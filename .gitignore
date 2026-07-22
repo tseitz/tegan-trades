@@ -1,0 +1,16 @@
+# Machine-generated ore — regenerable, never in git
+data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Secrets / env
+.env
+.env.*
+
+# OS
+.DS_Store
