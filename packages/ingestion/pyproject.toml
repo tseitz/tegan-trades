@@ -1,0 +1,25 @@
+[project]
+name = "ingestion"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "tseitz", email = "tdseitz10@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "youtube-transcript-api>=1.2.4",
+    "yt-dlp>=2026.7.4",
+]
+
+[project.scripts]
+ingestion = "ingestion:main"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
