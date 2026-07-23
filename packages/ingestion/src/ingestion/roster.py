@@ -122,3 +122,40 @@ def ingest_channel(
         save_video(vid, metadata, text)
         result.ingested.append(vid)
     return result
+
+
+def ingest_roster(
+    watchlist: dict,
+    *,
+    root: Path = DATA_ROOT,
+    today: date | None = None,
+    _ingest_channel=None,
+) -> list[ChannelResult]:
+    run = _ingest_channel or ingest_channel
+    results: list[ChannelResult] = []
+    for target in active_targets(watchlist):
+        results.append(run(target, root=root, today=today))
+    return results
+
+
+def format_summary(results: list[ChannelResult]) -> str:
+    lines: list[str] = []
+    for r in results:
+        lines.append(
+            f"{r.person} ({r.channel}): "
+            f"{len(r.ingested)} ingested, {len(r.skipped)} skipped, "
+            f"{len(r.stale)} stale, {len(r.failed)} failed"
+        )
+        for vid, reason in r.failed:
+            lines.append(f"    ! {vid}: {reason}")
+    totals = {
+        "ingested": sum(len(r.ingested) for r in results),
+        "skipped": sum(len(r.skipped) for r in results),
+        "stale": sum(len(r.stale) for r in results),
+        "failed": sum(len(r.failed) for r in results),
+    }
+    lines.append(
+        f"TOTAL: {totals['ingested']} ingested, {totals['skipped']} skipped, "
+        f"{totals['stale']} stale, {totals['failed']} failed"
+    )
+    return "\n".join(lines)

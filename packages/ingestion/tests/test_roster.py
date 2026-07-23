@@ -8,7 +8,9 @@ from ingestion.roster import (
     ChannelResult,
     ChannelTarget,
     active_targets,
+    format_summary,
     ingest_channel,
+    ingest_roster,
     load_watchlist,
 )
 
@@ -143,3 +145,33 @@ def test_ingest_channel_logs_transcript_failure_and_continues(tmp_path):
     assert result.ingested == ["good000001"]
     assert result.failed == [("bad0000001", "transcript: no captions")]
     assert "good000001" in saved and "bad0000001" not in saved
+
+
+def test_ingest_roster_runs_each_target(tmp_path):
+    wl = load_watchlist(_write(tmp_path, WATCHLIST))
+    calls = []
+
+    def fake_ingest_channel(target, **kwargs):
+        calls.append(target.person)
+        r = ChannelResult(target.person, target.channel)
+        r.ingested.append("vid_" + target.person)
+        return r
+
+    results = ingest_roster(wl, _ingest_channel=fake_ingest_channel)
+    assert calls == ["Alice", "Bob"]
+    assert [r.person for r in results] == ["Alice", "Bob"]
+
+
+def test_format_summary_reports_counts():
+    r = ChannelResult("Alice", "@alice")
+    r.ingested = ["a", "b"]
+    r.skipped = ["c"]
+    r.stale = ["d"]
+    r.failed = [("e", "transcript: no captions")]
+    text = format_summary([r])
+    assert "Alice" in text
+    assert "2 ingested" in text
+    assert "1 skipped" in text
+    assert "1 stale" in text
+    assert "1 failed" in text
+    assert "no captions" in text  # failure reasons surfaced
