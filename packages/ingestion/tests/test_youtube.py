@@ -85,3 +85,21 @@ def test_fetch_transcript_translates_request_blocked(monkeypatch):
     monkeypatch.setattr(yt, "YouTubeTranscriptApi", lambda: _BlockedApi())
     with pytest.raises(TranscriptBlocked):
         yt.fetch_transcript("vid00000001")
+
+
+def test_proxy_config_none_without_env(monkeypatch):
+    import ingestion.youtube as yt
+    monkeypatch.delenv("WEBSHARE_PROXY_USERNAME", raising=False)
+    monkeypatch.delenv("WEBSHARE_PROXY_PASSWORD", raising=False)
+    assert yt._proxy_config() is None
+
+
+def test_proxy_config_built_from_env(monkeypatch):
+    import ingestion.youtube as yt
+    from youtube_transcript_api.proxies import WebshareProxyConfig
+    monkeypatch.setenv("WEBSHARE_PROXY_USERNAME", "u123")
+    monkeypatch.setenv("WEBSHARE_PROXY_PASSWORD", "p456")
+    cfg = yt._proxy_config()
+    assert isinstance(cfg, WebshareProxyConfig)
+    assert cfg.proxy_username == "u123"
+    assert cfg.proxy_password == "p456"

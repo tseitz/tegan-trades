@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
 from youtube_transcript_api import RequestBlocked, YouTubeTranscriptApi
+from youtube_transcript_api.proxies import WebshareProxyConfig
 
 from ingestion.store import DATA_ROOT, TranscriptRecord, save
 
@@ -30,10 +32,29 @@ def extract_video_id(url: str) -> str:
     raise ValueError(f"Could not extract a YouTube video id from: {url}")
 
 
+def _proxy_config() -> WebshareProxyConfig | None:
+    """Build a Webshare residential proxy config from env vars, or None.
+
+    Opt-in: set WEBSHARE_PROXY_USERNAME + WEBSHARE_PROXY_PASSWORD to route
+    transcript fetches through rotating residential IPs (needed when YouTube
+    IP-blocks the caller's own IP). Absent → direct, un-proxied fetch.
+    """
+    user = os.environ.get("WEBSHARE_PROXY_USERNAME")
+    password = os.environ.get("WEBSHARE_PROXY_PASSWORD")
+    if user and password:
+        return WebshareProxyConfig(proxy_username=user, proxy_password=password)
+    return None
+
+
+def _build_api() -> YouTubeTranscriptApi:
+    config = _proxy_config()
+    return YouTubeTranscriptApi(proxy_config=config) if config else YouTubeTranscriptApi()
+
+
 def fetch_transcript(video_id: str) -> str:
     # v1.x instance API; each snippet exposes `.text`
     try:
-        fetched = YouTubeTranscriptApi().fetch(video_id)
+        fetched = _build_api().fetch(video_id)
     except RequestBlocked as exc:
         # IP-level block on the timedtext endpoint — surface as a domain
         # signal so the batch loop can abort instead of retrying every video.
