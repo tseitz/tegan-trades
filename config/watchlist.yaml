@@ -1,0 +1,225 @@
+# Roster — source of truth for who we ingest.
+# status: candidate | active | archived
+# access (per channel): ok | throttled | paid | blocked | unknown
+#
+# Seed captured 2026-07-22 from Tegan's crypto roster. access flags + discovered
+# additions filled in Task 7 (after channel-verification research).
+
+people:
+  # ─── Long-form primaries (YouTube / podcast — easy ingest) ───
+  - name: "TraderMayne"
+    handle: "@Tradermayne"
+    status: candidate
+    domains: [crypto]
+    why: "Primary technical/ICT signal — taught Tegan much of his ICT. Short-to-medium swing, multi-day/weekly theses. Long streams (1-2h) are the signal; also posts straight trades in Telegram."
+    channels:
+      - platform: youtube
+        id: "@TraderMayne"
+        access: unknown
+      - platform: telegram
+        id: "officialtradermayne"
+        access: unknown
+      - platform: x
+        id: "Tradermayne"
+        access: unknown
+    notes: "Guest on other podcasts sometimes, but usually reiterates his streams. Highest-priority technical source."
+
+  - name: "Benjamin Cowen"
+    handle: "@benjaminjcowen"
+    status: candidate
+    domains: [crypto, macro]
+    why: "Macro/cycle zoom-out. Consistently right on long-term trends — bull-market-support-band, 200W, risk metrics. Tegan's 'where is this eventually heading' source."
+    channels:
+      - platform: youtube
+        id: "@benjaminjcowen"
+        access: unknown
+    notes: "Into the Cryptoverse. Quantitative, higher-timeframe."
+
+  - name: "The DeFi Report (Michael Nadeau)"
+    handle: "@JustDeauIt"
+    status: candidate
+    domains: [crypto, macro]
+    why: "Week-to-week on-chain/macro trends. Directionally accurate but kept vague on the free pod. Good, accurate signal."
+    channels:
+      - platform: youtube
+        id: "@thedefireport"
+        access: unknown
+      - platform: x
+        id: "JustDeauIt"
+        access: unknown
+    notes: "TDR Pro is ~$25/mo — Tegan would consider paying if signal is good. Multi-channel overlap (YouTube + X)."
+
+  - name: "1000x Podcast"
+    handle: "@1000xNetwork"
+    status: candidate
+    domains: [macro, crypto]
+    why: "Macro signal with specific calls. Expanding to a network; less crypto-pure now but strong macro context."
+    channels:
+      - platform: youtube
+        id: "@1000xNetwork"
+        access: unknown
+    notes: ""
+
+  - name: "TTrades"
+    handle: "@TTrades_edu"
+    status: candidate
+    domains: [stock, crypto]
+    why: "Technically very talented (ICT-derived). Streams give best day-to-day value. Equities-leaning — hold primarily for the stocks expansion."
+    channels:
+      - platform: youtube
+        id: "@TTrades_edu"
+        access: unknown
+    notes: "Less personality-driven; Tegan didn't keep up but rates the technical skill."
+
+  - name: "Technical Roundup"
+    handle: "@TechnicalRoundup"
+    status: candidate
+    domains: [crypto]
+    why: "Reasonable weekly/monthly-timeframe calls. Trusted, but streaming activity has dropped (likely bear market)."
+    channels:
+      - platform: youtube
+        id: "@TechnicalRoundup"
+        access: unknown
+    notes: "Verify current activity — may be dormant."
+
+  - name: "TraderSZ"
+    handle: "@traderzs1"
+    status: candidate
+    domains: [crypto]
+    why: "Decent alpha when he streams; technical. Activity down in the bear market."
+    channels:
+      - platform: youtube
+        id: "@TraderSZ"
+        access: unknown
+      - platform: x
+        id: "traderzs1"
+        access: unknown
+    notes: "Verify current activity — may be dormant. Multi-channel (YouTube + X)."
+
+  # ─── X-list members (crypto trader list — mostly sentiment/flow) ───
+  # X ingestion approach pending go/no-go (Grok/xAI API under research).
+  - name: "Metaquant"
+    handle: "@QuantMeta"
+    status: candidate
+    domains: [crypto]
+    why: "Front-running the front-runners — flow/quant."
+    channels: [{ platform: x, id: "QuantMeta", access: unknown }]
+    notes: ""
+
+  - name: "fhd"
+    handle: "@0xfhd_"
+    status: candidate
+    domains: [crypto]
+    why: "Full-time trader (Hyperliquid-era perps/flow)."
+    channels: [{ platform: x, id: "0xfhd_", access: unknown }]
+    notes: ""
+
+  - name: "thiccy"
+    handle: "@thiccyth0t"
+    status: candidate
+    domains: [crypto]
+    why: "Trader; @scimitarcapital / @trylastpack."
+    channels: [{ platform: x, id: "thiccyth0t", access: unknown }]
+    notes: ""
+
+  - name: "GCR"
+    handle: "@GiganticRebirth"
+    status: candidate
+    domains: [crypto]
+    why: "Legendary directional trader. Very high historical signal."
+    channels: [{ platform: x, id: "GiganticRebirth", access: unknown }]
+    notes: "Likely largely inactive — verify. High signal, low volume."
+
+  - name: "Z$1"
+    handle: "@traderzs1"
+    status: candidate
+    domains: [crypto]
+    why: "'Buy internet money and draw lines' — technical. Same as TraderSZ above (dedupe in Task 7)."
+    channels: [{ platform: x, id: "traderzs1", access: unknown }]
+    notes: "Possible duplicate of TraderSZ — confirm."
+
+  - name: "Loma"
+    handle: "@LomahCrypto"
+    status: candidate
+    domains: [crypto]
+    why: "Trader; @thehavencrypto / @egirl_capital."
+    channels: [{ platform: x, id: "LomahCrypto", access: unknown }]
+    notes: ""
+
+  - name: "Cred (CryptoCred)"
+    handle: "@CryptoCred"
+    status: candidate
+    domains: [crypto]
+    why: "Respected trader/educator — technicals. High quality when posting."
+    channels: [{ platform: x, id: "CryptoCred", access: unknown }]
+    notes: "@breakoutprop."
+
+  - name: "DonAlt"
+    handle: "@DonAlt"
+    status: candidate
+    domains: [crypto]
+    why: "Well-known technical + macro trader; no-nonsense. Hosts a show."
+    channels: [{ platform: x, id: "DonAlt", access: unknown }]
+    notes: "Kraken/Breakout-affiliated; check for a streamable show/podcast."
+
+  - name: "alle"
+    handle: "@cryptoalle"
+    status: candidate
+    domains: [crypto]
+    why: "Trader since a -99.3% hold; @apg_capital."
+    channels: [{ platform: x, id: "cryptoalle", access: unknown }]
+    notes: ""
+
+  - name: "Arthur"
+    handle: "@arthur0x"
+    status: candidate
+    domains: [crypto]
+    why: "CEO/CIO DeFiance Capital — liquid-asset fundamentals."
+    channels: [{ platform: x, id: "arthur0x", access: unknown }]
+    notes: ""
+
+  - name: "Andrew Kang"
+    handle: "@Rewkang"
+    status: candidate
+    domains: [crypto]
+    why: "Mechanism Capital — big directional calls, perps/flow."
+    channels: [{ platform: x, id: "Rewkang", access: unknown }]
+    notes: ""
+
+  - name: "Stephen"
+    handle: "@0xmagiclines"
+    status: candidate
+    domains: [crypto]
+    why: "Full-time trader — 'fine lines and rectangles' (technical)."
+    channels: [{ platform: x, id: "0xmagiclines", access: unknown }]
+    notes: "@themagicintern."
+
+  - name: "Pierre"
+    handle: "@pierre_crypt0"
+    status: candidate
+    domains: [crypto]
+    why: "Trader/commentator; @TheHavenCrypto. Has a YouTube — transcribable."
+    channels:
+      - platform: youtube
+        id: "@pierre_crypt0"
+        access: unknown
+      - platform: x
+        id: "pierre_crypt0"
+        access: unknown
+    notes: "Multi-channel — prefer YouTube ingest."
+
+  - name: "Mark Newton CMT"
+    handle: "@MarkNewtonCMT"
+    status: candidate
+    domains: [stock, macro, crypto]
+    why: "Fundstrat Global Head of Technical Strategy. Cross-asset TradFi technicals — the bridge for the stocks expansion."
+    channels: [{ platform: x, id: "MarkNewtonCMT", access: unknown }]
+    notes: "Free 30-day daily note at fundstrat.com/Mark; CNBC/Fox commentator."
+
+  - name: "krillin"
+    handle: "@LSDinmycoffee"
+    status: candidate
+    domains: [crypto]
+    why: "Full-time trader/analyst; @TheHavenCrypto."
+    channels: [{ platform: x, id: "LSDinmycoffee", access: unknown }]
+    notes: ""
