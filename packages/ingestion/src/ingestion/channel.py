@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
@@ -68,8 +69,11 @@ def resolve_recent(channel: str, max_videos: int, *, _list_entries=None) -> list
     for tab in _TABS:
         try:
             stubs = list_tab(channel, tab, max_videos, _entries=_list_entries)
-        except Exception:
-            stubs = []  # tab may not exist (e.g. no /streams)
+        except Exception as exc:
+            # tab may not exist (e.g. no /streams) — but could also be a real
+            # config/network error, so surface it rather than failing silently.
+            print(f"[resolve_recent] {channel}/{tab} failed: {exc!r}", file=sys.stderr)
+            stubs = []
         for stub in stubs:
             if stub.video_id in seen:
                 continue

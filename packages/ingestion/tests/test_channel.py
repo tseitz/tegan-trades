@@ -71,3 +71,16 @@ def test_resolve_recent_tolerates_missing_streams_tab():
         raise RuntimeError("This channel has no streams tab")
     stubs = resolve_recent("@x", max_videos=10, _list_entries=entries)
     assert [s.video_id for s in stubs] == ["vid00000001"]
+
+
+def test_resolve_recent_returns_empty_and_surfaces_failure_when_both_tabs_error(capsys):
+    def entries(url, limit):
+        raise RuntimeError("boom")
+
+    stubs = resolve_recent("@x", max_videos=10, _list_entries=entries)
+
+    assert stubs == []
+    err = capsys.readouterr().err
+    assert "@x/videos" in err
+    assert "@x/streams" in err
+    assert "boom" in err
