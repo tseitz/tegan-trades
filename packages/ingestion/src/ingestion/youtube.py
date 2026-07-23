@@ -12,8 +12,26 @@ from youtube_transcript_api.proxies import WebshareProxyConfig
 from ingestion.store import DATA_ROOT, TranscriptRecord, save
 
 # Transient failures worth retrying (a rotating proxy gives a fresh IP each try):
-# connection drops, 429-redirects to google /sorry, chunked-encoding aborts.
+# connection drops, 429-redirects to google /sorry, chunked-encoding aborts,
+# and hung sockets (surfaced as Timeout by the session below).
 _TRANSIENT = (requests.exceptions.RequestException,)
+
+# (connect, read) seconds. Without a timeout a hung proxy socket stalls the whole
+# run indefinitely; on timeout the request errors (transient) and we retry a fresh IP.
+_HTTP_TIMEOUT = (10.0, 30.0)
+
+
+class _TimeoutSession(requests.Session):
+    """A requests Session that applies a default timeout to every request.
+
+    `requests` has no session-level default timeout, and youtube-transcript-api
+    calls `.get()` without one — so a hung connection never returns. We pass this
+    as the library's `http_client`; it still layers the proxy config on top.
+    """
+
+    def request(self, *args, **kwargs):
+        kwargs.setdefault("timeout", _HTTP_TIMEOUT)
+        return super().request(*args, **kwargs)
 
 
 class TranscriptBlocked(Exception):
@@ -53,8 +71,9 @@ def _proxy_config() -> WebshareProxyConfig | None:
 
 
 def _build_api() -> YouTubeTranscriptApi:
-    config = _proxy_config()
-    return YouTubeTranscriptApi(proxy_config=config) if config else YouTubeTranscriptApi()
+    # Pass our timeout session as http_client; the library still applies the
+    # proxy config (proxies, Connection: close, 429-retry adapters) to it.
+    return YouTubeTranscriptApi(proxy_config=_proxy_config(), http_client=_TimeoutSession())
 
 
 def fetch_transcript(

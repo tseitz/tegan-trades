@@ -82,9 +82,30 @@ def test_fetch_transcript_translates_request_blocked(monkeypatch):
         def fetch(self, vid):
             raise RequestBlocked(vid)
 
-    monkeypatch.setattr(yt, "YouTubeTranscriptApi", lambda: _BlockedApi())
+    monkeypatch.delenv("WEBSHARE_PROXY_USERNAME", raising=False)
+    monkeypatch.delenv("WEBSHARE_PROXY_PASSWORD", raising=False)
+    monkeypatch.setattr(yt, "YouTubeTranscriptApi", lambda *a, **k: _BlockedApi())
     with pytest.raises(TranscriptBlocked):
         yt.fetch_transcript("vid00000001")
+
+
+def test_timeout_session_injects_default_timeout(monkeypatch):
+    import ingestion.youtube as yt
+    import requests
+
+    captured = {}
+
+    def fake_request(self, method, url, **kwargs):
+        captured["timeout"] = kwargs.get("timeout")
+
+        class _Resp:
+            status_code = 200
+
+        return _Resp()
+
+    monkeypatch.setattr(requests.Session, "request", fake_request)
+    yt._TimeoutSession().get("http://example.com")
+    assert captured["timeout"] == yt._HTTP_TIMEOUT
 
 
 def test_proxy_config_none_without_env(monkeypatch):
