@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from yt_dlp import YoutubeDL
 
@@ -80,3 +80,49 @@ def resolve_recent(channel: str, max_videos: int, *, _list_entries=None) -> list
             seen.add(stub.video_id)
             out.append(stub)
     return out
+
+
+@dataclass(frozen=True)
+class VideoMeta:
+    video_id: str
+    title: str
+    published_at: str | None   # ISO "YYYY-MM-DD"
+    duration: int | None
+    channel_id: str | None
+    was_live: bool
+
+
+def _published_at(info: dict) -> str | None:
+    upload_date = info.get("upload_date")
+    if upload_date and len(upload_date) == 8:
+        return f"{upload_date[0:4]}-{upload_date[4:6]}-{upload_date[6:8]}"
+    ts = info.get("timestamp") or info.get("release_timestamp")
+    if ts:
+        return datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
+    return None
+
+
+def _full_extract(url: str) -> dict:
+    with YoutubeDL({"skip_download": True, "quiet": True}) as ydl:
+        return ydl.extract_info(url, download=False)
+
+
+def hydrate(video_id: str, *, _extract=None) -> VideoMeta:
+    """Full-extract a single video for reliable metadata."""
+    extract = _extract or _full_extract
+    info = extract(f"https://www.youtube.com/watch?v={video_id}")
+    return VideoMeta(
+        video_id=video_id,
+        title=info.get("title") or "",
+        published_at=_published_at(info),
+        duration=info.get("duration"),
+        channel_id=info.get("channel_id"),
+        was_live=bool(info.get("was_live")),
+    )
+
+
+def is_recent_enough(published_at: str | None, max_age_days: int, *, today: date) -> bool:
+    if not published_at:
+        return False
+    cutoff = today - timedelta(days=max_age_days)
+    return date.fromisoformat(published_at) >= cutoff

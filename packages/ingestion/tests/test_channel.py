@@ -1,6 +1,9 @@
+from datetime import date
+
 import pytest
 from ingestion.channel import channel_base_url, tab_url
 from ingestion.channel import VideoStub, list_tab, resolve_recent
+from ingestion.channel import VideoMeta, hydrate, is_recent_enough
 
 
 @pytest.mark.parametrize("channel,expected", [
@@ -84,3 +87,33 @@ def test_resolve_recent_returns_empty_and_surfaces_failure_when_both_tabs_error(
     assert "@x/videos" in err
     assert "@x/streams" in err
     assert "boom" in err
+
+
+def test_hydrate_maps_upload_date_to_iso_published_at():
+    info = {"title": "T", "upload_date": "20260701", "duration": 1220,
+            "channel_id": "UCabc", "was_live": True}
+    meta = hydrate("vid00000001", _extract=lambda url: info)
+    assert meta == VideoMeta("vid00000001", "T", "2026-07-01", 1220, "UCabc", True)
+
+
+def test_hydrate_falls_back_to_timestamp_when_no_upload_date():
+    # 2026-07-01T00:00:00Z == 1782864000
+    info = {"title": "T", "timestamp": 1782864000, "was_live": False}
+    meta = hydrate("vid00000002", _extract=lambda url: info)
+    assert meta.published_at == "2026-07-01"
+    assert meta.was_live is False
+
+
+def test_hydrate_published_at_none_when_no_date_fields():
+    meta = hydrate("vid00000003", _extract=lambda url: {"title": "T"})
+    assert meta.published_at is None
+
+
+def test_is_recent_enough_uses_cutoff():
+    today = date(2026, 7, 22)
+    assert is_recent_enough("2026-07-01", max_age_days=730, today=today) is True
+    assert is_recent_enough("2020-01-01", max_age_days=730, today=today) is False
+
+
+def test_is_recent_enough_false_for_missing_date():
+    assert is_recent_enough(None, max_age_days=730, today=date(2026, 7, 22)) is False
