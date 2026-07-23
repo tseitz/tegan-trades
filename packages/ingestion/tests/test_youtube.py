@@ -71,3 +71,17 @@ def test_ingest_url_round_trip(tmp_path, monkeypatch):
     assert sidecar["url"] == url
     assert sidecar["platform"] == "youtube"
     assert sidecar["source_id"] == "dQw4w9WgXcQ"
+
+
+def test_fetch_transcript_translates_request_blocked(monkeypatch):
+    import ingestion.youtube as yt
+    from ingestion.youtube import TranscriptBlocked
+    from youtube_transcript_api import RequestBlocked
+
+    class _BlockedApi:
+        def fetch(self, vid):
+            raise RequestBlocked(vid)
+
+    monkeypatch.setattr(yt, "YouTubeTranscriptApi", lambda: _BlockedApi())
+    with pytest.raises(TranscriptBlocked):
+        yt.fetch_transcript("vid00000001")

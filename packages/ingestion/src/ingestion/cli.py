@@ -6,6 +6,7 @@ from ingestion.roster import (
     DEFAULT_MAX_AGE_DAYS,
     DEFAULT_MAX_VIDEOS,
     ChannelTarget,
+    RunAborted,
     format_summary,
     ingest_channel,
     ingest_roster,
@@ -38,6 +39,9 @@ def channel_main(argv: list[str] | None = None) -> int:
         max_videos=args.max_videos,
         max_age_days=args.max_age_days,
     )
-    result = ingest_channel(target)
+    try:
+        result = ingest_channel(target)
+    except RunAborted as exc:
+        result = exc.result
     print(format_summary([result]))
     return 0

@@ -7,12 +7,14 @@ from ingestion.channel import VideoMeta, VideoStub
 from ingestion.roster import (
     ChannelResult,
     ChannelTarget,
+    RunAborted,
     active_targets,
     format_summary,
     ingest_channel,
     ingest_roster,
     load_watchlist,
 )
+from ingestion.youtube import TranscriptBlocked
 
 
 WATCHLIST = textwrap.dedent("""
@@ -160,6 +162,49 @@ def test_ingest_roster_runs_each_target(tmp_path):
     results = ingest_roster(wl, _ingest_channel=fake_ingest_channel)
     assert calls == ["Alice", "Bob"]
     assert [r.person for r in results] == ["Alice", "Bob"]
+
+
+def test_ingest_channel_aborts_run_on_block_preserving_partial(tmp_path):
+    saved = {}
+    target = ChannelTarget("Alice", "@alice", 50, 730)
+
+    def transcript(vid):
+        if vid == "blocked0001":
+            raise TranscriptBlocked("YouTube IP block")
+        return f"text-{vid}"
+
+    with pytest.raises(RunAborted) as excinfo:
+        ingest_channel(
+            target,
+            today=date(2026, 7, 22),
+            resolve=lambda ch, n: [_stub("good000001"), _stub("blocked0001"), _stub("good000002")],
+            hydrate=lambda vid: _meta(vid, "2026-07-01"),
+            fetch_transcript=transcript,
+            exists=lambda platform, vid: False,
+            save_video=lambda vid, meta, text: saved.update({vid: text}),
+        )
+
+    result = excinfo.value.result
+    assert result.ingested == ["good000001"]          # saved before the block
+    assert any(v == "blocked0001" for v, _ in result.failed)
+    assert "good000002" not in saved                   # never attempted after block
+
+
+def test_ingest_roster_stops_after_block(tmp_path):
+    wl = load_watchlist(_write(tmp_path, WATCHLIST))   # Alice, Bob both active
+
+    def fake_ingest_channel(target, **kwargs):
+        r = ChannelResult(target.person, target.channel)
+        if target.person == "Alice":
+            r.ingested.append("vidA")
+            r.failed.append(("blockedA", "transcript: blocked [BLOCKED — run aborted]"))
+            raise RunAborted(r)
+        r.ingested.append("vid_" + target.person)      # Bob — must never run
+        return r
+
+    results = ingest_roster(wl, _ingest_channel=fake_ingest_channel)
+    assert [r.person for r in results] == ["Alice"]    # Bob not processed
+    assert results[0].ingested == ["vidA"]             # Alice's partial preserved
 
 
 def test_format_summary_reports_counts():

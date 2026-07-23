@@ -3,9 +3,17 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api import RequestBlocked, YouTubeTranscriptApi
 
 from ingestion.store import DATA_ROOT, TranscriptRecord, save
+
+
+class TranscriptBlocked(Exception):
+    """YouTube has IP-blocked the transcript (timedtext) endpoint.
+
+    Systemic, not per-video — every subsequent fetch from this IP will also
+    fail, so callers should stop the run rather than keep hammering.
+    """
 
 _ID_PATTERNS = [
     r"youtu\.be/([A-Za-z0-9_-]{11})",
@@ -24,7 +32,12 @@ def extract_video_id(url: str) -> str:
 
 def fetch_transcript(video_id: str) -> str:
     # v1.x instance API; each snippet exposes `.text`
-    fetched = YouTubeTranscriptApi().fetch(video_id)
+    try:
+        fetched = YouTubeTranscriptApi().fetch(video_id)
+    except RequestBlocked as exc:
+        # IP-level block on the timedtext endpoint — surface as a domain
+        # signal so the batch loop can abort instead of retrying every video.
+        raise TranscriptBlocked(str(exc)) from exc
     return " ".join(snippet.text for snippet in fetched)
 
 

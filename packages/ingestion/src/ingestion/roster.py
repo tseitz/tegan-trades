@@ -10,6 +10,7 @@ import yaml
 from ingestion import channel as channel_mod
 from ingestion.store import DATA_ROOT
 from ingestion.store import exists as _store_exists
+from ingestion.youtube import TranscriptBlocked
 from ingestion.youtube import fetch_transcript as _fetch_transcript
 from ingestion.youtube import ingest_video as _ingest_video
 
@@ -62,6 +63,18 @@ class ChannelResult:
     failed: list[tuple[str, str]] = field(default_factory=list)
 
 
+class RunAborted(Exception):
+    """Stop the whole ingest run early (e.g. a YouTube IP block).
+
+    Carries the partial ChannelResult accumulated before the abort so the
+    caller can still report what was ingested up to that point.
+    """
+
+    def __init__(self, result: ChannelResult):
+        super().__init__("ingestion run aborted")
+        self.result = result
+
+
 def _default_save(root: Path):
     def save_video(video_id: str, metadata: dict, text: str) -> None:
         _ingest_video(video_id, metadata, text=text, root=root)
@@ -106,6 +119,16 @@ def ingest_channel(
             continue
         try:
             text = fetch_transcript(vid)
+        except TranscriptBlocked as exc:
+            # Systemic IP block — every later fetch will fail too. Record this
+            # video, then abort the run rather than hammering the blocked endpoint.
+            print(
+                f"[ingest_channel] {target.channel}/{vid} BLOCKED by YouTube "
+                f"(IP ban on transcript endpoint) — aborting run: {exc!r}",
+                file=sys.stderr,
+            )
+            result.failed.append((vid, f"transcript: {exc} [BLOCKED — run aborted]"))
+            raise RunAborted(result) from exc
         except Exception as exc:  # noqa: BLE001 - log-and-continue per spec
             print(f"[ingest_channel] {target.channel}/{vid} transcript: {exc!r}", file=sys.stderr)
             result.failed.append((vid, f"transcript: {exc}"))
@@ -134,7 +157,17 @@ def ingest_roster(
     run = _ingest_channel or ingest_channel
     results: list[ChannelResult] = []
     for target in active_targets(watchlist):
-        results.append(run(target, root=root, today=today))
+        try:
+            results.append(run(target, root=root, today=today))
+        except RunAborted as exc:
+            results.append(exc.result)
+            print(
+                "[ingest_roster] YouTube IP block detected — stopping sweep; "
+                "remaining channels not processed. Retry from a residential IP "
+                "or configure a proxy.",
+                file=sys.stderr,
+            )
+            break
     return results
 
 
