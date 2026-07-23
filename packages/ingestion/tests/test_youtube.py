@@ -103,3 +103,66 @@ def test_proxy_config_built_from_env(monkeypatch):
     assert isinstance(cfg, WebshareProxyConfig)
     assert cfg.proxy_username == "u123"
     assert cfg.proxy_password == "p456"
+
+
+def test_fetch_transcript_retries_transient_then_succeeds(monkeypatch):
+    import ingestion.youtube as yt
+    import requests
+    monkeypatch.delenv("WEBSHARE_PROXY_USERNAME", raising=False)
+    monkeypatch.delenv("WEBSHARE_PROXY_PASSWORD", raising=False)
+    calls = {"n": 0}
+
+    class _Snip:
+        text = "recovered"
+
+    class _FlakyApi:
+        def fetch(self, vid):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise requests.exceptions.ChunkedEncodingError("dropped")
+            return [_Snip()]
+
+    monkeypatch.setattr(yt, "_build_api", lambda: _FlakyApi())
+    text = yt.fetch_transcript("vid00000001", sleep=lambda _s: None)
+    assert text == "recovered"
+    assert calls["n"] == 3  # failed twice, succeeded on the third
+
+
+def test_fetch_transcript_gives_up_after_retries(monkeypatch):
+    import ingestion.youtube as yt
+    import requests
+    monkeypatch.delenv("WEBSHARE_PROXY_USERNAME", raising=False)
+    monkeypatch.delenv("WEBSHARE_PROXY_PASSWORD", raising=False)
+
+    class _DeadApi:
+        def fetch(self, vid):
+            raise requests.exceptions.ConnectionError("nope")
+
+    monkeypatch.setattr(yt, "_build_api", lambda: _DeadApi())
+    with pytest.raises(requests.exceptions.RequestException):
+        yt.fetch_transcript("v", retries=3, sleep=lambda _s: None)
+
+
+def test_fetch_transcript_proxied_block_retries_without_abort(monkeypatch):
+    # With a proxy (rotating IPs), a RequestBlocked on one IP must NOT become a
+    # run-aborting TranscriptBlocked — retry a fresh IP, then fail that video only.
+    import ingestion.youtube as yt
+    from youtube_transcript_api import RequestBlocked
+    from ingestion.youtube import TranscriptBlocked
+    monkeypatch.setenv("WEBSHARE_PROXY_USERNAME", "u")
+    monkeypatch.setenv("WEBSHARE_PROXY_PASSWORD", "p")
+
+    class _BlockedApi:
+        def fetch(self, vid):
+            raise RequestBlocked(vid)
+
+    monkeypatch.setattr(yt, "_build_api", lambda: _BlockedApi())
+    with pytest.raises(RequestBlocked):          # bubbles as a plain per-video failure
+        yt.fetch_transcript("v", retries=2, sleep=lambda _s: None)
+    # and specifically NOT the abort signal:
+    try:
+        yt.fetch_transcript("v", retries=2, sleep=lambda _s: None)
+    except TranscriptBlocked:
+        raise AssertionError("proxied block should not raise TranscriptBlocked")
+    except RequestBlocked:
+        pass

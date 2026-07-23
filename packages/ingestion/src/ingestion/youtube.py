@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from pathlib import Path
 
+import requests
 from youtube_transcript_api import RequestBlocked, YouTubeTranscriptApi
 from youtube_transcript_api.proxies import WebshareProxyConfig
 
 from ingestion.store import DATA_ROOT, TranscriptRecord, save
+
+# Transient failures worth retrying (a rotating proxy gives a fresh IP each try):
+# connection drops, 429-redirects to google /sorry, chunked-encoding aborts.
+_TRANSIENT = (requests.exceptions.RequestException,)
 
 
 class TranscriptBlocked(Exception):
@@ -51,15 +57,39 @@ def _build_api() -> YouTubeTranscriptApi:
     return YouTubeTranscriptApi(proxy_config=config) if config else YouTubeTranscriptApi()
 
 
-def fetch_transcript(video_id: str) -> str:
-    # v1.x instance API; each snippet exposes `.text`
-    try:
-        fetched = _build_api().fetch(video_id)
-    except RequestBlocked as exc:
-        # IP-level block on the timedtext endpoint — surface as a domain
-        # signal so the batch loop can abort instead of retrying every video.
-        raise TranscriptBlocked(str(exc)) from exc
-    return " ".join(snippet.text for snippet in fetched)
+def fetch_transcript(
+    video_id: str,
+    *,
+    retries: int = 4,
+    backoff: float = 1.5,
+    sleep=time.sleep,
+) -> str:
+    """Fetch a transcript, retrying transient failures with backoff.
+
+    Block handling depends on whether a proxy is configured:
+    - **No proxy (single IP):** a `RequestBlocked` is systemic — every later
+      fetch will fail too — so it's raised as `TranscriptBlocked` for the batch
+      loop to abort on (fail-fast).
+    - **Proxy (rotating IPs):** a block or a flaky-exit-IP error affects only
+      this attempt; retry with a fresh IP, and if all retries fail let the raw
+      error bubble as a per-video failure (no abort).
+    """
+    proxied = _proxy_config() is not None
+    last_exc: Exception | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            fetched = _build_api().fetch(video_id)  # v1.x instance API; snippet.text
+            return " ".join(snippet.text for snippet in fetched)
+        except RequestBlocked as exc:
+            if not proxied:
+                raise TranscriptBlocked(str(exc)) from exc
+            last_exc = exc  # rotating proxy — a fresh IP may not be blocked
+        except _TRANSIENT as exc:
+            last_exc = exc  # flaky proxy IP / dropped connection
+        if attempt < retries:
+            sleep(backoff * attempt)
+    assert last_exc is not None
+    raise last_exc
 
 
 def ingest_video(
