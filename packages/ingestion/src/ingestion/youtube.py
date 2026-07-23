@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from youtube_transcript_api import YouTubeTranscriptApi
 
-from ingestion.store import TranscriptRecord, save
+from ingestion.store import DATA_ROOT, TranscriptRecord, save
 
 _ID_PATTERNS = [
     r"youtu\.be/([A-Za-z0-9_-]{11})",
@@ -27,14 +28,30 @@ def fetch_transcript(video_id: str) -> str:
     return " ".join(snippet.text for snippet in fetched)
 
 
-def ingest(url: str) -> str:
-    """Fetch a YouTube transcript and persist it to the ore store. Returns the video id."""
-    video_id = extract_video_id(url)
-    text = fetch_transcript(video_id)
-    save(TranscriptRecord(
-        platform="youtube",
-        source_id=video_id,
-        text=text,
-        metadata={"url": url},
-    ))
+def ingest_video(
+    video_id: str,
+    metadata: dict,
+    *,
+    text: str | None = None,
+    root: Path = DATA_ROOT,
+) -> str:
+    """Persist a transcript + metadata for a known video id. Fetches the
+    transcript when `text` is not supplied. Returns the video id."""
+    if text is None:
+        text = fetch_transcript(video_id)
+    save(
+        TranscriptRecord(
+            platform="youtube",
+            source_id=video_id,
+            text=text,
+            metadata=metadata,
+        ),
+        root=root,
+    )
     return video_id
+
+
+def ingest(url: str, *, root: Path = DATA_ROOT) -> str:
+    """Fetch a YouTube transcript from a URL and persist it. Returns the video id."""
+    video_id = extract_video_id(url)
+    return ingest_video(video_id, {"url": url}, root=root)
