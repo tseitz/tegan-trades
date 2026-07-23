@@ -1,4 +1,5 @@
-import os
+import shutil
+
 import pytest
 
 from core.thesis import Source, Thesis
@@ -6,9 +7,12 @@ from distill.extract import extract_theses
 
 pytestmark = pytest.mark.integration
 
+# Real calls go through `claude -p` (Max subscription auth), not ANTHROPIC_API_KEY —
+# see cli_backend.ClaudeCodeClient. Only the CLI itself needs to be present/logged in.
+_NO_CLAUDE_CLI = shutil.which("claude") is None
 
-@pytest.mark.skipif(not os.environ.get("ANTHROPIC_API_KEY"),
-                    reason="needs ANTHROPIC_API_KEY")
+
+@pytest.mark.skipif(_NO_CLAUDE_CLI, reason="needs the `claude` CLI on PATH, logged in")
 def test_real_extraction_smoke():
     source = Source(person="Test", platform="youtube",
                     url="https://youtu.be/x", published_at="2025-02-28",
@@ -24,8 +28,7 @@ def test_real_extraction_smoke():
         assert t.id.startswith("youtube/x#")
 
 
-@pytest.mark.skipif(not os.environ.get("ANTHROPIC_API_KEY"),
-                    reason="needs ANTHROPIC_API_KEY")
+@pytest.mark.skipif(_NO_CLAUDE_CLI, reason="needs the `claude` CLI on PATH, logged in")
 def test_pure_chatter_yields_empty():
     source = Source(person="Test", platform="youtube", url="u",
                     published_at="2025-02-28", transcript_ref="youtube/y")

@@ -43,9 +43,9 @@ def extract_theses(
     retries: int = 2,
     extracted_at: str | None = None,
 ) -> list[Thesis]:
-    if client is None:  # pragma: no cover - real client needs a network key
-        import anthropic
-        client = anthropic.Anthropic()
+    if client is None:  # pragma: no cover - constructs the real subscription-backed client
+        from distill.cli_backend import ClaudeCodeClient
+        client = ClaudeCodeClient()
     extracted_at = extracted_at or _now()
     system, user = build_prompt(transcript_text, source)
 
