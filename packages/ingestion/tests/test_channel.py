@@ -146,3 +146,31 @@ def test_published_at_handles_timestamp_zero_without_falsy_bug():
     # timestamp=0 is falsy but a legitimate (if unrealistic) epoch value
     info = {"timestamp": 0}
     assert _published_at(info) == "1970-01-01"
+
+
+@pytest.mark.integration
+def test_resolve_and_hydrate_real_channel():
+    # TTrades posts both uploads and livestreams; small cap to keep it fast.
+    stubs = resolve_recent("@TTrades_edu", max_videos=5)
+    assert len(stubs) > 0
+    assert any(s.tab == "streams" for s in stubs), "expected at least one livestream VOD"
+
+    meta = hydrate(stubs[0].video_id)
+    assert meta.published_at is not None
+    assert len(meta.published_at) == 10  # YYYY-MM-DD
+    assert meta.channel_id and meta.channel_id.startswith("UC")
+
+
+@pytest.mark.integration
+def test_ingest_channel_real_end_to_end(tmp_path):
+    from ingestion.roster import ChannelTarget, ingest_channel
+    from ingestion.store import load
+
+    target = ChannelTarget("Cowen", "@benjaminjcowen", max_videos=1, max_age_days=3650)
+    result = ingest_channel(target, root=tmp_path, today=date.today())
+
+    # Either the one video ingested, or it lacked captions/date — but never crashed.
+    handled = result.ingested + result.skipped + result.stale + [v for v, _ in result.failed]
+    assert len(handled) >= 1
+    for vid in result.ingested:
+        assert len(load("youtube", vid, root=tmp_path)) > 0
