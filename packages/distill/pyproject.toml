@@ -1,0 +1,30 @@
+[project]
+name = "distill"
+version = "0.1.0"
+description = "LLM distillation: raw transcripts -> structured theses."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "core",
+    "anthropic",
+    "pydantic>=2",
+]
+
+[project.scripts]
+distill-roster = "distill.cli:roster_main"
+distill-transcript = "distill.cli:transcript_main"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+core = { path = "../core", editable = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+markers = ["integration: hits the network; run explicitly"]
