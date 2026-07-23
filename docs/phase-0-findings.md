@@ -31,3 +31,44 @@ Tegan's "use Grok to distill my X list" idea turned out to be the *purpose-built
 - **TraderSZ (= Z$1, @trader1sz): likely dormant on free YouTube** (last public upload ~2022; content moved behind the paid tradersz.com). Flag before relying on it.
 - **GCR: effectively retired** — rare one-off X posts only; no transcript path. The Grok digest catches him if he surfaces.
 - **Guest-only voices** (thiccy, arthur0x, Rewkang, Lyn Alden, Willy Woo) require "find name across N host channels" ingestion, not single-feed — a Phase 1+ capability decision.
+
+## Data platforms / alt-signal (Phase 5 sources)
+
+Verified 2026-07-22. Tiered by signal-per-dollar for a solo dev, weighted to Tegan's priorities (funding/OI = "who's offsides", sentiment extremes, unlock catalysts, on-chain cycle).
+
+### Grab — free (no or negligible cost)
+| Platform | Data | Access | Verified |
+|---|---|---|---|
+| **Alternative.me Fear & Greed** | sentiment extremes | free, no key — `api.alternative.me/fng/` | ✅ curl 200 (live value 31 = Fear) |
+| **Hyperliquid API** | funding / OI / order book (HL) | free, no key — `api.hyperliquid.xyz/info` `{"type":"metaAndAssetCtxs"}` | ✅ curl 200 (71KB, funding+OI) |
+| **DefiLlama `/unlocks`** | token unlock/vesting schedules | free, no key | agent (NEW — free replacement for paid Tokenomist API) |
+| **checkonchain** | BTC on-chain cycle (MVRV/SOPR/NUPL) | free charts, no API (manual) | agent (free Glassnode alternative for BTC) |
+| **Dune** | custom on-chain SQL | free tier 2,500 credits/mo, **API included** | agent |
+| **Flipside** | on-chain SQL | free Community API | agent (Dune fallback) |
+| **Tokenomist / Token Terminal / LunarCrush / Nansen** | (their free web/lite tiers) | free tier only | agent |
+
+### Cheap paid — worth it
+| Platform | Data | Cost | Note |
+|---|---|---|---|
+| **Coinglass** (Hobbyist) | funding, OI, liquidation heatmaps (cross-exchange) | **$29/mo** | **PRIORITY** — best $/signal on the board; = "who's offsides". V4 API `open-api-v4.coinglass.com`, `CG-API-KEY` header |
+| **LunarCrush** (Individual) | social sentiment, Galaxy Score/AltRank | ~$24/mo (free tier has AltRank) | Brain-head fuel |
+| **Nansen** (Pro) | smart-money wallet flows | $49/mo — or **x402 pay-per-call ~$0.01–0.05/call** | pay-per-call is ideal for occasional checks |
+
+### Skip for a solo dev (free/cheap alternatives cover them)
+- **Glassnode** — API only at ~$999/mo; use **checkonchain** (free) for BTC cycle metrics.
+- **Kaito AI** — ~$833/mo; Yaps program died Jan 2026. See note below.
+- **Velo Data** ($199/mo) — Coinglass covers ~90% cheaper. **CryptoQuant** ($99/mo API), **Token Terminal** ($49/mo) — optional, not core.
+- **Coin360**, **Blockchain Center Rainbow** — viz only, no real API moat; commodity/computable data.
+
+### Recommended stack (~$29–53/mo covers all four priorities)
+- **Funding/OI:** Coinglass $29/mo + Hyperliquid free
+- **Sentiment:** Alternative.me F&G free + LunarCrush free/$24
+- **Unlocks:** DefiLlama `/unlocks` free (+ Tokenomist free web)
+- **On-chain cycle:** checkonchain free + Dune free
+
+### Gold standards (2026) & what changed while Tegan was away
+- On-chain metrics: **Glassnode** (institutional, $$$) / **checkonchain** (free, BTC). Derivatives: **Coinglass** (trader gold standard) + **Hyperliquid** free. On-chain SQL: **Dune** (still king) / **Flipside** (free alt). Sentiment: **LunarCrush** + **F&G**. Unlocks: **Tokenomist** / **DefiLlama** (free).
+- **Kaito Yaps shut down Jan 2026** (X cut engagement-farming API access); Kaito pivoted to **mindshare prediction markets on Polymarket** — which ties directly into our Phase 5 Kalshi/Polymarket work: we can read narrative attention *as a market* instead of paying for the feed.
+- **Nansen** added **x402 USDC pay-per-call** (~$0.01/call) — subscription-free smart-money checks.
+- **Hyperliquid's** free Info API is now a first-class funding/OI source (didn't exist meaningfully 2 yrs ago).
+- **Dune** moved to credits with **free-tier API included** (previously paid-only).
