@@ -53,3 +53,66 @@ ExtractedThesis = Annotated[
 class ThesisExtraction(BaseModel):
     """The tool-call payload the LLM returns for one transcript."""
     theses: list[ExtractedThesis] = Field(default_factory=list)
+
+
+class Source(BaseModel):
+    person: str
+    platform: str
+    url: str
+    published_at: str
+    transcript_ref: str
+
+
+class Extraction(BaseModel):
+    model: str
+    confidence: float
+    extracted_at: str
+
+
+class Thesis(BaseModel):
+    id: str
+    schema_version: str = SCHEMA_VERSION
+    thesis_type: Literal["trade", "macro_lean"]
+    domain: Domain
+    asset: str
+    direction: Direction
+    timeframe: Timeframe
+    conviction: Conviction
+    summary: str
+    catalyst: str | None = None
+    invalidation: str | None = None
+    key_levels: list[float] = Field(default_factory=list)
+    quotes: list[Quote] = Field(default_factory=list)
+    source: Source
+    extraction: Extraction
+    status: Literal["raw", "reviewed", "promoted", "acted", "archived"] = "raw"
+    ext: dict = Field(default_factory=dict)
+
+
+def build_thesis(
+    extracted: ExtractedThesis,
+    *,
+    source: Source,
+    model: str,
+    extracted_at: str,
+    index: int,
+) -> Thesis:
+    """Enrich an LLM-extracted call into a stored Thesis record."""
+    return Thesis(
+        id=f"{source.transcript_ref}#{index}",
+        thesis_type=extracted.thesis_type,
+        domain=extracted.domain,
+        asset=extracted.asset,
+        direction=extracted.direction,
+        timeframe=extracted.timeframe,
+        conviction=extracted.conviction,
+        summary=extracted.summary,
+        catalyst=extracted.catalyst,
+        invalidation=getattr(extracted, "invalidation", None),
+        key_levels=getattr(extracted, "key_levels", []),
+        quotes=extracted.quotes,
+        source=source,
+        extraction=Extraction(
+            model=model, confidence=extracted.confidence, extracted_at=extracted_at,
+        ),
+    )
