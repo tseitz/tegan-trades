@@ -1,9 +1,9 @@
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from ingestion.channel import channel_base_url, tab_url
 from ingestion.channel import VideoStub, list_tab, resolve_recent
-from ingestion.channel import VideoMeta, hydrate, is_recent_enough
+from ingestion.channel import VideoMeta, hydrate, is_recent_enough, _published_at
 
 
 @pytest.mark.parametrize("channel,expected", [
@@ -117,3 +117,32 @@ def test_is_recent_enough_uses_cutoff():
 
 def test_is_recent_enough_false_for_missing_date():
     assert is_recent_enough(None, max_age_days=730, today=date(2026, 7, 22)) is False
+
+
+def test_is_recent_enough_true_at_exact_cutoff():
+    today = date(2026, 7, 22)
+    cutoff_date = (today - timedelta(days=730)).isoformat()
+    assert is_recent_enough(cutoff_date, max_age_days=730, today=today) is True
+
+
+def test_published_at_falls_back_when_upload_date_is_not_a_valid_calendar_date():
+    # 8 chars, non-numeric segment -> slices to a garbage ISO-shaped string
+    info = {"upload_date": "2026AB01", "timestamp": 1782864000}
+    assert _published_at(info) == "2026-07-01"
+
+
+def test_published_at_falls_back_when_upload_date_is_syntactically_numeric_but_invalid():
+    # Feb 31 doesn't exist
+    info = {"upload_date": "20260231", "timestamp": 1782864000}
+    assert _published_at(info) == "2026-07-01"
+
+
+def test_published_at_none_when_upload_date_invalid_and_no_timestamp():
+    info = {"upload_date": "2026AB01"}
+    assert _published_at(info) is None
+
+
+def test_published_at_handles_timestamp_zero_without_falsy_bug():
+    # timestamp=0 is falsy but a legitimate (if unrealistic) epoch value
+    info = {"timestamp": 0}
+    assert _published_at(info) == "1970-01-01"

@@ -95,9 +95,16 @@ class VideoMeta:
 def _published_at(info: dict) -> str | None:
     upload_date = info.get("upload_date")
     if upload_date and len(upload_date) == 8:
-        return f"{upload_date[0:4]}-{upload_date[4:6]}-{upload_date[6:8]}"
-    ts = info.get("timestamp") or info.get("release_timestamp")
-    if ts:
+        candidate = f"{upload_date[0:4]}-{upload_date[4:6]}-{upload_date[6:8]}"
+        try:
+            date.fromisoformat(candidate)
+            return candidate
+        except ValueError:
+            pass  # malformed/invalid calendar date — fall through to timestamp
+    ts = info.get("timestamp")
+    if ts is None:
+        ts = info.get("release_timestamp")
+    if ts is not None:
         return datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
     return None
 
