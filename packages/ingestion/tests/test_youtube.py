@@ -52,3 +52,22 @@ def test_ingest_video_fetches_transcript_when_text_omitted(tmp_path, monkeypatch
     yt.ingest_video("vid00000001", {"url": "u"}, root=tmp_path)
 
     assert load("youtube", "vid00000001", root=tmp_path) == "fetched:vid00000001"
+
+
+def test_ingest_url_round_trip(tmp_path, monkeypatch):
+    import ingestion.youtube as yt
+    from ingestion.store import load, path_for
+    import json
+
+    monkeypatch.setattr(yt, "fetch_transcript", lambda vid: f"fetched:{vid}")
+    url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+    vid = yt.ingest(url, root=tmp_path)
+
+    assert vid == "dQw4w9WgXcQ"
+    assert load("youtube", "dQw4w9WgXcQ", root=tmp_path) == "fetched:dQw4w9WgXcQ"
+    sidecar = json.loads(path_for("youtube", "dQw4w9WgXcQ", root=tmp_path)
+                         .with_suffix(".json").read_text())
+    assert sidecar["url"] == url
+    assert sidecar["platform"] == "youtube"
+    assert sidecar["source_id"] == "dQw4w9WgXcQ"
