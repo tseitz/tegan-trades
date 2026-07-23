@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -9,6 +10,8 @@ import yaml
 from ingestion import channel as channel_mod
 from ingestion.store import DATA_ROOT
 from ingestion.store import exists as _store_exists
+from ingestion.youtube import fetch_transcript as _fetch_transcript
+from ingestion.youtube import ingest_video as _ingest_video
 
 DEFAULT_MAX_VIDEOS = 50
 DEFAULT_MAX_AGE_DAYS = 730
@@ -47,3 +50,75 @@ def active_targets(watchlist: dict) -> list[ChannelTarget]:
                     max_age_days=max_age_days,
                 ))
     return targets
+
+
+@dataclass
+class ChannelResult:
+    person: str
+    channel: str
+    ingested: list[str] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
+    stale: list[str] = field(default_factory=list)
+    failed: list[tuple[str, str]] = field(default_factory=list)
+
+
+def _default_save(root: Path):
+    def save_video(video_id: str, metadata: dict, text: str) -> None:
+        _ingest_video(video_id, metadata, text=text, root=root)
+    return save_video
+
+
+def ingest_channel(
+    target: ChannelTarget,
+    *,
+    today: date | None = None,
+    root: Path = DATA_ROOT,
+    resolve=None,
+    hydrate=None,
+    fetch_transcript=None,
+    exists=None,
+    save_video=None,
+) -> ChannelResult:
+    today = today or date.today()
+    resolve = resolve or channel_mod.resolve_recent
+    hydrate = hydrate or channel_mod.hydrate
+    fetch_transcript = fetch_transcript or _fetch_transcript
+    exists = exists or (lambda platform, vid: _store_exists(platform, vid, root))
+    save_video = save_video or _default_save(root)
+
+    result = ChannelResult(person=target.person, channel=target.channel)
+    for stub in resolve(target.channel, target.max_videos):
+        vid = stub.video_id
+        if exists("youtube", vid):
+            result.skipped.append(vid)
+            continue
+        try:
+            meta = hydrate(vid)
+        except Exception as exc:  # noqa: BLE001 - log-and-continue per spec
+            print(f"[ingest_channel] {target.channel}/{vid} metadata: {exc!r}", file=sys.stderr)
+            result.failed.append((vid, f"metadata: {exc}"))
+            continue
+        if not meta.published_at:
+            result.failed.append((vid, "missing published_at"))
+            continue
+        if not channel_mod.is_recent_enough(meta.published_at, target.max_age_days, today=today):
+            result.stale.append(vid)
+            continue
+        try:
+            text = fetch_transcript(vid)
+        except Exception as exc:  # noqa: BLE001 - log-and-continue per spec
+            print(f"[ingest_channel] {target.channel}/{vid} transcript: {exc!r}", file=sys.stderr)
+            result.failed.append((vid, f"transcript: {exc}"))
+            continue
+        metadata = {
+            "url": f"https://www.youtube.com/watch?v={vid}",
+            "title": meta.title,
+            "published_at": meta.published_at,
+            "duration": meta.duration,
+            "channel_id": meta.channel_id,
+            "person": target.person,
+            "was_live": meta.was_live,
+        }
+        save_video(vid, metadata, text)
+        result.ingested.append(vid)
+    return result
