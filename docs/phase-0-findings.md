@@ -60,6 +60,8 @@ Verified 2026-07-22. Tiered by signal-per-dollar for a solo dev, weighted to Teg
 - **Velo Data** ($199/mo) — Coinglass covers ~90% cheaper. **CryptoQuant** ($99/mo API), **Token Terminal** ($49/mo) — optional, not core.
 - **Coin360**, **Blockchain Center Rainbow** — viz only, no real API moat; commodity/computable data.
 
+**Decision (2026-07-22):** free sources approved for Phase 5. **Coinglass ($29/mo) deferred to Phase 5** — approved as the priority paid source, not purchased yet.
+
 ### Recommended stack (~$29–53/mo covers all four priorities)
 - **Funding/OI:** Coinglass $29/mo + Hyperliquid free
 - **Sentiment:** Alternative.me F&G free + LunarCrush free/$24

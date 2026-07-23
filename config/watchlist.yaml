@@ -189,23 +189,23 @@ people:
     channels: [{ platform: x, id: "GiganticRebirth", access: grok }]
     notes: "Effectively retired since 2023; rare one-off posts (broke silence once Mar 2026). Grok digest surfaces him if he posts."
 
-  # ══════════ DISCOVERED — pending Tegan's review before activating ══════════
-  # My suggestions from research, matched to your ICT/macro/flow taste. Not your trusted picks yet.
+  # ══════════ DISCOVERED — Material Indicators + Checkmate ACTIVATED 2026-07-22; rest pending review ══════════
+  # My suggestions from research, matched to your ICT/macro/flow taste.
   - name: "Material Indicators (Keith Alan)"
     handle: "material-indicators"
-    status: candidate
+    status: active
     domains: [crypto]
     why: "TOP PICK — order-book/liquidity heat-maps (FireCharts). Basically your FVG/order-block concepts quantified with real bid/ask liquidity + whale behavior."
     channels: [{ platform: youtube, id: "@MaterialIndicators", access: ok }]
-    notes: "DISCOVERED. Intraday-to-swing. Strong complement to ICT liquidity framework."
+    notes: "ACTIVATED 2026-07-22. Intraday-to-swing. Strong complement to ICT liquidity framework."
 
   - name: "Checkmate (checkonchain / James Check)"
     handle: "checkonchain"
-    status: candidate
+    status: active
     domains: [crypto]
     why: "TOP PICK — best-in-class on-chain (ex-Glassnode). Accumulation/distribution + derivatives-vs-spot; useful for confirming 'discount of range'."
     channels: [{ platform: podcast, id: "Rough Consensus", access: ok }]
-    notes: "DISCOVERED. Podcast + frequent YouTube guest. Data-first, multi-week."
+    notes: "ACTIVATED 2026-07-22. Podcast + frequent YouTube guest. Data-first, multi-week."
 
   - name: "Traders Reality"
     handle: "@TradersReality"
