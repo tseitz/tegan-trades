@@ -13,6 +13,7 @@ from ingestion.roster import (
     ingest_channel,
     ingest_roster,
     load_watchlist,
+    unreachable_active,
 )
 from ingestion.youtube import TranscriptBlocked
 
@@ -220,3 +221,47 @@ def test_format_summary_reports_counts():
     assert "1 stale" in text
     assert "1 failed" in text
     assert "no captions" in text  # failure reasons surfaced
+
+
+# ── silently-skipped active people ──────────────────────────────────────────
+
+def test_unreachable_active_people_are_reported_not_silently_dropped(tmp_path):
+    """An `active` person whose channels are all unreachable vanishes from the sweep with
+    no signal. Checkmate sat that way for days: marked active, configured as a podcast,
+    contributing nothing. A consensus count is only meaningful if you know the denominator.
+    """
+    wl = load_watchlist(_write(tmp_path, WATCHLIST))
+    skipped = unreachable_active(wl)
+    by_name = {s.person: s for s in skipped}
+    assert set(by_name) == {"Dan"}          # active, but his only channel is access=paid
+    assert "youtube/@danpaid (paid)" in by_name["Dan"].reason
+
+
+def test_active_person_with_a_non_youtube_platform_is_reported(tmp_path):
+    wl = load_watchlist(_write(tmp_path, textwrap.dedent("""
+        people:
+          - name: "Podcaster"
+            status: active
+            channels:
+              - { platform: podcast, id: "Some Show", access: ok }
+    """)))
+    assert active_targets(wl) == []
+    skipped = unreachable_active(wl)
+    assert [s.person for s in skipped] == ["Podcaster"]
+    assert "podcast/Some Show (ok)" in skipped[0].reason
+
+
+def test_active_person_with_no_channels_at_all_is_reported(tmp_path):
+    wl = load_watchlist(_write(tmp_path, textwrap.dedent("""
+        people:
+          - name: "Ghost"
+            status: active
+    """)))
+    assert [s.person for s in unreachable_active(wl)] == ["Ghost"]
+
+
+def test_reachable_and_non_active_people_are_not_reported(tmp_path):
+    wl = load_watchlist(_write(tmp_path, WATCHLIST))
+    names = {s.person for s in unreachable_active(wl)}
+    assert "Alice" not in names and "Bob" not in names   # reachable
+    assert "Cara" not in names                            # candidate, not active

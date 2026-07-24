@@ -53,6 +53,35 @@ def active_targets(watchlist: dict) -> list[ChannelTarget]:
     return targets
 
 
+@dataclass(frozen=True)
+class SkippedPerson:
+    """An `active` roster member the sweep cannot reach, and why."""
+    person: str
+    reason: str
+
+
+def unreachable_active(watchlist: dict) -> list[SkippedPerson]:
+    """Active people that yield no ingest target.
+
+    ``active_targets`` filters to youtube+ok and says nothing about what it discarded, so a
+    person marked active with only a podcast/paid/dormant channel disappears from every run
+    without a word. That silence is the same failure shape as the Phase-1 stub bug: the
+    config looks right, the sweep looks clean, and the data is simply absent.
+    """
+    skipped: list[SkippedPerson] = []
+    for person in watchlist.get("people", []):
+        if person.get("status") != "active":
+            continue
+        channels = person.get("channels") or []
+        if any(c.get("platform") == "youtube" and c.get("access") == "ok" for c in channels):
+            continue
+        detail = ", ".join(
+            f"{c.get('platform')}/{c.get('id')} ({c.get('access')})" for c in channels
+        ) or "no channels configured"
+        skipped.append(SkippedPerson(person=person["name"], reason=detail))
+    return skipped
+
+
 @dataclass
 class ChannelResult:
     person: str
@@ -156,6 +185,10 @@ def ingest_roster(
 ) -> list[ChannelResult]:
     run = _ingest_channel or ingest_channel
     results: list[ChannelResult] = []
+    for skipped in unreachable_active(watchlist):
+        # Loud, every run: an active person contributing nothing must never be invisible.
+        print(f"[ingest_roster] SKIPPED active person {skipped.person!r} — "
+              f"no reachable channel: {skipped.reason}", file=sys.stderr)
     for target in active_targets(watchlist):
         try:
             results.append(run(target, root=root, today=today))
