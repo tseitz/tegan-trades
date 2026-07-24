@@ -7,11 +7,15 @@ requires-python = ">=3.12"
 dependencies = [
     "core",
     "pydantic>=2",
+    "pyyaml>=6",
+    "requests>=2",
 ]
 
 [project.scripts]
 distill-roster = "distill.cli:roster_main"
 distill-transcript = "distill.cli:transcript_main"
+distill-canon = "distill.canon_cli:main"
+fetch-tickers = "distill.fetch_tickers:main"
 
 [build-system]
 requires = ["uv_build>=0.10.4,<0.11.0"]

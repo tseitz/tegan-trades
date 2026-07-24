@@ -1,0 +1,95 @@
+# Asset canonicalization registry (Phase 3a). canonical_symbol -> [raw aliases].
+# Deterministic read-time lookup via core.canon. Crypto validity/rank comes from the
+# CoinGecko snapshot (config/tickers.json); this file collapses spelling/format variants
+# and covers non-crypto (stocks, indices, commodities) that CoinGecko doesn't list.
+# __basket__ / __macro__ are sentinels for themes that are NOT a single tradeable asset.
+# Curate from `distill-canon` unmapped output. NOTE: `distill-canon --review` rewrites this
+# file via yaml.safe_dump and will not preserve these comments.
+
+# ── crypto: spelling/format variants (canonical is the CoinGecko-known ticker) ──
+BTC: [Bitcoin, "Bitcoin (BTC)", "BTC/USD", "Bitcoin (BTC) - long-term"]
+ETH: [Ethereum, "Ethereum (ETH)", "ETH/USD"]
+HYPE: ["HYPE (Hyperliquid)", "Hyperliquid (HYPE)"]
+ZEC: ["Zcash (ZEC)", "ZEC (Zcash)"]
+CRV: ["Curve (CRV)"]
+XPL: ["Plasma (XPL)"]
+MON: ["Monad (MON)", MONAD]
+MNT: ["Mantle (MNT)", Mantle]
+SOL: ["Solana (SOL)"]
+
+# ── crypto pairs / ratios (kept as the pair; not a single asset) ──
+ETH/BTC: [ETHBTC]
+SOL/BTC: []
+SOL/ETH: []
+
+# ── bitcoin dominance (distinct from BTC price) ──
+BTC.D: ["Bitcoin Dominance", "BTC Dominance", "Bitcoin Dominance (BTC.D)", "altcoins vs BTC (BTC dominance)"]
+
+# ── indices ──
+SPX: ["S&P 500", "S&P 500 (ES)", "ES (S&P 500 futures)", "S&P 500 / Nasdaq", ES, "US500 / S&P 500 (ES)"]
+NDX: [NASDAQ, "NASDAQ (NQ)", NQ, "Nasdaq (NQ/QQQ)"]
+DXY: ["DXY (US Dollar Index)", "US Dollar (DXY)", "DXY (US Dollar)", "DXY (Dollar Index)"]
+RUT: ["Russell 2000", "Russell 2000 (small caps)", "Russell 2000 (RTY)"]
+
+# ── commodities ──
+GOLD: [Gold]
+SILVER: [Silver]
+OIL: [Oil, "Crude oil", "Crude Oil (WTI)", "Oil (crude)"]
+URANIUM: [Uranium, "Uranium ETF", "URA / Uranium"]
+
+# ── equities: name -> ticker + self-maps (not in CoinGecko, so no rank) ──
+TSLA: ["Tesla (TSLA)"]
+NVDA: ["Nvidia (NVDA)"]
+MSTR: ["MSTR (Strategy)", "MSTR/Strategy", "MicroStrategy (MSTR)", "MicroStrategy / Saylor complex"]
+HOOD: ["Robinhood (HOOD)", "HOOD (Robinhood)", "Robin Hood (HOOD)"]
+GLXY: ["Galaxy Digital (GLXY)", "Galaxy Digital"]
+GOOGL: ["Google (GOOGL)"]
+META: ["Meta (META)"]
+MU: ["Micron (MU)", "Micron (MU) / DRAM memory stocks"]
+ILMN: ["Illumina (ILMN)"]
+RIVN: ["Rivian (RIVN)"]
+COIN: ["Coinbase (COIN)"]
+CRCL: ["Circle (CRCL)"]
+NFLX: []
+
+# ── ratios vs BTC (kept as the ratio, not a single asset) ──
+BTC/GOLD: ["BTC/Gold", "BTC/Gold Ratio", "Gold vs Bitcoin", "BTC vs Gold"]
+
+# ── broad-market baskets / sector themes (not a single tradeable asset) ──
+__basket__:
+  - "Altcoins (broad)"
+  - "Altcoins"
+  - "Altcoins (Total3)"
+  - "Altcoins vs BTC"
+  - "Altcoins (vs BTC)"
+  - "Altcoins vs Bitcoin"
+  - "Altcoins (broad market)"
+  - "Altcoins (broad basket)"
+  - "Altcoins (ex-BTC)"
+  - "Altcoins (broad, ex-BTC)"
+  - "BTC/ETH/SOL"
+  - "Gold/Silver"
+  - "Gold/Silver basket vs S&P 500"
+  - "NFTs (broad sector)"
+  - "AI sector (broad, e.g. AI-linked equities)"
+  - "Memecoins (broad)"
+  - "Memecoins (broad sector)"
+  - "Meme coins (e.g. PEPE)"
+  - "Crypto (broad)"
+  - "Crypto (broad market)"
+  - "Crypto market (broad)"
+  - "Crypto (asset class)"
+  - "Bitcoin / Crypto broad market"
+  - "BTC/Crypto broad market"
+  - "Broad crypto/risk assets"
+
+# ── macro themes / rates / policy (directional macro, not an instrument) ──
+__macro__:
+  - "Fed Funds Rate / Risk Assets"
+  - "Fed Funds Rate"
+  - "US Residential Real Estate"
+  - "US equities (broad stock market)"
+  - "US equities (broad market)"
+  - "Fed QT / Crypto liquidity"
+  - "US Inflation / CPI"
+  - "Global Liquidity (Michael Howell framework)"
