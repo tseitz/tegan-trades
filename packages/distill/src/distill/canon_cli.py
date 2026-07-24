@@ -1,5 +1,5 @@
 """distill-canon — report person/asset label drift across the thesis firehose, and
-(--review) interactively map unmapped asset labels into config/assets.yaml. Deterministic,
+(--review) interactively map unmapped asset labels into cfg/assets.yaml. Deterministic,
 no LLM. Person aliases are only *suggested* here (not auto-written) because watchlist.yaml
 is heavily commented and safe_dump would destroy it — person drift is tiny, so it's manual."""
 from __future__ import annotations
@@ -16,7 +16,7 @@ from core.canon import load_registry, resolve_asset, resolve_person
 from distill import store as store_mod
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-CONFIG_DIR = _REPO_ROOT / "config"
+CONFIG_DIR = _REPO_ROOT / "cfg"
 
 
 @dataclass
@@ -63,7 +63,7 @@ def format_report(stats: ReportStats, *, top: int = 25) -> str:
         f"person coverage: {stats.person_resolved}/{stats.total} ({_pct(stats.person_resolved, stats.total)})",
     ]
     if stats.unmapped_assets:
-        lines.append("\nUNMAPPED assets (add to config/assets.yaml):")
+        lines.append("\nUNMAPPED assets (add to cfg/assets.yaml):")
         lines += [f"  {c:4d}  {label!r}" for label, c in stats.unmapped_assets.most_common(top)]
     if stats.unmapped_persons:
         lines.append("\nUNMAPPED persons (add aliases in watchlist.yaml):")
@@ -109,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="distill-canon",
         description="Report person/asset label drift across the thesis firehose.")
     parser.add_argument("--review", action="store_true",
-                        help="interactively map unmapped asset labels into config/assets.yaml")
+                        help="interactively map unmapped asset labels into cfg/assets.yaml")
     args = parser.parse_args(argv)
     registry = load_registry(CONFIG_DIR)
     stats = scan(store_mod.DATA_ROOT, registry)

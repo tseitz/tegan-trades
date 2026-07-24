@@ -9,7 +9,7 @@ Personal signal/trading platform: ingest trusted people → distill theses → c
 ## Repo layout
 
 - `packages/ingestion/` — Python (uv) transcript ingestion spine (Phase 1). CLIs: `ingest-roster`, `ingest-channel`.
-- `config/watchlist.yaml` — roster source of truth (who we ingest).
+- `cfg/watchlist.yaml` — roster source of truth (who we ingest).
 - `data/` — machine-generated ore (raw transcripts). **Gitignored, never committed.**
 - `docs/superpowers/plans/` — implementation plans.
 

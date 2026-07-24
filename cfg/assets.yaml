@@ -1,6 +1,6 @@
 # Asset canonicalization registry (Phase 3a). canonical_symbol -> [raw aliases].
 # Deterministic read-time lookup via core.canon. Crypto validity/rank comes from the
-# CoinGecko snapshot (config/tickers.json); this file collapses spelling/format variants
+# CoinGecko snapshot (cfg/tickers.json); this file collapses spelling/format variants
 # and covers non-crypto (stocks, indices, commodities) that CoinGecko doesn't list.
 # __basket__ / __macro__ are sentinels for themes that are NOT a single tradeable asset.
 # Curate from `distill-canon` unmapped output. NOTE: `distill-canon --review` rewrites this

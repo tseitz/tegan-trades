@@ -1,4 +1,4 @@
-"""One-time CoinGecko snapshot fetcher -> config/tickers.json. Run manually to refresh
+"""One-time CoinGecko snapshot fetcher -> cfg/tickers.json. Run manually to refresh
 (hits api.coingecko.com); resolve-time never touches the network. Free API, no key."""
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 import requests
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-DEFAULT_OUT = _REPO_ROOT / "config" / "tickers.json"
+DEFAULT_OUT = _REPO_ROOT / "cfg" / "tickers.json"
 API = "https://api.coingecko.com/api/v3/coins/markets"
 DEFAULT_TOP_N = 1000
 PER_PAGE = 250

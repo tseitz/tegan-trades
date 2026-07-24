@@ -22,7 +22,7 @@ from core.thesis import Thesis
 from distill import store as store_mod
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-CONFIG_DIR = _REPO_ROOT / "config"
+CONFIG_DIR = _REPO_ROOT / "cfg"
 DEFAULT_DECISIONS = _REPO_ROOT / "data" / "triage" / "decisions.jsonl"
 DEFAULT_VAULT_NOTE = Path(
     "/Users/tseitz/vault/Claude/Projects/tegan-trades/Promoted Theses.md"

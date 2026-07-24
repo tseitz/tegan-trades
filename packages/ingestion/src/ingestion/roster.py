@@ -19,7 +19,7 @@ DEFAULT_MAX_AGE_DAYS = 730
 
 # Repo root: src/ingestion/roster.py -> ... -> <root>
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-DEFAULT_WATCHLIST = _REPO_ROOT / "config" / "watchlist.yaml"
+DEFAULT_WATCHLIST = _REPO_ROOT / "cfg" / "watchlist.yaml"
 
 
 @dataclass(frozen=True)

@@ -8,5 +8,5 @@ Raw transcripts (the "ore") live in `data/` (gitignored, regenerable-but-protect
 
 ## Layout
 - `packages/ingestion` — transcript pullers + raw-transcript store
-- `config/watchlist.yaml` — roster source-of-truth
+- `cfg/watchlist.yaml` — roster source-of-truth
 - `docs/` — code-adjacent docs (feasibility findings, API notes)
