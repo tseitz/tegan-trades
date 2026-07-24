@@ -54,6 +54,12 @@ def test_ingest_video_fetches_transcript_when_text_omitted(tmp_path, monkeypatch
     assert load("youtube", "vid00000001", root=tmp_path) == "fetched:vid00000001"
 
 
+def _fake_meta(video_id):
+    from ingestion.channel import VideoMeta
+    return VideoMeta(video_id=video_id, title="Gold Below 4000", published_at="2026-05-02",
+                     duration=900, channel_id="UCxyz", was_live=False)
+
+
 def test_ingest_url_round_trip(tmp_path, monkeypatch):
     import ingestion.youtube as yt
     from ingestion.store import load, path_for
@@ -62,7 +68,7 @@ def test_ingest_url_round_trip(tmp_path, monkeypatch):
     monkeypatch.setattr(yt, "fetch_transcript", lambda vid: f"fetched:{vid}")
     url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
-    vid = yt.ingest(url, root=tmp_path)
+    vid = yt.ingest(url, root=tmp_path, _hydrate=_fake_meta)
 
     assert vid == "dQw4w9WgXcQ"
     assert load("youtube", "dQw4w9WgXcQ", root=tmp_path) == "fetched:dQw4w9WgXcQ"
@@ -71,6 +77,55 @@ def test_ingest_url_round_trip(tmp_path, monkeypatch):
     assert sidecar["url"] == url
     assert sidecar["platform"] == "youtube"
     assert sidecar["source_id"] == "dQw4w9WgXcQ"
+
+
+def test_ingest_url_hydrates_metadata(tmp_path, monkeypatch):
+    """Regression: ingest() used to persist bare {"url": url}, producing a record with no
+    published_at. That later crashed the triage ranker and left the thesis person 'unknown'."""
+    import ingestion.youtube as yt
+    from ingestion.store import path_for
+    import json
+
+    monkeypatch.setattr(yt, "fetch_transcript", lambda vid: f"fetched:{vid}")
+    yt.ingest("https://www.youtube.com/watch?v=dQw4w9WgXcQ", person="Heavy Metal Verse",
+              root=tmp_path, _hydrate=_fake_meta)
+
+    sidecar = json.loads(path_for("youtube", "dQw4w9WgXcQ", root=tmp_path)
+                         .with_suffix(".json").read_text())
+    assert sidecar["published_at"] == "2026-05-02"
+    assert sidecar["title"] == "Gold Below 4000"
+    assert sidecar["channel_id"] == "UCxyz"
+    assert sidecar["was_live"] is False
+    assert sidecar["person"] == "Heavy Metal Verse"
+
+
+def test_ingest_url_defaults_person_when_unspecified(tmp_path, monkeypatch):
+    import ingestion.youtube as yt
+    from ingestion.store import path_for
+    import json
+
+    monkeypatch.setattr(yt, "fetch_transcript", lambda vid: f"fetched:{vid}")
+    yt.ingest("https://www.youtube.com/watch?v=dQw4w9WgXcQ", root=tmp_path, _hydrate=_fake_meta)
+
+    sidecar = json.loads(path_for("youtube", "dQw4w9WgXcQ", root=tmp_path)
+                         .with_suffix(".json").read_text())
+    assert sidecar["person"] == "ad-hoc"  # matches ingest-channel's --person default
+
+
+def test_ingest_url_fails_loudly_when_hydration_fails(tmp_path, monkeypatch):
+    """A stub record is worse than no record — it silently poisons downstream ranking."""
+    import ingestion.youtube as yt
+    from ingestion.store import path_for
+
+    monkeypatch.setattr(yt, "fetch_transcript", lambda vid: f"fetched:{vid}")
+
+    def _boom(video_id):
+        raise RuntimeError("yt-dlp exploded")
+
+    with pytest.raises(RuntimeError):
+        yt.ingest("https://www.youtube.com/watch?v=dQw4w9WgXcQ", root=tmp_path, _hydrate=_boom)
+
+    assert not path_for("youtube", "dQw4w9WgXcQ", root=tmp_path).exists()
 
 
 def test_fetch_transcript_translates_request_blocked(monkeypatch):

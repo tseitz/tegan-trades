@@ -134,7 +134,35 @@ def ingest_video(
     return video_id
 
 
-def ingest(url: str, *, root: Path = DATA_ROOT) -> str:
-    """Fetch a YouTube transcript from a URL and persist it. Returns the video id."""
+def ingest(
+    url: str,
+    *,
+    person: str = "ad-hoc",
+    root: Path = DATA_ROOT,
+    _hydrate=None,
+) -> str:
+    """Fetch a YouTube transcript from a URL and persist it. Returns the video id.
+
+    Hydrates full metadata (title/published_at/channel_id) the same way the roster sweep
+    does. This used to persist a bare ``{"url": url}``, which left the record with no
+    ``published_at`` — downstream that surfaced as an unrankable, person-'unknown' thesis.
+    Hydration failure raises rather than falling back to a stub: a dateless record silently
+    poisons ranking, so no record is better than a partial one.
+    """
+    from ingestion.channel import hydrate  # local import keeps yt_dlp off the fetch-only path
+
     video_id = extract_video_id(url)
-    return ingest_video(video_id, {"url": url}, root=root)
+    meta = (_hydrate or hydrate)(video_id)
+    return ingest_video(
+        video_id,
+        {
+            "url": url,
+            "title": meta.title,
+            "published_at": meta.published_at,
+            "duration": meta.duration,
+            "channel_id": meta.channel_id,
+            "person": person,
+            "was_live": meta.was_live,
+        },
+        root=root,
+    )
