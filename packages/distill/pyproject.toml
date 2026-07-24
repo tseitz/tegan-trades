@@ -15,6 +15,7 @@ dependencies = [
 distill-roster = "distill.cli:roster_main"
 distill-transcript = "distill.cli:transcript_main"
 distill-canon = "distill.canon_cli:main"
+distill-triage = "distill.triage_cli:main"
 fetch-tickers = "distill.fetch_tickers:main"
 
 [build-system]
