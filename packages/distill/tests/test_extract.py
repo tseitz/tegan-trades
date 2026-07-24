@@ -57,7 +57,7 @@ def test_extract_returns_enriched_theses():
     assert len(out) == 1
     assert isinstance(out[0], Thesis)
     assert out[0].asset == "BTC"
-    assert out[0].id == "youtube/vid00000001#0"
+    assert out[0].id.startswith("youtube/vid00000001#")  # content-addressed, not positional
     assert out[0].extraction.model  # model stamped
 
 

@@ -62,9 +62,8 @@ def extract_theses(
             )
             extraction = ThesisExtraction.model_validate(_tool_input(message))
             return [
-                build_thesis(e, source=source, model=model,
-                             extracted_at=extracted_at, index=i)
-                for i, e in enumerate(extraction.theses)
+                build_thesis(e, source=source, model=model, extracted_at=extracted_at)
+                for e in extraction.theses
             ]
         except Exception as exc:  # noqa: BLE001 - validation/parse errors are retryable
             last_exc = exc

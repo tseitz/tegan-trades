@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from hashlib import sha256
 from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field
@@ -91,17 +92,46 @@ class Thesis(BaseModel):
     ext: dict = Field(default_factory=dict)
 
 
+_ID_SEP = "\x1f"   # unit separator — cannot appear in extracted text
+_ID_LEN = 12       # 48 bits; collisions are negligible even corpus-wide
+
+
+def thesis_id(transcript_ref: str, *, thesis_type: str, asset: str, direction: str,
+              timeframe: str, summary: str) -> str:
+    """Content-addressed id: ``<transcript_ref>#<hash of the call itself>``.
+
+    Ids were positional (``ref#0``), but a ``--force`` re-distill re-extracts from scratch
+    and index 0 is routinely a *different* call afterwards — so anything keyed on the id
+    (the triage decisions sidecar) silently re-points at the wrong thesis. Hashing the
+    content means an id identifies a call, not a slot.
+
+    Rewording by the LLM still changes the id, which fails safe: the thesis reappears in
+    the queue as if new, rather than inheriting a decision made about some other call.
+    Identical content yields an identical id by design — that *is* the same call.
+    """
+    parts = [transcript_ref, thesis_type, asset, direction, timeframe, summary]
+    # Whitespace/case normalized so trivial reformatting doesn't churn the id.
+    raw = _ID_SEP.join(" ".join(str(p).split()).lower() for p in parts)
+    return f"{transcript_ref}#{sha256(raw.encode('utf-8')).hexdigest()[:_ID_LEN]}"
+
+
 def build_thesis(
     extracted: ExtractedThesis,
     *,
     source: Source,
     model: str,
     extracted_at: str,
-    index: int,
 ) -> Thesis:
     """Enrich an LLM-extracted call into a stored Thesis record."""
     return Thesis(
-        id=f"{source.transcript_ref}#{index}",
+        id=thesis_id(
+            source.transcript_ref,
+            thesis_type=extracted.thesis_type,
+            asset=extracted.asset,
+            direction=extracted.direction,
+            timeframe=extracted.timeframe,
+            summary=extracted.summary,
+        ),
         thesis_type=extracted.thesis_type,
         domain=extracted.domain,
         asset=extracted.asset,
