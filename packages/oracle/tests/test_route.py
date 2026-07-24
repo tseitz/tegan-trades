@@ -1,0 +1,152 @@
+import pytest
+
+from oracle.route import (
+    CONFLICT,
+    OracleRef,
+    RoutingTable,
+    Unpriceable,
+    build_domain_consensus,
+    route,
+)
+
+
+def _table(**kw):
+    base = dict(
+        curated={},
+        coinbase_symbols=frozenset({"BTC", "ETH", "SOL", "SPX", "META", "IP", "HYPE"}),
+        kraken_symbols=frozenset({"XMR", "TRX", "BTC"}),
+        domain_consensus={},
+    )
+    base.update(kw)
+    return RoutingTable(**base)
+
+
+# ── domain consensus ────────────────────────────────────────────────────────
+
+def test_domain_consensus_takes_the_majority_domain():
+    rows = [("SPX", "stock")] * 118 + [("SPX", "macro")] * 84 + [("SPX", "crypto")] * 2
+    assert build_domain_consensus(rows)["SPX"] == "stock"
+
+
+def test_domain_consensus_collapses_macro_and_stock_for_routing():
+    """Routing only needs 'is this crypto or not' — SPX splits stock/macro across theses
+    and either answer sends it to Yahoo."""
+    rows = [("DXY", "macro")] * 64
+    assert build_domain_consensus(rows)["DXY"] == "macro"
+
+
+# ── curated map wins, always ────────────────────────────────────────────────
+
+def test_curated_mapping_beats_every_heuristic():
+    table = _table(
+        curated={"SPX": {"source": "yahoo", "symbol": "^GSPC"}},
+        domain_consensus={"SPX": "crypto"},  # even a wrong consensus must not override
+    )
+    ref = route("SPX", table)
+    assert isinstance(ref, OracleRef)
+    assert (ref.source, ref.symbol, ref.curated) == ("yahoo", "^GSPC", True)
+    assert ref.needs_validation is False
+
+
+def test_curated_can_declare_an_asset_unpriceable():
+    table = _table(curated={"BTC.D": {"unpriceable": "dominance_metric"}})
+    result = route("BTC.D", table)
+    assert isinstance(result, Unpriceable) and result.reason == "dominance_metric"
+
+
+# ── the collision guard (the reason this module exists) ─────────────────────
+
+def test_spx_is_never_routed_to_the_coinbase_memecoin():
+    """Coinbase lists SPX6900 under the symbol 'SPX'. The corpus has 204 SPX theses that
+    mean the S&P 500. Auto-routing on symbol availability would silently price 5.5% of
+    the corpus against a memecoin."""
+    table = _table(domain_consensus={"SPX": "stock"})
+    result = route("SPX", table)
+    assert not (isinstance(result, OracleRef) and result.source == "coinbase")
+
+
+@pytest.mark.parametrize("asset,consensus", [("SPX", "stock"), ("META", "stock"), ("IP", "crypto")])
+def test_known_collisions_route_by_consensus_not_availability(asset, consensus):
+    table = _table(domain_consensus={asset: consensus})
+    result = route(asset, table)
+    expected = "coinbase" if consensus == "crypto" else "yahoo"
+    assert isinstance(result, OracleRef) and result.source == expected
+
+
+def test_crypto_consensus_asset_absent_from_both_exchanges_is_unmapped():
+    table = _table(domain_consensus={"WEIRDCOIN": "crypto"})
+    result = route("WEIRDCOIN", table)
+    assert isinstance(result, Unpriceable) and result.reason == "unmapped"
+
+
+def test_asset_with_no_consensus_at_all_is_a_conflict_not_a_guess():
+    """No corpus evidence for the domain means we cannot safely pick a source. Guessing
+    is exactly the failure mode this module exists to prevent."""
+    result = route("AMBIGUOUS", _table())
+    assert isinstance(result, Unpriceable) and result.reason == CONFLICT
+
+
+# ── auto-derivation for the long tail ───────────────────────────────────────
+
+def test_crypto_prefers_coinbase_over_kraken():
+    table = _table(domain_consensus={"BTC": "crypto"})
+    ref = route("BTC", table)
+    assert isinstance(ref, OracleRef) and (ref.source, ref.symbol) == ("coinbase", "BTC-USD")
+
+
+def test_crypto_falls_back_to_kraken_when_coinbase_lacks_it():
+    table = _table(domain_consensus={"XMR": "crypto"})
+    ref = route("XMR", table)
+    assert isinstance(ref, OracleRef) and (ref.source, ref.symbol) == ("kraken", "XMRUSD")
+
+
+def test_uncurated_equity_is_routed_to_yahoo_but_flagged_for_validation():
+    """A bare ticker off a transcript is only a guess until Yahoo confirms it resolves to
+    a real instrument — so the fetch stage must still verify before trusting a price."""
+    table = _table(domain_consensus={"TSLA": "stock"})
+    ref = route("TSLA", table)
+    assert isinstance(ref, OracleRef)
+    assert (ref.source, ref.symbol) == ("yahoo", "TSLA")
+    assert ref.needs_validation is True
+
+
+# ── structural sentinels ────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("asset", ["__basket__", "__macro__"])
+def test_canon_sentinels_are_unpriceable(asset):
+    result = route(asset, _table())
+    assert isinstance(result, Unpriceable) and result.reason in {"basket", "macro"}
+
+
+# ── structural backstop for labels that aren't tickers at all ───────────────
+
+@pytest.mark.parametrize(
+    "label",
+    ["HARD_ASSETS", "SEMIS/AI", "US Rates/Inflation", "IRAN_CEASEFIRE", "COLLECTIBLES"],
+)
+def test_theme_and_event_labels_are_never_auto_routed(label):
+    """The LLM lifts prose out of transcripts as an 'asset'. Yahoo will happily match some
+    unrelated instrument for these, so anything not shaped like an exchange ticker must be
+    curated or refused."""
+    table = _table(domain_consensus={label: "stock"})
+    result = route(label, table)
+    assert isinstance(result, Unpriceable) and result.reason == CONFLICT
+
+
+def test_plausible_ticker_shapes_still_pass_through():
+    for label in ("TSLA", "BRK.B", "DX-Y"):
+        table = _table(domain_consensus={label: "stock"})
+        assert isinstance(route(label, table), OracleRef)
+
+
+def test_curated_entry_survives_the_ticker_shape_guard():
+    """`ETH/BTC` and `FED_FUNDS_RATE` are unticker-like but explicitly curated — the
+    curated verdict must win, with its own specific reason, not a generic conflict."""
+    table = _table(curated={"ETH/BTC": {"unpriceable": "derived_ratio"}})
+    result = route("ETH/BTC", table)
+    assert isinstance(result, Unpriceable) and result.reason == "derived_ratio"
+
+
+def test_routing_is_deterministic():
+    table = _table(domain_consensus={"BTC": "crypto"})
+    assert route("BTC", table) == route("BTC", table)

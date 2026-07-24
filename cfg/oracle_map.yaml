@@ -1,0 +1,118 @@
+# Canonical asset -> price source. Hand-curated, and authoritative over every heuristic.
+#
+# WHY THIS FILE EXISTS. Auto-routing an asset label to whichever exchange happens to list
+# that symbol is silently catastrophic. Verified against the live APIs:
+#
+#   SPX    -> Coinbase lists SPX6900 (a memecoin) under "SPX"; Yahoo resolves bare "SPX"
+#             to a MUTUALFUND. Neither is the S&P 500. 204 theses ride on this.
+#   GOLD   -> Yahoo resolves to "Gold.com, Inc." — a real EQUITY, entirely the wrong thing.
+#   CL     -> Yahoo resolves to Colgate-Palmolive, not crude oil.
+#   OIL    -> Yahoo resolves to an iPath crude ETN, not WTI.
+#   XAU    -> Yahoo resolves to a MUTUALFUND, not gold spot.
+#
+# Instrument-type checking does NOT catch these: GOLD is a valid EQUITY and OIL a valid
+# ETF — they're just the wrong instrument. Only an explicit mapping is safe. Anything
+# ambiguous and uncurated resolves to `unpriceable`, never to a guess.
+#
+# Entries are either {source, symbol} or {unpriceable: <reason>}.
+
+assets:
+  # ── indices ──────────────────────────────────────────────────────────────
+  SPX:      {source: yahoo, symbol: "^GSPC"}      # S&P 500
+  NDX:      {source: yahoo, symbol: "^NDX"}       # NASDAQ-100
+  DJI:      {source: yahoo, symbol: "^DJI"}       # Dow Jones Industrial Average
+  DXY:      {source: yahoo, symbol: "DX-Y.NYB"}   # US Dollar Index
+  DAX40:    {source: yahoo, symbol: "^GDAXI"}
+  N225:     {source: yahoo, symbol: "^N225"}
+  NKY:      {source: yahoo, symbol: "^N225"}
+  VIX:      {source: yahoo, symbol: "^VIX"}       # bare VIX resolves to a MUTUALFUND
+  RUT:      {source: yahoo, symbol: "^RUT"}       # bare RUT resolves to a MUTUALFUND
+  RTY:      {source: yahoo, symbol: "^RUT"}       # Russell future -> the index
+  CHINA:    {source: yahoo, symbol: "FXI"}        # iShares China Large-Cap ETF as proxy
+
+  # ── metals & energy (futures, not the equities that share these names) ───
+  GOLD:     {source: yahoo, symbol: "GC=F"}
+  XAU:      {source: yahoo, symbol: "GC=F"}
+  SILVER:   {source: yahoo, symbol: "SI=F"}
+  XAG:      {source: yahoo, symbol: "SI=F"}
+  COPPER:   {source: yahoo, symbol: "HG=F"}
+  PALLADIUM: {source: yahoo, symbol: "PA=F"}
+  PLATINUM: {source: yahoo, symbol: "PL=F"}
+  OIL:      {source: yahoo, symbol: "CL=F"}
+  CL:       {source: yahoo, symbol: "CL=F"}
+  NATGAS:   {source: yahoo, symbol: "NG=F"}
+  YM:       {source: yahoo, symbol: "YM=F"}       # Mini Dow future
+  GC:       {source: yahoo, symbol: "GC=F"}       # bare GC is an opaque ECNQUOTE
+  ULSD:     {source: yahoo, symbol: "HO=F"}       # heating oil
+
+  # ── FX ───────────────────────────────────────────────────────────────────
+  EURUSD:   {source: yahoo, symbol: "EURUSD=X"}
+  EUR:      {source: yahoo, symbol: "EURUSD=X"}
+  USDJPY:   {source: yahoo, symbol: "JPY=X"}
+  GBPUSD:   {source: yahoo, symbol: "GBPUSD=X"}
+  GBPJPY:   {source: yahoo, symbol: "GBPJPY=X"}
+  USDCAD:   {source: yahoo, symbol: "USDCAD=X"}
+  GBP:      {source: yahoo, symbol: "GBPUSD=X"}   # bare GBP resolves to a MUTUALFUND
+  CAD:      {source: yahoo, symbol: "USDCAD=X"}
+
+  # ── rates ────────────────────────────────────────────────────────────────
+  US10Y:    {source: yahoo, symbol: "^TNX"}
+  US30Y:    {source: yahoo, symbol: "^TYX"}
+
+  # ── ETF proxies (a proxy, not the underlying — noted deliberately) ───────
+  URANIUM:  {source: yahoo, symbol: "URA"}        # Global X Uranium ETF as the proxy
+  MAG7:     {source: yahoo, symbol: "MAGS"}       # Roundhill Magnificent Seven ETF
+
+  # ── crypto needing an explicit hand ──────────────────────────────────────
+  # The other half of the SPX collision: this one really *is* the memecoin.
+  SPX6900:  {source: coinbase, symbol: "SPX-USD"}
+
+  # ── dominance / index metrics: TradingView-only concepts, no price feed ──
+  BTC.D:    {unpriceable: dominance_metric}
+  USDT.D:   {unpriceable: dominance_metric}
+  TOTAL:    {unpriceable: dominance_metric}
+  TOTAL2:   {unpriceable: dominance_metric}
+  TOTAL3:   {unpriceable: dominance_metric}
+  OTHERS:   {unpriceable: dominance_metric}
+
+  # ── ratios: derivable from both legs, but not a fetchable series (v1) ────
+  "ETH/BTC": {unpriceable: derived_ratio}
+  ALTBTC:   {unpriceable: derived_ratio}
+
+  # ── baskets / themes: not a tradeable instrument ─────────────────────────
+  ALTS:     {unpriceable: basket}
+  ALTCOIN:  {unpriceable: basket}
+  CRYPTO:   {unpriceable: basket}
+  MEMECOINS: {unpriceable: basket}
+  NFT:      {unpriceable: basket}
+  CRYPTOPUNKS: {unpriceable: basket}
+  PUNKS:    {unpriceable: basket}
+  ENERGY:   {unpriceable: basket}
+  ROBOTICS: {unpriceable: basket}
+  DEFENSE:  {unpriceable: basket}
+  SOFTWARE: {unpriceable: basket}
+  NUCLEAR:  {unpriceable: basket}
+  BONDS:    {unpriceable: basket}
+  EM:       {unpriceable: basket}
+  LITHIUM:  {unpriceable: basket}
+  NICKEL:   {unpriceable: basket}
+  RARE_EARTHS: {unpriceable: basket}
+  HARD_ASSETS: {unpriceable: basket}
+  COLLECTIBLES: {unpriceable: basket}
+
+  # ── private companies: no public price ───────────────────────────────────
+  SPACEX:   {unpriceable: private_company}
+  STRIPE:   {unpriceable: private_company}
+
+  # ── policy rates / events: not a price series ────────────────────────────
+  FEDFUNDS:       {unpriceable: rate}
+  FED_FUNDS_RATE: {unpriceable: rate}
+  FED_RATES:      {unpriceable: rate}
+  FOMC_RATE_CUT:  {unpriceable: rate}
+  US02Y:          {unpriceable: rate}   # Yahoo carries no 2-year yield series
+  CPI:            {unpriceable: rate}   # an economic release, not a price series
+  FED:            {unpriceable: rate}
+  PE:             {unpriceable: basket} # "private equity" as a theme, not a ticker
+  USRECESSION:       {unpriceable: event}
+  IRAN_CEASEFIRE:    {unpriceable: event}
+  IRAN_BOOTS_ON_GROUND: {unpriceable: event}
