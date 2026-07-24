@@ -14,6 +14,11 @@ Return ONLY genuine, gradeable calls via the extract_theses tool. Two kinds:
 
 Rules:
 - Extract the analyst's OWN calls, not markets/prices they merely mention.
+- `asset` is a standard uppercase ticker/symbol (e.g. BTC, ETH, SOL, SPX, NVDA).
+- These transcripts are auto-captions that mishear tickers ("Cardano" -> "Cards",
+  "Cheniere" -> "Shener"). Put your best-guess ticker in `asset`; when the spoken term
+  was garbled or ambiguous, ALSO put the verbatim heard phrase in `asset_heard` and lower
+  `confidence`. Leave `asset_heard` unset when the ticker was stated clearly.
 - `conviction` reflects how strongly/hedged they said it (low | med | high).
 - `confidence` is YOUR certainty (0-1) that this is a real, correctly-parsed call.
 - `quotes` must be verbatim snippets from the transcript (no timestamps).

@@ -44,6 +44,31 @@ def test_build_thesis_enriches_lean():
     assert t.key_levels == []
 
 
+def test_asset_heard_defaults_none():
+    extracted = MacroLeanThesis(
+        domain="crypto", asset="ADA", direction="long", timeframe="swing",
+        conviction="med", summary="Cardano bid", confidence=0.5,
+    )
+    t = build_thesis(extracted, source=SOURCE, model="m",
+                     extracted_at="2026-07-23T00:00:00+00:00", index=0)
+    assert t.asset_heard is None
+
+
+def test_asset_heard_carries_through_and_round_trips():
+    # Auto-caption misheard "Cardano" as "Cards"; model kept the provenance.
+    heard = TradeThesis(
+        domain="crypto", asset="ADA", asset_heard="Cards", direction="long",
+        timeframe="swing", conviction="high", summary="Cardano long",
+        invalidation="below 0.30", key_levels=[0.45], confidence=0.7,
+    )
+    t = build_thesis(heard, source=SOURCE, model="m",
+                     extracted_at="2026-07-23T00:00:00+00:00", index=1)
+    assert t.asset_heard == "Cards"
+    restored = Thesis.model_validate_json(t.model_dump_json())
+    assert restored == t
+    assert restored.asset_heard == "Cards"
+
+
 def test_thesis_round_trips_through_json():
     extracted = MacroLeanThesis(
         domain="macro", asset="DXY", direction="short", timeframe="position",

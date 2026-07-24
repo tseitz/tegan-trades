@@ -21,6 +21,7 @@ class _Extracted(BaseModel):
     """Content fields the LLM produces for a single call (pre-enrichment)."""
     domain: Domain
     asset: str
+    asset_heard: str | None = None  # verbatim ASR phrasing when the ticker was misheard/guessed
     direction: Direction
     timeframe: Timeframe
     conviction: Conviction
@@ -75,6 +76,7 @@ class Thesis(BaseModel):
     thesis_type: Literal["trade", "macro_lean"]
     domain: Domain
     asset: str
+    asset_heard: str | None = None  # verbatim ASR phrasing when the ticker was misheard/guessed
     direction: Direction
     timeframe: Timeframe
     conviction: Conviction
@@ -103,6 +105,7 @@ def build_thesis(
         thesis_type=extracted.thesis_type,
         domain=extracted.domain,
         asset=extracted.asset,
+        asset_heard=extracted.asset_heard,
         direction=extracted.direction,
         timeframe=extracted.timeframe,
         conviction=extracted.conviction,

@@ -29,6 +29,7 @@ FLAT_THESIS_SCHEMA = {
                     "thesis_type": {"type": "string", "enum": ["trade", "macro_lean"]},
                     "domain": {"type": "string", "enum": ["crypto", "stock", "macro"]},
                     "asset": {"type": "string"},
+                    "asset_heard": {"type": "string"},
                     "direction": {"type": "string", "enum": ["long", "short", "neutral"]},
                     "timeframe": {"type": "string",
                                   "enum": ["scalp", "swing", "position", "macro"]},

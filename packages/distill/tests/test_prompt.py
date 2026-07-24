@@ -18,5 +18,12 @@ def test_prompt_carries_context_and_rules():
     assert "ETH looks strong above 2400." in user
 
 
+def test_prompt_explains_asset_heard_provenance():
+    system, _ = build_prompt("x", SOURCE)
+    # names the provenance field and the ticker-format expectation
+    assert "asset_heard" in system
+    assert "ticker" in system.lower()
+
+
 def test_prompt_is_deterministic():
     assert build_prompt("x", SOURCE) == build_prompt("x", SOURCE)

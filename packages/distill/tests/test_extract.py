@@ -36,6 +36,20 @@ class _FakeClient:
         return _Msg(self._queue.pop(0))
 
 
+HEARD_INPUT = {"theses": [{
+    "thesis_type": "macro_lean", "domain": "crypto", "asset": "ETH",
+    "asset_heard": "ethereal", "direction": "long", "timeframe": "swing",
+    "conviction": "med", "summary": "ETH bid", "confidence": 0.55,
+}]}
+
+
+def test_extract_passes_through_asset_heard():
+    client = _FakeClient(HEARD_INPUT)
+    out = extract_theses("body", SOURCE, client=client, extracted_at="t")
+    assert out[0].asset == "ETH"
+    assert out[0].asset_heard == "ethereal"
+
+
 def test_extract_returns_enriched_theses():
     client = _FakeClient(VALID_INPUT)
     out = extract_theses("body", SOURCE, client=client,
