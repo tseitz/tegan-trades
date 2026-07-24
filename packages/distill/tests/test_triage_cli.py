@@ -61,6 +61,35 @@ def test_rank_corpus_orders_by_score_desc_and_skips_empty(tmp_path):
     assert ranked[0].resolved.asset_canonical == "BTC"
 
 
+def test_rank_corpus_survives_undated_thesis(tmp_path):
+    # Regression: a transcript ingested without metadata hydration has published_at "".
+    # min() over raw strings made '' the corpus 'oldest' and date.fromisoformat('') raised,
+    # so one unhydrated video took down the whole triage queue.
+    _write_doc(tmp_path, "a.json", [
+        _tdict(ref="a", idx=0, published_at="2025-06-10"),
+        _tdict(ref="a", idx=1, published_at=""),  # unhydrated
+    ])
+    _write_doc(tmp_path, "b.json", [_tdict(ref="b", idx=0, published_at="2025-01-01")])
+    ranked = rank_corpus(tmp_path, REGISTRY)
+
+    assert len(ranked) == 3
+    by_id = {r.thesis.id: r for r in ranked}
+    # The dated pair still spans 2025-01-01..2025-06-10, so the newest keeps full recency
+    # rather than being flattened by a phantom '' oldest.
+    assert by_id["youtube/a#0"].score > by_id["youtube/b#0"].score
+    # The undated one is ranked, not dropped, but earns no recency credit.
+    assert by_id["youtube/a#1"].score < by_id["youtube/a#0"].score
+
+
+def test_rank_corpus_all_undated_does_not_crash(tmp_path):
+    _write_doc(tmp_path, "a.json", [
+        _tdict(ref="a", idx=0, published_at=""),
+        _tdict(ref="a", idx=1, published_at="", conviction="low"),
+    ])
+    ranked = rank_corpus(tmp_path, REGISTRY)
+    assert [r.thesis.id for r in ranked] == ["youtube/a#0", "youtube/a#1"]
+
+
 def test_rank_corpus_excludes_decided(tmp_path):
     _write_doc(tmp_path, "a.json", [
         _tdict(ref="a", idx=0),

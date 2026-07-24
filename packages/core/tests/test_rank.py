@@ -10,6 +10,7 @@ from core.rank import (
     build_agreement_index,
     confidence_signal,
     conviction_signal,
+    corpus_span,
     recency_signal,
     score,
 )
@@ -59,6 +60,34 @@ def test_recency_signal_single_day_corpus_is_full():
 
 def test_recency_signal_tolerates_full_timestamp():
     assert recency_signal("2025-01-06T12:00:00Z", newest="2025-01-11", oldest="2025-01-01") == pytest.approx(0.5)
+
+
+def test_recency_signal_undated_thesis_scores_zero():
+    # An undated thesis can't claim recency, but must never crash the ranker.
+    # channel.hydrate models published_at as str|None, so blanks are a real input.
+    assert recency_signal("", newest="2025-01-11", oldest="2025-01-01") == pytest.approx(0.0)
+    assert recency_signal(None, newest="2025-01-11", oldest="2025-01-01") == pytest.approx(0.0)
+    assert recency_signal("not-a-date", newest="2025-01-11", oldest="2025-01-01") == pytest.approx(0.0)
+
+
+def test_recency_signal_undated_corpus_span_is_full():
+    # No usable span (every thesis undated) degrades to the single-day case, not a crash.
+    assert recency_signal("2025-01-06", newest="", oldest="") == pytest.approx(1.0)
+
+
+def test_corpus_span_ignores_undated_entries():
+    # One blank must not poison the span: min() over raw strings would make '' the oldest.
+    assert corpus_span(["2025-06-01", "", "2025-01-01", None]) == ("2025-06-01", "2025-01-01")
+
+
+def test_corpus_span_all_undated_is_none():
+    assert corpus_span(["", None]) is None
+
+
+def test_score_survives_an_undated_thesis():
+    thesis = _thesis(published_at="")
+    s = score(thesis, _resolved(), build_agreement_index([]), newest="2025-01-11", oldest="2025-01-01")
+    assert 0.0 <= s <= 1.0
 
 
 def test_agreement_signal_normalizes_with_cap():

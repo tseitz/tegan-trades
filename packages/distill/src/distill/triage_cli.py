@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from core.canon import ResolvedThesis, load_registry, resolve
-from core.rank import build_agreement_index, score
+from core.rank import build_agreement_index, corpus_span, score
 from core.thesis import Thesis
 
 from distill import store as store_mod
@@ -57,8 +57,8 @@ def rank_corpus(theses_root, registry, *, decided: set[str] | None = None) -> li
     index = build_agreement_index(
         (res.asset_canonical, t.direction, res.person_canonical) for t, res, _ in loaded
     )
-    published = [t.source.published_at for t, _, _ in loaded]
-    newest, oldest = max(published), min(published)
+    span = corpus_span(t.source.published_at for t, _, _ in loaded)
+    newest, oldest = span if span else (None, None)
 
     ranked = [
         RankedThesis(
