@@ -123,6 +123,44 @@ def _ranked_from(tmp_path, theses):
     return rank_corpus(tmp_path, REGISTRY)
 
 
+def test_collapse_defaults_to_current_view_only(tmp_path):
+    """Default: one entry per (person, asset, direction, timeframe) — their current stance.
+    A fixed window only slices a continuously-restated view into buckets; it never finds
+    'the latest one', which is what triage actually wants."""
+    ranked = _ranked_from(tmp_path, [
+        _tdict(ref="a", idx=0, published_at="2026-07-22"),
+        _tdict(ref="a", idx=1, published_at="2026-06-19"),  # >30d earlier: own cluster
+        _tdict(ref="a", idx=2, published_at="2026-01-05"),  # months earlier: own cluster
+    ])
+    out = collapse_restatements(ranked)
+
+    assert len(out) == 1
+    assert out[0].thesis.source.published_at == "2026-07-22"
+    # Counts the whole history, not just one cluster — dropping 2 statements silently
+    # would read as "this is all he said".
+    assert out[0].restated == 2
+    assert out[0].restated_since == "2026-01-05"
+
+
+def test_collapse_current_view_still_separates_direction_and_timeframe(tmp_path):
+    """A long-term position call and a short-term swing call are different theses, not
+    restatements — these people routinely hold both on the same asset at once."""
+    ranked = _ranked_from(tmp_path, [
+        _tdict(ref="a", idx=0, published_at="2026-07-22", direction="long"),
+        _tdict(ref="a", idx=1, published_at="2026-07-21", direction="short"),
+        _tdict(ref="a", idx=2, published_at="2026-07-20", person="Benjamin Cowen"),
+    ])
+    assert len(collapse_restatements(ranked)) == 3
+
+
+def test_collapse_current_view_leaves_undated_alone(tmp_path):
+    ranked = _ranked_from(tmp_path, [
+        _tdict(ref="a", idx=0, published_at=""),
+        _tdict(ref="a", idx=1, published_at=""),
+    ])
+    assert len(collapse_restatements(ranked)) == 2
+
+
 def test_collapse_keeps_most_recent_restatement_within_window(tmp_path):
     """Same person re-stating the same call inside the window is one position, not three."""
     ranked = _ranked_from(tmp_path, [
@@ -130,7 +168,7 @@ def test_collapse_keeps_most_recent_restatement_within_window(tmp_path):
         _tdict(ref="a", idx=1, published_at="2026-07-10"),
         _tdict(ref="a", idx=2, published_at="2026-07-01"),
     ])
-    out = collapse_restatements(ranked, window_days=30)
+    out = collapse_restatements(ranked, window_days=30, latest_only=False)
 
     assert len(out) == 1
     assert out[0].thesis.source.published_at == "2026-07-22"  # newest survives, not highest-scoring
@@ -144,7 +182,7 @@ def test_collapse_keeps_calls_outside_the_window_separate(tmp_path):
         _tdict(ref="a", idx=0, published_at="2026-07-22"),
         _tdict(ref="a", idx=1, published_at="2026-04-01"),
     ])
-    out = collapse_restatements(ranked, window_days=30)
+    out = collapse_restatements(ranked, window_days=30, latest_only=False)
 
     assert len(out) == 2
     assert all(r.restated == 0 for r in out)
@@ -159,7 +197,7 @@ def test_collapse_chains_by_cluster_anchor_not_transitively(tmp_path):
         _tdict(ref="a", idx=2, published_at="2026-06-20"),  # 32d from 07-22 -> new cluster
         _tdict(ref="a", idx=3, published_at="2026-06-10"),  # within 30d of 06-20 -> folds
     ])
-    out = collapse_restatements(ranked, window_days=30)
+    out = collapse_restatements(ranked, window_days=30, latest_only=False)
 
     assert [r.thesis.source.published_at for r in out] == ["2026-07-22", "2026-06-20"]
     assert [r.restated for r in out] == [1, 1]
@@ -173,7 +211,7 @@ def test_collapse_never_merges_across_direction_timeframe_or_person(tmp_path):
         _tdict(ref="a", idx=2, published_at="2026-07-22", person="Benjamin Cowen"),
         _tdict(ref="a", idx=3, published_at="2026-07-22", asset="Bitcoin"),
     ])
-    out = collapse_restatements(ranked, window_days=30)
+    out = collapse_restatements(ranked, window_days=30, latest_only=False)
     # idx0 and idx3 share (person, BTC, long, swing) and the same day -> collapse to one.
     assert len(out) == 3
 
@@ -184,7 +222,7 @@ def test_collapse_leaves_undated_theses_alone(tmp_path):
         _tdict(ref="a", idx=0, published_at=""),
         _tdict(ref="a", idx=1, published_at=""),
     ])
-    out = collapse_restatements(ranked, window_days=30)
+    out = collapse_restatements(ranked, window_days=30, latest_only=False)
     assert len(out) == 2
 
 
@@ -194,7 +232,7 @@ def test_collapse_preserves_score_ordering(tmp_path):
         _tdict(ref="a", idx=1, published_at="2026-07-22", asset="Bitcoin", direction="short",
                conviction="high", confidence=0.99),
     ])
-    out = collapse_restatements(ranked, window_days=30)
+    out = collapse_restatements(ranked, window_days=30, latest_only=False)
     assert [r.score for r in out] == sorted((r.score for r in out), reverse=True)
 
 

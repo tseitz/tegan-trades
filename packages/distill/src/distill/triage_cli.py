@@ -88,41 +88,44 @@ def _restatement_key(r: RankedThesis) -> tuple[str, str, str, str]:
 
 
 def collapse_restatements(
-    ranked: list[RankedThesis], *, window_days: int = DEFAULT_WINDOW_DAYS,
+    ranked: list[RankedThesis],
+    *,
+    window_days: int = DEFAULT_WINDOW_DAYS,
+    latest_only: bool = True,
 ) -> list[RankedThesis]:
-    """Fold repeat statements of the same call into their most recent version.
+    """Fold repeat statements of the same call, keyed on (person, asset, direction, timeframe).
 
-    These people re-state the same position weekly, so an unfiltered queue spends most of
-    its slots on one person restating one view. Two theses collapse only when they share
-    (person, asset, direction, timeframe) AND fall within ``window_days`` of each other —
-    a call from months back is a genuinely separate statement of view, not a duplicate.
+    These people re-state the same position weekly, so an unfiltered queue spends most of its
+    slots on one person restating one view. ``timeframe`` is part of the key on purpose: a
+    long-term ``position`` call and a short-term ``swing`` call on the same asset are separate
+    theses, and these people routinely hold both at once.
 
-    Clusters anchor on the newest member rather than chaining transitively: a steady weekly
-    drip would otherwise merge into one blob spanning the whole corpus, and the surviving
-    representative could end up being an old call that absorbed the current one.
+    ``latest_only`` (default) keeps just the current statement per key — what do they think
+    *now*. ``restated``/``restated_since`` then cover the entire history, so a queue entry
+    never hides how much was folded away.
 
-    The survivor is always the *most recent* of its cluster (not the highest-scoring) —
-    the point is "what do they think now". Undated theses are never folded: without a date
-    there's no way to say which statement is current. Score ordering is preserved.
+    ``latest_only=False`` keeps one entry per ``window_days`` cluster instead, for reviewing
+    how a view evolved. Clusters anchor on their newest member rather than chaining
+    transitively, so a steady weekly drip can't merge into one blob spanning the corpus and
+    an old call can't end up absorbing the current one. ``window_days`` is ignored when
+    ``latest_only`` is set — there's nothing left to cluster.
+
+    The survivor is always the *most recent*, never the highest-scoring. Undated theses are
+    never folded: without a date there's no way to say which statement is current. Score
+    ordering is preserved.
     """
-    clustered: dict[tuple, list[list[RankedThesis]]] = defaultdict(list)
+    grouped: dict[tuple, list[RankedThesis]] = defaultdict(list)
     keep: dict[str, tuple[int, str | None]] = {}
 
     for r in sorted(ranked, key=lambda r: r.thesis.source.published_at or "", reverse=True):
         if parse_date(r.thesis.source.published_at) is None:
             keep[r.thesis.id] = (0, None)  # undated — always its own position
-            continue
-        clusters = clustered[_restatement_key(r)]
-        anchor = parse_date(clusters[-1][0].thesis.source.published_at) if clusters else None
-        current = parse_date(r.thesis.source.published_at)
-        if anchor is not None and (anchor - current).days <= window_days:
-            clusters[-1].append(r)
         else:
-            clusters.append([r])
+            grouped[_restatement_key(r)].append(r)  # stays sorted newest-first
 
-    for clusters in clustered.values():
-        for cluster in clusters:
-            survivor = cluster[0]  # sorted desc, so [0] is the most recent
+    for members in grouped.values():
+        for cluster in ([members] if latest_only else _cluster_by_window(members, window_days)):
+            survivor = cluster[0]  # newest-first, so [0] is the current statement
             oldest = cluster[-1].thesis.source.published_at if len(cluster) > 1 else None
             keep[survivor.thesis.id] = (len(cluster) - 1, oldest)
 
@@ -131,6 +134,19 @@ def collapse_restatements(
         for r in ranked
         if r.thesis.id in keep
     ]
+
+
+def _cluster_by_window(members: list[RankedThesis], window_days: int) -> list[list[RankedThesis]]:
+    """Split a newest-first run of same-key theses into within-``window_days`` clusters."""
+    clusters: list[list[RankedThesis]] = []
+    for r in members:
+        anchor = parse_date(clusters[-1][0].thesis.source.published_at) if clusters else None
+        current = parse_date(r.thesis.source.published_at)
+        if anchor is not None and current is not None and (anchor - current).days <= window_days:
+            clusters[-1].append(r)
+        else:
+            clusters.append([r])
+    return clusters
 
 
 # ── decisions sidecar (JSONL, last-wins) ────────────────────────────────────
@@ -241,10 +257,13 @@ def main(argv: list[str] | None = None) -> int:
                         help="running promotions note to append to")
     parser.add_argument("--decisions", type=Path, default=DEFAULT_DECISIONS,
                         help="triage-decisions sidecar (JSONL)")
+    parser.add_argument("--history", action="store_true",
+                        help="show how a view evolved: one entry per --window-days cluster "
+                             "instead of only the current statement")
     parser.add_argument("--window-days", type=int, default=DEFAULT_WINDOW_DAYS,
-                        help="fold a person's repeat statements of the same call within N days")
+                        help="cluster size for --history (ignored otherwise)")
     parser.add_argument("--no-dedup", action="store_true",
-                        help="show every restatement instead of folding to the most recent")
+                        help="show every restatement, unfolded")
     args = parser.parse_args(argv)
 
     registry = load_registry(CONFIG_DIR)
@@ -252,9 +271,10 @@ def main(argv: list[str] | None = None) -> int:
     ranked = rank_corpus(store_mod.DATA_ROOT, registry, decided=decided)
     if not args.no_dedup:  # fold before slicing, or --top just re-fills with restatements
         before = len(ranked)
-        ranked = collapse_restatements(ranked, window_days=args.window_days)
-        print(f"{before} theses -> {len(ranked)} distinct positions "
-              f"({args.window_days}d restatement window)")
+        ranked = collapse_restatements(
+            ranked, window_days=args.window_days, latest_only=not args.history)
+        mode = f"{args.window_days}d clusters" if args.history else "current view per position"
+        print(f"{before} theses -> {len(ranked)} distinct positions ({mode})")
     ranked = ranked[: args.top]
     if not ranked:  # pragma: no cover - trivial
         print("Queue empty — nothing left to triage.")
