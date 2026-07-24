@@ -4,6 +4,7 @@ from core.canon import Registry
 
 from distill.triage_cli import (
     append_note,
+    collapse_restatements,
     load_decisions,
     rank_corpus,
     record_decision,
@@ -115,7 +116,110 @@ def test_rank_corpus_agreement_lifts_a_shared_view(tmp_path):
     assert all(r.score > solo.score for r in shared)
 
 
-# ── decisions sidecar ───────────────────────────────────────────────────────
+# ── collapse_restatements ───────────────────────────────────────────────────
+
+def _ranked_from(tmp_path, theses):
+    _write_doc(tmp_path, "a.json", theses)
+    return rank_corpus(tmp_path, REGISTRY)
+
+
+def test_collapse_keeps_most_recent_restatement_within_window(tmp_path):
+    """Same person re-stating the same call inside the window is one position, not three."""
+    ranked = _ranked_from(tmp_path, [
+        _tdict(ref="a", idx=0, published_at="2026-07-22"),
+        _tdict(ref="a", idx=1, published_at="2026-07-10"),
+        _tdict(ref="a", idx=2, published_at="2026-07-01"),
+    ])
+    out = collapse_restatements(ranked, window_days=30)
+
+    assert len(out) == 1
+    assert out[0].thesis.source.published_at == "2026-07-22"  # newest survives, not highest-scoring
+    assert out[0].restated == 2
+    assert out[0].restated_since == "2026-07-01"
+
+
+def test_collapse_keeps_calls_outside_the_window_separate(tmp_path):
+    """A June call and a July call are genuinely separate statements of view, not dupes."""
+    ranked = _ranked_from(tmp_path, [
+        _tdict(ref="a", idx=0, published_at="2026-07-22"),
+        _tdict(ref="a", idx=1, published_at="2026-04-01"),
+    ])
+    out = collapse_restatements(ranked, window_days=30)
+
+    assert len(out) == 2
+    assert all(r.restated == 0 for r in out)
+
+
+def test_collapse_chains_by_cluster_anchor_not_transitively(tmp_path):
+    """Anchored on the newest of each cluster: a steady weekly drip must not chain into one
+    blob spanning months, or an old call silently absorbs the current one."""
+    ranked = _ranked_from(tmp_path, [
+        _tdict(ref="a", idx=0, published_at="2026-07-22"),
+        _tdict(ref="a", idx=1, published_at="2026-07-05"),  # within 30d of 07-22 -> folds
+        _tdict(ref="a", idx=2, published_at="2026-06-20"),  # 32d from 07-22 -> new cluster
+        _tdict(ref="a", idx=3, published_at="2026-06-10"),  # within 30d of 06-20 -> folds
+    ])
+    out = collapse_restatements(ranked, window_days=30)
+
+    assert [r.thesis.source.published_at for r in out] == ["2026-07-22", "2026-06-20"]
+    assert [r.restated for r in out] == [1, 1]
+
+
+def test_collapse_never_merges_across_direction_timeframe_or_person(tmp_path):
+    """A long and a short on the same day are a thesis change — the whole point of triage."""
+    ranked = _ranked_from(tmp_path, [
+        _tdict(ref="a", idx=0, published_at="2026-07-22", direction="long"),
+        _tdict(ref="a", idx=1, published_at="2026-07-22", direction="short"),
+        _tdict(ref="a", idx=2, published_at="2026-07-22", person="Benjamin Cowen"),
+        _tdict(ref="a", idx=3, published_at="2026-07-22", asset="Bitcoin"),
+    ])
+    out = collapse_restatements(ranked, window_days=30)
+    # idx0 and idx3 share (person, BTC, long, swing) and the same day -> collapse to one.
+    assert len(out) == 3
+
+
+def test_collapse_leaves_undated_theses_alone(tmp_path):
+    """Without a date we can't say which restatement is current, so never fold them."""
+    ranked = _ranked_from(tmp_path, [
+        _tdict(ref="a", idx=0, published_at=""),
+        _tdict(ref="a", idx=1, published_at=""),
+    ])
+    out = collapse_restatements(ranked, window_days=30)
+    assert len(out) == 2
+
+
+def test_collapse_preserves_score_ordering(tmp_path):
+    ranked = _ranked_from(tmp_path, [
+        _tdict(ref="a", idx=0, published_at="2026-07-22", asset="BTC", conviction="low", confidence=0.2),
+        _tdict(ref="a", idx=1, published_at="2026-07-22", asset="Bitcoin", direction="short",
+               conviction="high", confidence=0.99),
+    ])
+    out = collapse_restatements(ranked, window_days=30)
+    assert [r.score for r in out] == sorted((r.score for r in out), reverse=True)
+
+
+def test_prompt_shows_publish_date_and_restatement_count(tmp_path):
+    """Which of two similar calls is current is the whole question — show the date."""
+    ranked = collapse_restatements(_ranked_from(tmp_path, [
+        _tdict(ref="a", idx=0, published_at="2026-07-22"),
+        _tdict(ref="a", idx=1, published_at="2026-07-02"),
+    ]), window_days=30)
+    lines: list[str] = []
+    triage(ranked, decisions_path=tmp_path / "d.jsonl", vault_path=tmp_path / "v.md",
+           input_fn=lambda _: "q", out=lines.append)
+
+    assert "2026-07-22" in lines[0]
+    assert "+1 similar since 2026-07-02" in lines[0]
+
+
+def test_prompt_marks_undated_theses(tmp_path):
+    ranked = _ranked_from(tmp_path, [_tdict(ref="a", idx=0, published_at="")])
+    lines: list[str] = []
+    triage(ranked, decisions_path=tmp_path / "d.jsonl", vault_path=tmp_path / "v.md",
+           input_fn=lambda _: "q", out=lines.append)
+
+    assert "undated" in lines[0]
+
 
 def test_decisions_roundtrip_last_wins(tmp_path):
     path = tmp_path / "triage" / "decisions.jsonl"

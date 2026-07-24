@@ -38,6 +38,9 @@ people:
 
   - name: "The DeFi Report (Michael Nadeau)"
     handle: "@JustDeauIt"
+    # The extractor labels him by show name as often as by full name; without these the
+    # bare form resolves to a separate person, splitting agreement counts and defeating dedup.
+    aliases: ["The DeFi Report", "Michael Nadeau", "Mike Nadeau"]
     status: active
     domains: [crypto, macro]
     why: "Week-to-week on-chain/macro + portfolio-construction framing. Directionally accurate. Multi-channel (YouTube + X)."

@@ -12,11 +12,12 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import dataclass
+from collections import defaultdict
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from core.canon import ResolvedThesis, load_registry, resolve
-from core.rank import build_agreement_index, corpus_span, score
+from core.rank import build_agreement_index, corpus_span, parse_date, score
 from core.thesis import Thesis
 
 from distill import store as store_mod
@@ -35,6 +36,8 @@ class RankedThesis:
     resolved: ResolvedThesis
     score: float
     source_path: Path
+    restated: int = 0                    # older near-identical statements folded into this one
+    restated_since: str | None = None    # published_at of the oldest one folded in
 
 
 # ── ranking the corpus ──────────────────────────────────────────────────────
@@ -72,6 +75,62 @@ def rank_corpus(theses_root, registry, *, decided: set[str] | None = None) -> li
     ]
     ranked.sort(key=lambda r: r.score, reverse=True)
     return ranked
+
+
+# ── collapsing repeat statements of the same call ───────────────────────────
+
+DEFAULT_WINDOW_DAYS = 30
+
+
+def _restatement_key(r: RankedThesis) -> tuple[str, str, str, str]:
+    return (r.resolved.person_canonical, r.resolved.asset_canonical,
+            r.thesis.direction, r.thesis.timeframe)
+
+
+def collapse_restatements(
+    ranked: list[RankedThesis], *, window_days: int = DEFAULT_WINDOW_DAYS,
+) -> list[RankedThesis]:
+    """Fold repeat statements of the same call into their most recent version.
+
+    These people re-state the same position weekly, so an unfiltered queue spends most of
+    its slots on one person restating one view. Two theses collapse only when they share
+    (person, asset, direction, timeframe) AND fall within ``window_days`` of each other —
+    a call from months back is a genuinely separate statement of view, not a duplicate.
+
+    Clusters anchor on the newest member rather than chaining transitively: a steady weekly
+    drip would otherwise merge into one blob spanning the whole corpus, and the surviving
+    representative could end up being an old call that absorbed the current one.
+
+    The survivor is always the *most recent* of its cluster (not the highest-scoring) —
+    the point is "what do they think now". Undated theses are never folded: without a date
+    there's no way to say which statement is current. Score ordering is preserved.
+    """
+    clustered: dict[tuple, list[list[RankedThesis]]] = defaultdict(list)
+    keep: dict[str, tuple[int, str | None]] = {}
+
+    for r in sorted(ranked, key=lambda r: r.thesis.source.published_at or "", reverse=True):
+        if parse_date(r.thesis.source.published_at) is None:
+            keep[r.thesis.id] = (0, None)  # undated — always its own position
+            continue
+        clusters = clustered[_restatement_key(r)]
+        anchor = parse_date(clusters[-1][0].thesis.source.published_at) if clusters else None
+        current = parse_date(r.thesis.source.published_at)
+        if anchor is not None and (anchor - current).days <= window_days:
+            clusters[-1].append(r)
+        else:
+            clusters.append([r])
+
+    for clusters in clustered.values():
+        for cluster in clusters:
+            survivor = cluster[0]  # sorted desc, so [0] is the most recent
+            oldest = cluster[-1].thesis.source.published_at if len(cluster) > 1 else None
+            keep[survivor.thesis.id] = (len(cluster) - 1, oldest)
+
+    return [
+        replace(r, restated=keep[r.thesis.id][0], restated_since=keep[r.thesis.id][1])
+        for r in ranked
+        if r.thesis.id in keep
+    ]
 
 
 # ── decisions sidecar (JSONL, last-wins) ────────────────────────────────────
@@ -119,6 +178,8 @@ def render_note(ranked: RankedThesis) -> str:
         lines.append("- **Key levels:** " + ", ".join(str(x) for x in t.key_levels))
     if t.catalyst:
         lines.append(f"- **Catalyst:** {t.catalyst}")
+    if ranked.restated:
+        lines.append(f"- **Restated:** {ranked.restated} similar call(s) since {ranked.restated_since}")
     if t.asset_heard:
         lines.append(f"- **Heard as:** {t.asset_heard}")
     for q in t.quotes:
@@ -143,8 +204,10 @@ def append_note(vault_path, section: str) -> None:
 
 def _prompt_header(r: RankedThesis) -> str:
     t, res = r.thesis, r.resolved
-    return (f"\n[score {r.score:.2f}] {res.person_canonical} · "
-            f"{res.asset_canonical} {t.direction} ({t.timeframe})\n{t.summary}")
+    when = t.source.published_at or "undated"
+    restated = f" · +{r.restated} similar since {r.restated_since}" if r.restated else ""
+    return (f"\n[score {r.score:.2f}] {when} · {res.person_canonical} · "
+            f"{res.asset_canonical} {t.direction} ({t.timeframe}){restated}\n{t.summary}")
 
 
 def triage(ranked, *, decisions_path, vault_path, input_fn=input, out=print) -> dict[str, int]:
@@ -178,11 +241,21 @@ def main(argv: list[str] | None = None) -> int:
                         help="running promotions note to append to")
     parser.add_argument("--decisions", type=Path, default=DEFAULT_DECISIONS,
                         help="triage-decisions sidecar (JSONL)")
+    parser.add_argument("--window-days", type=int, default=DEFAULT_WINDOW_DAYS,
+                        help="fold a person's repeat statements of the same call within N days")
+    parser.add_argument("--no-dedup", action="store_true",
+                        help="show every restatement instead of folding to the most recent")
     args = parser.parse_args(argv)
 
     registry = load_registry(CONFIG_DIR)
     decided = set(load_decisions(args.decisions))
-    ranked = rank_corpus(store_mod.DATA_ROOT, registry, decided=decided)[: args.top]
+    ranked = rank_corpus(store_mod.DATA_ROOT, registry, decided=decided)
+    if not args.no_dedup:  # fold before slicing, or --top just re-fills with restatements
+        before = len(ranked)
+        ranked = collapse_restatements(ranked, window_days=args.window_days)
+        print(f"{before} theses -> {len(ranked)} distinct positions "
+              f"({args.window_days}d restatement window)")
+    ranked = ranked[: args.top]
     if not ranked:  # pragma: no cover - trivial
         print("Queue empty — nothing left to triage.")
         return 0

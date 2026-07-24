@@ -65,7 +65,7 @@ def confidence_signal(thesis: _ThesisLike) -> float:
     return max(0.0, min(1.0, thesis.extraction.confidence))
 
 
-def _parse_date(value: str | None) -> date | None:
+def parse_date(value: str | None) -> date | None:
     """Tolerant ISO parse — accepts 'YYYY-MM-DD' or a full timestamp (first 10 chars).
     Returns None for missing/malformed input: ``published_at`` is genuinely optional
     upstream (``channel.hydrate`` types it ``str | None`` — yt-dlp doesn't always supply
@@ -83,7 +83,7 @@ def corpus_span(published_dates: Iterable[str | None]) -> tuple[str, str] | None
     Undated entries must be filtered rather than min/max'd: '' sorts before every real
     ISO date, so a single blank would silently become the corpus 'oldest' and flatten
     every other thesis's recency score."""
-    dated = [d for d in published_dates if d and _parse_date(d) is not None]
+    dated = [d for d in published_dates if d and parse_date(d) is not None]
     if not dated:
         return None
     return max(dated), min(dated)
@@ -93,7 +93,7 @@ def recency_signal(published_at: str | None, *, newest: str | None, oldest: str 
     """Linear across the corpus span: oldest -> 0.0, newest -> 1.0.
     An undated thesis scores 0.0 — we can't claim it's recent. An unusable corpus span
     (no dates at all, or a single day) degrades to 1.0 for everything dated."""
-    at, hi, lo = _parse_date(published_at), _parse_date(newest), _parse_date(oldest)
+    at, hi, lo = parse_date(published_at), parse_date(newest), parse_date(oldest)
     if at is None:
         return 0.0
     if hi is None or lo is None:
