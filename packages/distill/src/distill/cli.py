@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from distill.extract import DEFAULT_MODEL, extract_theses
 from distill.roster import (
-    TRANSCRIPTS_ROOT, distill_all, format_summary, _source_from_sidecar,
+    DEFAULT_MAX_WORKERS, TRANSCRIPTS_ROOT, distill_all, format_summary, _source_from_sidecar,
 )
 from distill.store import save_theses
 
@@ -22,8 +22,11 @@ def roster_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--force", action="store_true",
                         help="re-distill transcripts that already have a thesis file")
+    parser.add_argument("--concurrency", type=int, default=DEFAULT_MAX_WORKERS,
+                        help="number of transcripts to distill in parallel")
     args = parser.parse_args(argv)
-    results = distill_all(distilled_at=_now(), model=args.model, force=args.force)
+    results = distill_all(distilled_at=_now(), model=args.model, force=args.force,
+                          max_workers=args.concurrency)
     print(format_summary(results))
     return 0
 

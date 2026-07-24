@@ -78,6 +78,23 @@ def test_force_redistills_existing(tmp_path):
     assert calls["n"] == 2                       # force bypassed the skip
 
 
+def test_distill_all_runs_concurrently(tmp_path):
+    import time
+
+    for i in range(4):
+        _write_transcript(tmp_path, f"vid0000000{i}", "Cowen")
+
+    def slow_extract(text, source, **kw):
+        time.sleep(0.2)
+        return []
+
+    start = time.monotonic()
+    distill_all(root=tmp_path, extract=slow_extract, distilled_at="t", max_workers=4)
+    elapsed = time.monotonic() - start
+    # sequential would take >= 0.8s; concurrent (4 workers) should be ~0.2-0.3s
+    assert elapsed < 0.6
+
+
 def test_format_summary_has_totals(tmp_path):
     r = DistillResult(person="Cowen")
     r.distilled.append("a"); r.empty.append("b")
