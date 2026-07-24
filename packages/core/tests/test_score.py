@@ -3,6 +3,7 @@ import pytest
 from core.grade import Grade, Pending, Ungradeable
 from core.score import (
     MIN_SAMPLE,
+    best_static_baseline,
     bootstrap_ci,
     fold_restatements,
     group_scores,
@@ -220,3 +221,50 @@ def test_fold_anchors_rather_than_chaining_transitively():
             ("2025-01-01", "2025-01-25", "2025-02-18", "2025-03-14")]
     kept = fold_restatements(rows, window_days=30)
     assert [r.id for r in kept] == ["2025-01-01", "2025-02-18"]
+
+
+# ── static-bias baseline (does a person beat a fixed directional stance?) ───
+
+def test_best_static_baseline_picks_the_strongest_fixed_stance():
+    """On a slate where everything fell, always-short is the stance to beat."""
+    grades = [_grade(signed=0.0, null=-0.2, benchmark=0.0, direction="neutral") for _ in range(5)]
+    direction, value = best_static_baseline(grades)
+    assert direction == "short"
+    assert value == pytest.approx(0.20)
+
+
+def test_static_baseline_is_measured_on_the_persons_own_slate():
+    """Not a pooled average — each person is compared against a robot trading exactly
+    their calls, so asset mix and timing can't flatter anyone."""
+    grades = [_grade(signed=0.0, null=0.5, benchmark=0.0, direction="neutral")]
+    assert best_static_baseline(grades)[0] == "long"
+
+
+def test_skill_edge_subtracts_the_best_fixed_stance():
+    """The finding that motivated this: a +7% benchmark edge is worthless if a permanently
+    short robot earned +11% on the identical calls."""
+    grades = [_grade(signed=0.07, null=-0.11, benchmark=0.0, direction="short") for _ in range(40)]
+    s = score_person("P", grades, min_sample=1)
+    assert s.benchmark_edge == pytest.approx(0.07)
+    assert s.best_static_edge == pytest.approx(0.11)
+    assert s.skill_edge == pytest.approx(-0.04)
+    assert s.best_static_direction == "short"
+
+
+def test_skill_edge_is_positive_only_when_beating_every_fixed_stance():
+    # market flat, person still extracts return -> genuine selection
+    grades = [_grade(signed=0.05, null=0.0, benchmark=0.0, direction="long") for _ in range(40)]
+    s = score_person("P", grades, min_sample=1)
+    assert s.best_static_edge == pytest.approx(0.0)
+    assert s.skill_edge == pytest.approx(0.05)
+
+
+def test_skill_edge_none_without_benchmarks():
+    s = score_person("P", [_grade(signed=0.1)], min_sample=1)
+    assert s.skill_edge is None and s.best_static_edge is None
+
+
+def test_skill_edge_has_a_confidence_interval():
+    grades = [_grade(signed=r, null=r, benchmark=0.0) for r in (0.1, -0.2, 0.3, 0.05)] * 10
+    s = score_person("P", grades, min_sample=1)
+    assert s.skill_edge_ci is not None and len(s.skill_edge_ci) == 2

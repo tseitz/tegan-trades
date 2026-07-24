@@ -13,6 +13,7 @@ from pathlib import Path
 from core.canon import load_registry
 from core.grade import DEFAULT_HORIZONS, Grade, Horizons, Pending, Ungradeable, grade
 from core.score import MIN_SAMPLE, fold_restatements, group_scores
+from core.stability import kendall_tau, rank_stability
 
 from oracle import cache, corpus, listings
 from oracle.benchmarks import BENCHMARKS, DEFAULT_DOMAIN
@@ -128,53 +129,100 @@ def main(argv: list[str] | None = None) -> int:
 def _print_table(scores, *, label, min_sample):
     ranked = sorted(
         scores.values(),
-        key=lambda s: (s.benchmark_edge if s.benchmark_edge is not None else -9e9),
+        key=lambda s: (s.skill_edge if s.skill_edge is not None else -9e9),
         reverse=True,
     )
-    print(f"\n{label:<42} {'n':>5} {'hit':>7} {'null':>7} {'bench edge':>11}  {'95% CI':<20} "
-          f"{'dir edge':>9} {'long%':>6}")
-    print("─" * 118)
+    print(f"\n{label:<42} {'n':>5} {'hit':>7} {'skill edge':>11}  {'95% CI':<20} "
+          f"{'bench':>7} {'best stance':>12} {'long%':>6}")
+    print("─" * 122)
     for s in ranked:
         flag = "  ⚠ low-n" if s.insufficient_sample else ""
         name = s.person[:40] + (f" {MULTI_AUTHOR_MARKER}" if "+" in s.person else "")
-        print(f"{name:<42} {s.n:>5} {_fmt_pct(s.hit_rate)} {_fmt_pct(s.null_hit_rate)} "
-              f"{_fmt_pct(s.benchmark_edge, 11)}  {_fmt_ci(s.benchmark_edge_ci):<20} "
-              f"{_fmt_pct(s.direction_edge, 9)} {s.long_share:>6.0%}{flag}")
-    print(f"\n  bench edge = mean(call return − benchmark return over the same window). "
-          f"The headline.\n"
-          f"  dir edge   = mean(call return − always-long the same asset). Structurally 0 "
-          f"for a long-only\n"
-          f"               caller, so read it together with long%: it measures shorting, "
-          f"not skill overall.\n"
-          f"  ⚠ low-n    = fewer than {min_sample} graded calls; not rankable.\n"
+        stance = (f"{s.best_static_direction or '—'} {s.best_static_edge:+.1%}"
+                  if s.best_static_edge is not None else "—")
+        print(f"{name:<42} {s.n:>5} {_fmt_pct(s.hit_rate)} "
+              f"{_fmt_pct(s.skill_edge, 11)}  {_fmt_ci(s.skill_edge_ci):<20} "
+              f"{_fmt_pct(s.benchmark_edge)} {stance:>12} {s.long_share:>6.0%}{flag}")
+    print(f"\n  skill edge  = benchmark edge − the BEST FIXED STANCE on that person's own "
+          f"slate. The headline.\n"
+          f"                A stance needs no judgement, so beating the market while losing "
+          f"to one is\n"
+          f"                regime-matching bias, not a read. Chosen in hindsight, so this "
+          f"is conservative.\n"
+          f"  best stance = which fixed stance that was, and what it earned. Compare it to "
+          f"bench.\n"
+          f"  bench       = mean(call return − benchmark return). Confounded by directional "
+          f"bias; kept for context.\n"
+          f"  ⚠ low-n     = fewer than {min_sample} graded calls; not rankable.\n"
           f"  {MULTI_AUTHOR_MARKER} = multi-author feed — the score covers the feed, not "
           f"one person.")
 
 
+def _ordering(outcomes, min_sample):
+    scores = group_scores(outcomes, min_sample=min_sample)
+    ok = [s for s in scores.values() if not s.insufficient_sample and s.skill_edge is not None]
+    return [s.person for s in sorted(ok, key=lambda s: -s.skill_edge)]
+
+
+def _noise_floor(outcomes, *, min_sample, trials=200, seed=11):
+    """How much the ranking moves when nothing changes — bootstrap-resample each person's
+    own calls at a fixed horizon. Without this band, a sweep result is uninterpretable:
+    you cannot tell a horizon effect from ordinary sampling noise."""
+    import random
+
+    baseline = _ordering(outcomes, min_sample)
+    by_person: dict = {}
+    for outcome in outcomes:
+        by_person.setdefault(outcome.person, []).append(outcome)
+    rng = random.Random(seed)
+    taus = []
+    for _ in range(trials):
+        resampled = []
+        for group in by_person.values():
+            resampled.extend(rng.choices(group, k=len(group)))
+        tau = kendall_tau(baseline, _ordering(resampled, min_sample))
+        if tau is not None:
+            taus.append(tau)
+    if not taus:
+        return baseline, None
+    taus.sort()
+    return baseline, (taus[int(0.05 * len(taus))], taus[int(0.95 * len(taus)) - 1])
+
+
 def _print_sweep(rows, table, *, today, series_cache, min_sample):
-    """Re-score at scaled horizons. If the ordering churns, the ranking is an artifact of
-    the horizon constants rather than a fact about the roster."""
-    print("\nhorizon sweep (benchmark edge by horizon scaling):")
-    scalings = [0.5, 1.0, 2.0]
-    orderings = {}
-    for factor in scalings:
+    """Sweep horizons, but judge the result against the noise floor rather than in a vacuum."""
+    base_outcomes = build_outcomes(rows, table, today=today, horizons=DEFAULT_HORIZONS,
+                                   series_cache=series_cache)
+    baseline, floor = _noise_floor(base_outcomes, min_sample=min_sample)
+
+    print("\nhorizon sweep — Kendall tau of the skill-edge ranking vs the 1x baseline")
+    if floor:
+        print(f"  noise floor (same data, same horizons, bootstrap-resampled): "
+              f"tau p05={floor[0]:+.2f} p95={floor[1]:+.2f}")
+        print("  a sweep tau at or above p05 means the horizon moved the ranking no more "
+              "than chance.")
+    verdicts = []
+    for factor in (0.5, 0.75, 1.5, 2.0):
         horizons = Horizons(
             scalp=max(1, int(7 * factor)), swing=max(1, int(30 * factor)),
             position=max(1, int(180 * factor)), macro=max(1, int(365 * factor)),
         )
         outcomes = build_outcomes(rows, table, today=today, horizons=horizons,
                                   series_cache=series_cache)
-        scores = group_scores(outcomes, min_sample=min_sample)
-        ranked = [s.person for s in sorted(
-            scores.values(),
-            key=lambda s: (s.benchmark_edge if s.benchmark_edge is not None else -9e9),
-            reverse=True) if not s.insufficient_sample]
-        orderings[factor] = ranked
-        print(f"  ×{factor}: " + " > ".join(p.split(" (")[0][:18] for p in ranked[:6]))
-    base = orderings[1.0]
-    stable = all(orderings[f][:3] == base[:3] for f in scalings)
-    print(f"  top-3 {'STABLE' if stable else 'CHURNS'} across horizons"
-          + ("" if stable else " — treat the ranking as horizon-sensitive"))
+        tau = kendall_tau(baseline, _ordering(outcomes, min_sample))
+        verdict = rank_stability(observed=tau, noise_floor=floor)
+        verdicts.append(verdict)
+        shown = f"{tau:+.2f}" if tau is not None else "  n/a"
+        print(f"  x{factor:<5} tau={shown}   {verdict}")
+
+    if verdicts and all(v in {"within-noise", "marginal"} for v in verdicts):
+        print("\n  VERDICT: no horizon perturbation moves the ranking clearly beyond the")
+        print("  noise floor, so the horizon constants are defensible as they stand.")
+        print("  What limits this ranking is sample size, not horizon choice — the fix is")
+        print("  more calls per person, not better constants.")
+    else:
+        print("\n  VERDICT: at least one perturbation moved the ranking clearly beyond the")
+        print("  noise floor — the horizon constants are genuinely load-bearing here.")
 
 
 if __name__ == "__main__":

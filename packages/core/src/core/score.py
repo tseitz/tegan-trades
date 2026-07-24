@@ -10,8 +10,19 @@ and another trades small-caps stays comparable.
 being long *is* the null. On a corpus that is 65% long, this measures little except how
 well someone shorts. Useful, but it cannot rank a long-only caller.
 
-``benchmark_edge`` (vs BTC for crypto, the S&P 500 otherwise) asks the decision-relevant
-question — did following this person beat simply holding the market? That is the headline.
+``benchmark_edge`` (vs BTC for crypto, the S&P 500 otherwise) asks whether following this
+person beat simply holding the market.
+
+``skill_edge`` is the headline, because ``benchmark_edge`` alone is confounded by a *static
+directional bias*. Measured on this corpus: one feed posts a +7.2% benchmark edge, but a
+robot that was permanently short — making no decisions at all — earns +11.4% on that same
+person's exact calls, because the corpus window ends in a drawdown. Their edge is a bearish
+stance, not a read. ``skill_edge`` subtracts the best fixed stance (always-long /
+always-short / always-flat) evaluated on the person's own slate, so only call-by-call
+*selection* survives. Adding this control reorders the roster completely.
+
+The best stance is chosen in hindsight on the same data, which biases ``skill_edge``
+downward. That is deliberate: it is the conservative direction for a claim of skill.
 
 **Why every number ships with a sample size and a CI.** Per-person graded counts here run
 from ~50 to ~600 and asset mixes are concentrated (BTC alone is over a quarter of the
@@ -24,7 +35,7 @@ import random
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
-from core.grade import Grade, Pending, Ungradeable
+from core.grade import Grade, Pending, Ungradeable, signed_return_for
 from core.rank import parse_date
 
 # Below this many graded calls, per-person differences are noise. Flag, don't rank.
@@ -49,6 +60,10 @@ class PersonScore:
     direction_edge_ci: tuple[float, float] | None
     benchmark_edge: float | None
     benchmark_edge_ci: tuple[float, float] | None
+    best_static_direction: str | None   # the fixed stance that would have done best
+    best_static_edge: float | None      # what that stance earned on this same slate
+    skill_edge: float | None            # benchmark_edge - best_static_edge  <- headline
+    skill_edge_ci: tuple[float, float] | None
     n_with_benchmark: int
     long_share: float       # context for reading direction_edge
     insufficient_sample: bool
@@ -84,6 +99,35 @@ def bootstrap_ci(
     return lo, hi
 
 
+STATIC_DIRECTIONS = ("long", "short", "neutral")
+
+
+def static_baseline_returns(grades, direction: str) -> list[float]:
+    """Per-call excess of a robot that always calls ``direction`` on this exact slate."""
+    return [
+        signed_return_for(direction, g.market_return) - g.benchmark_return
+        for g in grades
+        if g.benchmark_return is not None
+    ]
+
+
+def best_static_baseline(grades) -> tuple[str | None, float | None]:
+    """The fixed directional stance that would have scored best here, and its edge.
+
+    This is the bar a person has to clear to have demonstrated anything: a stance requires
+    no judgement, so beating the market while *underperforming a constant stance* is
+    evidence of bias matching the regime, not of skill.
+    """
+    scored = [
+        (direction, _mean(static_baseline_returns(grades, direction)))
+        for direction in STATIC_DIRECTIONS
+        if static_baseline_returns(grades, direction)
+    ]
+    if not scored:
+        return None, None
+    return max(scored, key=lambda pair: pair[1])
+
+
 def score_person(
     person: str,
     outcomes: Iterable,
@@ -102,6 +146,19 @@ def score_person(
     excesses = [g.excess_return for g in grades if g.excess_return is not None]
     direction_deltas = [g.signed_return - g.null_return for g in grades]
 
+    static_direction, static_edge = best_static_baseline(grades)
+    benchmarked = [g for g in grades if g.excess_return is not None]
+    skill_deltas = (
+        [
+            g.excess_return - static
+            for g, static in zip(
+                benchmarked, static_baseline_returns(grades, static_direction), strict=True
+            )
+        ]
+        if static_direction
+        else []
+    )
+
     return PersonScore(
         person=person,
         n=len(grades),
@@ -115,6 +172,10 @@ def score_person(
         direction_edge_ci=bootstrap_ci(direction_deltas, seed=seed),
         benchmark_edge=_mean(excesses) if excesses else None,
         benchmark_edge_ci=bootstrap_ci(excesses, seed=seed) if excesses else None,
+        best_static_direction=static_direction,
+        best_static_edge=static_edge,
+        skill_edge=_mean(skill_deltas) if skill_deltas else None,
+        skill_edge_ci=bootstrap_ci(skill_deltas, seed=seed) if skill_deltas else None,
         n_with_benchmark=len(excesses),
         long_share=_mean(1.0 if g.direction == "long" else 0.0 for g in grades),
         insufficient_sample=len(grades) < min_sample,
