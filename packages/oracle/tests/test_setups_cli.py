@@ -249,6 +249,20 @@ def test_an_unrecognised_reject_reason_falls_back_to_other(tmp_path):
     assert record["reason"] == setups_cli.REASON_OTHER
 
 
+def test_the_summary_names_every_verdict_triage_can_return(tmp_path):
+    """Regression: the summary used to hand-list verdict names, drifted when the vocabulary
+    changed, and was marked no-cover — so nothing caught it until it raised KeyError at the end
+    of a real session. Deriving the line from the counts makes drift impossible."""
+    counts = setups_cli.triage(
+        [], decisions_path=tmp_path / "d.jsonl", vault_path=None,
+        input_fn=lambda _: "", out=lambda *_: None,
+    )
+    line = setups_cli.format_counts(counts)
+    assert counts, "triage must report a count per verdict"
+    for verdict in counts:
+        assert verdict in line
+
+
 def test_archive_is_recorded_without_a_reason(tmp_path):
     """Archive is suppression, explicitly not judgment — so there is nothing to explain."""
     counts, record = _run(["x"], _candidate(), tmp_path)

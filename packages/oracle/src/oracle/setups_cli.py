@@ -397,6 +397,17 @@ def triage(candidates, *, decisions_path, vault_path, input_fn=input, out=print)
     return counts
 
 
+def format_counts(counts: dict[str, int]) -> str:
+    """The end-of-session summary, derived from the counts rather than hand-listing verdicts.
+
+    Hand-listing is exactly what broke: the line named `skipped` explicitly, the vocabulary
+    changed under it, and a ``# pragma: no cover`` meant nothing caught the drift until it
+    raised ``KeyError`` at the end of a real triage session. Deriving it means adding a verdict
+    can never leave the summary behind.
+    """
+    return " · ".join(f"{verdict} {count}" for verdict, count in counts.items())
+
+
 _REASONS = {"t": REASON_TRADE, "v": REASON_VIEW, "o": REASON_OTHER}
 
 
@@ -476,8 +487,7 @@ def main(argv: list[str] | None = None) -> int:
 
     counts = triage(  # pragma: no cover - interactive
         queue, decisions_path=DEFAULT_DECISIONS, vault_path=args.vault_note)
-    print(f"\napproved {counts[APPROVED]} · skipped {counts[SKIPPED]} · "  # pragma: no cover
-          f"archived {counts[ARCHIVED]}")
+    print("\n" + format_counts(counts))
     return 0
 
 
