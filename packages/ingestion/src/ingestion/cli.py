@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 
+from ingestion.env import load_env
 from ingestion.roster import (
     DEFAULT_MAX_AGE_DAYS,
     DEFAULT_MAX_VIDEOS,
@@ -15,6 +16,7 @@ from ingestion.roster import (
 
 
 def roster_main(argv: list[str] | None = None) -> int:
+    load_env()
     parser = argparse.ArgumentParser(prog="ingest-roster",
                                      description="Ingest transcripts for all active roster channels.")
     parser.parse_args(argv)
@@ -25,6 +27,7 @@ def roster_main(argv: list[str] | None = None) -> int:
 
 
 def channel_main(argv: list[str] | None = None) -> int:
+    load_env()
     parser = argparse.ArgumentParser(prog="ingest-channel",
                                      description="Ingest transcripts for a single YouTube channel.")
     parser.add_argument("channel", help="@handle, channel id (UC...), or full channel URL")
