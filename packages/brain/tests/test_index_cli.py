@@ -9,6 +9,8 @@ import json
 import numpy as np
 import pytest
 
+from core.canon import Registry
+
 from brain.index_cli import DEFAULT_BATCH, index_all, main
 from brain.vector_store import connect, count, search
 
@@ -136,6 +138,61 @@ class TestAssetsFromStanceFile:
 
         row = conn.execute("SELECT assets FROM chunks LIMIT 1").fetchone()
         assert row[0] == "BTC,ETH"
+
+    def test_assets_are_canonicalized_before_being_stored(self, data_root):
+        """The retrieval side canonicalizes both the query asset and the stance asset via
+        `resolve_asset` (retrieve.py:157,162), but the index stored `s.asset` RAW — so a
+        chunk tagged 'Gold' never matched a query canonicalized to 'GOLD'
+        (vector_store.py:150 does a LIKE on the literal column). Measured on the real
+        corpus: 13 collision groups incl. GOLD/Gold, SILVER/Silver, ALTCOINS/altcoins.
+        This was invisible only because 98% of chunks had EMPTY assets and the pre-filter
+        fails open on empty — as the column populates, those chunks become selectively
+        unreachable instead."""
+        _write_transcript(data_root, "youtube", "vid1", "Cowen", "hello world")
+        _write_stance_file(data_root, "youtube", "vid1", ["Gold", "btc"])
+        conn = connect(data_root / "index.db")
+        registry = Registry(assets={"gold": "GOLD", "btc": "BTC"})
+
+        index_all(
+            transcripts_root=data_root / "transcripts",
+            stances_root=data_root / "stances",
+            conn=conn, embedder=_FakeEmbedder(), registry=registry,
+        )
+
+        row = conn.execute("SELECT assets FROM chunks LIMIT 1").fetchone()
+        assert row[0] == "GOLD,BTC"
+
+    def test_canonicalization_dedupes_labels_that_collapse_to_one_asset(self, data_root):
+        """'Gold' and 'GOLD' in the same transcript must not produce a duplicated column."""
+        _write_transcript(data_root, "youtube", "vid1", "Cowen", "hello world")
+        _write_stance_file(data_root, "youtube", "vid1", ["Gold", "GOLD"])
+        conn = connect(data_root / "index.db")
+
+        index_all(
+            transcripts_root=data_root / "transcripts",
+            stances_root=data_root / "stances",
+            conn=conn, embedder=_FakeEmbedder(),
+            registry=Registry(assets={"gold": "GOLD"}),
+        )
+
+        row = conn.execute("SELECT assets FROM chunks LIMIT 1").fetchone()
+        assert row[0] == "GOLD"
+
+    def test_unresolvable_asset_is_kept_verbatim_not_dropped(self, data_root):
+        """An unknown label must still be indexed — `resolve_asset` returns it unchanged
+        and the chunk stays reachable. Dropping it would silently orphan evidence."""
+        _write_transcript(data_root, "youtube", "vid1", "Cowen", "hello world")
+        _write_stance_file(data_root, "youtube", "vid1", ["WEIRDTHING"])
+        conn = connect(data_root / "index.db")
+
+        index_all(
+            transcripts_root=data_root / "transcripts",
+            stances_root=data_root / "stances",
+            conn=conn, embedder=_FakeEmbedder(), registry=Registry(),
+        )
+
+        row = conn.execute("SELECT assets FROM chunks LIMIT 1").fetchone()
+        assert row[0] == "WEIRDTHING"
 
     def test_missing_stance_file_yields_empty_assets_not_an_error(self, data_root):
         _write_transcript(data_root, "youtube", "vid1", "Cowen", "hello world")

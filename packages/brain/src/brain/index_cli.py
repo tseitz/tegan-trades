@@ -20,6 +20,8 @@ import json
 import time
 from pathlib import Path
 
+from core.canon import Registry, load_registry, resolve_asset
+
 from brain import stance_store as store_mod
 from brain import vector_store as store
 from brain.chunk import chunk_transcript
@@ -32,12 +34,24 @@ TRANSCRIPTS_ROOT = _REPO_ROOT / "data" / "transcripts"
 DEFAULT_BATCH = 64
 
 
-def _read_assets(platform: str, source_id: str, stances_root: Path) -> list[str]:
+def _read_assets(platform: str, source_id: str, stances_root: Path,
+                 registry: Registry) -> list[str]:
+    """Canonical asset labels for the chunk pre-filter.
+
+    Canonicalizing here is load-bearing, not cosmetic. `retrieve.py` canonicalizes BOTH
+    the query asset (:157) and the stance asset (:162) through `resolve_asset`, and
+    `vector_store.py:150` matches the stored column with a literal LIKE — so storing the
+    raw `s.asset` meant a chunk tagged 'Gold' was unreachable from a query resolved to
+    'GOLD'. The real corpus has 13 such collision groups (GOLD/Gold, SILVER/Silver,
+    ALTCOINS/altcoins/alts, ...). An unresolvable label is returned unchanged by
+    `resolve_asset`, so unknown assets stay indexed rather than being dropped.
+    """
     if not store_mod.exists(platform, source_id, stances_root):
         return []
     stances = store_mod.load_stances(platform, source_id, stances_root)
-    # dict.fromkeys dedupes while preserving first-seen order; set() would not.
-    return list(dict.fromkeys(s.asset for s in stances))
+    # dict.fromkeys dedupes while preserving first-seen order; set() would not. Dedupe
+    # happens AFTER resolving, so 'Gold' and 'GOLD' collapse to a single entry.
+    return list(dict.fromkeys(resolve_asset(s.asset, registry)[0] for s in stances))
 
 
 def index_all(
@@ -46,6 +60,7 @@ def index_all(
     stances_root: Path | None = None,
     conn=None,
     embedder: Embedder | None = None,
+    registry: Registry | None = None,
     rebuild: bool = False,
     limit: int | None = None,
     batch_size: int = DEFAULT_BATCH,
@@ -61,6 +76,8 @@ def index_all(
     stances_root = stances_root or store_mod.DATA_ROOT
     conn = conn if conn is not None else store.connect()
     embedder = embedder or FastEmbedder()
+    # Deterministic, no network: yaml registries + a CoinGecko snapshot on disk.
+    registry = registry if registry is not None else load_registry(_REPO_ROOT / "cfg")
 
     if rebuild:
         store.clear(conn)
@@ -91,7 +108,7 @@ def index_all(
             transcripts_indexed += 1
             continue
 
-        assets = _read_assets(platform, source_id, stances_root)
+        assets = _read_assets(platform, source_id, stances_root, registry)
 
         for start in range(0, len(chunks), batch_size):
             batch = chunks[start : start + batch_size]
