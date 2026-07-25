@@ -33,6 +33,9 @@ class CorpusRow:
     summary: str
     thesis_type: str
     url: str
+    # A tuple, not a list, so the row stays genuinely immutable. Unlabeled by design — see
+    # core.levels for how a target is read out of it, and why that can decline.
+    key_levels: tuple[float, ...] = ()
 
 
 def iter_rows(registry: Registry, *, root: Path = THESES_ROOT) -> Iterator[CorpusRow]:
@@ -54,6 +57,7 @@ def iter_rows(registry: Registry, *, root: Path = THESES_ROOT) -> Iterator[Corpu
                 summary=t.get("summary", ""),
                 thesis_type=t.get("thesis_type", ""),
                 url=(t.get("source") or {}).get("url", ""),
+                key_levels=tuple(t.get("key_levels") or ()),
             )
 
 
