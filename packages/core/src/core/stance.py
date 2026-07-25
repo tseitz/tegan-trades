@@ -5,9 +5,10 @@
 `architecture.md` §D specified both tiers; Phase 2 built Calls only. Stance is what the
 Brain head reads to answer "where is my roster on ETH, and where do they disagree".
 
-Deliberately **permissive**. `TradeThesis.key_levels` has `min_length=1`, and combined
-with all-or-nothing batch validation that meant one bad item destroyed a whole video's
-extraction (13 such failures in the Phase-2 re-distill). Narrative stance has no
+Deliberately **permissive**. `TradeThesis.key_levels` used to require `min_length=1`, and
+combined with all-or-nothing batch validation that meant one bad item destroyed a whole
+video's extraction (13 such failures in the Phase-2 re-distill). That constraint has since
+been dropped for the same reason this module never had one. Narrative stance has no
 equivalent hard invariant, so only `asset`, `lean` and `rationale` are required and
 `parse_stances` validates **each item independently** — a malformed stance is dropped
 and reported, never taking its siblings with it.

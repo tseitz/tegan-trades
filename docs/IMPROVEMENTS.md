@@ -11,7 +11,20 @@ be a problem; revisit if it bites).
 
 ---
 
-## 1. Levels are not the product — sentiment and trust are · `DECIDED`
+## 1. Levels are not the product — sentiment and trust are · `PARTLY DONE`
+
+**Done:** `min_length=1` is dropped, the prompt now says levels are optional and forbids
+inventing one, and `TradeThesis` is distinguished from a lean by its `invalidation` alone.
+
+**Residual: the existing corpus was extracted under the old prompt.** All 3,427 stored theses
+were produced by a model that had to supply a level, so the fabricated ones are still in
+`data/theses/`. The fix only applies to what gets extracted from here. Options: live with it and
+let the corpus turn over naturally, or re-distill — which is a full-corpus LLM pass, so read §9
+first. Do NOT re-distill just for this; the levels were never the product.
+
+---
+
+## 1b. Original rationale, kept for context
 
 **The call (2026-07-25):** we went too hard, too fast at extracting exact price levels from
 videos. What the roster is actually *for* is **sentiment** — direction and conviction — plus a
@@ -161,12 +174,31 @@ query-prefix theory is disproven.
 
 ---
 
-## 9. Extraction runs on the expensive path · `OPEN`
+## 9. Audit extraction efficiency before considering the API · `OPEN`
 
-~90% of every `claude -p` extraction call is harness overhead; the direct API is **8–15× cheaper**
-(~$26 vs ~$183 per full corpus pass). The whole extraction spine was built on the expensive path.
+**First, a correction to how this was originally framed.** "The direct API is 8–15× cheaper
+(~$26 vs ~$183 per pass)" is true *per token* and misleading as a decision rule. `claude -p`
+runs on the existing **$100/month Max subscription — marginal cost zero**. API tokens are
+**incremental cash on top of that**. So switching billing paths only wins where volume genuinely
+exceeds what the subscription carries. A full 666-transcript pass might; a freshness loop of
+5–20 new videos a day almost certainly does not.
 
-Worth fixing before any bulk re-extraction — including the methodology pass in §3.
+**What matters on *both* paths is waste**, because burning allowance still risks cap hits — and
+a usage cap silently killing an entire sweep has already happened once (`8365729`).
+
+**The audit, before any billing change or bulk pass:**
+- **Where does the ~90% harness overhead actually go?** It's the headline number and nobody has
+  broken it down. Some may be avoidable inside `claude -p`.
+- **We send whole transcripts, and the corpus is 5.26% signal.** Extractive pre-filtering before
+  the LLM call would cut input dramatically on *either* path, and it's the single biggest lever.
+  Must stay extractive — abstractive summarizing would destroy `asset_heard`, `watching` and
+  citation integrity.
+- **Is the system prompt cached across calls?** It's identical every time.
+- **Do retries and re-distills resend transcripts unnecessarily?**
+- **Measure the real daily volume of a freshness loop (§6)** before pricing anything.
+
+**Decision rule:** stay on the subscription unless the measured volume can't fit in it. Optimize
+the waste regardless — it pays off either way.
 
 ---
 

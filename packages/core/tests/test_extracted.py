@@ -31,9 +31,22 @@ def test_trade_requires_invalidation():
         ThesisExtraction.model_validate({"theses": [bad]})
 
 
-def test_trade_requires_nonempty_key_levels():
+def test_a_trade_without_levels_is_valid():
+    """Levels were once required, and the constraint manufactured data: 24% of live readings
+    carried levels only *behind* entry (invalidations stuffed in to satisfy the schema), and it
+    rejected 13 whole-video extractions during a re-distill. What these transcripts reliably
+    contain is sentiment; a level is a bonus when someone actually stated one."""
+    ex = ThesisExtraction.model_validate({"theses": [{**TRADE, "key_levels": []}]})
+    assert ex.theses[0].key_levels == []
+    assert ex.theses[0].thesis_type == "trade"
+
+
+def test_a_trade_still_requires_an_invalidation():
+    """That is what separates a trade from a lean now — and free text can say 'wrong if the
+    trend breaks' honestly, where a fabricated float cannot."""
+    without = {k: v for k, v in TRADE.items() if k != "invalidation"}
     with pytest.raises(ValidationError):
-        ThesisExtraction.model_validate({"theses": [{**TRADE, "key_levels": []}]})
+        ThesisExtraction.model_validate({"theses": [without]})
 
 
 def test_lean_without_levels_is_valid():

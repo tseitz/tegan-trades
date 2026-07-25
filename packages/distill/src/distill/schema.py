@@ -4,7 +4,7 @@ from __future__ import annotations
 # Code's --json-schema validator runs in a strict JSON-Schema subset that rejects
 # Pydantic's `discriminator` keyword ("strict mode: unknown keyword: discriminator"),
 # so the trade/macro_lean discriminated union can't be expressed here directly. This
-# schema only guides the model's shape; the real trade-requires-invalidation+key_levels
+# schema only guides the model's shape; the real trade-requires-invalidation
 # invariant is enforced afterward by ThesisExtraction.model_validate() in extract.py,
 # which retries on violation exactly like a malformed-JSON response.
 FLAT_THESIS_SCHEMA = {

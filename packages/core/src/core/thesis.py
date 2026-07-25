@@ -33,9 +33,22 @@ class _Extracted(BaseModel):
 
 
 class TradeThesis(_Extracted):
+    """A specific call. Distinguished from a lean by having a stated invalidation, not by levels.
+
+    ``key_levels`` used to require at least one entry, and that constraint manufactured data:
+    measured on the live corpus, **388 of 1,621 readings (24%) carried levels only *behind*
+    entry** — invalidations and stops stuffed into the field to satisfy the schema — and it
+    rejected 13 whole-video extractions outright during a re-distill because one call in each
+    had no number attached.
+
+    What these transcripts reliably contain is sentiment and conviction; levels are a bonus when
+    someone happens to state one. So levels are now optional and the prompt forbids inventing
+    them. ``invalidation`` stays required, because free text can say "wrong if the trend breaks"
+    honestly where a fabricated float cannot.
+    """
     thesis_type: Literal["trade"] = "trade"
     invalidation: str                                   # required — ICT "know your exit"
-    key_levels: list[float] = Field(min_length=1)       # required, non-empty
+    key_levels: list[float] = Field(default_factory=list)
 
 
 class MacroLeanThesis(_Extracted):

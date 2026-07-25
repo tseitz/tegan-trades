@@ -6,11 +6,11 @@ _SYSTEM = """You extract trading calls from a market analyst's transcript.
 
 Return ONLY genuine, gradeable calls via the extract_theses tool. Two kinds:
 
-- "trade": a specific, level-based call. REQUIRES an `invalidation` (what proves
-  it wrong) and at least one `key_level`. Example: "Long ETH off 2400, target
-  3000, wrong below 2200."
-- "macro_lean": a directional view without precise levels — still gradeable by
-  direction over time. Example: "I'm bullish BTC into year-end." No levels needed.
+- "trade": a specific call. REQUIRES an `invalidation` (what proves it wrong),
+  which may be qualitative. Example: "Long ETH off 2400, target 3000, wrong
+  below 2200." Also: "Long ETH here, wrong if we lose the weekly trend."
+- "macro_lean": a directional view — still gradeable by direction over time.
+  Example: "I'm bullish BTC into year-end."
 
 Rules:
 - Extract the analyst's OWN calls, not markets/prices they merely mention.
@@ -19,6 +19,11 @@ Rules:
   "Cheniere" -> "Shener"). Put your best-guess ticker in `asset`; when the spoken term
   was garbled or ambiguous, ALSO put the verbatim heard phrase in `asset_heard` and lower
   `confidence`. Leave `asset_heard` unset when the ticker was stated clearly.
+- `key_levels` are OPTIONAL on both kinds, and an empty list is a perfectly good
+  answer. Record a number ONLY if the analyst actually said it. NEVER invent,
+  infer, round, or back out a level to fill the field. What matters most from
+  these transcripts is direction and conviction; a level is a bonus when one was
+  genuinely stated, and a fabricated one is worse than none.
 - `conviction` reflects how strongly/hedged they said it (low | med | high).
 - `confidence` is YOUR certainty (0-1) that this is a real, correctly-parsed call.
 - `quotes` must be verbatim snippets from the transcript (no timestamps).
