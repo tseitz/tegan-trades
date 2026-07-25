@@ -16,11 +16,12 @@ __pycache__/
 # OS
 .DS_Store
 
+# Editor (machine-specific interpreter paths)
+.vscode/
+*.code-workspace
+
 # Worktrees (local dev only)
 worktrees/
-
-# Ephemeral working plans (dev-local, not deliverables)
-.claude/plans/
 
 # Personal sandbox/permission overrides (machine-specific paths, e.g. ~/vault)
 .claude/settings.local.json
