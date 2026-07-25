@@ -75,6 +75,30 @@ def test_create_raises_on_nonzero_exit(monkeypatch):
                                      tool_choice={}, messages=[{"role": "user", "content": "u"}])
 
 
+def test_nonzero_exit_error_includes_stdout_when_stderr_is_empty(monkeypatch):
+    """The 2026-07-24 overnight sweep lost its cause this way: 466 transcripts failed
+    as bare `exit 1:` with nothing after the colon, because `claude -p` reports the
+    real error as JSON on STDOUT and this path only captured stderr. Both streams
+    must survive into the exception or a cap/auth failure is undiagnosable."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    run = lambda *a, **k: _FakeProc(
+        returncode=1, stderr="",
+        stdout='{"is_error": true, "result": "Claude usage limit reached"}')
+    with pytest.raises(ClaudeCodeCallFailed, match="Claude usage limit reached"):
+        _client(run).messages.create(model="m", max_tokens=1, system="s", tools=[],
+                                     tool_choice={}, messages=[{"role": "user", "content": "u"}])
+
+
+def test_nonzero_exit_error_keeps_stderr_too(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    run = lambda *a, **k: _FakeProc(returncode=1, stderr="boom", stdout="envelope text")
+    with pytest.raises(ClaudeCodeCallFailed) as excinfo:
+        _client(run).messages.create(model="m", max_tokens=1, system="s", tools=[],
+                                     tool_choice={}, messages=[{"role": "user", "content": "u"}])
+    assert "boom" in str(excinfo.value)
+    assert "envelope text" in str(excinfo.value)
+
+
 def test_create_raises_on_timeout(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 

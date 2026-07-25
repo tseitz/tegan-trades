@@ -143,6 +143,56 @@ def test_limit_applies_to_sorted_paths_deterministically(tmp_path):
     assert first_run == ["youtube/vid00000000", "youtube/vid00000001"]
 
 
+def test_circuit_breaker_aborts_after_consecutive_failures(tmp_path):
+    """A usage-cap hit fails every remaining call instantly. On 2026-07-24 that burned
+    37 minutes and 466 useless calls before the sweep gave up on its own. Once N calls
+    fail back to back, stop — the rest are not attempted and are reported as aborted,
+    never silently counted as failures."""
+    for i in range(20):
+        _write_transcript(tmp_path, f"vid{i:08d}", "Cowen")
+
+    attempts = {"n": 0}
+
+    def always_fails(text, source, **kw):
+        attempts["n"] += 1
+        raise RuntimeError("exit 1: usage limit reached")
+
+    results = extract_all(root=tmp_path, extract=always_fails, extracted_at="t",
+                          max_workers=1, max_consecutive_failures=3)
+    r = results[0]
+    assert len(r.failed) + len(r.aborted) == 20, "every transcript must be accounted for"
+    assert len(r.failed) <= 6, f"breaker should trip early, got {len(r.failed)} failures"
+    assert len(r.aborted) >= 14
+    assert attempts["n"] <= 6, "aborted transcripts must not call the LLM at all"
+
+
+def test_circuit_breaker_counter_resets_on_success(tmp_path):
+    """Only *consecutive* failures trip the breaker. Intermittent failures interleaved
+    with successes are normal and must not abort a healthy run."""
+    for i in range(12):
+        _write_transcript(tmp_path, f"vid{i:08d}", "Cowen")
+
+    def every_third_fails(text, source, **kw):
+        if int(source.transcript_ref[-1]) % 3 == 2:
+            raise RuntimeError("transient")
+        return _one_stance(source)
+
+    results = extract_all(root=tmp_path, extract=every_third_fails, extracted_at="t",
+                          max_workers=1, max_consecutive_failures=3)
+    r = results[0]
+    assert r.aborted == [], "breaker must not trip when failures are non-consecutive"
+    assert len(r.extracted) + len(r.failed) == 12
+
+
+def test_format_summary_reports_aborted_run():
+    r = ExtractResult(person="Cowen")
+    r.failed.append(("a", "exit 1: usage limit reached"))
+    r.aborted.append("b")
+    out = format_summary([r])
+    assert "aborted" in out.lower()
+    assert "1 aborted" in out
+
+
 def test_format_summary_has_totals_and_dropped_marker():
     r = ExtractResult(person="Cowen")
     r.extracted.append("a")

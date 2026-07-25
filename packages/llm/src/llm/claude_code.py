@@ -84,7 +84,17 @@ class ClaudeCodeClient:
             raise ClaudeCodeCallFailed(f"timed out after {self._timeout}s") from exc
 
         if proc.returncode != 0:
-            raise ClaudeCodeCallFailed(f"exit {proc.returncode}: {proc.stderr[-2000:]}")
+            # `claude -p` reports its real errors (usage cap reached, auth failure) as
+            # JSON on STDOUT, not stderr. Capturing stderr alone rendered the entire
+            # 2026-07-24 overnight sweep undiagnosable: 466 transcripts logged as a bare
+            # `exit 1:` with nothing after the colon. Keep BOTH streams.
+            detail = " | ".join(
+                f"{name}: {stream[-2000:]}"
+                for name, stream in (("stderr", proc.stderr), ("stdout", proc.stdout))
+                if stream and stream.strip()
+            )
+            raise ClaudeCodeCallFailed(
+                f"exit {proc.returncode}: {detail or 'no output on either stream'}")
 
         envelope = json.loads(proc.stdout)
         if envelope.get("is_error"):
