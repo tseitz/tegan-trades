@@ -210,3 +210,53 @@ class TestSearchFilters:
         hits = search(conn, _unit_vector(1.0), k=10, person="Alice", assets=["BTC"])
 
         assert {h.chunk_id for h in hits} == {chunks[0].id}
+
+
+class TestUnknownAssetsAreNotSilentlyExcluded:
+    """A chunk whose transcript has not been stance-extracted yet has an EMPTY assets
+    column. Excluding those from an asset-filtered search makes most of the corpus
+    invisible whenever extraction lags indexing — which is the normal state, since
+    indexing is free and extraction costs tokens. `assets` is explicitly a coarse
+    pre-filter, not a claim about the chunk, so "unknown" must mean "keep", not "drop".
+    """
+
+    def _seed(self, conn):
+        tagged = _chunk("youtube/tagged", 0, "btc analysis")
+        untagged = _chunk("youtube/untagged", 0, "also btc analysis")
+        other = _chunk("youtube/other", 0, "eth analysis")
+        upsert_chunks(conn, [tagged], person="Alice", published_at="2026-06-01",
+                      assets=["BTC"], vectors=np.stack([_unit_vector(1.0)]))
+        upsert_chunks(conn, [untagged], person="Bob", published_at="2026-06-01",
+                      assets=[], vectors=np.stack([_unit_vector(1.1)]))
+        upsert_chunks(conn, [other], person="Carol", published_at="2026-06-01",
+                      assets=["ETH"], vectors=np.stack([_unit_vector(1.2)]))
+        return tagged, untagged, other
+
+    def test_a_chunk_with_no_assets_survives_an_asset_filter(self, tmp_path):
+        conn = connect(tmp_path / "index.db")
+        tagged, untagged, other = self._seed(conn)
+
+        hits = search(conn, _unit_vector(1.0), k=10, assets=["BTC"])
+
+        ids = {h.chunk_id for h in hits}
+        assert untagged.id in ids, "un-extracted transcripts must not vanish"
+        assert tagged.id in ids
+
+    def test_a_chunk_tagged_with_a_different_asset_is_still_excluded(self, tmp_path):
+        """The filter must still do its job — only *unknown* is treated as keep."""
+        conn = connect(tmp_path / "index.db")
+        _tagged, _untagged, other = self._seed(conn)
+
+        hits = search(conn, _unit_vector(1.0), k=10, assets=["BTC"])
+
+        assert other.id not in {h.chunk_id for h in hits}
+
+    def test_prefix_false_positives_are_still_rejected(self, tmp_path):
+        conn = connect(tmp_path / "index.db")
+        dom = _chunk("youtube/dom", 0, "dominance")
+        upsert_chunks(conn, [dom], person="Alice", published_at="2026-06-01",
+                      assets=["BTCDOM"], vectors=np.stack([_unit_vector(1.0)]))
+
+        hits = search(conn, _unit_vector(1.0), k=10, assets=["BTC"])
+
+        assert hits == []

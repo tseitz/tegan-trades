@@ -147,8 +147,15 @@ def search(
     if assets:
         # Wrap the stored comma-list in delimiters before matching, so a query
         # for "BTC" can't false-positive against a row tagged only "BTCDOM".
-        clauses = " OR ".join("(',' || assets || ',') LIKE ?" for _ in assets)
-        where.append(f"({clauses})")
+        clauses = [" OR ".join("(',' || assets || ',') LIKE ?" for _ in assets)]
+        # An EMPTY assets column means "this transcript has no stance file yet", NOT
+        # "this transcript is about nothing". Indexing is free and stance extraction
+        # costs tokens, so extraction lagging indexing is the normal state — dropping
+        # unknowns here would make most of the corpus invisible to every asset-filtered
+        # search, silently. This column is a coarse pre-filter, never a claim about the
+        # chunk, so unknown resolves to keep-and-let-cosine-rank.
+        clauses.append("assets IS NULL OR assets = ''")
+        where.append(f"({' OR '.join(clauses)})")
         params.extend(f"%,{asset},%" for asset in assets)
 
     sql = "SELECT id, transcript_ref, person, published_at, text, vector FROM chunks"
