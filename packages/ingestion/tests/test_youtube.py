@@ -242,3 +242,38 @@ def test_fetch_transcript_proxied_block_retries_without_abort(monkeypatch):
         raise AssertionError("proxied block should not raise TranscriptBlocked")
     except RequestBlocked:
         pass
+
+
+# ── proxy credential validation ─────────────────────────────────────────────
+
+def test_proxy_config_rejects_credentials_containing_the_connection_string(monkeypatch):
+    """Pasting Webshare's '<user>:<pass>@p.webshare.io:80' whole leaves an '@' in the
+    password. That makes the proxy URL unparseable, requests silently falls back to a
+    DIRECT fetch, and YouTube blocks your own IP — the exact failure the proxy exists to
+    prevent. Fail loudly instead."""
+    import pytest as _pytest
+
+    from ingestion.youtube import ProxyCredentialError, _proxy_config
+
+    monkeypatch.setenv("WEBSHARE_PROXY_USERNAME", "abcd1234")
+    monkeypatch.setenv("WEBSHARE_PROXY_PASSWORD", "secretvalue@p")
+    with _pytest.raises(ProxyCredentialError) as exc:
+        _proxy_config()
+    assert "@" in str(exc.value)
+    assert "p.webshare.io" in str(exc.value)
+
+
+def test_proxy_config_accepts_clean_credentials(monkeypatch):
+    from ingestion.youtube import _proxy_config
+
+    monkeypatch.setenv("WEBSHARE_PROXY_USERNAME", "abcd1234")
+    monkeypatch.setenv("WEBSHARE_PROXY_PASSWORD", "cleanpassword")
+    assert _proxy_config() is not None
+
+
+def test_no_credentials_is_still_the_unproxied_path(monkeypatch):
+    from ingestion.youtube import _proxy_config
+
+    monkeypatch.delenv("WEBSHARE_PROXY_USERNAME", raising=False)
+    monkeypatch.delenv("WEBSHARE_PROXY_PASSWORD", raising=False)
+    assert _proxy_config() is None

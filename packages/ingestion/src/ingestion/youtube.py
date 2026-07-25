@@ -56,18 +56,42 @@ def extract_video_id(url: str) -> str:
     raise ValueError(f"Could not extract a YouTube video id from: {url}")
 
 
+class ProxyCredentialError(RuntimeError):
+    """Proxy credentials are present but unusable."""
+
+
+# Webshare proxy credentials are alphanumeric. Any of these means something else got
+# pasted — almost always the dashboard's "<user>:<pass>@p.webshare.io:80" connection
+# string rather than the password field alone.
+_ILLEGAL_CREDENTIAL_CHARS = "@:/ "
+
+
 def _proxy_config() -> WebshareProxyConfig | None:
     """Build a Webshare residential proxy config from env vars, or None.
 
     Opt-in: set WEBSHARE_PROXY_USERNAME + WEBSHARE_PROXY_PASSWORD to route
     transcript fetches through rotating residential IPs (needed when YouTube
     IP-blocks the caller's own IP). Absent → direct, un-proxied fetch.
+
+    Malformed credentials raise rather than degrade. An unparseable proxy URL makes
+    ``requests`` fall back to a **direct** connection without a word, so a typo silently
+    turns "route around the block" into "hammer my own IP until YouTube blocks it" — which
+    is precisely how the checkonchain backfill got blocked on 2026-07-24.
     """
     user = os.environ.get("WEBSHARE_PROXY_USERNAME")
     password = os.environ.get("WEBSHARE_PROXY_PASSWORD")
-    if user and password:
-        return WebshareProxyConfig(proxy_username=user, proxy_password=password)
-    return None
+    if not (user and password):
+        return None
+    found = sorted({c for c in _ILLEGAL_CREDENTIAL_CHARS if c in user or c in password})
+    if found:
+        raise ProxyCredentialError(
+            f"WEBSHARE_PROXY_* contains {found!r}, which Webshare credentials never do. "
+            "This is usually the dashboard connection string "
+            "'<user>:<pass>@p.webshare.io:80' pasted whole — keep only the password part. "
+            "Refusing to continue: an unusable proxy silently falls back to a direct "
+            "fetch and gets your own IP blocked."
+        )
+    return WebshareProxyConfig(proxy_username=user, proxy_password=password)
 
 
 def _build_api() -> YouTubeTranscriptApi:
