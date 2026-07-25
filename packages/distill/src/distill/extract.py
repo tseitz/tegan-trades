@@ -44,8 +44,9 @@ def extract_theses(
     extracted_at: str | None = None,
 ) -> list[Thesis]:
     if client is None:  # pragma: no cover - constructs the real subscription-backed client
-        from distill.cli_backend import ClaudeCodeClient
-        client = ClaudeCodeClient()
+        from llm.claude_code import ClaudeCodeClient
+        from distill.schema import FLAT_THESIS_SCHEMA
+        client = ClaudeCodeClient(json_schema=FLAT_THESIS_SCHEMA)
     extracted_at = extracted_at or _now()
     system, user = build_prompt(transcript_text, source)
 

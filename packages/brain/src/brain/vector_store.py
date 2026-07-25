@@ -1,0 +1,179 @@
+"""SQLite-backed vector store for transcript chunk embeddings.
+
+No vector database. 666 transcripts is roughly 15k chunks x 384 dims ≈ 23MB;
+brute-force cosine similarity in numpy over that many rows is sub-millisecond,
+so SQLite (for storage + cheap person/date/asset pre-filtering) plus a numpy
+matrix-multiply (for ranking) is simpler than adding a dependency like
+`sqlite-vec` — that would only start to earn its keep past ~100k chunks,
+which this corpus is nowhere near.
+
+Vectors are stored as raw float32 BLOBs and are assumed to already be
+L2-normalized by the embedder (see `brain.embed`) — `search` relies on that
+to compute cosine similarity as a plain dot product, with no renormalization.
+"""
+from __future__ import annotations
+
+import sqlite3
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+
+from brain.chunk import Chunk
+
+# Repo root: src/brain/vector_store.py -> src/brain -> src -> brain -> packages -> <root>
+DB_PATH = Path(__file__).resolve().parents[4] / "data" / "brain" / "index.db"
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS chunks (
+  id             TEXT PRIMARY KEY,
+  transcript_ref TEXT NOT NULL,
+  person         TEXT NOT NULL,
+  published_at   TEXT,
+  assets         TEXT,
+  idx            INTEGER NOT NULL,
+  start          INTEGER NOT NULL,
+  end            INTEGER NOT NULL,
+  text           TEXT NOT NULL,
+  vector         BLOB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chunks_transcript_ref ON chunks(transcript_ref);
+CREATE INDEX IF NOT EXISTS idx_chunks_person ON chunks(person);
+CREATE INDEX IF NOT EXISTS idx_chunks_published_at ON chunks(published_at);
+"""
+
+
+@dataclass(frozen=True)
+class SearchHit:
+    chunk_id: str
+    transcript_ref: str
+    person: str
+    published_at: str | None
+    text: str
+    score: float
+
+
+def connect(path: Path = DB_PATH) -> sqlite3.Connection:
+    """Open (creating if needed) the index DB, ensuring parent dirs and schema exist."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.executescript(_SCHEMA)
+    conn.commit()
+    return conn
+
+
+def _assets_column(assets: list[str] | None) -> str:
+    """Comma-join asset tickers for storage.
+
+    IMPORTANT: a chunk is a window of narrative text, not a claim about any one
+    asset — a chunk may mention several assets stanced in its transcript, or
+    none at all. This column holds every asset stanced *anywhere in that
+    transcript* (see `index_cli`), denormalized onto each of its chunks purely
+    as a coarse pre-filter for `search`. It must never be read as "this chunk
+    is about asset X" — only as "this chunk's transcript also touches asset X
+    somewhere, so don't filter it out before ranking."
+    """
+    return ",".join(assets) if assets else ""
+
+
+def upsert_chunks(
+    conn: sqlite3.Connection,
+    chunks: list[Chunk],
+    *,
+    person: str,
+    published_at: str | None,
+    assets: list[str] | None,
+    vectors: np.ndarray,
+) -> int:
+    """Insert or replace chunk rows (with their vectors) into the store.
+
+    Chunk ids are content-addressed (see `brain.chunk`), so two byte-identical
+    chunks within one transcript legitimately share an id. `INSERT OR REPLACE`
+    makes both re-indexing and same-run duplicates idempotent rather than
+    raising an integrity error.
+    """
+    assets_col = _assets_column(assets)
+    rows = [
+        (
+            c.id, c.transcript_ref, person, published_at, assets_col,
+            c.index, c.start, c.end, c.text,
+            np.asarray(vectors[i], dtype=np.float32).tobytes(),
+        )
+        for i, c in enumerate(chunks)
+    ]
+    conn.executemany(
+        """INSERT OR REPLACE INTO chunks
+           (id, transcript_ref, person, published_at, assets, idx, start, end, text, vector)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        rows,
+    )
+    conn.commit()
+    return len(rows)
+
+
+def count(conn: sqlite3.Connection) -> int:
+    return conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+
+
+def clear(conn: sqlite3.Connection) -> None:
+    conn.execute("DELETE FROM chunks")
+    conn.commit()
+
+
+def search(
+    conn: sqlite3.Connection,
+    query_vector: np.ndarray,
+    *,
+    k: int = 10,
+    person: str | None = None,
+    since: str | None = None,
+    assets: list[str] | None = None,
+) -> list[SearchHit]:
+    """Rank chunks by cosine similarity to `query_vector`, after composing any
+    given filters with AND. Filters narrow the SQL row set *before* ranking;
+    the actual similarity math happens once in numpy over whatever remains.
+    """
+    where: list[str] = []
+    params: list[object] = []
+
+    if person is not None:
+        where.append("person = ?")
+        params.append(person)
+    if since is not None:
+        # ISO-8601 date strings compare correctly as plain strings — the same
+        # convention the rest of this repo uses for date filtering.
+        where.append("published_at >= ?")
+        params.append(since)
+    if assets:
+        # Wrap the stored comma-list in delimiters before matching, so a query
+        # for "BTC" can't false-positive against a row tagged only "BTCDOM".
+        clauses = " OR ".join("(',' || assets || ',') LIKE ?" for _ in assets)
+        where.append(f"({clauses})")
+        params.extend(f"%,{asset},%" for asset in assets)
+
+    sql = "SELECT id, transcript_ref, person, published_at, text, vector FROM chunks"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+
+    rows = conn.execute(sql, params).fetchall()
+    if not rows:
+        return []
+
+    ids, refs, persons, published_ats, texts, blobs = zip(*rows)
+    matrix = np.stack([np.frombuffer(blob, dtype=np.float32) for blob in blobs])
+    # Every stored vector (and the query vector) is already L2-normalized by
+    # brain.embed, so this dot product IS cosine similarity — no renormalizing.
+    scores = matrix @ np.asarray(query_vector, dtype=np.float32)
+
+    top_k = np.argsort(-scores)[:k]
+    return [
+        SearchHit(
+            chunk_id=ids[i],
+            transcript_ref=refs[i],
+            person=persons[i],
+            published_at=published_ats[i],
+            text=texts[i],
+            score=float(scores[i]),
+        )
+        for i in top_k
+    ]

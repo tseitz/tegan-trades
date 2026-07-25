@@ -8,7 +8,7 @@ from distill.extract import extract_theses
 pytestmark = pytest.mark.integration
 
 # Real calls go through `claude -p` (Max subscription auth), not ANTHROPIC_API_KEY —
-# see cli_backend.ClaudeCodeClient. Only the CLI itself needs to be present/logged in.
+# see llm.claude_code.ClaudeCodeClient. Only the CLI itself needs to be present/logged in.
 _NO_CLAUDE_CLI = shutil.which("claude") is None
 
 

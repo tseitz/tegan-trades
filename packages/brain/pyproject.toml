@@ -1,0 +1,38 @@
+[project]
+name = "brain"
+version = "0.1.0"
+description = "Context tier: narrative stance extraction, retrieval, and synthesis over the transcript corpus."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "core",
+    "llm",
+    "pydantic>=2",
+    "pyyaml>=6",
+    # Local embeddings: ONNX runtime, no torch. Vectors are brute-forced in numpy —
+    # 666 transcripts is ~15k chunks x 384 dims, which is sub-millisecond. A vector
+    # database would earn its dependency at 100k+, not here.
+    "fastembed>=0.4",
+    "numpy>=2",
+]
+
+[project.scripts]
+brain = "brain.query_cli:main"
+brain-extract = "brain.cli:extract_main"
+brain-index = "brain.index_cli:main"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+core = { path = "../core", editable = true }
+llm = { path = "../llm", editable = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+markers = ["integration: hits the network; run explicitly"]

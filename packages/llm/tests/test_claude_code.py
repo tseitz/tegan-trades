@@ -2,16 +2,7 @@ import subprocess
 
 import pytest
 
-from distill.cli_backend import FLAT_THESIS_SCHEMA, ClaudeCodeCallFailed, ClaudeCodeClient
-
-
-def test_flat_schema_advertises_asset_heard_but_not_required():
-    item = FLAT_THESIS_SCHEMA["properties"]["theses"]["items"]
-    # The model must be told the field exists...
-    assert item["properties"]["asset_heard"]["type"] == "string"
-    # ...but it must NOT be required — the strict --json-schema subset would then
-    # force a heard-form on every call, defeating "populate only when unsure".
-    assert "asset_heard" not in item["required"]
+from llm.claude_code import ClaudeCodeCallFailed, ClaudeCodeClient
 
 
 class _FakeProc:
@@ -28,7 +19,7 @@ ENVELOPE_OK = (
 
 
 def _client(run):
-    return ClaudeCodeClient(run=run)
+    return ClaudeCodeClient(json_schema={}, run=run)
 
 
 def test_create_returns_tool_use_shaped_message(monkeypatch):
@@ -117,3 +108,27 @@ def test_create_reports_usage_equivalent_cost_to_stderr(monkeypatch, capsys):
     _client(run).messages.create(model="m", max_tokens=1, system="s", tools=[],
                                  tool_choice={}, messages=[{"role": "user", "content": "u"}])
     assert "0.12" in capsys.readouterr().err
+
+
+def test_constructing_without_json_schema_raises_type_error():
+    # Pins the required-param decision: no default schema, ever.
+    with pytest.raises(TypeError):
+        ClaudeCodeClient()
+
+
+def test_json_schema_passed_to_constructor_lands_in_argv(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    sentinel_schema = {"type": "object", "properties": {"__sentinel_marker__": {"type": "string"}}}
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        return _FakeProc(stdout=ENVELOPE_OK)
+
+    client = ClaudeCodeClient(json_schema=sentinel_schema, run=fake_run)
+    client.messages.create(model="m", max_tokens=1, system="s", tools=[], tool_choice={},
+                           messages=[{"role": "user", "content": "u"}])
+    argv = captured["argv"]
+    assert "--json-schema" in argv
+    schema_arg = argv[argv.index("--json-schema") + 1]
+    assert "__sentinel_marker__" in schema_arg

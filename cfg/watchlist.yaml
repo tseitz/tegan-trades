@@ -12,6 +12,11 @@
 #                       dormant   — feed inactive
 #                       unknown
 #
+# members: [..]  — for a multi-author feed, the people actually speaking on it. A feed is
+#                  scored and counted as ONE voice (attribution is feed-level), so anything
+#                  reporting a consensus split must label these rows or "5 bullish, 2 bearish"
+#                  gets misread as seven independent opinions.
+#
 # Seed captured 2026-07-22 from Tegan's roster; enriched same day from channel-verification research.
 
 people:
@@ -54,6 +59,7 @@ people:
     status: active
     domains: [macro, crypto]
     why: "Macro + micro flows, funding/perps, narrative rotation. Specific calls. Hosts Avi Felman & Jonah Van Bourg."
+    members: ["Avi Felman", "Jonah Van Bourg"]
     channels:
       - { platform: youtube, id: "@1000xNetwork", access: ok }
     notes: "Confirmed active, weekly, 118+ episodes (1KX Media)."
@@ -72,6 +78,7 @@ people:
     status: active
     domains: [crypto]
     why: "THE unlock — Cred + DonAlt's joint Mon/Wed/Fri livestream + weekly newsletter. Pragmatic, risk-first, no-hype HTF TA. Converts two X-only names into one transcribable feed."
+    members: ["CryptoCred", "DonAlt"]
     channels:
       - { platform: youtube, id: "UCYStZ8mMNGOVTj-Z4AbbSrQ", access: ok }
       - { platform: x, id: "CryptoCred", access: grok }

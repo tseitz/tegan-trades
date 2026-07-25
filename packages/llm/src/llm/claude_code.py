@@ -11,49 +11,6 @@ DEFAULT_TIMEOUT = 300.0
 # (see ClaudeCodeClient docstring) — just stops a runaway/looping call.
 DEFAULT_MAX_BUDGET_USD = 3.0
 
-# Deliberately flat — NOT core.thesis.ThesisExtraction.model_json_schema(). Claude
-# Code's --json-schema validator runs in a strict JSON-Schema subset that rejects
-# Pydantic's `discriminator` keyword ("strict mode: unknown keyword: discriminator"),
-# so the trade/macro_lean discriminated union can't be expressed here directly. This
-# schema only guides the model's shape; the real trade-requires-invalidation+key_levels
-# invariant is enforced afterward by ThesisExtraction.model_validate() in extract.py,
-# which retries on violation exactly like a malformed-JSON response.
-FLAT_THESIS_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "theses": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "thesis_type": {"type": "string", "enum": ["trade", "macro_lean"]},
-                    "domain": {"type": "string", "enum": ["crypto", "stock", "macro"]},
-                    "asset": {"type": "string"},
-                    "asset_heard": {"type": "string"},
-                    "direction": {"type": "string", "enum": ["long", "short", "neutral"]},
-                    "timeframe": {"type": "string",
-                                  "enum": ["scalp", "swing", "position", "macro"]},
-                    "conviction": {"type": "string", "enum": ["low", "med", "high"]},
-                    "summary": {"type": "string"},
-                    "catalyst": {"type": ["string", "null"]},
-                    "invalidation": {"type": ["string", "null"]},
-                    "key_levels": {"type": "array", "items": {"type": "number"}},
-                    "quotes": {
-                        "type": "array",
-                        "items": {"type": "object",
-                                  "properties": {"text": {"type": "string"}},
-                                  "required": ["text"]},
-                    },
-                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-                },
-                "required": ["thesis_type", "domain", "asset", "direction", "timeframe",
-                             "conviction", "summary", "confidence"],
-            },
-        }
-    },
-    "required": ["theses"],
-}
-
 
 class ClaudeCodeCallFailed(Exception):
     """The `claude -p` subprocess failed, timed out, or returned no structured output."""
@@ -88,11 +45,18 @@ class ClaudeCodeClient:
     def __init__(
         self,
         *,
+        json_schema: dict,
         timeout: float = DEFAULT_TIMEOUT,
         max_budget_usd: float = DEFAULT_MAX_BUDGET_USD,
         run=subprocess.run,
     ):
         self.messages = self
+        # No default — a default here would let a future caller silently get
+        # thesis-shaped (or whatever-shaped) output from an unrelated extraction.
+        # This codebase has been bitten repeatedly by silent-wrong-value bugs, so
+        # failing loudly at construction (missing required kwarg -> TypeError) is
+        # the point.
+        self._json_schema = json_schema
         self._timeout = timeout
         self._max_budget_usd = max_budget_usd
         self._run = run
@@ -107,7 +71,7 @@ class ClaudeCodeClient:
             "--model", model,
             "--output-format", "json",
             "--system-prompt", system,
-            "--json-schema", json.dumps(FLAT_THESIS_SCHEMA),
+            "--json-schema", json.dumps(self._json_schema),
             "--tools", "",
             "--max-budget-usd", str(self._max_budget_usd),
         ]
