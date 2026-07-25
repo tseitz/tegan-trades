@@ -17,6 +17,7 @@ from core.setups import (
     NotASetup,
     Setup,
     StaleAfter,
+    View,
     Zone,
     collapse,
     cross_reference,
@@ -453,9 +454,50 @@ def test_many_theses_on_one_zone_collapse_into_a_single_candidate():
     candidates = collapse(_setups_for(["Mayne", "Cred", "DonAlt", "Mayne"]))
     assert len(candidates) == 1
     assert isinstance(candidates[0], Candidate)
-    assert candidates[0].people == ("Cred", "DonAlt", "Mayne")   # deduped and sorted
+    assert set(candidates[0].people) == {"Cred", "DonAlt", "Mayne"}   # deduped
     assert candidates[0].agreement == 3
     assert len(candidates[0].thesis_ids) == 4
+
+
+# ── dates on candidates ─────────────────────────────────────────────────────
+#
+# A bare agreement count hides that one of four people last spoke months ago. The triage queue
+# had to be fixed once for exactly this ("no date shown"), so the setups queue carries dates
+# from the start.
+
+def test_each_supporter_carries_their_own_latest_date_newest_first():
+    ctx = _ctx()
+    old = cross_reference(_row(id="a", person="Cowen", published_at="2026-07-05"), ctx,
+                          published_close=100.0)
+    recent = cross_reference(_row(id="b", person="Mayne", published_at="2026-07-20"), ctx,
+                             published_close=100.0)
+    candidate = collapse([old, recent])[0]
+    assert candidate.views[0] == View(person="Mayne", published_at="2026-07-20")
+    assert candidate.views[1] == View(person="Cowen", published_at="2026-07-05")
+    assert candidate.newest_at == "2026-07-20"
+    assert candidate.oldest_at == "2026-07-05"
+
+
+def test_a_person_who_restated_counts_once_at_their_latest_date():
+    """Ten restatements are one voice, not ten — and the date shown is the current one."""
+    ctx = _ctx()
+    setups = [
+        cross_reference(_row(id="a", person="Mayne", published_at="2026-07-05"), ctx,
+                        published_close=100.0),
+        cross_reference(_row(id="b", person="Mayne", published_at="2026-07-20"), ctx,
+                        published_close=100.0),
+    ]
+    candidate = collapse(setups)[0]
+    assert candidate.agreement == 1
+    assert candidate.views == (View(person="Mayne", published_at="2026-07-20"),)
+    assert len(candidate.thesis_ids) == 2
+
+
+def test_published_at_is_normalized_to_a_date_even_from_a_full_timestamp():
+    setup = cross_reference(
+        _row(published_at="2026-07-20T14:33:02Z"), _ctx(), published_close=100.0
+    )
+    assert setup.published_at == "2026-07-20"
 
 
 def test_collapsing_recomputes_agreement_from_the_group():

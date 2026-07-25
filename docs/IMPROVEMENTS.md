@@ -180,7 +180,30 @@ collision leaking in. A per-asset domain consensus in `core/canon.py` would be s
 
 ---
 
-## 11. Slice 2 needs the oracle at sub-daily granularity · `OPEN`
+## 11. Agreement is date-blind · `OPEN`
+
+`agreement_signal` counts distinct people and saturates at 3, so seven voices score 1.0 whether
+they all spoke this week or one spoke six months ago.
+
+**Evidence (live, 2026-07-25):** the ETH long candidate's seven supporters span **2026-01-20 to
+2026-07-22** — Magic Lines' view is **186 days old** and counted equally with TraderMayne's from
+three days prior. ZEC's second supporter is two months stale.
+
+Not a staleness-gate failure: the old view is a `macro` thesis and legitimately survives a
+360-day horizon. The question is whether a macro bull from January is the same evidence as a
+swing bull from last week. Arguably cross-horizon agreement *is* meaningful confluence — but
+right now it's indistinguishable, which is the actual problem.
+
+Candidate fix: weight each voice by recency (`core.rank.recency_signal` already exists) rather
+than counting heads. Interacts with §2 — if horizons go event-based, "current view" becomes
+better defined and this may partly solve itself.
+
+Dates are now shown per supporter in the queue and the vault note, so this is at least visible
+rather than hidden.
+
+---
+
+## 12. Slice 2 needs the oracle at sub-daily granularity · `OPEN`
 
 Layers 2–3 of `Trading/_Structure.md` (1H approach, 15m trigger) require a `date` → `datetime`
 refactor through `Bar`, `PriceSeries`, `cache` (granularity in the key), all three sources, and

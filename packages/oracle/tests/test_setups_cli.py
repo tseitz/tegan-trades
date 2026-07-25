@@ -4,7 +4,7 @@ import json
 from datetime import date
 
 from core.canon import Registry
-from core.setups import STRUCTURAL, TIER_LARGE, TIER_MAJOR, Candidate
+from core.setups import STRUCTURAL, TIER_LARGE, TIER_MAJOR, Candidate, View
 from core.structure import BULLISH, SWING_HIGH, SWING_LOW, Break, OrderBlock, Swing
 
 from oracle import setups_cli
@@ -37,7 +37,7 @@ def _candidate(**overrides) -> Candidate:
         reward_risk=3.0, depth=0.0, proximity=1.0,
         weekly_trend="uptrend", daily_trend="uptrend", zone="discount",
         tier=TIER_MAJOR,
-        people=("Mayne",), thesis_ids=("t1",),
+        views=(View(person="Mayne", published_at="2026-07-20"),), thesis_ids=("t1",),
         score=0.5,
     )
     base.update(overrides)

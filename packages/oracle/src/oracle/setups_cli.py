@@ -210,19 +210,31 @@ def format_candidate(candidate: Candidate, *, rank: int | None = None) -> str:
     two distinct labelled values on purpose — they answer different questions ("where is
     this trade wrong" vs "where does the zone itself die") and blurring them into one number
     would hide that. ``target_source`` is always shown so an inferred target never reads as
-    a clean, stated one."""
+    a clean, stated one.
+
+    Every candidate leads with **when it was last called**, and each supporting person carries
+    their own date. A bare agreement count hides that one of four people last spoke months ago,
+    and a queue without dates was already fixed once in ``triage_cli`` for exactly that reason.
+    """
     c = candidate
     header = f"[{rank}] " if rank is not None else ""
+    span = "" if c.newest_at == c.oldest_at else f", oldest {c.oldest_at}"
     lines = [
         f"\n{header}{c.asset} {c.direction.upper()} · tier {c.tier} · score {c.score:.2f}",
+        f"  last called {c.newest_at}{span}",
         f"  entry zone {c.entry_bottom:g}–{c.entry_top:g}  ·  entry {c.entry:g}",
         f"  stop {c.stop:g}  ·  invalidation {c.invalidation:g}",
         f"  target {c.target:g}  [{c.target_source}]",
         f"  reward:risk {c.reward_risk:.2f}  ·  proximity {c.proximity:.2f}  ·  depth {c.depth:.2f}",
         f"  weekly {c.weekly_trend} · daily {c.daily_trend} · zone {c.zone}",
-        f"  people: {', '.join(c.people)}  ·  agreement {c.agreement}",
+        f"  people: {format_views(c)}  ·  agreement {c.agreement}",
     ]
     return "\n".join(lines)
+
+
+def format_views(candidate: Candidate) -> str:
+    """``Person (date)`` per supporter, newest first — so a stale voice is visible as one."""
+    return ", ".join(f"{v.person} ({v.published_at})" for v in candidate.views)
 
 
 def render_note(candidate: Candidate) -> str:
@@ -231,13 +243,15 @@ def render_note(candidate: Candidate) -> str:
     lines = [
         f"## {c.asset} {c.direction} · tier {c.tier} · score {c.score:.2f}",
         "",
+        f"- **Last called:** {c.newest_at}"
+        + ("" if c.newest_at == c.oldest_at else f" (oldest {c.oldest_at})"),
         f"- **Entry zone:** {c.entry_bottom:g}–{c.entry_top:g} (entry {c.entry:g})",
         f"- **Stop:** {c.stop:g}",
         f"- **Invalidation:** {c.invalidation:g}",
         f"- **Target:** {c.target:g} ({c.target_source})",
         f"- **Reward:risk:** {c.reward_risk:.2f}",
         f"- **Trend:** weekly {c.weekly_trend} · daily {c.daily_trend} · zone {c.zone}",
-        f"- **Supporting:** {', '.join(c.people)} (agreement {c.agreement})",
+        f"- **Supporting:** {format_views(c)} (agreement {c.agreement})",
         f"- **Theses:** {', '.join(c.thesis_ids)}",
     ]
     return "\n".join(lines)

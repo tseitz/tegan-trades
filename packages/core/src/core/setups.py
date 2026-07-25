@@ -181,6 +181,18 @@ class Context:
 
 
 @dataclass(frozen=True, slots=True)
+class View:
+    """One person's most recent statement backing a candidate, and when they made it.
+
+    A candidate collapses many theses across many people and dates, so "when was this called"
+    has no single answer — and a bare count of people hides that one of them last spoke months
+    ago. Carrying the date per person is the only honest form.
+    """
+    person: str
+    published_at: str   # normalized to YYYY-MM-DD
+
+
+@dataclass(frozen=True, slots=True)
 class Setup:
     """One thesis that survived every gate. Usually not the unit you want — see ``collapse``."""
     thesis_id: str
@@ -188,6 +200,7 @@ class Setup:
     person: str
     direction: str
     timeframe: str
+    published_at: str
     block: OrderBlock
     entry: float          # the near edge — the shallowest fill, so RR is conservative
     entry_top: float
@@ -232,13 +245,27 @@ class Candidate:
     daily_trend: str
     zone: str
     tier: str
-    people: tuple[str, ...]
+    # Latest statement per person, newest first. Ordered by recency rather than alphabetically
+    # because "who said this most recently" is the question being asked.
+    views: tuple[View, ...]
     thesis_ids: tuple[str, ...]
     score: float
 
     @property
+    def people(self) -> tuple[str, ...]:
+        return tuple(view.person for view in self.views)
+
+    @property
     def agreement(self) -> int:
-        return len(self.people)
+        return len(self.views)
+
+    @property
+    def newest_at(self) -> str:
+        return self.views[0].published_at if self.views else ""
+
+    @property
+    def oldest_at(self) -> str:
+        return self.views[-1].published_at if self.views else ""
 
     @property
     def key(self) -> str:
@@ -295,7 +322,18 @@ def collapse(outcomes, *, weights: SetupWeights = DEFAULT_WEIGHTS) -> tuple[Cand
     for members in groups.values():
         authored = [s for s in members if s.target_source != STRUCTURAL]
         rep = min(authored or members, key=lambda s: abs(s.target - s.entry))
-        people = tuple(sorted({s.person for s in members}))
+
+        # Latest statement per person, newest first. Keeping only the latest means a person who
+        # restated ten times doesn't read as ten separate voices, and surfacing the date means a
+        # months-old view can't hide behind a healthy-looking agreement count.
+        latest: dict[str, str] = {}
+        for member in members:
+            if member.published_at > latest.get(member.person, ""):
+                latest[member.person] = member.published_at
+        views = tuple(
+            View(person=person, published_at=when)
+            for person, when in sorted(latest.items(), key=lambda kv: (kv[1], kv[0]), reverse=True)
+        )
         candidates.append(Candidate(
             asset=rep.asset, direction=rep.direction, block=rep.block,
             entry=rep.entry, entry_top=rep.entry_top, entry_bottom=rep.entry_bottom,
@@ -304,10 +342,10 @@ def collapse(outcomes, *, weights: SetupWeights = DEFAULT_WEIGHTS) -> tuple[Cand
             reward_risk=rep.reward_risk, depth=rep.depth, proximity=rep.proximity,
             weekly_trend=rep.weekly_trend, daily_trend=rep.daily_trend,
             zone=rep.zone, tier=rep.tier,
-            people=people,
+            views=views,
             thesis_ids=tuple(sorted(s.thesis_id for s in members)),
             score=_score(weights, proximity=rep.proximity, depth=rep.depth,
-                         reward_risk=rep.reward_risk, agreement_count=len(people)),
+                         reward_risk=rep.reward_risk, agreement_count=len(views)),
         ))
     return tuple(sorted(candidates, key=lambda c: (-c.score, c.asset, c.direction)))
 
@@ -477,7 +515,7 @@ def cross_reference(
     proximity = proximity_to(block, context.price)
     return Setup(
         thesis_id=ident, asset=asset, person=person, direction=direction,
-        timeframe=timeframe, block=block,
+        timeframe=timeframe, published_at=published.isoformat(), block=block,
         entry=entry, entry_top=block.top, entry_bottom=block.bottom,
         stop=block.stop, invalidation=block.invalidation,
         target=target, target_source=target_source,
