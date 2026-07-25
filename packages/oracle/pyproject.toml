@@ -20,7 +20,7 @@ requires = ["uv_build>=0.10.4,<0.11.0"]
 build-backend = "uv_build"
 
 [tool.uv.sources]
-core = { path = "../core", editable = true }
+core = { workspace = true }
 
 [dependency-groups]
 dev = [
