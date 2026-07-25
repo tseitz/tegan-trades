@@ -57,9 +57,31 @@ TIER_CHOICES = (TIER_MAJOR, TIER_LARGE, TIER_SMALL, TIER_UNRANKED, TIER_NONCRYPT
 # Decision vocabulary. Deliberately distinct spelling from distill.triage_cli's
 # "promoted"/"skipped"/"archived" — a setup is "approved" for execution, not "promoted"
 # into a note; the two sidecars are unrelated and must never be confused on disk.
+# Decisions. Four of them, because there are four genuinely different things a person means
+# when they don't take a setup, and the original three all behaved identically — which made the
+# labels promise a distinction the code didn't deliver.
+#
+#   APPROVED  taking it
+#   LATER     the zone is fine, price isn't there yet. REVERSIBLE — see `is_stale_decision`.
+#   REJECTED  judged and declined. Carries a reason, because "bad trade" calibrates the setups
+#             scorer while "their view is wrong" calibrates the roster trust score, and those
+#             are feedback to different consumers.
+#   ARCHIVED  suppress permanently, explicitly NOT a judgment ("I don't trade this").
 APPROVED = "approved"
-SKIPPED = "skipped"
+LATER = "later"
+REJECTED = "rejected"
 ARCHIVED = "archived"
+
+# Legacy: earlier runs recorded "skipped", which was permanent. Honour that rather than
+# resurfacing everything already passed on — the sidecar is append-only and never rewritten.
+SKIPPED = "skipped"
+
+_PERMANENT = frozenset({APPROVED, REJECTED, ARCHIVED, SKIPPED})
+
+# Why a candidate was rejected.
+REASON_TRADE = "trade_quality"
+REASON_VIEW = "view_wrong"
+REASON_OTHER = "other"
 
 _NOTE_TITLE = "# Approved Setups"
 
@@ -184,14 +206,48 @@ def filter_candidates(
     return out
 
 
-def drop_decided(candidates, decided: set[str]) -> list[Candidate]:
-    """Candidates whose ``key`` is not already in the decisions sidecar."""
-    return [c for c in candidates if c.key not in decided]
+def is_inside_zone(candidate: Candidate) -> bool:
+    """Has price actually reached the zone? ``proximity`` saturates at 1.0 on arrival."""
+    return candidate.proximity >= 1.0
 
 
-def decision_record(candidate: Candidate, decision: str, *, decided_at: str) -> dict:
-    """A JSON-serializable decision, keyed on the candidate's content-addressed zone."""
-    return {
+def resurfaces(candidate: Candidate, record: dict | None) -> bool:
+    """Whether a previously-deferred candidate is worth showing again.
+
+    Only ``LATER`` is reversible, and only on the two things that genuinely change the
+    situation: **price has entered the zone**, or **another person now backs it**. Everything
+    else stays buried.
+
+    This exists because deferring used to be permanent, inherited from ``triage_cli`` where it
+    made sense — a skipped *thesis* is a judgment about the thesis. A deferred *zone* is almost
+    always a judgment about timing: on the first live run **every candidate had depth 0.00**,
+    meaning price had reached none of them. Burying those forever would discard the setup at
+    exactly the moment it became actionable.
+    """
+    if record is None:
+        return True
+    if record.get("decision") != LATER:
+        return False
+    was_inside = bool(record.get("inside_zone"))
+    if is_inside_zone(candidate) and not was_inside:
+        return True
+    return candidate.agreement > int(record.get("agreement") or 0)
+
+
+def drop_decided(candidates, decided: dict[str, dict]) -> list[Candidate]:
+    """Candidates not already settled — deferrals return once the situation has moved on."""
+    return [c for c in candidates if resurfaces(c, decided.get(c.key))]
+
+
+def decision_record(candidate: Candidate, decision: str, *, decided_at: str,
+                    reason: str | None = None) -> dict:
+    """A JSON-serializable decision, keyed on the candidate's content-addressed zone.
+
+    ``inside_zone`` and ``agreement`` are the state a later run compares against to decide
+    whether a deferral has become actionable, so they are recorded even for decisions that are
+    permanent — the file is the audit trail, not just a suppression list.
+    """
+    record = {
         "candidate_key": candidate.key,
         "decision": decision,
         "decided_at": decided_at,
@@ -201,8 +257,17 @@ def decision_record(candidate: Candidate, decision: str, *, decided_at: str) -> 
         "stop": candidate.stop,
         "target": candidate.target,
         "target_source": candidate.target_source,
+        "score": candidate.score,
+        "proximity": candidate.proximity,
+        "inside_zone": is_inside_zone(candidate),
+        "agreement": candidate.agreement,
+        "newest_at": candidate.newest_at,
+        "people": list(candidate.people),
         "thesis_ids": list(candidate.thesis_ids),
     }
+    if reason is not None:
+        record["reason"] = reason
+    return record
 
 
 def format_candidate(candidate: Candidate, *, rank: int | None = None) -> str:
@@ -259,17 +324,23 @@ def render_note(candidate: Candidate) -> str:
 
 # ── decisions sidecar (JSONL, append-only) ──────────────────────────────────────────────────
 
-def load_decisions(path) -> dict[str, str]:
+def load_decisions(path) -> dict[str, dict]:
+    """Latest decision record per candidate key.
+
+    The whole record is returned, not just the verdict, because deciding whether a deferral has
+    become actionable needs the state captured at the time. Later lines win, so re-deciding a
+    zone supersedes the earlier answer without rewriting history.
+    """
     path = Path(path)
     if not path.exists():
         return {}
-    decisions: dict[str, str] = {}
+    decisions: dict[str, dict] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
             continue
         rec = json.loads(line)
-        decisions[rec["candidate_key"]] = rec["decision"]
+        decisions[rec["candidate_key"]] = rec
     return decisions
 
 
@@ -297,25 +368,47 @@ def append_note(vault_path, section: str) -> None:
 def triage(candidates, *, decisions_path, vault_path, input_fn=input, out=print) -> dict[str, int]:
     """Present each candidate, highest score first; approve -> vault note (if given) + sidecar,
     all decisions -> sidecar. Quit stops immediately without consuming further input."""
-    counts = {APPROVED: 0, SKIPPED: 0, ARCHIVED: 0}
+    counts = {APPROVED: 0, LATER: 0, REJECTED: 0, ARCHIVED: 0}
     decided_at = datetime.now(UTC).isoformat(timespec="seconds")
     for i, c in enumerate(candidates, start=1):
         out(format_candidate(c, rank=i))
-        ans = input_fn("[a]pprove / [s]kip / [x]archive / [q]uit: ").strip().lower()
+        ans = input_fn("[a]pprove / [l]ater / [r]eject / [x]archive / [q]uit: ").strip().lower()
         if ans in ("q", "quit"):
             break
+
+        reason = None
         if ans in ("a", "approve"):
+            decision = APPROVED
             if vault_path is not None:
                 append_note(vault_path, render_note(c))
-            append_decision(decisions_path, decision_record(c, APPROVED, decided_at=decided_at))
-            counts[APPROVED] += 1
+        elif ans in ("r", "reject"):
+            decision = REJECTED
+            reason = _ask_reason(input_fn)
         elif ans in ("x", "archive"):
-            append_decision(decisions_path, decision_record(c, ARCHIVED, decided_at=decided_at))
-            counts[ARCHIVED] += 1
-        else:  # blank or 's' -> skip ("seen, pass"); won't re-surface
-            append_decision(decisions_path, decision_record(c, SKIPPED, decided_at=decided_at))
-            counts[SKIPPED] += 1
+            decision = ARCHIVED
+        else:
+            # Blank falls through to LATER on purpose: it is the only reversible answer, so a
+            # stray keypress defers rather than permanently burying a setup.
+            decision = LATER
+
+        append_decision(decisions_path,
+                        decision_record(c, decision, decided_at=decided_at, reason=reason))
+        counts[decision] += 1
     return counts
+
+
+_REASONS = {"t": REASON_TRADE, "v": REASON_VIEW, "o": REASON_OTHER}
+
+
+def _ask_reason(input_fn) -> str:
+    """Why the reject — one keystroke.
+
+    Worth the extra key because the two answers feed different things: bad trade quality
+    calibrates the setups scorer, a wrong view calibrates the roster's trust score. Collapsing
+    them would discard the distinction that matters most to what the roster is actually for.
+    """
+    ans = input_fn("  why? [t]rade quality / [v]iew wrong / [o]ther: ").strip().lower()
+    return _REASONS.get(ans[:1], REASON_OTHER)
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────────────────────
@@ -354,11 +447,17 @@ def main(argv: list[str] | None = None) -> int:
     if stats.rejections:
         print("  rejected: " + ", ".join(f"{k}={v}" for k, v in stats.rejections.most_common()))
 
-    decided = set(load_decisions(DEFAULT_DECISIONS))
+    decided = load_decisions(DEFAULT_DECISIONS)
     undecided = drop_decided(candidates, decided)
     already_decided = len(candidates) - len(undecided)
     if already_decided:
-        print(f"  {already_decided} already decided — skipped")
+        print(f"  {already_decided} already decided — hidden")
+    returning = sum(
+        1 for c in undecided
+        if (rec := decided.get(c.key)) is not None and rec.get("decision") == LATER
+    )
+    if returning:
+        print(f"  {returning} deferred earlier, back because price arrived or support grew")
 
     tiers = tuple(args.tiers) if args.tiers else None
     queue = filter_candidates(undecided, min_score=args.min_score, tiers=tiers, limit=args.limit)

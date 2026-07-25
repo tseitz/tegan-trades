@@ -84,13 +84,29 @@ def test_decision_record_roundtrips_through_the_jsonl_sidecar(tmp_path):
     assert loaded["thesis_ids"] == list(c.thesis_ids)
 
 
-def test_load_decisions_reads_back_appended_records(tmp_path):
+def test_load_decisions_reads_back_the_whole_record(tmp_path):
+    """The verdict alone isn't enough — deciding whether a deferral has become actionable needs
+    the state captured at the time."""
     c = _candidate()
     path = tmp_path / "decisions.jsonl"
     setups_cli.append_decision(
-        path, setups_cli.decision_record(c, setups_cli.SKIPPED, decided_at="x")
+        path, setups_cli.decision_record(c, setups_cli.LATER, decided_at="x")
     )
-    assert setups_cli.load_decisions(path) == {c.key: setups_cli.SKIPPED}
+    loaded = setups_cli.load_decisions(path)
+    assert loaded[c.key]["decision"] == setups_cli.LATER
+    assert loaded[c.key]["agreement"] == c.agreement
+    assert loaded[c.key]["inside_zone"] is True
+
+
+def test_a_later_line_supersedes_an_earlier_one_for_the_same_zone(tmp_path):
+    """Re-deciding a zone wins without rewriting history — the file stays append-only."""
+    c = _candidate()
+    path = tmp_path / "decisions.jsonl"
+    for verdict in (setups_cli.LATER, setups_cli.REJECTED):
+        setups_cli.append_decision(
+            path, setups_cli.decision_record(c, verdict, decided_at="x")
+        )
+    assert setups_cli.load_decisions(path)[c.key]["decision"] == setups_cli.REJECTED
 
 
 def test_load_decisions_on_missing_file_is_empty(tmp_path):
@@ -99,10 +115,56 @@ def test_load_decisions_on_missing_file_is_empty(tmp_path):
 
 # ── already-decided candidates are skipped on re-runs ────────────────────────
 
-def test_drop_decided_filters_out_a_candidate_already_in_the_sidecar():
+def _decided(candidate, verdict, **overrides):
+    record = setups_cli.decision_record(candidate, verdict, decided_at="x")
+    record.update(overrides)
+    return {candidate.key: record}
+
+
+def test_a_settled_candidate_does_not_come_back():
     c = _candidate()
-    assert setups_cli.drop_decided([c], {c.key}) == []
-    assert setups_cli.drop_decided([c], set()) == [c]
+    for verdict in (setups_cli.APPROVED, setups_cli.REJECTED, setups_cli.ARCHIVED):
+        assert setups_cli.drop_decided([c], _decided(c, verdict)) == []
+    assert setups_cli.drop_decided([c], {}) == [c]
+
+
+def test_a_legacy_skip_is_still_honoured_as_permanent():
+    """Earlier runs recorded 'skipped', which was permanent. The sidecar is append-only and
+    never rewritten, so those must not all come flooding back."""
+    c = _candidate()
+    assert setups_cli.drop_decided([c], _decided(c, setups_cli.SKIPPED)) == []
+
+
+def test_a_deferred_candidate_stays_hidden_while_nothing_has_changed():
+    c = _candidate(proximity=0.4)
+    assert setups_cli.drop_decided([c], _decided(c, setups_cli.LATER)) == []
+
+
+def test_a_deferred_candidate_returns_once_price_reaches_the_zone():
+    """The reason deferral had to become reversible: on the first live run every candidate sat
+    outside its zone, so burying them permanently would discard each setup at exactly the
+    moment it became actionable."""
+    away = _candidate(proximity=0.4)
+    arrived = _candidate(proximity=1.0)
+    assert arrived.key == away.key       # same zone, different moment
+    assert setups_cli.drop_decided([arrived], _decided(away, setups_cli.LATER)) == [arrived]
+
+
+def test_a_deferred_candidate_returns_when_another_person_backs_it():
+    before = _candidate(proximity=0.4)
+    after = _candidate(
+        proximity=0.4,
+        views=(View(person="Mayne", published_at="2026-07-20"),
+               View(person="Cowen", published_at="2026-07-19")),
+    )
+    assert setups_cli.drop_decided([after], _decided(before, setups_cli.LATER)) == [after]
+
+
+def test_a_rejected_candidate_does_not_come_back_even_when_price_arrives():
+    """Rejection is a judgment about the trade, not about its timing."""
+    away = _candidate(proximity=0.4)
+    arrived = _candidate(proximity=1.0)
+    assert setups_cli.drop_decided([arrived], _decided(away, setups_cli.REJECTED)) == []
 
 
 def test_two_candidates_with_different_zones_have_distinct_keys_and_are_tracked_independently():
@@ -111,9 +173,7 @@ def test_two_candidates_with_different_zones_have_distinct_keys_and_are_tracked_
     a = _candidate(block=_block(top=110.0, bottom=100.0))
     b = _candidate(block=_block(top=120.0, bottom=112.0))
     assert a.key != b.key
-
-    decided = {a.key}
-    assert setups_cli.drop_decided([a, b], decided) == [b]
+    assert setups_cli.drop_decided([a, b], _decided(a, setups_cli.REJECTED)) == [b]
 
 
 # ── display formatter ─────────────────────────────────────────────────────────
@@ -148,9 +208,53 @@ def test_triage_skips_the_vault_write_when_vault_path_is_none(tmp_path):
         input_fn=lambda _: next(answers), out=lambda *_: None,
     )
     assert counts[setups_cli.APPROVED] == 1
-    assert setups_cli.load_decisions(decisions_path) == {c.key: setups_cli.APPROVED}
+    assert setups_cli.load_decisions(decisions_path)[c.key]["decision"] == setups_cli.APPROVED
     # nothing else was written under tmp_path — no vault note file appeared anywhere
     assert list(tmp_path.iterdir()) == [decisions_path]
+
+
+# ── the four verdicts actually differ ─────────────────────────────────────────
+
+def _run(answers, candidate, tmp_path):
+    it = iter(answers)
+    path = tmp_path / "decisions.jsonl"
+    counts = setups_cli.triage(
+        [candidate], decisions_path=path, vault_path=None,
+        input_fn=lambda _: next(it), out=lambda *_: None,
+    )
+    return counts, setups_cli.load_decisions(path).get(candidate.key)
+
+
+def test_blank_input_defers_rather_than_burying(tmp_path):
+    """Blank used to record a permanent skip, so hitting Enter to scroll past a setup lost it
+    for good. It now falls through to the one reversible answer."""
+    counts, record = _run([""], _candidate(), tmp_path)
+    assert counts[setups_cli.LATER] == 1
+    assert record["decision"] == setups_cli.LATER
+
+
+def test_reject_records_the_reason(tmp_path):
+    """'Bad trade' calibrates the setups scorer; 'their view is wrong' calibrates the roster
+    trust score. Different consumers, so they must not collapse into one verdict."""
+    _, trade = _run(["r", "t"], _candidate(), tmp_path)
+    assert trade["decision"] == setups_cli.REJECTED
+    assert trade["reason"] == setups_cli.REASON_TRADE
+
+    _, view = _run(["r", "v"], _candidate(), tmp_path / "b")
+    assert view["reason"] == setups_cli.REASON_VIEW
+
+
+def test_an_unrecognised_reject_reason_falls_back_to_other(tmp_path):
+    _, record = _run(["r", "zzz"], _candidate(), tmp_path)
+    assert record["reason"] == setups_cli.REASON_OTHER
+
+
+def test_archive_is_recorded_without_a_reason(tmp_path):
+    """Archive is suppression, explicitly not judgment — so there is nothing to explain."""
+    counts, record = _run(["x"], _candidate(), tmp_path)
+    assert counts[setups_cli.ARCHIVED] == 1
+    assert record["decision"] == setups_cli.ARCHIVED
+    assert "reason" not in record
 
 
 # ── empty queue and quit ──────────────────────────────────────────────────────
@@ -163,7 +267,8 @@ def test_triage_on_an_empty_candidate_list_exits_without_prompting(tmp_path):
         [], decisions_path=tmp_path / "decisions.jsonl", vault_path=None,
         input_fn=_boom, out=lambda *_: None,
     )
-    assert counts == {setups_cli.APPROVED: 0, setups_cli.SKIPPED: 0, setups_cli.ARCHIVED: 0}
+    assert counts == {setups_cli.APPROVED: 0, setups_cli.LATER: 0,
+                      setups_cli.REJECTED: 0, setups_cli.ARCHIVED: 0}
 
 
 def test_triage_quit_stops_immediately_without_consuming_further_input(tmp_path):
@@ -181,7 +286,8 @@ def test_triage_quit_stops_immediately_without_consuming_further_input(tmp_path)
         [c1, c2], decisions_path=tmp_path / "decisions.jsonl", vault_path=None,
         input_fn=_input, out=lambda *_: None,
     )
-    assert counts == {setups_cli.APPROVED: 0, setups_cli.SKIPPED: 0, setups_cli.ARCHIVED: 0}
+    assert counts == {setups_cli.APPROVED: 0, setups_cli.LATER: 0,
+                      setups_cli.REJECTED: 0, setups_cli.ARCHIVED: 0}
 
 
 # ── build_candidates: engine assembly stats, without touching real data ──────
