@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -51,6 +52,12 @@ from oracle.route import OracleRef, RoutingTable, load_routing_table, route
 REPO_ROOT = Path(__file__).resolve().parents[4]
 CONFIG_DIR = REPO_ROOT / "cfg"
 DEFAULT_DECISIONS = REPO_ROOT / "data" / "setups" / "decisions.jsonl"
+
+# The running approvals note. Derived from ``Path.home()`` rather than hardcoded to
+# /Users/tseitz (which is what ``distill.triage_cli.DEFAULT_VAULT_NOTE`` does) so the
+# default is portable. The filename matches the note that already exists, whose title
+# is the ``_NOTE_TITLE`` below — this is the file that was being passed by hand.
+DEFAULT_VAULT_NOTE = Path.home() / "vault" / "Trading" / "Trade Logs" / "Setups.md"
 
 TIER_CHOICES = (TIER_MAJOR, TIER_LARGE, TIER_SMALL, TIER_UNRANKED, TIER_NONCRYPTO)
 
@@ -302,11 +309,18 @@ def format_views(candidate: Candidate) -> str:
     return ", ".join(f"{v.person} ({v.published_at})" for v in candidate.views)
 
 
-def render_note(candidate: Candidate) -> str:
-    """One markdown section for an approved candidate, same shape as ``triage_cli.render_note``."""
+def render_note(candidate: Candidate, *, decided_on: str) -> str:
+    """One markdown section for an approved candidate, same shape as ``triage_cli.render_note``.
+
+    ``decided_on`` (a YYYY-MM-DD string) leads the heading because the note is append-only and
+    the rest of the heading is not unique: approving the same asset again weeks later at a
+    different entry would otherwise render a byte-identical ``## ZEC long · tier large`` section,
+    leaving no way to tell the two apart or read the file chronologically. This mirrors the
+    dated headings already used in ``Promoted Theses.md``.
+    """
     c = candidate
     lines = [
-        f"## {c.asset} {c.direction} · tier {c.tier} · score {c.score:.2f}",
+        f"## {decided_on} · {c.asset} {c.direction} · tier {c.tier} · score {c.score:.2f}",
         "",
         f"- **Last called:** {c.newest_at}"
         + ("" if c.newest_at == c.oldest_at else f" (oldest {c.oldest_at})"),
@@ -351,6 +365,33 @@ def append_decision(path, record: dict) -> None:
         f.write(json.dumps(record) + "\n")
 
 
+class VaultNoteUnavailable(Exception):
+    """The vault note's directory does not exist, so the approvals note cannot be written."""
+
+
+def resolve_vault_note(path, *, disabled: bool):
+    """Return the note path to write to, or None when the vault write is switched off.
+
+    Raises ``VaultNoteUnavailable`` when the parent directory is missing rather than creating
+    it. ``append_note`` calls ``mkdir(parents=True)``, so defaulting the path would otherwise
+    scatter an empty, fake vault tree onto any machine where the real vault isn't mounted —
+    and the approvals would look filed while living somewhere nobody reads.
+
+    Callers must invoke this *before* the triage loop starts. Failing after a decision has
+    been entered would throw away the session's judgement, which is the scarce input here.
+    """
+    if disabled:
+        return None
+    path = Path(path)
+    if not path.parent.is_dir():
+        raise VaultNoteUnavailable(
+            f"vault note path {path} is not reachable ({path.parent} does not exist). "
+            f"Pass --vault-note <path> to point somewhere else, or --no-vault-note to "
+            f"record approvals to the decisions sidecar only."
+        )
+    return path
+
+
 def append_note(vault_path, section: str) -> None:
     """Append a section to the running approvals note, creating it (with title) if absent."""
     path = Path(vault_path)
@@ -380,7 +421,7 @@ def triage(candidates, *, decisions_path, vault_path, input_fn=input, out=print)
         if ans in ("a", "approve"):
             decision = APPROVED
             if vault_path is not None:
-                append_note(vault_path, render_note(c))
+                append_note(vault_path, render_note(c, decided_on=decided_at[:10]))
         elif ans in ("r", "reject"):
             decision = REJECTED
             reason = _ask_reason(input_fn)
@@ -434,8 +475,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--min-score", type=float, default=None, help="drop candidates below this score")
     parser.add_argument("--tier", action="append", dest="tiers", choices=TIER_CHOICES,
                         help="restrict to this tier; repeatable")
-    parser.add_argument("--vault-note", type=Path, default=None,
-                        help="running approvals note to append to (omit to skip the vault write)")
+    parser.add_argument("--vault-note", type=Path, default=DEFAULT_VAULT_NOTE,
+                        help=f"running approvals note to append to (default: {DEFAULT_VAULT_NOTE})")
+    parser.add_argument("--no-vault-note", action="store_true",
+                        help="record approvals to the decisions sidecar only, skipping the vault")
     parser.add_argument("--list", action="store_true",
                         help="print the queue and exit, no prompting")
     return parser.parse_args(argv)
@@ -482,11 +525,21 @@ def main(argv: list[str] | None = None) -> int:
             print(format_candidate(c, rank=i))
         return 0
 
-    if args.vault_note is None:
-        print("  no --vault-note given; approvals will not be written to the vault")
+    # Resolved before the first prompt: a vault that turns out to be unreachable must fail
+    # while the cost is zero, not after a session's worth of decisions has been entered.
+    try:
+        vault_note = resolve_vault_note(args.vault_note, disabled=args.no_vault_note)
+    except VaultNoteUnavailable as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    if vault_note is None:
+        print("  --no-vault-note; approvals recorded to the decisions sidecar only")
+    else:
+        print(f"  approvals append to {vault_note}")
 
     counts = triage(  # pragma: no cover - interactive
-        queue, decisions_path=DEFAULT_DECISIONS, vault_path=args.vault_note)
+        queue, decisions_path=DEFAULT_DECISIONS, vault_path=vault_note)
     print("\n" + format_counts(counts))
     return 0
 

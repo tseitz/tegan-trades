@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 from datetime import date
+from pathlib import Path
+
+import pytest
 
 from core.canon import Registry
 from core.setups import STRUCTURAL, TIER_LARGE, TIER_MAJOR, Candidate, View
@@ -317,3 +320,65 @@ def test_build_candidates_with_no_rows_reports_zero_everything(tmp_path):
     assert stats.assets_priced == 0
     assert stats.assets_unpriced == 0
     assert stats.candidate_count == 0
+
+
+# ── default vault note ────────────────────────────────────────────────────────
+
+def test_default_vault_note_is_the_running_setups_file_under_the_home_vault():
+    """Hardcoding an absolute /Users/<name> path (as triage_cli does) breaks on any other
+    machine; deriving from Path.home() is what makes the default portable."""
+    default = setups_cli.DEFAULT_VAULT_NOTE
+    assert default == Path.home() / "vault" / "Trading" / "Trade Logs" / "Setups.md"
+    assert default.is_relative_to(Path.home())
+    assert default.name == "Setups.md"
+
+
+def test_render_note_heading_carries_the_approval_date():
+    """Two approvals of the same asset must not render as identical sections."""
+    c = _candidate(asset="ZEC", direction="long")
+    first = setups_cli.render_note(c, decided_on="2026-07-25")
+    second = setups_cli.render_note(c, decided_on="2026-08-14")
+    assert first.splitlines()[0] == "## 2026-07-25 · ZEC long · tier major · score 0.50"
+    assert second.splitlines()[0].startswith("## 2026-08-14 · ZEC long")
+    assert first != second
+
+
+def test_approval_writes_a_dated_section_to_the_vault_note(tmp_path):
+    note = tmp_path / "Setups.md"
+    answers = iter(["a"])
+    setups_cli.triage(
+        [_candidate(asset="ZEC")], decisions_path=tmp_path / "d.jsonl", vault_path=note,
+        input_fn=lambda _: next(answers), out=lambda *_: None,
+    )
+    body = note.read_text(encoding="utf-8")
+    assert body.startswith("# Approved Setups")
+    # the dated heading, not the bare one
+    assert "## " in body and "· ZEC long" in body
+    heading = [l for l in body.splitlines() if l.startswith("## ")][0]
+    assert heading.split(" · ")[0].removeprefix("## ").count("-") == 2  # YYYY-MM-DD
+
+
+# ── missing vault is a hard error, raised BEFORE triage consumes any input ────
+
+def test_resolve_vault_note_raises_when_the_parent_directory_is_absent(tmp_path):
+    missing = tmp_path / "no-vault" / "Trade Logs" / "Setups.md"
+    with pytest.raises(setups_cli.VaultNoteUnavailable) as exc:
+        setups_cli.resolve_vault_note(missing, disabled=False)
+    assert "--no-vault-note" in str(exc.value)
+
+
+def test_resolve_vault_note_returns_none_when_disabled(tmp_path):
+    missing = tmp_path / "no-vault" / "Setups.md"
+    assert setups_cli.resolve_vault_note(missing, disabled=True) is None
+
+
+def test_resolve_vault_note_accepts_an_existing_parent(tmp_path):
+    note = tmp_path / "Setups.md"          # tmp_path exists; note itself need not
+    assert setups_cli.resolve_vault_note(note, disabled=False) == note
+
+
+def test_missing_vault_never_creates_a_directory_tree(tmp_path):
+    missing = tmp_path / "no-vault" / "Trade Logs" / "Setups.md"
+    with pytest.raises(setups_cli.VaultNoteUnavailable):
+        setups_cli.resolve_vault_note(missing, disabled=False)
+    assert not (tmp_path / "no-vault").exists()
