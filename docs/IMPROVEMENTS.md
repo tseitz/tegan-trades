@@ -293,6 +293,98 @@ invisibly, but it is a TUNE.
 
 ---
 
+## 6g. One missing `invalidation` discards a whole video's extraction · `OPEN` — new 2026-07-26
+
+The trial-cohort distill pass: **124 distilled, 17 empty, 670 skipped, 1 failed**. The single
+failure, Capital Flows `udGgR-6lyCQ`:
+
+    1 validation error for ThesisExtraction
+    theses.3.trade.invalidation
+      Input should be a valid string [type=string_type, input_value=None]
+
+The fourth call in that video had no invalidation, so **all** of the video's theses were
+rejected. This is the same defect §1 recorded for `key_levels` `min_length=1` — "13 of the 98
+re-distill failures were exactly this constraint rejecting a whole video's extraction because
+one call had no explicit level" — surviving in a different field after that one was fixed.
+
+`invalidation` being required is *correct* and deliberate (architecture.md: "a thesis without
+an invalidation is incomplete"). The defect is that validation is **batch-atomic**: one bad
+call in a list of N discards N. Drop the offending thesis, keep the rest, and count it.
+
+**Also worth noting: 17 of 141 new transcripts (12%) distilled to nothing**, and they are
+concentrated in the two macro voices — Real Vision 8, Capital Flows 7, versus Traders Reality
+2 and DataDash 0. Consistent with §6f: those two talk in CPI/FEDFUNDS/liquidity terms, which
+yields no gradeable directional call. Not a bug, but it does mean a macro voice's value is
+mostly Brain-head, and judging them by setups contribution alone will undercount them.
+
+---
+
+## 6f. 429 rows are about things the oracle cannot price, and most of them are computable · `OPEN` — new 2026-07-26
+
+Adding four voices took the corpus from 3,851 to 4,471 rows but candidates only from 49 to 53,
+because unpriced assets went **128 → 201**. 152 distinct assets, **429 rows**, route nowhere.
+They sort into four groups, and only one is genuinely hopeless:
+
+| group | examples | rows | verdict |
+|---|---|---|---|
+| **Ratios** | `ETH/BTC` | 28 | **computable from two series already cached** |
+| **Aggregates / dominance** | `BTC.D` 44, `ALTS` 30, `TOTAL3` 15, `TOTAL`/`TOTAL2` 7, `ALTBTC`, `MEMECOINS` | ~110 | derivable from CoinGecko global data we already fetch |
+| **Macro series** | `CPI` 11, `FEDFUNDS` 7, `FED_FUNDS_RATE` 5, `FED` 5 | ~28 | free via FRED; context not setups |
+| **Private / unpriceable** | `SPACEX` 25, `ANTHROPIC` 3 | ~28 | correctly rejected, leave alone |
+| **Sentinels** | `__basket__` 53, `__macro__` 4 | 57 | not assets — the extractor's placeholder for a thesis that isn't about one thing |
+
+**`ETH/BTC` is the cheap win**: 28 rows, and both legs are already in `data/prices/`. A ratio
+series is a division, not a new source. `BTC.D` at 44 rows is the single biggest real asset on
+the list and is a well-understood computation.
+
+**`__basket__` at 53 rows deserves separate attention** — it is a sentinel, not an asset, and
+it is currently counted in the "no price source" tally as though it were a routing failure.
+That inflates the number and hides the real gap. Sentinels should be classified before routing
+is attempted, the way `unknown_direction` now is.
+
+**Note this is a *supply* lever, not a data-quality one:** the macro/FX/aggregate vocabulary is
+disproportionately what the two new macro voices (Capital Flows, Real Vision) talk about, so
+the value of adding them is partly gated behind it.
+
+---
+
+## 6d. An unreachable channel reports as an up-to-date one · `OPEN` — new 2026-07-26
+
+`@RealVision` was recorded in `cfg/watchlist.yaml` as a verified `access: ok` channel and does
+not exist — yt-dlp reports *no videos tab and no streams tab*. The roster sweep summarised it
+as:
+
+    Raoul Pal (Real Vision) (@RealVision): 0 ingested, 0 skipped, 0 stale, 0 failed
+
+**All four counters zero is indistinguishable from "this channel is already current"**, which
+is what a healthy channel with no new uploads prints. `resolve_recent` does emit the real
+error to stderr (`channel.py:73`), but it is buried among per-video warnings in a sweep that
+printed hundreds of lines, and the summary line — the part anyone actually reads — reported
+success. The correct handle is `@RealVisionFinance`; found only by testing handles by hand
+after noticing the zero.
+
+**Fix:** a target that resolved to *zero videos* is a distinct outcome from one where every
+video was skipped, and `active_targets` knows the difference. It should be counted and
+reported like `SkippedPerson` already is — an unreachable roster member is exactly the kind of
+silent gap that class exists to surface.
+
+**Why it matters beyond one typo:** this is a supply bug that hides itself. A channel that
+renames its handle goes quiet permanently and the sweep keeps reporting fine, so the corpus
+silently loses a voice and nothing says so. Every `access: ok` entry not yet ingested is
+unverified in the same way.
+
+---
+
+## 6e. `backfill.max_videos` is a per-tab cap, not per-channel · `WATCHING` — new 2026-07-26
+
+`resolve_recent` iterates `_TABS` (videos, streams) and applies the cap to **each**, as its
+docstring states. So `max_videos: 20` yielded **40 ingested** for Traders Reality and 38 for
+Real Vision. Not a bug — documented and deduped — but the knob reads like a per-channel budget
+and isn't one, which matters when it is being used to bound a trial cohort's cost. Either
+rename it or apply the cap after the merge.
+
+---
+
 ## 6b. `brain/report.py` keeps its own staleness cliff · `OPEN` — new 2026-07-26
 
 `brain/report.py:22,32` has `_DEFAULT_STALE_DAYS = 120` and its own `STALE_AFTER_DAYS` map.

@@ -230,21 +230,37 @@ people:
       His own @checkonchain channel is active and on-topic, so that is the real feed.
       The podcast stays listed as `manual` for when podcast ingestion exists.
 
+  # ── Turned on 2026-07-26 as a trial cohort ──
+  #
+  # All four carry a reduced `backfill` rather than the 50/730 default. These are unproven
+  # voices: the point is to hear enough of each to judge whether they earn a permanent slot,
+  # not to commit a full two-year sweep to someone who may get dropped. Ingestion is
+  # idempotent and resumable, so raising these later costs only the delta.
   - name: "Traders Reality"
     handle: "@TradersReality"
-    status: candidate
+    status: active
     domains: [crypto, stock]
     why: "ICT/SMC institutional-order-flow education, cross-asset (Nasdaq futures + BTC). Direct overlap with TTrades/TraderSZ."
     channels: [{ platform: youtube, id: "@TradersReality", access: ok }]
-    notes: "DISCOVERED. Useful for correlating BTC vs equity liquidity sweeps."
+    backfill: { max_videos: 20, max_age_days: 270 }
+    notes: "DISCOVERED. Useful for correlating BTC vs equity liquidity sweeps. Trial cohort 2026-07-26."
 
   - name: "Raoul Pal (Real Vision)"
     handle: "raoul-pal"
-    status: candidate
+    status: active
     domains: [macro, crypto]
     why: "Macro liquidity/debt-cycle. His 5-yr cycle thesis directly CONFLICTS with Cowen's 4-yr — a built-in disagreement the Brain head can surface."
-    channels: [{ platform: youtube, id: "@RealVision", access: ok }]
-    notes: "DISCOVERED. Multi-month/year. Cross-check for Cowen."
+    # @RealVision was recorded as verified in Phase 0 and does not exist — yt-dlp reports no
+    # videos *or* streams tab for it. Corrected 2026-07-26 after the first sweep returned
+    # 0/0/0/0. (@realvisiontv is a different, dead archive: last upload 2012.)
+    channels: [{ platform: youtube, id: "@RealVisionFinance", access: ok }]
+    backfill: { max_videos: 20, max_age_days: 270 }
+    # ATTRIBUTION HAZARD: @RealVision is the firm's channel, not Raoul's personal feed, and
+    # attribution is feed-level — so every guest interview it publishes is scored as Raoul's
+    # voice and counted as his in agreement. This is what `members:` handles for Technical
+    # Roundup, except the guest list here is unbounded and changes weekly. Watch what actually
+    # lands before trusting any agreement count that includes this feed.
+    notes: "DISCOVERED. Multi-month/year. Cross-check for Cowen. Trial cohort 2026-07-26."
 
   - name: "Lyn Alden"
     handle: "lyn-alden"
@@ -256,19 +272,23 @@ people:
 
   - name: "Capital Flows"
     handle: "@CapitalFlowsResearch"
-    status: candidate
+    status: active
     domains: [macro, crypto]
     why: "Macro flows (rates/FX/equities) → leveraged/perps positioning. Explicit funding/perps + macro-catalyst (CPI/FOMC) lens."
     channels: [{ platform: youtube, id: "@CapitalFlowsResearch", access: ok }]
-    notes: "DISCOVERED. Daily livestream. Fills the flow-trader niche."
+    # A daily livestream, so 20 videos is under a month of output and each is long. If this
+    # voice earns its slot the cap should rise; if it doesn't, a month is plenty to tell.
+    backfill: { max_videos: 20, max_age_days: 270 }
+    notes: "DISCOVERED. Daily livestream. Fills the flow-trader niche. Trial cohort 2026-07-26."
 
   - name: "DataDash (Nicholas Merten)"
     handle: "@DataDash"
-    status: candidate
+    status: active
     domains: [crypto, macro]
     why: "Longest-running crypto YouTube (since 2017), macro cycle + TA. Confirmed active with a '2026 Bear Market is Here' video — on-topic now."
     channels: [{ platform: youtube, id: "@DataDash", access: ok }]
-    notes: "DISCOVERED. Swing-to-multimonth."
+    backfill: { max_videos: 20, max_age_days: 270 }
+    notes: "DISCOVERED. Swing-to-multimonth. Trial cohort 2026-07-26."
 
   - name: "CryptoCon"
     handle: "@CryptoConComic"
