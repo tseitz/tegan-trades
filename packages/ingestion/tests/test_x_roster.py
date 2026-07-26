@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 
 from ingestion import x_roster
@@ -110,6 +112,46 @@ def test_posts_from_an_unattributable_handle_are_not_stored(tmp_path):
     written = x_roster.store_posts(posts, WATCHLIST, root=tmp_path)
     assert written == []
     assert not (tmp_path / "x").exists()
+
+
+# ── resuming after a gap ────────────────────────────────────────────────────────
+#
+# launchd runs a missed StartCalendarInterval job *on wake*, and coalesces several missed days
+# into one run. So the nightly's real cadence is "whenever the laptop next wakes", and a fixed
+# `--from yesterday` would silently lose every day in between.
+
+def test_the_window_resumes_from_the_last_captured_day(tmp_path):
+    """Resumes *from* that day, not the day after: a day captured mid-run is partial, and
+    store_posts rewrites a day wholesale, so re-fetching it is correct and idempotent."""
+    posts = [XPost("Tradermayne", "1", "u", "2026-07-20", "a", "")]
+    x_roster.store_posts(posts, WATCHLIST, root=tmp_path)
+    start, truncated = x_roster.resume_window(date(2026, 7, 23), root=tmp_path)
+    assert start == "2026-07-20"
+    assert truncated is False
+
+
+def test_a_gap_longer_than_the_cap_is_truncated_and_flagged(tmp_path):
+    """A day of the digest costs ~$0.25, so a week is worth paying unprompted and a quarter is
+    not. Truncation is reported rather than silent — the untruncated days are genuinely lost."""
+    posts = [XPost("Tradermayne", "1", "u", "2026-01-01", "a", "")]
+    x_roster.store_posts(posts, WATCHLIST, root=tmp_path)
+    start, truncated = x_roster.resume_window(date(2026, 7, 23), root=tmp_path)
+    assert start == "2026-07-16"   # 7 days back, not January
+    assert truncated is True
+
+
+def test_the_first_ever_run_just_takes_yesterday(tmp_path):
+    start, truncated = x_roster.resume_window(date(2026, 7, 23), root=tmp_path)
+    assert start == "2026-07-22"
+    assert truncated is False
+
+
+def test_the_last_ingested_day_is_the_newest_across_all_authors(tmp_path):
+    x_roster.store_posts([
+        XPost("Tradermayne", "1", "u", "2026-07-20", "a", ""),
+        XPost("GiganticRebirth", "2", "u", "2026-07-22", "b", ""),
+    ], WATCHLIST, root=tmp_path)
+    assert x_roster.last_ingested_day(root=tmp_path) == "2026-07-22"
 
 
 def test_restoring_the_same_day_replaces_rather_than_duplicates(tmp_path):

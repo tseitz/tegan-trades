@@ -75,9 +75,10 @@ def x_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="ingest-x",
         description="Pull X posts for the roster's digest handles via xAI x_search.")
-    yesterday = (datetime.now(UTC).date() - timedelta(days=1)).isoformat()
-    parser.add_argument("--from", dest="from_date", default=yesterday,
-                        help=f"window start, YYYY-MM-DD (default: {yesterday})")
+    resume_from, truncated = x_roster.resume_window(datetime.now(UTC).date())
+    parser.add_argument("--from", dest="from_date", default=resume_from,
+                        help=f"window start, YYYY-MM-DD (default: resume from the last "
+                             f"captured day, currently {resume_from})")
     parser.add_argument("--to", dest="to_date", default=None,
                         help="window end, YYYY-MM-DD (default: today)")
     # Charts are ON by default. Measured: ~$0.07 per chart actually viewed, and image tokens
@@ -91,6 +92,12 @@ def x_main(argv: list[str] | None = None) -> int:
                         help="search and report, but write nothing")
     args = parser.parse_args(argv)
     to_date = args.to_date or datetime.now(UTC).date().isoformat()
+
+    if truncated and args.from_date == resume_from:
+        print(f"  ! gap since the last capture exceeds "
+              f"{x_roster.MAX_AUTO_LOOKBACK_DAYS} days — starting at {resume_from}. "
+              f"Days before that are NOT recoverable by a later run; pass --from to widen.",
+              file=sys.stderr)
 
     watchlist = load_watchlist()
     handles = x_roster.search_handles(watchlist)

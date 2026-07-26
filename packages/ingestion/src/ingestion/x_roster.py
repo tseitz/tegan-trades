@@ -15,6 +15,8 @@ against a metric that is 20% of a setup's score.
 """
 from __future__ import annotations
 
+import json
+from datetime import date, timedelta
 from pathlib import Path
 
 from ingestion.store import DATA_ROOT, TranscriptRecord, save
@@ -83,6 +85,47 @@ def undigested(watchlist: dict) -> list[str]:
             if channel["id"].lower() not in digest:
                 out.append(channel["id"].lower())
     return out
+
+
+# How far back the window may be widened automatically to close a gap. A day of the digest is
+# roughly $0.25, so a week is ~$1.75 — worth paying unprompted, a quarter is not.
+MAX_AUTO_LOOKBACK_DAYS = 7
+
+
+def last_ingested_day(*, root: Path = DATA_ROOT) -> str | None:
+    """The newest day already captured, or None if nothing has been.
+
+    Exists because the nightly job's real cadence is "whenever the laptop next wakes", not
+    06:15: launchd runs a missed `StartCalendarInterval` on wake and coalesces several missed
+    days into **one** run. With a fixed `--from yesterday`, closing the lid Friday and opening
+    it Monday would fetch Sunday→Monday and lose Saturday permanently — YouTube self-heals
+    because `ingest-roster` looks back months and skips what exists, but X had no equivalent.
+    """
+    days = []
+    for sidecar in (Path(root) / PLATFORM).glob("*.json"):
+        try:
+            day = json.loads(sidecar.read_text(encoding="utf-8")).get("published_at")
+        except (OSError, json.JSONDecodeError):
+            continue
+        if day:
+            days.append(day[:10])
+    return max(days) if days else None
+
+
+def resume_window(today: date, *, root: Path = DATA_ROOT,
+                  max_lookback: int = MAX_AUTO_LOOKBACK_DAYS) -> tuple[str, bool]:
+    """Where to start the next X pull, and whether the gap had to be truncated.
+
+    Resumes *from* the last captured day rather than the day after it: a day captured mid-run
+    is partial, and `store_posts` rewrites a day wholesale, so re-fetching it is both correct
+    and idempotent.
+    """
+    floor = today - timedelta(days=max_lookback)
+    last = last_ingested_day(root=root)
+    if last is None:
+        return (today - timedelta(days=1)).isoformat(), False
+    start = date.fromisoformat(last)
+    return (max(start, floor).isoformat(), start < floor)
 
 
 def store_posts(posts, watchlist: dict, *, root: Path = DATA_ROOT) -> list[Path]:
