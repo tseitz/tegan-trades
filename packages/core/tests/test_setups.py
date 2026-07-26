@@ -1,4 +1,5 @@
 from datetime import date
+from hashlib import sha256
 from types import SimpleNamespace
 
 import pytest
@@ -6,7 +7,10 @@ import pytest
 from core.dealing_range import DealingRange
 from core.levels import NEAREST, STATED
 from core.setups import (
+    DAILY,
     STRUCTURAL,
+    WEEKLY,
+    ZONE_LEVEL_REASONS,
     TIER_LARGE,
     TIER_MAJOR,
     TIER_NONCRYPTO,
@@ -656,6 +660,156 @@ def test_candidate_key_is_content_addressed_not_positional():
                         published_close=100.0)
     ])[0]
     assert different.key != a.key
+
+
+# ── zone timeframes ─────────────────────────────────────────────────────────
+
+def _tf_ctx(**overrides):
+    """A context carrying one weekly zone and one daily zone, both bullish and both live.
+
+    The weekly zone is deliberately the *wider and further* of the two, mirroring the live
+    GOOGL shape that motivated all of this: a tight daily block sitting on top of price while
+    the weekly block price is actually drawn to sits well below it.
+    """
+    base = dict(zones=(
+        Zone(block=_block(top=95.0, bottom=75.0, invalidation=70.0, confirmed_day=7),
+             structural_target=140.0, timeframe=WEEKLY),
+        Zone(block=_block(top=110.0, bottom=100.0, confirmed_day=6),
+             structural_target=140.0, timeframe=DAILY),
+    ))
+    base.update(overrides)
+    return _ctx(**base)
+
+
+def test_cross_reference_still_reads_the_daily_zone_by_default():
+    """Back-compat is load-bearing: every other test in this file, and the whole notion of an
+    unchanged decision key, depends on the daily pass being what you get for free."""
+    setup = cross_reference(_row(), _tf_ctx(), published_close=100.0)
+    assert setup.zone_timeframe == DAILY
+    assert (setup.entry_bottom, setup.entry_top) == (100.0, 110.0)
+
+
+def test_the_weekly_pass_reads_the_weekly_zone():
+    setup = cross_reference(_row(), _tf_ctx(), published_close=100.0, zone_timeframe=WEEKLY)
+    assert setup.zone_timeframe == WEEKLY
+    assert (setup.entry_bottom, setup.entry_top) == (75.0, 95.0)
+
+
+def test_the_two_timeframes_do_not_compete_for_the_same_slot():
+    """The weekly zone here is both older and further from price, so a newest-wins or a
+    score-wins contest across timeframes would hand both passes the daily block — which is
+    exactly the bias weekly structure was added to correct."""
+    weekly = cross_reference(_row(), _tf_ctx(), published_close=100.0, zone_timeframe=WEEKLY)
+    daily = cross_reference(_row(), _tf_ctx(), published_close=100.0, zone_timeframe=DAILY)
+    assert weekly.entry != daily.entry
+
+
+def test_pricing_risk_on_the_weekly_zone_gives_a_sane_reward_risk():
+    """The point of the whole exercise. The daily block is 10 wide and the weekly one 20, so
+    the weekly setup risks more per unit and reports a reward:risk a human recognizes rather
+    than the inflated number a one-candle stop produces."""
+    weekly = cross_reference(_row(key_levels=[140.0]), _tf_ctx(), published_close=100.0,
+                             zone_timeframe=WEEKLY)
+    daily = cross_reference(_row(key_levels=[140.0]), _tf_ctx(), published_close=100.0,
+                            zone_timeframe=DAILY)
+    assert weekly.reward_risk < daily.reward_risk
+    assert weekly.stop == 75.0 and daily.stop == 100.0
+
+
+def test_a_timeframe_with_no_live_zone_is_refused_without_borrowing_the_other():
+    daily_only = _ctx(zones=(Zone(block=_block(), structural_target=140.0, timeframe=DAILY),))
+    assert _reason(cross_reference(_row(), daily_only, published_close=100.0,
+                                   zone_timeframe=WEEKLY)) == "no_live_zone"
+    assert isinstance(cross_reference(_row(), daily_only, published_close=100.0), Setup)
+
+
+def test_every_zone_level_refusal_the_engine_emits_is_classified_as_one():
+    """``ZONE_LEVEL_REASONS`` repeats refusal strings that are written out in
+    ``cross_reference``, and nothing in the type system ties the two together. Renaming a reason
+    there would silently drop it out of the set, at which point the tally starts deduping it as
+    a thesis-level reason and under-counts it. Driving each refusal for real is what keeps them
+    in step — asserting the strings by hand would just restate the bug.
+    """
+    emitted = {
+        _reason(cross_reference(_row(), _ctx(), published_close=100.0,
+                                zone_timeframe=WEEKLY)),
+        _reason(cross_reference(
+            _row(), _ctx(zones=(Zone(block=_block(invalidation=None),
+                                     structural_target=140.0),)), published_close=100.0)),
+        _reason(cross_reference(
+            _row(), _ctx(zones=(Zone(block=_block(top=110.0, bottom=110.0),
+                                     structural_target=140.0),)), published_close=100.0)),
+        _reason(cross_reference(
+            _row(), _ctx(zones=(Zone(block=_block(), structural_target=None),)),
+            published_close=100.0)),
+        _reason(cross_reference(
+            _row(), _ctx(zones=(Zone(block=_block(), structural_target=115.0),)),
+            published_close=100.0)),
+    }
+    assert emitted == ZONE_LEVEL_REASONS
+
+
+def test_a_thesis_level_refusal_is_never_classified_as_a_zone_one():
+    """The other half of the split. These are decided from the thesis and the asset alone, so
+    they fire identically on every timeframe and counting them per pass would double them."""
+    emitted = {
+        _reason(cross_reference(_row(published_at=None), _ctx(), published_close=100.0)),
+        _reason(cross_reference(_row(direction="sideways"), _ctx(), published_close=100.0)),
+        _reason(cross_reference(_row(timeframe="epochal"), _ctx(), published_close=100.0)),
+        _reason(cross_reference(_row(), _ctx(dealing_range=None), published_close=100.0)),
+        _reason(cross_reference(_row(), _ctx(price=180.0), published_close=100.0)),
+        _reason(cross_reference(_row(), _ctx(daily_trend=DOWNTREND), published_close=100.0)),
+        _reason(cross_reference(_row(), _ctx(weekly_trend=DOWNTREND), published_close=100.0)),
+    }
+    assert emitted.isdisjoint(ZONE_LEVEL_REASONS)
+
+
+def test_collapse_keeps_the_two_timeframes_as_separate_candidates():
+    ctx = _tf_ctx()
+    candidates = collapse([
+        cross_reference(_row(id="w"), ctx, published_close=100.0, zone_timeframe=WEEKLY),
+        cross_reference(_row(id="d"), ctx, published_close=100.0, zone_timeframe=DAILY),
+    ])
+    assert len(candidates) == 2
+    assert {c.zone_timeframe for c in candidates} == {WEEKLY, DAILY}
+
+
+def test_collapse_ranks_a_weekly_candidate_above_a_daily_one_it_outscores_on_nothing():
+    """'The macro is much stronger' — Rule 8 already lets the weekly veto a direction, and the
+    same precedence decides the queue. The weekly zone here scores *worse* (price has not
+    reached it, so proximity and depth are both lower) and must still come first."""
+    ctx = _tf_ctx()
+    candidates = collapse([
+        cross_reference(_row(id="d"), ctx, published_close=100.0, zone_timeframe=DAILY),
+        cross_reference(_row(id="w"), ctx, published_close=100.0, zone_timeframe=WEEKLY),
+    ])
+    assert candidates[0].zone_timeframe == WEEKLY
+    assert candidates[0].score < candidates[1].score
+
+
+def test_a_daily_candidates_decision_key_is_unchanged_by_the_weekly_addition():
+    """Decisions on disk are keyed by this hash. Changing the daily form would orphan every
+    approve/reject already recorded, so the timeframe is only mixed in for weekly zones."""
+    candidate = collapse([cross_reference(_row(), _tf_ctx(), published_close=100.0)])[0]
+    legacy = sha256(
+        f"{candidate.asset}\x1f{candidate.direction}\x1f{candidate.block.date.isoformat()}"
+        f"\x1f{candidate.block.top}\x1f{candidate.block.bottom}".encode("utf-8")
+    ).hexdigest()[:12]
+    assert candidate.key == legacy
+
+
+def test_a_weekly_zone_cannot_collide_with_a_daily_one_on_the_same_bar():
+    """``to_weekly`` dates a weekly bar at the last daily bar it aggregates, so a week with a
+    single trading day produces a bar identical to that day's — same date, same high, same low.
+    Without the timeframe in the hash both would key to one decision."""
+    twin = _block(top=110.0, bottom=100.0)
+    ctx = _ctx(zones=(Zone(block=twin, structural_target=140.0, timeframe=WEEKLY),))
+    weekly = collapse([cross_reference(_row(), ctx, published_close=100.0,
+                                       zone_timeframe=WEEKLY)])[0]
+    daily = collapse([cross_reference(_row(), _ctx(), published_close=100.0)])[0]
+    assert weekly.block.date == daily.block.date
+    assert (weekly.block.top, weekly.block.bottom) == (daily.block.top, daily.block.bottom)
+    assert weekly.key != daily.key
 
 
 # ── shape ───────────────────────────────────────────────────────────────────

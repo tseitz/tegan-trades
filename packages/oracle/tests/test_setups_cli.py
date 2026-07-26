@@ -8,8 +8,10 @@ import pytest
 
 from core.canon import Registry
 from core.setups import (
+    DAILY,
     SCORE_VERSION,
     STRUCTURAL,
+    WEEKLY,
     TIER_LARGE,
     TIER_MAJOR,
     Candidate,
@@ -46,6 +48,7 @@ def _candidate(**overrides) -> Candidate:
         target=140.0, target_source=STRUCTURAL,
         reward_risk=3.0, depth=0.0, proximity=1.0,
         weekly_trend="uptrend", daily_trend="uptrend", zone="discount",
+        zone_timeframe=DAILY,
         tier=TIER_MAJOR,
         freshness=1.0, trend_alignment=1.0,
         views=(View(person="Mayne", published_at="2026-07-20"),), thesis_ids=("t1",),
@@ -98,6 +101,29 @@ def test_decision_record_stamps_the_scoring_generation():
     record = setups_cli.decision_record(_candidate(), setups_cli.APPROVED,
                                         decided_at="2026-07-26T00:00:00+00:00")
     assert record["score_version"] == SCORE_VERSION
+
+
+def test_decision_record_carries_the_zone_timeframe():
+    """The open question weekly zones were added to answer is whether they actually beat daily
+    ones. That stays answerable only if every decision records which kind it judged."""
+    record = setups_cli.decision_record(_candidate(zone_timeframe=WEEKLY), setups_cli.APPROVED,
+                                        decided_at="2026-07-26T00:00:00+00:00")
+    assert record["zone_timeframe"] == WEEKLY
+
+
+def test_the_queue_labels_which_timeframe_a_zone_came_from():
+    """The same asset can now appear twice, once per timeframe, and the two differ in exactly
+    the numbers a glance skips. Unlabelled they read as a duplicate rather than as two setups
+    with different risk."""
+    weekly = setups_cli.format_candidate(_candidate(zone_timeframe=WEEKLY))
+    daily = setups_cli.format_candidate(_candidate(zone_timeframe=DAILY))
+    assert "weekly zone" in weekly
+    assert "daily zone" in daily
+
+
+def test_an_approved_note_records_which_timeframe_it_was():
+    note = setups_cli.render_note(_candidate(zone_timeframe=WEEKLY), decided_on="2026-07-26")
+    assert "weekly zone" in note
 
 
 def test_decision_record_carries_freshness_so_it_can_be_correlated_later():
@@ -388,7 +414,9 @@ def test_render_note_heading_carries_the_approval_date():
     c = _candidate(asset="ZEC", direction="long")
     first = setups_cli.render_note(c, decided_on="2026-07-25")
     second = setups_cli.render_note(c, decided_on="2026-08-14")
-    assert first.splitlines()[0] == "## 2026-07-25 · ZEC long · tier major · score 0.50"
+    assert first.splitlines()[0] == (
+        "## 2026-07-25 · ZEC long · daily zone · tier major · score 0.50"
+    )
     assert second.splitlines()[0].startswith("## 2026-08-14 · ZEC long")
     assert first != second
 

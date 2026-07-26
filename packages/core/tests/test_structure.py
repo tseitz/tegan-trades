@@ -9,7 +9,9 @@ from core.structure import (
     SWING_WIDTH,
     UPTREND,
     UPTREND_FAILED_BREAKOUT,
+    Break,
     Swing,
+    _invalidation_for,
     breaks,
     confirmed_by,
     invalidated_on,
@@ -348,6 +350,83 @@ def test_order_block_is_only_knowable_once_the_break_happens():
 
 def test_order_block_invalidation_is_the_origin_swing_low():
     assert _bull_ob().invalidation == 9
+
+
+# A break whose origin swing lands *inside* the order block it produces.
+#
+# Not a contrived shape — it is what look-ahead avoidance does on wick-heavy candles, and live
+# GOOGL weekly data hits it exactly. The block at index 8 wicks to 85, and the bar after it goes
+# lower still (80), which is the low the move truly began at. But that swing is only confirmed
+# two bars later, *after* the break, so ``_origin_before`` may not use it and reaches back to
+# the last swing low that was knowable in time — index 2 at 90, which sits inside the block and
+# above its own stop.
+WICK_BELOW_ORIGIN = _candles([
+    (100, 102, 98, 101),
+    (101, 103, 99, 102),
+    (102, 104, 90, 103),    # swing low 90, confirmed at index 4 — the eligible origin
+    (103, 108, 100, 107),
+    (107, 112, 104, 111),   # swing high 112 — the level the break clears
+    (111, 111, 106, 108),
+    (108, 110, 105, 109),
+    (109, 110, 107, 108),
+    (108, 109, 85, 87),     # the order block: a down candle wicking below the origin
+    (87, 100, 80, 98),      # the true low, confirmed too late to be the origin
+    (98, 120, 97, 118),     # break of structure
+    (118, 122, 115, 120),
+])
+
+
+def _wicked_ob():
+    return [o for o in order_blocks(WICK_BELOW_ORIGIN) if o.kind == BULLISH][0]
+
+
+def test_the_fixture_really_does_put_the_origin_swing_inside_the_block():
+    """Guards the premise of the next test: if the walk-back or the origin rule changes, this
+    fails loudly rather than leaving the clamp test silently asserting nothing."""
+    ob = _wicked_ob()
+    assert (ob.top, ob.bottom) == (109, 85)
+    assert ob.bos.origin.price == 90          # the stale swing, not the 80 that came later
+    assert ob.bottom < ob.bos.origin.price < ob.top
+
+
+def test_an_origin_swing_inside_the_zone_is_clamped_to_the_far_edge():
+    """Left alone the zone would die at 90 while a trade on it survived to its stop at 85 —
+    inverting the relationship the rest of the module assumes, where invalidation outlives the
+    stop. Clamping lands them together so zone and trade die on the same close."""
+    assert _wicked_ob().invalidation == 85
+
+
+def test_clamping_does_not_touch_an_origin_that_is_already_outside_the_zone():
+    """The normal case, and by far the common one: BULL_BOS's origin is 9 against a block
+    bottom of 9.2, so the clamp is a no-op and the real swing level survives."""
+    assert _bull_ob().invalidation == 9
+    assert _bull_ob().invalidation < _bull_ob().bottom
+
+
+def _bos(kind, *, origin_price):
+    """A hand-built break, for exercising the clamp directly in both directions.
+
+    Bearish fixtures big enough to produce this shape from real bars cost far more than the rule
+    is worth, and the bullish path is already covered end-to-end by ``WICK_BELOW_ORIGIN``.
+    """
+    opposing = "low" if kind == BULLISH else "high"
+    origin = None if origin_price is None else Swing(
+        date=START, price=origin_price, kind=opposing, confirmed_at=START, index=0)
+    broken = Swing(date=START, price=120.0, kind=("high" if kind == BULLISH else "low"),
+                   confirmed_at=START, index=1)
+    return Break(kind=kind, level=broken.price, swing=broken, origin=origin,
+                 date=START, index=2)
+
+
+def test_a_bearish_origin_inside_the_zone_clamps_up_to_the_top():
+    bos = _bos(BEARISH, origin_price=100.0)
+    assert _invalidation_for(bos, top=105.0, bottom=95.0) == 105.0
+    assert _invalidation_for(bos, top=98.0, bottom=90.0) == 100.0   # already outside, untouched
+
+
+def test_a_break_with_no_origin_still_has_no_invalidation():
+    assert _invalidation_for(_bos(BULLISH, origin_price=None),
+                             top=110.0, bottom=100.0) is None
 
 
 def test_order_block_depth_runs_from_the_near_edge():

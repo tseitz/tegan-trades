@@ -387,9 +387,34 @@ def _block_for(bars, bos: Break) -> OrderBlock | None:
         return OrderBlock(
             kind=bos.kind, top=bar.high, bottom=bar.low, date=bar.date, index=i,
             confirmed_at=bos.date, bos=bos,
-            invalidation=bos.origin.price if bos.origin is not None else None,
+            invalidation=_invalidation_for(bos, top=bar.high, bottom=bar.low),
         )
     return None
+
+
+def _invalidation_for(bos: Break, *, top: float, bottom: float) -> float | None:
+    """The origin swing, pulled to the zone's far edge when it lands *inside* the zone.
+
+    Usually a no-op: the move began at a low below the down-candle it later left behind, so the
+    origin sits beyond the block and is returned untouched.
+
+    It is not a no-op on wick-heavy candles, and the cause is look-ahead avoidance rather than
+    bad data. ``_origin_before`` may only use swings already *confirmed* at the break, so when
+    the low a move truly began at is confirmed a bar too late, the search falls back to a much
+    older swing — on live GOOGL weekly bars, a block spanning 273.95–305.98 whose origin was a
+    three-month-old swing at 296.12, inside the block and above its own stop. Left alone the
+    zone dies before a trade on it does, inverting the relationship the rest of the module
+    assumes: ``invalidation`` is meant to outlive ``stop``, not precede it.
+
+    The honest caveat is that clamping reports a level no swing actually marks. The alternative
+    — discarding the block — throws away real structure over an artifact of aggregation, and
+    landing the two together at least means the zone and any trade on it die on the same close,
+    which is the conservative direction to be wrong in.
+    """
+    if bos.origin is None:
+        return None
+    return (min(bos.origin.price, bottom) if bos.kind == BULLISH
+            else max(bos.origin.price, top))
 
 
 def invalidated_on(block: OrderBlock, bars) -> date | None:

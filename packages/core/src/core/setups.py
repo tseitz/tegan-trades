@@ -64,6 +64,39 @@ from core.structure import (
 # Target source, alongside core.levels.STATED.
 STRUCTURAL = "structural"
 
+# Which bar series a zone's structure was read from.
+#
+# Daily-only selection is systematically biased toward tight, near-price zones, and the bias is
+# structural rather than incidental: ``SWING_WIDTH`` is 2, so daily breaks fire often, and
+# ``_newest_zone`` takes the newest. On live GOOGL that produced a 5.51-wide zone
+# (316.32–321.83) carrying a reward:risk of 14.19 — a number that high is a symptom of a broken
+# denominator, not a good trade — while the weekly block price was actually drawn to sat at
+# 273.95–305.98 and priced at 2.94.
+#
+# The two are **not competitors for one slot**. A weekly zone and a daily zone on the same asset
+# are different setups with different risk, and each is judged and offered on its own.
+DAILY = "daily"
+WEEKLY = "weekly"
+# Weekly first: "the macro is much stronger" already lets the weekly trend veto a direction in
+# ``cross_reference``, and the same precedence orders the queue. See ``collapse``.
+ZONE_TIMEFRAMES = (WEEKLY, DAILY)
+
+# Refusals that describe a *zone* rather than the thesis that pointed at it.
+#
+# A thesis is cross-referenced once per zone timeframe, so these can legitimately fire more than
+# once for one thesis — "no live weekly zone" and "no live daily zone" are two separate facts.
+# Everything above them (direction, trend agreement, dealing range, dating) is decided from the
+# thesis and the asset alone, so it can only be true once however many timeframes are tried. A
+# tally that doesn't know the difference silently doubles ``weekly_disagrees`` for a reason that
+# has nothing to do with zones.
+ZONE_LEVEL_REASONS = frozenset({
+    "no_live_zone",
+    "no_invalidation",
+    "degenerate_zone",
+    "no_target",
+    "reward_risk_too_low",
+})
+
 TIER_MAJOR = "major"
 TIER_LARGE = "large"
 TIER_SMALL = "small"
@@ -215,6 +248,9 @@ class Zone:
     """
     block: OrderBlock
     structural_target: float | None
+    # Which bar series ``block`` was derived from. Defaults to daily so every caller that
+    # predates weekly structure — and every fixture built by hand — keeps its meaning.
+    timeframe: str = DAILY
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,6 +309,7 @@ class Setup:
     weekly_trend: str
     daily_trend: str
     zone: str             # DISCOUNT | PREMIUM
+    zone_timeframe: str   # WEEKLY | DAILY — which series ``block`` was read from
     tier: str
     score: float
 
@@ -302,6 +339,7 @@ class Candidate:
     weekly_trend: str
     daily_trend: str
     zone: str
+    zone_timeframe: str   # WEEKLY | DAILY — which series ``block`` was read from
     tier: str
     # The freshest supporting view's, not an average: the question a candidate answers is "is
     # anyone still saying this", so one current voice carries a zone the others have gone
@@ -339,9 +377,19 @@ class Candidate:
         index — the exact failure that made thesis ids content-addressed in ``core.thesis``
         (positional ids silently re-pointed triage decisions at unrelated theses). A zone is
         the same zone whatever array it happens to live in.
+
+        **Daily zones keep the original three-field form, and that asymmetry is deliberate.**
+        Decisions already on disk are keyed by this hash, so mixing the timeframe into every
+        input would orphan every approve/reject ever recorded and refill the queue with zones
+        already judged. Weekly zones are new, have no history to preserve, and do need the
+        discriminator: ``oracle.resample.to_weekly`` dates a weekly bar at the last daily bar it
+        aggregates, so a week with a single trading day yields a bar identical to that day's —
+        same date, same high, same low — which would otherwise collide onto one key.
         """
         raw = f"{self.asset}\x1f{self.direction}\x1f{self.block.date.isoformat()}" \
               f"\x1f{self.block.top}\x1f{self.block.bottom}"
+        if self.zone_timeframe != DAILY:
+            raw += f"\x1f{self.zone_timeframe}"
         return sha256(raw.encode("utf-8")).hexdigest()[:12]
 
 
@@ -373,11 +421,22 @@ def collapse(outcomes, *, weights: SetupWeights = DEFAULT_WEIGHTS) -> tuple[Cand
 
     Agreement is recomputed from the collapsed group, which is the whole point — six people on
     one zone is one strong candidate, not six weak ones.
+
+    **Ordering is weekly-then-score, not score alone.** "The macro is much stronger" already
+    lets the weekly trend veto a direction outright in ``cross_reference``, and the same rule
+    decides the queue: a weekly zone outranks a daily one even when it scores lower. It usually
+    *will* score lower, because price has typically not reached it — on live GOOGL the weekly
+    zone scored ~0.75 against the daily zone's 0.90 precisely because ``proximity`` and
+    ``depth`` reward being close, which is the near-price bias in a different coat. Expressing
+    the precedence in the sort rather than as a score weight keeps it a rule, per the split this
+    module opens with: a rule is gated or ordered, never quietly priced into a continuum.
     """
     groups: dict[tuple, list[Setup]] = defaultdict(list)
     for outcome in outcomes:
         if isinstance(outcome, Setup):
-            key = (outcome.asset, outcome.direction,
+            # ``zone_timeframe`` is part of the identity because ``block.index`` is only unique
+            # within the series it indexes — daily bar 42 and weekly bar 42 are unrelated.
+            key = (outcome.asset, outcome.direction, outcome.zone_timeframe,
                    outcome.block.index, outcome.block.confirmed_at)
             groups[key].append(outcome)
 
@@ -410,7 +469,7 @@ def collapse(outcomes, *, weights: SetupWeights = DEFAULT_WEIGHTS) -> tuple[Cand
             target=rep.target, target_source=rep.target_source,
             reward_risk=rep.reward_risk, depth=rep.depth, proximity=rep.proximity,
             weekly_trend=rep.weekly_trend, daily_trend=rep.daily_trend,
-            zone=rep.zone, tier=rep.tier,
+            zone=rep.zone, zone_timeframe=rep.zone_timeframe, tier=rep.tier,
             freshness=freshness, trend_alignment=rep.trend_alignment,
             views=views,
             thesis_ids=tuple(sorted(s.thesis_id for s in members)),
@@ -418,7 +477,11 @@ def collapse(outcomes, *, weights: SetupWeights = DEFAULT_WEIGHTS) -> tuple[Cand
                          reward_risk=rep.reward_risk, agreement_count=len(views),
                          freshness=freshness, trend_alignment=rep.trend_alignment),
         ))
-    return tuple(sorted(candidates, key=lambda c: (-c.score, c.asset, c.direction)))
+    return tuple(sorted(candidates, key=lambda c: (
+        ZONE_TIMEFRAMES.index(c.zone_timeframe) if c.zone_timeframe in ZONE_TIMEFRAMES
+        else len(ZONE_TIMEFRAMES),
+        -c.score, c.asset, c.direction,
+    )))
 
 
 def tier_for(rank: int | None, *, domain: str = "crypto") -> str:
@@ -452,28 +515,46 @@ def build_context(daily, weekly, *, as_of: date,
 
     ``daily`` and ``weekly`` are bar sequences — pass ``series.bars`` and
     ``resample.to_weekly(series).bars``. The dealing range is taken from **weekly**, since the
-    manifesto bounds it on the macro timeframe; order blocks come from **daily**, the structure
-    timeframe the break is set on.
+    manifesto bounds it on the macro timeframe.
+
+    **Order blocks are read from both series and kept side by side**, tagged by the one they
+    came from. See ``DAILY``/``WEEKLY`` for why daily alone was not enough. Each series
+    validates and measures its own blocks: ``block.bos.index`` indexes the array the block was
+    derived from, so an invalidation check or a post-break extreme computed against the other
+    array would be reading unrelated bars.
+
+    One honest limitation: ``to_weekly`` excludes the in-progress week, so a weekly zone's
+    ``structural_target`` cannot see this week's extreme and will understate it slightly. That
+    is the same look-ahead discipline ``oracle.resample`` is built on, and understating a target
+    is the safe direction to be wrong in.
     """
     upto = tuple(bar for bar in daily if bar.date <= as_of)
     if not upto:
         return None
 
-    live = tuple(
-        block for block in order_blocks(daily, as_of=as_of, width=width)
-        if invalidated_on(block, upto) is None
-    )
     return Context(
         as_of=as_of,
         price=upto[-1].close,
         weekly_trend=trend_state(weekly, as_of=as_of, width=width),
         daily_trend=trend_state(daily, as_of=as_of, width=width),
         dealing_range=resolve_dealing_range(weekly, as_of=as_of, width=width),
-        zones=tuple(
-            Zone(block=block, structural_target=_extreme_since(upto, block))
-            for block in live
+        zones=(
+            _zones_from(weekly, timeframe=WEEKLY, as_of=as_of, width=width)
+            + _zones_from(daily, timeframe=DAILY, as_of=as_of, width=width)
         ),
         atr=atr(upto, len(upto) - 1),
+    )
+
+
+def _zones_from(bars, *, timeframe: str, as_of: date, width: int) -> tuple[Zone, ...]:
+    """Live blocks from one bar series, each validated and measured against that same series."""
+    upto = tuple(bar for bar in bars if bar.date <= as_of)
+    if not upto:
+        return ()
+    return tuple(
+        Zone(block=block, structural_target=_extreme_since(upto, block), timeframe=timeframe)
+        for block in order_blocks(bars, as_of=as_of, width=width)
+        if invalidated_on(block, upto) is None
     )
 
 
@@ -492,6 +573,7 @@ def cross_reference(
     context: Context,
     *,
     published_close: float | None,
+    zone_timeframe: str = DAILY,
     asset_rank: int | None = None,
     agreement_count: int = 0,
     weights: SetupWeights = DEFAULT_WEIGHTS,
@@ -506,6 +588,13 @@ def cross_reference(
     ``published_close`` is the asset's close when the thesis was published — a per-thesis
     input, which is why it isn't on ``Context``. ``core.levels`` needs it to tell a stated
     target from a stated stop.
+
+    ``zone_timeframe`` selects which series' structure to gate against, and one call judges
+    exactly one timeframe. Defaulting to ``DAILY`` preserves the original contract — one thesis
+    in, one ``Outcome`` out — so a caller wanting both passes asks for both explicitly, and
+    every pre-existing caller and fixture keeps its meaning. ``timeframe`` (from ``row``) is the
+    unrelated horizon the *person* spoke on: scalp/swing/position/macro. The two are deliberately
+    named apart because conflating them would silently gate a swing call against weekly bars.
     """
     ident = getattr(row, "id", "")
     asset = getattr(row, "asset", "")
@@ -551,7 +640,7 @@ def cross_reference(
     zone_label = context.dealing_range.zone_at(context.price)
 
     # ── a live zone pointing the same way ──
-    zone = _newest_zone(context.zones, family)
+    zone = _newest_zone(context.zones, family, zone_timeframe)
     if zone is None:
         return refuse("no_live_zone")
     block = zone.block
@@ -605,6 +694,7 @@ def cross_reference(
         # Domain comes off the row so a cross-domain ticker collision can't leak a crypto
         # market-cap rank onto a stock or a macro instrument. See tier_for.
         zone=zone_label or "",
+        zone_timeframe=zone_timeframe,
         tier=tier_for(asset_rank, domain=getattr(row, "domain", "crypto")),
         score=_score(weights, proximity=proximity, depth=depth,
                      reward_risk=reward_risk, agreement_count=agreement_count,
@@ -626,13 +716,19 @@ def _family_of(state: str) -> str | None:
     return None
 
 
-def _newest_zone(zones, family: str) -> Zone | None:
-    """The most recently confirmed live zone on the given side.
+def _newest_zone(zones, family: str, timeframe: str) -> Zone | None:
+    """The most recently confirmed live zone on the given side, *within one timeframe*.
 
     Selected by ``confirmed_at`` rather than sequence position so the caller's ordering can
     never change the answer — structure is defined by the most recent level.
+
+    Scoped to a single timeframe rather than ranging across all of them because a weekly zone
+    and a daily zone are separate candidates, judged separately. Letting them compete here would
+    reintroduce exactly the newest-wins bias weekly structure was added to correct: the daily
+    block is almost always the newer one, so it would win every contest.
     """
-    matching = [zone for zone in zones if zone.block.kind == family]
+    matching = [zone for zone in zones
+                if zone.timeframe == timeframe and zone.block.kind == family]
     if not matching:
         return None
     return max(matching, key=lambda zone: (zone.block.confirmed_at, zone.block.index))

@@ -471,7 +471,7 @@ Revisit if the tally starts getting read for signal.
 
 ---
 
-## 7. Stop sanity should be ATR-relative, not a minimum width · `WATCHING`
+## 7. Stop sanity should be ATR-relative, not a minimum width · `WATCHING` — updated 2026-07-26
 
 A minimum stop width was considered and declined, correctly — score saturation already caps the
 ranking damage (RR saturates at 3.0, so 15.75 and 4.67 contribute identically).
@@ -480,7 +480,18 @@ The real concern is different: **GOOGL's 5.51 stop is roughly 1 ATR**, which ord
 takes out. RR without survival probability is a half-metric. The right form is `stop >= k * ATR`,
 not an absolute width. `Context` already carries ATR, so it's cheap.
 
-Revisit if narrow zones keep topping the list.
+**Partly relieved 2026-07-26 by weekly zones** (`core.setups.WEEKLY`). The same GOOGL long now
+also surfaces as a weekly candidate with a 32.03-wide stop and RR 2.94, alongside the daily one
+at 5.51 and 14.19. Narrow zones no longer *crowd out* wide ones — but they still top the list on
+score, because `proximity` and `depth` reward being close to price and a tight zone is the one
+price is sitting in. So the ATR check is still the right fix; it just isn't urgent.
+
+**Separate, unfixed, and cheaper: there is no stop buffer at all.** `OrderBlock.stop` documents
+itself as "just past the far edge" (`core/structure.py:324`) but returns `self.bottom` exactly,
+and `Candidate.stop == Candidate.entry_bottom` in every row the queue prints. Two consequences:
+a wick one tick into the zone is a stop-out, and a fill at the far edge is a zero-risk trade
+whose RR is a division by ~0. Whatever `k * ATR` lands on, the buffer is a one-line change and
+independent of it.
 
 ---
 
@@ -712,3 +723,32 @@ so he's uncovered too.
 the per-item LLM economics are inverted — batching many posts into one `distill` call is the
 obvious shape, and the current one-call-per-document `distill_all` loop does not fit it.
 Interacts with §9 (the extractive pre-filter) — X needs no pre-filter at all.
+
+---
+
+## 15. No concept of moving averages as levels · `OPEN` — new 2026-07-26
+
+Nothing in the repo computes a moving average. `core/levels.py` handles stated levels only,
+`core/structure.py` knows swings, breaks and order blocks, and `grep -rn "sma\|SMA\|moving_aver"
+packages/` returns nothing. Every level the engine reasons about is structural.
+
+**Evidence (2026-07-26, Tegan on the GOOGL long):** the 50- and 52-week SMA sit in the same
+273–303 region as the weekly order block, and that *confluence* — not the order block alone — is
+what makes the zone worth entering. The engine surfaced the zone (§ weekly zones, shipped) but
+is blind to the reason it's strong. Two independent reasons to buy the same area currently
+score identically to one.
+
+**Shape when built.** This is a **score**, not a gate, per the gates-vs-scores rule: "how much
+confluence does this zone have" is a measurement on a continuum, and no rule says a zone without
+an SMA is untradeable. So it wants a new `SetupWeights` term and a `SCORE_VERSION` bump, with
+the new term shown in the queue row (a soft signal that isn't displayed is strictly worse than a
+hard one — same argument that put `freshness` and `no macro alignment` on screen).
+
+**Cheap to source.** `Context` is already built from full daily and weekly bar arrays, so a
+50/52-week SMA is an average over `weekly[-50:]` — no new fetch, no new dependency, no cost
+tier. Note the weekly series excludes the in-progress week (`oracle.resample.to_weekly`), so an
+SMA computed from it is as-of last week's close.
+
+**Open question before building:** which averages. 50W and 52W were the two named, but nothing
+has measured whether either actually marks turns in this corpus — and a confluence term that
+fires on an arbitrary average is worse than none, since it would launder a guess into the score.

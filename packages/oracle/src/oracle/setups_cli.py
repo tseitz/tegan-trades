@@ -38,6 +38,8 @@ from core.setups import (
     TIER_NONCRYPTO,
     TIER_SMALL,
     TIER_UNRANKED,
+    ZONE_LEVEL_REASONS,
+    ZONE_TIMEFRAMES,
     Candidate,
     NotASetup,
     build_context,
@@ -173,6 +175,13 @@ def build_candidates(
 
     rank_cache: dict[str, int | None] = {}
     outcomes = []
+    rejections: Counter = Counter()
+    # Thesis-level refusals are identical across timeframes — a thesis whose weekly trend
+    # disagrees disagrees once, however many zone timeframes it is tried against. Counting them
+    # per pass would double every such tally and make the queue's headline diagnostic lie. Zone
+    # -level ones are counted per pass, because "no live weekly zone" and "no live daily zone"
+    # are genuinely two separate facts about two separate zones. See ZONE_LEVEL_REASONS.
+    counted_once: set[tuple[str, str]] = set()
     for row in rows:
         entry = contexts.get(row.asset)
         if entry is None:
@@ -183,16 +192,25 @@ def build_candidates(
             rank_cache[row.asset] = rank
         published = parse_date(row.published_at)
         published_close = daily.close_on(published) if published is not None else None
-        # agreement_count is irrelevant here: collapse() recomputes each candidate's score
-        # from its own regrouped agreement count, so whatever a single Setup carried never
-        # survives to the collapsed Candidate.
-        outcomes.append(cross_reference(
-            row, ctx, published_close=published_close,
-            asset_rank=rank_cache[row.asset], agreement_count=0,
-        ))
+        for zone_timeframe in ZONE_TIMEFRAMES:
+            # agreement_count is irrelevant here: collapse() recomputes each candidate's score
+            # from its own regrouped agreement count, so whatever a single Setup carried never
+            # survives to the collapsed Candidate.
+            outcome = cross_reference(
+                row, ctx, published_close=published_close,
+                zone_timeframe=zone_timeframe,
+                asset_rank=rank_cache[row.asset], agreement_count=0,
+            )
+            outcomes.append(outcome)
+            if not isinstance(outcome, NotASetup):
+                continue
+            if outcome.reason in ZONE_LEVEL_REASONS:
+                rejections[outcome.reason] += 1
+            elif (outcome.thesis_id, outcome.reason) not in counted_once:
+                counted_once.add((outcome.thesis_id, outcome.reason))
+                rejections[outcome.reason] += 1
 
     candidates = collapse(outcomes)
-    rejections = Counter(o.reason for o in outcomes if isinstance(o, NotASetup))
     stats = BuildStats(
         assets_total=len(assets), assets_priced=len(contexts),
         assets_unpriced=unpriced, assets_no_context=no_context,
@@ -271,6 +289,10 @@ def decision_record(candidate: Candidate, decision: str, *, decided_at: str,
         "asset": candidate.asset,
         "direction": candidate.direction,
         "entry": candidate.entry,
+        # Which series the zone came from. Recorded because the whole reason weekly zones exist
+        # is the open question "do weekly setups actually beat daily ones", and that stays
+        # answerable only if every decision says which kind it was judging.
+        "zone_timeframe": candidate.zone_timeframe,
         "stop": candidate.stop,
         "target": candidate.target,
         "target_source": candidate.target_source,
@@ -313,7 +335,12 @@ def format_candidate(candidate: Candidate, *, rank: int | None = None) -> str:
     # like every other, and the judgement it was softened to enable can't actually be made.
     unaligned = "  ·  no macro alignment" if not c.trend_alignment else ""
     lines = [
-        f"\n{header}{c.asset} {c.direction.upper()} · tier {c.tier} · score {c.score:.2f}",
+        # The zone timeframe leads the heading because the same asset can now appear twice —
+        # once per timeframe — and the two differ in exactly the numbers a glance skips over.
+        # Unlabelled, a weekly and a daily GOOGL long read as a duplicate rather than as two
+        # setups with different risk.
+        f"\n{header}{c.asset} {c.direction.upper()} · {c.zone_timeframe} zone"
+        f" · tier {c.tier} · score {c.score:.2f}",
         f"  last called {c.newest_at}{span}  ·  freshness {c.freshness:.2f}",
         f"  entry zone {c.entry_bottom:g}–{c.entry_top:g}  ·  entry {c.entry:g}",
         f"  stop {c.stop:g}  ·  invalidation {c.invalidation:g}",
@@ -341,7 +368,8 @@ def render_note(candidate: Candidate, *, decided_on: str) -> str:
     """
     c = candidate
     lines = [
-        f"## {decided_on} · {c.asset} {c.direction} · tier {c.tier} · score {c.score:.2f}",
+        f"## {decided_on} · {c.asset} {c.direction} · {c.zone_timeframe} zone"
+        f" · tier {c.tier} · score {c.score:.2f}",
         "",
         f"- **Last called:** {c.newest_at}"
         + ("" if c.newest_at == c.oldest_at else f" (oldest {c.oldest_at})"),
