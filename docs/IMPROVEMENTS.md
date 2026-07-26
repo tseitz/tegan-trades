@@ -486,12 +486,35 @@ at 5.51 and 14.19. Narrow zones no longer *crowd out* wide ones — but they sti
 score, because `proximity` and `depth` reward being close to price and a tight zone is the one
 price is sitting in. So the ATR check is still the right fix; it just isn't urgent.
 
-**Separate, unfixed, and cheaper: there is no stop buffer at all.** `OrderBlock.stop` documents
-itself as "just past the far edge" (`core/structure.py:324`) but returns `self.bottom` exactly,
-and `Candidate.stop == Candidate.entry_bottom` in every row the queue prints. Two consequences:
-a wick one tick into the zone is a stop-out, and a fill at the far edge is a zero-risk trade
-whose RR is a division by ~0. Whatever `k * ATR` lands on, the buffer is a one-line change and
-independent of it.
+**Separate and unfixed: there is no stop buffer at all.** `OrderBlock.stop` returns the far edge
+exactly, so `Candidate.stop == Candidate.entry_bottom` in every row the queue prints. Two
+consequences: a wick one tick into the zone is a stop-out, and a fill at the far edge is a
+zero-risk trade whose RR divides by ~0. (The docstring claiming "just past the far edge" was
+corrected 2026-07-26; the behaviour was always the edge itself.)
+
+**Correction — this is NOT independent of the ATR question, and NOT a one-line change.** An
+earlier version of this entry said both; both were wrong.
+
+- A buffer proportional to the zone's own height is the wrong shape: it hands the *tightest*
+  zones the smallest cushion. GOOGL's 5.51-wide daily block would get 0.28 while the 32-wide
+  weekly block gets 1.6 — backwards, since the tight zone is the one noise takes out. That is
+  the same reasoning that declined a minimum stop width above, so the buffer wants the same ATR
+  yardstick. One fix, not two.
+- It therefore cannot live on `OrderBlock`, which has no access to ATR. It belongs in
+  `cross_reference`, where `Context.atr` is in scope and `Setup.stop` is already a distinct
+  field from `block.stop`. Roughly: pad the stop, derive `risk` from the padded value, keep
+  `block.stop` raw. ~10 lines. Unknown ATR must skip padding rather than fail it, per the rule
+  `_reasonable` and `imbalance.is_displacement` already follow.
+
+**Measure `k` before shipping it.** Padding widens risk, so it lowers *every* RR and silently
+drops candidates through `MIN_REWARD_RISK`. Baseline to measure against: 84 candidates (30
+weekly / 54 daily) at 2026-07-26.
+
+**Known test consequence:** `core/tests/test_setups.py` drives a `degenerate_zone` refusal with
+a zero-height block, and `_ctx` defaults to `atr=5.0` — padding would make that zone non-
+degenerate and the reason unreachable. `test_every_zone_level_refusal_the_engine_emits_is_
+classified_as_one` asserts exact set equality, so it will fail loudly. That fixture needs an
+`atr=None` variant.
 
 ---
 

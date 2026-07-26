@@ -322,12 +322,27 @@ class OrderBlock:
 
     @property
     def stop(self) -> float:
-        """Where a *trade* on this zone is wrong: just past the far edge.
+        """Where a *trade* on this zone is wrong: the far edge, exactly.
 
         Deliberately distinct from ``invalidation``, which is where the *zone* dies. Conflating
         them was measured and rejected: pricing risk all the way down to the origin swing low
         put 17 of 18 live candidates under 1.0 reward-to-risk. The zone surviving a stop-out is
         the correct behaviour — structure hasn't broken just because one entry failed.
+
+        **There is no buffer, and the omission is real rather than intended.** This returns the
+        edge itself, so ``Setup.stop`` equals ``Setup.entry_bottom`` on every long: a wick one
+        tick through the zone is a stop-out, and a fill at the far edge is a zero-risk trade
+        whose reward-to-risk divides by ~0.
+
+        A buffer does not belong here. Padding by a fraction of the zone's own height would give
+        the *tightest* zones the smallest cushion, which is backwards — a 5.51-wide daily block
+        needs relatively more protection from noise than a 32-wide weekly one, not less. The
+        yardstick has to be ATR, and ATR is not knowable from a block; it lives on
+        ``core.setups.Context``. So the fix belongs in ``cross_reference``, where both are in
+        scope and ``Setup.stop`` is already a separate field from this one. Tracked as §7 in
+        ``docs/IMPROVEMENTS.md``, gated on measuring the multiplier rather than guessing it —
+        padding widens risk, so it lowers every reward-to-risk and silently drops candidates
+        through ``MIN_REWARD_RISK``.
         """
         return self.bottom if self.kind == BULLISH else self.top
 
