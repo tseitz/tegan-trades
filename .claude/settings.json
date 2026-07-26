@@ -3,9 +3,6 @@
     "filesystem": {
       "allowWrite": ["cfg", "data"]
     },
-    "network": {
-      "allowedDomains": ["p.webshare.io", "www.youtube.com", "youtube.com"]
-    },
-    "excludedCommands": ["ingest-roster", "ingest-channel"]
+    "excludedCommands": ["uv"]
   }
 }
