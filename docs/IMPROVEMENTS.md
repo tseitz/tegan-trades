@@ -151,17 +151,62 @@ work that accelerates it.
 
 ---
 
-## 5. `trend_state` is noisy — two swings decide everything · `OPEN`
+## 5. `trend_state` read only two swings · `FIXED 2026-07-25`
 
-`core.structure.trend_state` reads only the **last two swing highs and last two swing lows**.
-One unusual swing flips the verdict.
+`core.structure.trend_state` compared the **last two swing highs and last two swing lows**.
+Fixed by anchoring the comparison `TREND_DEPTH = 2` swings back and requiring each side to
+clear `TREND_NOISE_FLOOR = 0.01`.
 
-**Evidence:** BTC weekly reads `ranging` as of 2026-07-24, and since ranging permits neither
-direction, **BTC — 28.5% of the corpus — yields zero candidates.** That may be correct, but it
-rests on four data points.
+### It was mis-filed as a supply problem — it was a correctness bug
 
-Candidate fix: score the structure *sequence* (how many recent swings agree) rather than a
-two-point comparison, so the state degrades gradually instead of flipping.
+The entry above framed this as "BTC yields no candidates." That is the *lesser* half. The gate
+also pointed **backwards**: **ETH weekly read `uptrend`** on 2026-07-25 off `+3.4%` on highs and
+`+0.3%` on lows, while highs were down 50% (4,956 → 2,466) and lows 57% (3,510 → 1,510). Since
+weekly sets direction (`setups.py:458`), that verdict **permitted a long on a chart in freefall
+— and ETH long was one of the five setups approved that day.** Across 217 cached assets, 16 had
+a verdict that inverted under a corrected rule, 11 in the permissive direction. Separately, 13
+of 110 decisive verdicts rested on a swing-to-swing move under 1%.
+
+### The fix this entry originally proposed was the worst of the four tested
+
+"Score how many recent swings agree" is **magnitude-blind** — one large drop and one small
+bounce cancel. Measured: 28.6% decisive vs 50.7% for the code it would have replaced, and it
+still got BTC wrong. Deleted rather than left as a suggestion. *Do not re-derive it.*
+
+| Design | decisive | BTC | ETH | SOL |
+|---|---|---|---|---|
+| last-two (was) | 50.7% | ✗ | ✗ | ✓ |
+| agreement vote (proposed here) | 28.6% | ✗ | ~ | ✓ |
+| **anchored `k=2`, 1% floor (shipped)** | **44.7%** | ✓ | ✓ | ✓ |
+| least-squares slope over 5 | 57.1% | ✓ | ✓ | ✓ |
+
+**Slope was rejected despite being the most decisive.** Its window keeps structure price has
+already left: on HOOD — topped at 154, bottomed at 63, now building higher highs and higher
+lows — slope still reported `downtrend` because `150.47` and `139.75` were in its 5-swing
+window. Some of its extra decisiveness is confidently wrong. Anchored also stays in the
+manifesto's higher-high/higher-low vocabulary, so a verdict is checkable against a chart.
+
+**Depth is the fix; the floor is the junior partner.** No noise floor at depth 1 gets ETH right
+at any threshold — it only downgrades `uptrend` to `ranging`. Only reaching past the bounce
+makes it `downtrend`.
+
+### Effect
+
+90 of 217 assets changed verdict, 5 formerly inverted. BTC `ranging → downtrend`, ETH
+`uptrend → downtrend`, NVDA and TLT `→ ranging` (both genuinely undecided — NVDA's highs are
+falling while its lows still rise). Decisive verdicts fell 110 → 97: **the rule is deliberately
+less decisive, because accuracy was the goal and some old confidence was false.**
+
+### Watch
+
+- **`timeframe_conflict` rose 41 → 129** in the live run. Both legs use this function, so daily
+  and weekly now disagree more often. Expected, but unmeasured — if it keeps climbing it may
+  mean depth 2 is too coarse for the daily leg specifically, which has far more swings.
+- **The ETH approval of 2026-07-25 is invalidated by this change** and is still sitting in
+  `data/setups/decisions.jsonl` as `approved`. See §4 — it also means one of that session's
+  five positives is not trustworthy ground truth.
+- `TREND_NOISE_FLOOR` is marked TUNE. 1% was chosen to clear the observed sub-1% cluster, not
+  fitted to anything.
 
 ---
 

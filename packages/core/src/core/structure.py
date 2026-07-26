@@ -26,6 +26,20 @@ from datetime import date
 # widening it finds fewer, more significant swings. Tunable, like ``core.rank``'s weights.
 SWING_WIDTH = 2
 
+# How many swings back ``trend_state`` reaches for its comparison. Depth 1 — the last two
+# swings of each kind — reads a single leg, so any counter-trend bounce inverts the verdict.
+# Measured on the cached corpus at 2026-07-25: it called ETH weekly an ``uptrend`` off +3.4%
+# on highs and +0.3% on lows while highs were down 50% and lows 57%, and that verdict is what
+# permits a direction in ``core.setups``. Depth 2 spans the bounce; it fixed BTC, ETH and SOL
+# and cost 3 points of decisiveness across 217 assets.
+TREND_DEPTH = 2
+
+# Fractional move a swing must clear against its anchor to count as higher or lower. Without
+# it, 12% of decisive verdicts on the cached corpus rested on a move under 1% — noise wearing
+# a direction. Deliberately the junior partner to depth: a floor alone downgrades a wrong
+# verdict to ``RANGING``, only depth makes it right. TUNE once decisions accumulate.
+TREND_NOISE_FLOOR = 0.01
+
 SWING_HIGH = "high"
 SWING_LOW = "low"
 
@@ -114,13 +128,44 @@ def position_in_range(bottom: float, top: float, price: float) -> float | None:
 
 # ── trend state ─────────────────────────────────────────────────────────────
 
-def trend_state(bars, *, as_of: date | None = None, width: int = SWING_WIDTH) -> str:
-    """The market-structure state implied by the last two swings of each kind.
+def _swing_direction(prices: list[float], depth: int, noise_floor: float) -> int:
+    """+1 / -1 / 0 for the newest swing measured against the one ``depth`` swings back.
+
+    Fractional rather than absolute so one floor serves every asset — a 1% move means the
+    same thing on BTC and on a sub-cent memecoin, which an absolute threshold could not.
+    Returns 0 on a non-positive anchor: no honest fraction exists, and guessing a sign there
+    would put a direction on a price that cannot support one.
+    """
+    newest, anchor = prices[-1], prices[-1 - depth]
+    if anchor <= 0:
+        return 0
+    change = (newest - anchor) / anchor
+    if change > noise_floor:
+        return 1
+    if change < -noise_floor:
+        return -1
+    return 0
+
+
+def trend_state(bars, *, as_of: date | None = None, width: int = SWING_WIDTH,
+                depth: int = TREND_DEPTH,
+                noise_floor: float = TREND_NOISE_FLOOR) -> str:
+    """The market-structure state implied by the swing sequence.
 
     A trend requires agreement: higher highs *and* higher lows. Highs rising while lows fall
     is an expanding range, and reporting that as a trend would hand the cross-ref engine a
     directional bias the chart doesn't support — so it degrades to ``RANGING`` rather than
     picking a side.
+
+    **Each side is measured against the swing ``depth`` back, not its immediate predecessor**,
+    and must clear ``noise_floor`` to count. Comparing adjacent swings makes the verdict a
+    function of the newest leg alone, which inverts on any bounce — see ``TREND_DEPTH``. The
+    two knobs are separable on purpose: depth decides *which* structure is read, the floor
+    only decides whether a move is big enough to be structure at all.
+
+    Fewer than ``depth + 1`` swings of either kind cannot reach the anchor, so the state is
+    ``RANGING``. That is an abstention, not a finding of balance — the caller treats ranging
+    as permitting neither direction, which is the safe reading of "not enough structure yet".
 
     The failed-break states are the other half of the same idea: an attempt beyond the level
     that couldn't close there. A break that *holds* is a break of structure (see ``breaks``);
@@ -132,16 +177,16 @@ def trend_state(bars, *, as_of: date | None = None, width: int = SWING_WIDTH) ->
 
     highs = [s for s in found if s.kind == SWING_HIGH]
     lows = [s for s in found if s.kind == SWING_LOW]
-    if len(highs) < 2 or len(lows) < 2:
+    if len(highs) <= depth or len(lows) <= depth:
         return RANGING
 
-    rising = highs[-1].price > highs[-2].price and lows[-1].price > lows[-2].price
-    falling = highs[-1].price < highs[-2].price and lows[-1].price < lows[-2].price
+    high_dir = _swing_direction([s.price for s in highs], depth, noise_floor)
+    low_dir = _swing_direction([s.price for s in lows], depth, noise_floor)
 
-    if rising:
+    if high_dir > 0 and low_dir > 0:
         failed = _attempt_failed(bars, highs[-1], BULLISH, as_of)
         return UPTREND_FAILED_BREAKOUT if failed else UPTREND
-    if falling:
+    if high_dir < 0 and low_dir < 0:
         failed = _attempt_failed(bars, lows[-1], BEARISH, as_of)
         return DOWNTREND_FAILED_BREAKDOWN if failed else DOWNTREND
     return RANGING

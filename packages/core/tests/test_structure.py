@@ -171,14 +171,26 @@ def test_position_in_range_refuses_a_degenerate_range():
 
 # ── trend state ─────────────────────────────────────────────────────────────
 
+# Each fixture carries THREE swings of each kind, because the comparison reaches
+# `TREND_DEPTH` swings back. Swing sequences, for reading the assertions below:
+#   UPTREND_BARS    highs 16 → 18 → 20   lows  4 →  6 →  8
+#   DOWNTREND_BARS  highs 34 → 31 → 28   lows 17 → 14 → 11
 UPTREND_BARS = _bars([
-    (10, 5), (11, 6), (15, 7), (12, 6), (11, 4), (13, 6), (14, 8),
-    (18, 10), (15, 9), (14, 8), (16, 10), (17, 11), (15, 10),
+    (10, 5), (11, 6), (9, 4), (11, 6), (13, 8), (16, 9), (13, 8), (12, 7), (11, 6), (13, 8),
+    (15, 10), (18, 11), (15, 10), (14, 9), (13, 8), (15, 10), (17, 12), (20, 13), (17, 12),
+    (16, 11),
 ])
 
 DOWNTREND_BARS = _bars([
-    (20, 15), (19, 14), (21, 16), (18, 13), (17, 10), (16, 12), (17, 13),
-    (18, 14), (15, 9), (14, 6), (15, 8), (16, 10), (14, 9),
+    (30, 25), (29, 24), (34, 29), (29, 24), (27, 22), (24, 17), (26, 20), (27, 22), (31, 26),
+    (26, 21), (24, 19), (21, 14), (23, 17), (24, 19), (28, 23), (23, 18), (21, 16), (18, 11),
+    (20, 14), (21, 16),
+])
+
+# Two swings of each kind — one short of the anchor.
+SHALLOW_BARS = _bars([
+    (10, 5), (11, 6), (15, 7), (12, 6), (11, 4), (13, 6), (14, 8),
+    (18, 10), (15, 9), (14, 8), (16, 10), (17, 11), (15, 10),
 ])
 
 
@@ -194,14 +206,61 @@ def test_disagreeing_highs_and_lows_are_ranging_not_a_trend():
     """Higher highs with lower lows is an expanding range. Calling it a trend would hand the
     cross-ref engine a directional bias the chart does not support."""
     expanding = _bars([
-        (10, 5), (11, 6), (15, 7), (12, 6), (11, 4), (13, 6), (14, 8),
-        (18, 10), (15, 9), (14, 3), (16, 10), (17, 11), (15, 10),
+        (10, 9), (11, 10), (9, 8), (11, 10), (13, 11), (16, 12), (13, 10), (12, 9), (11, 6),
+        (13, 9), (15, 11), (18, 13), (15, 11), (14, 9), (13, 4), (15, 9), (17, 12), (20, 14),
+        (17, 12), (16, 11),
     ])
     assert trend_state(expanding) == RANGING
 
 
+def test_a_bounce_inside_a_larger_decline_is_still_a_downtrend():
+    """The defect that motivated the anchored comparison.
+
+    Swing highs run 104 → 90 → 93 and lows 60 → 40 → 41: the newest leg of each is *up*, so
+    comparing only the last two swings reports ``uptrend`` on a chart that has lost a third of
+    its range. Reaching two swings back spans the bounce and reads the structure containing it.
+
+    Taken from ETH weekly on 2026-07-25, where the real numbers were +3.4% and +0.3% against a
+    50% decline — and the resulting ``uptrend`` let a long through the direction gate.
+    """
+    bounce = _bars([
+        (100, 70), (99, 69), (104, 74), (98, 68), (96, 66), (92, 60), (86, 64), (88, 66),
+        (90, 70), (87, 63), (85, 61), (82, 40), (84, 44), (86, 48), (93, 52), (88, 46),
+        (86, 44), (83, 41), (85, 45), (87, 47),
+    ])
+    assert trend_state(bounce) == DOWNTREND
+
+
+def test_moves_under_the_noise_floor_are_not_a_trend():
+    """Swing highs 100.8 → 100.9 → 101.0 and lows 90.0 → 90.1 → 90.2 — every leg rises, and
+    every rise is a rounding error. Direction has to clear the floor to count, or noise reads
+    as structure: 12% of decisive verdicts across the cached corpus rested on a sub-1% move.
+    """
+    flat = _bars([
+        (100.6, 90.6), (100.5, 90.5), (100.8, 90.8), (100.4, 90.4), (100.3, 90.3),
+        (100.2, 90.0), (100.3, 90.15), (100.5, 90.25), (100.9, 90.5), (100.45, 90.35),
+        (100.35, 90.3), (100.25, 90.1), (100.3, 90.2), (100.5, 90.3), (101.0, 90.6),
+        (100.5, 90.4), (100.4, 90.35), (100.3, 90.2), (100.4, 90.3), (100.5, 90.4),
+    ])
+    assert trend_state(flat) == RANGING
+
+
+def test_too_few_swings_to_reach_the_anchor_is_ranging():
+    """Two swings of each kind cannot support a depth-2 comparison. Abstaining is the point —
+    thin series are common (TLT had three weekly swing highs across two years), and answering
+    from whatever exists would put a verdict on the whole of a short history."""
+    assert trend_state(SHALLOW_BARS) == RANGING
+
+
+def test_trend_depth_and_noise_floor_are_tunable():
+    """Both knobs are parameters, not constants baked into the comparison — the floor in
+    particular is marked TUNE and will move once decisions accumulate."""
+    assert trend_state(SHALLOW_BARS, depth=1) == UPTREND
+    assert trend_state(UPTREND_BARS, noise_floor=10.0) == RANGING
+
+
 def test_a_wick_above_the_last_swing_high_without_a_close_is_a_failed_breakout():
-    bars = UPTREND_BARS + _bars([(19, 10)], start=START + timedelta(days=13))
+    bars = UPTREND_BARS + _bars([(21, 12)], start=START + timedelta(days=20))
     assert trend_state(bars) == UPTREND_FAILED_BREAKOUT
 
 
