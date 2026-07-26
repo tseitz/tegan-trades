@@ -3,6 +3,6 @@
     "filesystem": {
       "allowWrite": ["cfg", "data"]
     },
-    "excludedCommands": ["uv"]
+    "excludedCommands": ["uv *"]
   }
 }

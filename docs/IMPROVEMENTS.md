@@ -119,6 +119,36 @@ miscalibrated, and nothing in the system can distinguish them.
 **Unblocked by:** using `setups` and `distill-triage` for real, a few sessions. Costs no tokens,
 needs no new code, and produces the only ground truth available.
 
+### First real session · 2026-07-25 — 7 candidates decided, and neither half is usable yet
+
+`data/setups/decisions.jsonl` holds 10 rows over **7 distinct candidates** (ZEC and NEAR were
+each revised). Two defects to fix before the mining pass is worth writing.
+
+**a. Half the rows carry no ranker value — historical only, no code fix needed.** The sidecar
+gained `score` / `proximity` / `inside_zone` / `agreement` / `newest_at` / `people` partway
+through the session (first row with them: 18:15Z, minutes after `2141c35` landed). The five
+earlier rows — including three of the five approvals (GOOGL, SPX, ETH) — have none. §4 correlates
+*decision against score*; those rows cannot participate. `decision_record` already writes all six
+fields unconditionally, so this cannot recur — don't "fix" it. Backfilling the old rows is **not
+clean**: the corpus moved mid-session (ZEC's `newest_at` 07-15 → 07-24, agreement 2 → 3, score
+0.665 → 0.790 between 18:02Z and 23:47Z), so a re-run yields today's score, not the decision-time
+score. If backfilled, mark it `recomputed_at` — never as captured live.
+
+**b. Zero `rejected` rows — the only verdict designed to calibrate.** Final tally is 5 approved,
+1 `later`, 1 `archived`. Per `setups_cli.py:67-91`, `later` is reversible and `archived` is
+*explicitly not a judgment*, so neither is a negative label. `rejected` is the one that carries a
+reason (`trade_quality` → setups scorer, `view_wrong` → roster trust), and there are none. A
+ranker cannot be validated against five positives and no negatives.
+
+Note the two rows spelled `skipped` are **legacy vocabulary**, predating the four-way split; they
+are honoured as permanent (`_PERMANENT`) so old passes don't resurface. Don't read them as a
+current verdict.
+
+**Next:** nothing to build — accumulate sessions until `rejected` has real rows, then correlate.
+Do not start the correlation before then. Note this makes §4 gated on **decision volume**, which
+is in turn gated on candidate supply (§5) and thesis freshness (§6) — those are the buildable
+work that accelerates it.
+
 ---
 
 ## 5. `trend_state` is noisy — two swings decide everything · `OPEN`
@@ -272,7 +302,8 @@ return two different residential IPs: the proxy is applied *and* rotating.
 doing so, `ingest-roster` returned **4 ingested, 662 skipped, 60 stale, 6 failed** and all 6
 residual failures are the permanently-dead set below.
 
-**Permanent fix — `sandbox.excludedCommands: ["uv"]` in `.claude/settings.json`.**
+**Permanent fix — `sandbox.excludedCommands: ["uv *"]` in `.claude/settings.json`, plus a patch to
+the global direnv hook. Both are required; either alone does nothing.**
 
 `allowedDomains` was tried and **removed as dead config — it cannot work here.** The sandbox
 exports `HTTPS_PROXY=http://srt:...@localhost:63350`, a local filtering proxy. When the code sets
@@ -286,17 +317,38 @@ It is scoped to `uv` rather than `ingest-roster` because commands are invoked as
 `uv run ingest-roster` — the first token is `uv`, so a binary-name entry would never match.
 **Consequence, accepted deliberately: every `uv run ...` in this repo now runs unsandboxed.**
 
-**Unverified until a session restart.** Confirm with the probe below (proxied must differ from
-direct); until it passes, `dangerouslyDisableSandbox` remains the proven path.
+#### Attempt 1 (`excludedCommands: ["uv"]`) failed — and why · 2026-07-25
 
-### Second sandbox gap: the vault is a symlink
+After a restart the probe still returned `direct == proxied`. Two independent defects:
+
+1. **A global `PreToolUse` Bash hook rewrote every command**, prefixing
+   `eval "$(direnv export bash 2>/dev/null)" && `. The first token the sandbox matched on was
+   therefore always `eval`, never `uv`. Proof: `ps -o args= -p $$` returned
+   `(eval):1: operation not permitted: ps` — zsh's error prefix for code run under `eval`.
+2. **Entries are command globs, not binary names.** The docs' own example is `"docker *"`. A bare
+   `"uv"` would not match `uv run ingest-roster` even without the hook.
+
+Control that isolated defect 1: `mkdir /Users/tseitz/.claude/sandbox-probe-dir` — a bare, exact
+first-token match against the **global** `excludedCommands` entry `"mkdir"` — was still denied. So
+exclusion was inert for every command, not just `uv`. **Always run a control against an entry you
+did not add**; it separates "my config is wrong" from "the mechanism is broken".
+
+**Attempt 2 — `VERIFIED WORKING 2026-07-25`.** The direnv hook in `~/.claude/settings.json` now
+emits `{}` (no rewrite) when the command matches `^\s*uv\s`, and the project entry is `"uv *"`.
+Harmless here — this repo has no `.envrc`, so `uv` never needed direnv.
+
+Probe result in a fresh session, sandbox ON, no `dangerouslyDisableSandbox`:
+`direct 97.88.98.212` vs `proxied 190.233.209.115`. The proxy survives. `uv run ingest-roster`
+no longer needs the sandbox escape hatch.
+
+### Second sandbox gap: the vault is a symlink · `FIXED, VERIFIED 2026-07-25`
 
 Writing to `~/vault/Trading/Trade Logs/Setups.md` failed with `Operation not permitted` even
 though `~/vault/Trading` was in `allowWrite`. `~/vault` is a **symlink** to
 `/Users/tseitz/Obsidian/Main Vault`, and macOS seatbelt matches the **resolved** path — so the
 symlink entry granted nothing. `.claude/settings.local.json` now lists both the symlink paths and
 the resolved `~/Obsidian/Main Vault/...` ones. Any future vault path must be added in resolved
-form.
+form. Confirmed working: `touch` succeeded through **both** the resolved and the symlink path.
 
 The probe (proxied must differ from direct):
 
