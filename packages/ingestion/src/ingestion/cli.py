@@ -6,7 +6,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from ingestion import x_roster
+from ingestion import verify, x_roster
 from ingestion.env import load_env
 from ingestion.store import DATA_ROOT
 from ingestion.x_search import SearchNotRun, group_by_author_day, harvest, search
@@ -137,3 +137,17 @@ def x_main(argv: list[str] | None = None) -> int:
     for path in written:
         print(f"  {path.name}")
     return 0
+
+
+def verify_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="verify-roster",
+        description="Check what cfg/watchlist.yaml claims against what is actually there. "
+                    "Free — no API key, no proxy. Exits non-zero if anything disagrees.")
+    parser.add_argument("--limit", type=int, default=5,
+                        help="videos to request per tab when probing (default: 5)")
+    args = parser.parse_args(argv)
+
+    report = verify.verify_roster(load_watchlist(), limit=args.limit)
+    print(report.format())
+    return report.exit_code

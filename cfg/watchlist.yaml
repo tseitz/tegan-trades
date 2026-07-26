@@ -316,8 +316,14 @@ people:
     status: candidate
     domains: [crypto]
     why: "'Bear Bands' halving-cycle model for bottoms/tops. Competing framework to Cowen — good for triangulating cycle timing."
-    channels: [{ platform: youtube, id: "@CryptoCon_", access: ok }]
-    notes: "DISCOVERED. Active (Jul 2026). Projecting a bottom window late-2026/early-2027."
+    # access ok -> unknown, 2026-07-26. `verify-roster` found this: @CryptoCon_ resolves to
+    # neither a videos nor a streams tab, and @CryptoConComic / @CryptoCon / @cryptocon_official
+    # all 404 too, so the recorded handle *and* channel id are both wrong. The "Active (Jul
+    # 2026)" note came from the same research pass, so treat it as unverified rather than false.
+    # Third bad channel marker found today (@RealVision, @TraderSZ). `unknown` because that is
+    # what we know — not `dormant`, which would claim he stopped posting.
+    channels: [{ platform: youtube, id: "@CryptoCon_", access: unknown }]
+    notes: "DISCOVERED, NOT VERIFIED — no resolvable channel found 2026-07-26. Find the real handle before activating. 'Bear Bands' cycle model; projecting a bottom late-2026/early-2027."
 
 # ─── Machine-readable list for the daily Grok x_search digest (allowed_x_handles, max 20) ───
 # Feeds the Brain-head sentiment layer. Honor the `degraded` flag = silence, not signal.

@@ -348,7 +348,7 @@ the value of adding them is partly gated behind it.
 
 ---
 
-## 6h. The roster's channel metadata is unverified and drifts · `OPEN` — new 2026-07-26
+## 6h. The roster's channel metadata is unverified and drifts · `WATCHING` — tool shipped 2026-07-26
 
 Three roster facts were checked against reality on 2026-07-26. **Two were wrong**, and both had
 been recorded by Phase 0 as verified:
@@ -375,10 +375,31 @@ Each failed differently, and each failure was silent:
 channel that renames, dies, or changes format does not announce it, and nothing in the sweep
 distinguishes "correctly skipped" from "wrongly skipped".
 
-**Cheapest fix:** a `verify-roster` command that probes every declared channel (both tabs) and
-diffs reality against the recorded `access`/`status`. It is free — `list_tab` needs no key and
-no proxy — and would have caught all three of these in one run. Worth doing before the nightly
-loop, since the loop will otherwise faithfully reproduce whatever the roster gets wrong.
+### `verify-roster` shipped 2026-07-26 · this entry is now `WATCHING`
+
+`uv run verify-roster` probes every declared YouTube channel across both tabs and diffs reality
+against the recorded `access`. Free — no key, no proxy — and exits non-zero on any disagreement
+so a scheduled run surfaces rather than scrolls past. Also does three structural checks that
+need no network: a channel claimed by two people, an alias naming a *different* person, and a
+non-dormant person with no feed at all.
+
+**It found a third bad marker on its first run.** `@CryptoCon_` was recorded `access: ok` and
+resolves to neither tab; `@CryptoConComic`, `@CryptoCon` and `@cryptocon_official` all 404 too,
+so both the recorded handle and the channel id are wrong. Set to `unknown` — not `dormant`,
+which would claim he stopped posting, when what we actually know is that we can't find him.
+
+**It also shipped with a false positive, which is worth remembering.** The first version called
+any written-off channel with videos `REVIVED`, and flagged Mark Newton's UC… channel — whose
+newest item is *"Cnbc interview 3/28/17"*. An archive is not a feed. `REVIVED` now requires a
+video inside `REVIVAL_WINDOW_DAYS` (180), with the date fetched via `hydrate` **only** for
+channels where it could change the verdict, and a distinct `UNDATED` verdict when the date
+can't be had — refusing to decide rather than guessing from a title.
+
+Roster now verifies clean: **16 OK · 1 dormant (confirmed) · 0 problems.**
+
+**Still uncovered:** X handles can't be probed for free (an xAI call costs money, and a check
+that costs money doesn't get run), so the digest is verified only structurally. Podcast and
+telegram feeds likewise.
 
 ---
 
