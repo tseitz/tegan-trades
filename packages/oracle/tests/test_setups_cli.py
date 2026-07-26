@@ -7,7 +7,14 @@ from pathlib import Path
 import pytest
 
 from core.canon import Registry
-from core.setups import STRUCTURAL, TIER_LARGE, TIER_MAJOR, Candidate, View
+from core.setups import (
+    SCORE_VERSION,
+    STRUCTURAL,
+    TIER_LARGE,
+    TIER_MAJOR,
+    Candidate,
+    View,
+)
 from core.structure import BULLISH, SWING_HIGH, SWING_LOW, Break, OrderBlock, Swing
 
 from oracle import setups_cli
@@ -40,6 +47,7 @@ def _candidate(**overrides) -> Candidate:
         reward_risk=3.0, depth=0.0, proximity=1.0,
         weekly_trend="uptrend", daily_trend="uptrend", zone="discount",
         tier=TIER_MAJOR,
+        freshness=1.0, trend_alignment=1.0,
         views=(View(person="Mayne", published_at="2026-07-20"),), thesis_ids=("t1",),
         score=0.5,
     )
@@ -65,12 +73,38 @@ def test_filter_by_limit_caps_the_result():
     assert setups_cli.filter_candidates(cands, limit=2) == cands[:2]
 
 
+def test_the_queue_is_capped_by_default_so_a_soft_gate_cannot_produce_a_wall():
+    assert setups_cli._parse_args([]).limit == setups_cli.DEFAULT_LIMIT
+
+
+def test_limit_zero_means_no_cap():
+    """The escape hatch from the default cap — distinct from omitting the flag, which takes
+    the default rather than meaning 'everything'."""
+    assert setups_cli._parse_args(["--limit", "0"]).limit == 0
+
+
 def test_filter_with_no_arguments_is_a_passthrough():
     cands = [_candidate(), _candidate()]
     assert setups_cli.filter_candidates(cands) == cands
 
 
 # ── decision records + sidecar round trip ────────────────────────────────────
+
+def test_decision_record_stamps_the_scoring_generation():
+    """The sidecar stores the score a candidate carried when it was judged, and the whole
+    point of that store is correlating decisions against scores later. A re-weighting changes
+    the scale underneath those numbers, so the generation has to travel with them or the
+    correlation silently compares two different things."""
+    record = setups_cli.decision_record(_candidate(), setups_cli.APPROVED,
+                                        decided_at="2026-07-26T00:00:00+00:00")
+    assert record["score_version"] == SCORE_VERSION
+
+
+def test_decision_record_carries_freshness_so_it_can_be_correlated_later():
+    record = setups_cli.decision_record(_candidate(freshness=0.31), setups_cli.APPROVED,
+                                        decided_at="2026-07-26T00:00:00+00:00")
+    assert record["freshness"] == 0.31
+
 
 def test_decision_record_roundtrips_through_the_jsonl_sidecar(tmp_path):
     c = _candidate()
@@ -193,6 +227,22 @@ def test_format_candidate_always_shows_target_source():
     structural = setups_cli.format_candidate(_candidate(target_source=STRUCTURAL))
     assert "[stated]" in stated
     assert "[structural]" in structural
+
+
+def test_format_candidate_shows_freshness_so_an_old_view_reads_as_one():
+    """Age no longer removes a candidate, so the queue has to *show* it — otherwise a
+    two-year-old call and a fresh one look identical at the moment of judgement, which is
+    exactly the trade the soft gate makes."""
+    text = setups_cli.format_candidate(_candidate(freshness=0.08))
+    assert "freshness 0.08" in text
+
+
+def test_format_candidate_flags_a_ranging_weekly_rather_than_hiding_it():
+    aligned = setups_cli.format_candidate(_candidate(trend_alignment=1.0))
+    ranging = setups_cli.format_candidate(_candidate(trend_alignment=0.0,
+                                                    weekly_trend="ranging"))
+    assert "no macro alignment" in ranging
+    assert "no macro alignment" not in aligned
 
 
 def test_format_candidate_shows_entry_zone_and_entry_price():

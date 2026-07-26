@@ -149,6 +149,44 @@ Do not start the correlation before then. Note this makes §4 gated on **decisio
 is in turn gated on candidate supply (§5) and thesis freshness (§6) — those are the buildable
 work that accelerates it.
 
+**c. The score scale changed on 2026-07-26** (freshness + trend_alignment added, all four
+existing weights cut — see §6). Every record now carries `score_version`; the 10 pre-existing
+rows have no such field and are implicitly **version 1**. Their `score` values are *not*
+comparable to anything recorded after that date, so the correlation must partition on
+`score_version` rather than pooling. This is the second time the sidecar has changed shape
+mid-life — the field exists so there is no third time that has to be reconstructed by hand.
+
+**d. v1 was archived, not migrated · 2026-07-26.** `data/setups/decisions.jsonl` →
+`data/setups/decisions.v1.jsonl`. The sidecar is append-only by design, so the whole file
+moved rather than its rows being rewritten. All 7 v1 candidates therefore resurface and get
+re-judged on the v2 scale — which is the point: 5 approvals and **zero rejections** were
+never usable calibration, and re-judging them with the reject verdict available is worth more
+than preserving them. **One knowingly-accepted cost:** the `AI long` archive was
+score-independent ("I don't trade this") and comes back once; press `x` again. Building a
+carry-forward path for a single row was not worth it.
+
+---
+
+## 4b. The decision sidecars are irreplaceable and unbacked · `OPEN` — new 2026-07-26
+
+`data/setups/decisions*.jsonl` and `data/triage/decisions.jsonl` sit under `data/`, which
+`.gitignore:2` excludes and `docs/ARCHITECTURE.md` describes as machine-generated ore —
+"regenerable", "never committed". That description is accurate for transcripts, theses,
+stances, and prices. It is **false for these two files**: they are hand-entered judgment, they
+are what §4 calls the only ground truth available, and nothing can reconstruct them.
+
+**Evidence:** the only backup that exists anywhere is `data/triage/decisions.jsonl.pre-contentid.bak`,
+created by hand during a migration and now stale. `data/setups/` has none.
+
+Approvals do reach durable storage — `render_note` appends them to `~/vault/Trading/Trade
+Logs/Setups.md`. **Rejections do not**, and rejections are the verdict §4 is actually waiting
+on. So the failure mode is precise: lose `data/` and you keep the trades you liked and lose
+every reason you passed on something.
+
+Per the vault/repo boundary in `architecture.md` — "human-curated judgment lives in the vault"
+— these belong on the vault side, or at minimum need a mirrored write. Decide before decision
+volume accumulates, not after.
+
 ---
 
 ## 5. `trend_state` read only two swings · `FIXED 2026-07-25`
@@ -210,15 +248,71 @@ less decisive, because accuracy was the goal and some old confidence was false.*
 
 ---
 
-## 6. No freshness loop · `OPEN`
+## 6. No freshness loop · `OPEN` — narrowed 2026-07-26
 
 The machinery is batch-historical; the use case is real-time. Nothing runs on a schedule —
 every Brain answer and every setups run is only as current as the last hand-run sweep.
 
-**Evidence:** `stale` is **2,872 of 3,427** rejections (84%) in the live setups run. Partly an
-artifact of scanning two years of corpus at one as-of date, but the underlying gap is real: the
-question worth answering is "price is approaching this level *now*", which needs a scheduled
-ingest → distill → setups pipeline.
+**Original evidence, now spent:** `stale` was **2,913 of 3,459** rejections (84%). That half of
+the entry was a *gate* problem, not a scheduling one, and is fixed — see below. The scheduling
+gap is untouched: the question worth answering is "price is approaching this level *now*", and
+that still needs a scheduled ingest → distill → setups pipeline. **Next: nightly via launchd**
+(not cron, not the Claude scheduler — the pipeline must not need a session open, and the plist
+needs `WEBSHARE_PROXY_*` or transcript fetches hit YouTube's IP block). Design for silent
+failure: a dead nightly job and a quiet market look identical unless the note carries a last-
+successful-run line.
+
+### The staleness cliff is gone · `FIXED 2026-07-26`
+
+`StaleAfter` → `HalfLife`: the per-timeframe windows became the shape parameter of
+`freshness_signal = 1/(1 + age/half_life)` — 1.0 the day it was said, exactly 0.50 at the
+window, never zero — and `freshness` is now a 0.15-weighted scoring term instead of a gate.
+
+**Why it had to go beyond the raw count:** the constant was unfalsifiable. The gate that would
+have produced evidence about where the line belongs was the gate under test, so nothing could
+ever tell us 21 days was wrong for a swing call. Rejecting a loosened candidate as
+`view_wrong` is now the evidence that tunes it, which is also why this unblocks §4.
+
+**Also split out of the same pass:** a **ranging** weekly is no longer `weekly_disagrees`. It
+is the absence of a macro opinion, not one against — 630 rows versus 1,617 genuine
+contradictions, a fifth of everything reaching that gate discarded for the wrong reason. It
+now scores `trend_alignment = 0.0` (weight 0.05) instead of dying.
+
+**Measured effect:** 8 candidates → **49**. The rejection tally stopped being one constant
+drowning everything: `weekly_disagrees` 1,617 · `timeframe_conflict` 798 ·
+`wrong_side_of_range` 342 · `unknown_direction` 229 · `no_dealing_range` 74.
+
+**The line that was drawn, worth not re-litigating:** gate a rule you wrote or a fact that is
+missing; score a measurement on a continuum. `min_reward_risk` is the counter-example — it was
+scored, measured, and *hardened*, because a 0.32-RR candidate surfacing mid-list feeds "I take
+way too many trades". Softening is right for measurements and wrong for rules.
+
+**Watch:** `--limit` now defaults to 25 with the held-back count printed. That cap is the only
+thing bounding the queue, so it is doing the job the cliff used to do — badly is better than
+invisibly, but it is a TUNE.
+
+---
+
+## 6b. `brain/report.py` keeps its own staleness cliff · `OPEN` — new 2026-07-26
+
+`brain/report.py:22,32` has `_DEFAULT_STALE_DAYS = 120` and its own `STALE_AFTER_DAYS` map.
+That was a duplicate of `core.setups.StaleAfter` and is now a *divergence*: setups treats age
+as a half-life, brain still treats it as a cliff. The same thesis can be current in one head
+and dead in the other, with nothing reporting the disagreement.
+
+Not urgent — the two heads answer different questions and a cliff may genuinely suit a
+narrative report. But the constant should live in `core` once, with each head choosing how to
+apply it, rather than being independently guessed in two places.
+
+---
+
+## 6c. 245 theses have no tradeable direction · `WATCHING` — new 2026-07-26
+
+`direction` is `long` 2,524 · `short` 1,082 · **`neutral` 245**. Neutral theses can never
+become setups, and now surface as `unknown_direction=229` in the rejection tally, which reads
+as a failure rather than as a category. This is correct behaviour — they are Brain-head
+material by design — but the tally should probably separate "couldn't" from "wasn't trying".
+Revisit if the tally starts getting read for signal.
 
 ---
 

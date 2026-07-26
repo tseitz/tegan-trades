@@ -1,8 +1,20 @@
 """Cross-reference: a roster thesis plus price structure becomes a setup candidate, or doesn't.
 
-This module is the manifesto encoded. Every gate below is a rule from it, and the gates are
-**hard** — Rule 8 says "the macro is much stronger", so a signal against the higher timeframe
-is discarded, not ranked lower. Scoring only ever orders candidates that already passed.
+This module is the manifesto encoded, and the line between what it **gates** and what it
+**scores** is the load-bearing decision here:
+
+- **Gate a rule you wrote, or a fact that is missing.** Rule 8 says "the macro is much
+  stronger", so a signal against the higher timeframe is discarded, not ranked lower. A
+  candidate with no target or no invalidation cannot be scored down into existence either.
+- **Score a measurement on a continuum.** Age is the example: a view one day past its window
+  is not categorically different from one a day inside it, and the cliff that pretended
+  otherwise was the largest filter in the system (2,913 of 3,459 live rejections) while being
+  unfalsifiable, since the gate that would generate evidence about it was the gate under test.
+
+The counter-example is deliberate and worth keeping in mind before softening anything else:
+``min_reward_risk`` *was* scored, and it was measured and hardened — a 0.32-RR candidate still
+surfaced mid-list, and a queue padded with those feeds the stated leak "I take way too many
+trades". Softening is not free; it is right for measurements and wrong for rules.
 
 **Rejections are a sum type, not a filter.** ``NotASetup`` carries the thesis identity and a
 reason, mirroring ``core.grade``'s ``Pending``/``Ungradeable`` and the oracle's
@@ -27,7 +39,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date
 from hashlib import sha256
 
 from core.dealing_range import DealingRange
@@ -91,13 +103,21 @@ _DIRECTION_FAMILY = {"long": BULLISH, "short": BEARISH}
 
 
 @dataclass(frozen=True)
-class StaleAfter:
-    """Days after which a stated view stops being actionable, per stated timeframe.
+class HalfLife:
+    """Age, per stated timeframe, at which a view is worth half of what it was worth new.
 
     Expressed in days but *derived* from candles of the timeframe the view was stated on — a
     swing call ages in weekly bars, a position call in monthly ones. That is what lets one
     rule fit all four horizons instead of four unrelated constants: ~3 candles of the relevant
     length. The counts, not the mechanism, are the knob. TUNE.
+
+    **These were a cliff and are now a slope.** As ``StaleAfter`` they were the age at which a
+    view was *discarded*, and that single constant was the largest filter in the system:
+    2,913 of 3,459 rejections on the live corpus, killing 95% of the swing calls that are 56%
+    of the whole corpus. Nothing justified the exact numbers — the gate that would have
+    produced evidence about where the line belongs was the gate under test, so the cliff made
+    itself unfalsifiable. Age is a measurement on a continuum; it now scores rather than
+    gates, and ``--min-score`` is the one dial that decides how much confidence is enough.
     """
     scalp: int = 3      # ~3 daily candles
     swing: int = 21     # ~3 weekly candles
@@ -109,7 +129,7 @@ class StaleAfter:
 
 
 _TIMEFRAMES = frozenset({"scalp", "swing", "position", "macro"})
-DEFAULT_STALE_AFTER = StaleAfter()
+DEFAULT_HALF_LIFE = HalfLife()
 
 
 @dataclass(frozen=True)
@@ -120,14 +140,31 @@ class SetupWeights:
     price approaches the zone and saturates on arrival, depth takes over once inside. Both are
     needed because a live zone 1% away and one 30% away would otherwise score identically —
     measured on real data, every candidate sat outside its zone with ``depth`` pinned at 0.
+
+    ``trend_alignment`` carries a deliberately small weight. A ranging weekly is genuinely
+    worse than an aligned one, and we have no idea how much worse; a small weight says that
+    honestly instead of pretending to a precision we don't have.
     """
-    proximity: float = 0.30
-    depth: float = 0.20
-    reward_risk: float = 0.25
-    agreement: float = 0.25
+    proximity: float = 0.25
+    depth: float = 0.15
+    reward_risk: float = 0.20
+    agreement: float = 0.20
+    freshness: float = 0.15
+    trend_alignment: float = 0.05
 
 
 DEFAULT_WEIGHTS = SetupWeights()
+
+# Scoring generation, recorded alongside every decision. Bumped whenever the terms or their
+# weights change, because the decisions sidecar stores the score a candidate carried when it
+# was judged, and correlating decisions against scores across a re-weighting would silently
+# compare two different scales. 1 = proximity/depth/RR/agreement; 2 = + freshness/alignment.
+SCORE_VERSION = 2
+
+# Weekly trend agrees with the thesis, versus has no opinion at all. There is no third value:
+# a weekly that genuinely contradicts is still refused outright, so it never reaches scoring.
+ALIGNED = 1.0
+UNALIGNED = 0.0
 
 
 def proximity_to(block: OrderBlock, price: float, *, span: float = PROXIMITY_SPAN) -> float:
@@ -139,13 +176,32 @@ def proximity_to(block: OrderBlock, price: float, *, span: float = PROXIMITY_SPA
     return max(0.0, 1.0 - (abs(price - block.near_edge) / price) / span)
 
 
-def _score(weights: SetupWeights, *, proximity: float, depth: float,
-           reward_risk: float, agreement_count: int) -> float:
+def freshness_signal(age_days: int, half_life: int) -> float:
+    """How much a view is still worth at ``age_days``, given its timeframe's half-life.
+
+    ``1 / (1 + age/half_life)`` — 1.0 the day it was said, exactly 0.5 at the half-life, 0.33
+    at twice it, 0.25 at three times. Chosen over a linear ramp or an exponential because it
+    introduces **no second constant**: the existing per-timeframe windows become the curve's
+    shape parameter, so nothing new has to be guessed at.
+
+    It never reaches zero, and that is the point. Age alone must not be able to eliminate a
+    view — a call from two years ago ranks near the bottom of the queue where it belongs,
+    rather than vanishing into a rejection tally nobody reads.
+    """
+    if half_life <= 0:
+        return 0.0
+    return 1.0 / (1.0 + max(age_days, 0) / half_life)
+
+
+def _score(weights: SetupWeights, *, proximity: float, depth: float, reward_risk: float,
+           agreement_count: int, freshness: float, trend_alignment: float) -> float:
     return (
         weights.proximity * proximity
         + weights.depth * depth
         + weights.reward_risk * min(reward_risk / RR_SATURATION, 1.0)
         + weights.agreement * agreement_signal(agreement_count)
+        + weights.freshness * freshness
+        + weights.trend_alignment * trend_alignment
     )
 
 
@@ -212,6 +268,8 @@ class Setup:
     reward_risk: float
     depth: float
     proximity: float
+    freshness: float         # 1.0 the day it was said, halving every ``HalfLife`` days
+    trend_alignment: float   # ALIGNED, or UNALIGNED when the weekly is merely ranging
     weekly_trend: str
     daily_trend: str
     zone: str             # DISCOUNT | PREMIUM
@@ -245,6 +303,11 @@ class Candidate:
     daily_trend: str
     zone: str
     tier: str
+    # The freshest supporting view's, not an average: the question a candidate answers is "is
+    # anyone still saying this", so one current voice carries a zone the others have gone
+    # quiet on. See ``collapse``.
+    freshness: float
+    trend_alignment: float
     # Latest statement per person, newest first. Ordered by recency rather than alphabetically
     # because "who said this most recently" is the question being asked.
     views: tuple[View, ...]
@@ -334,6 +397,12 @@ def collapse(outcomes, *, weights: SetupWeights = DEFAULT_WEIGHTS) -> tuple[Cand
             View(person=person, published_at=when)
             for person, when in sorted(latest.items(), key=lambda kv: (kv[1], kv[0]), reverse=True)
         )
+        # The freshest member's, not the representative's or an average. A zone one person
+        # called yesterday and three called last year is a live idea with old corroboration,
+        # not a stale one — and averaging would let extra supporters *lower* the score, which
+        # would invert what agreement is supposed to mean. Taking the max also keeps ``as_of``
+        # out of ``collapse``, which has no business knowing today's date.
+        freshness = max(s.freshness for s in members)
         candidates.append(Candidate(
             asset=rep.asset, direction=rep.direction, block=rep.block,
             entry=rep.entry, entry_top=rep.entry_top, entry_bottom=rep.entry_bottom,
@@ -342,10 +411,12 @@ def collapse(outcomes, *, weights: SetupWeights = DEFAULT_WEIGHTS) -> tuple[Cand
             reward_risk=rep.reward_risk, depth=rep.depth, proximity=rep.proximity,
             weekly_trend=rep.weekly_trend, daily_trend=rep.daily_trend,
             zone=rep.zone, tier=rep.tier,
+            freshness=freshness, trend_alignment=rep.trend_alignment,
             views=views,
             thesis_ids=tuple(sorted(s.thesis_id for s in members)),
             score=_score(weights, proximity=rep.proximity, depth=rep.depth,
-                         reward_risk=rep.reward_risk, agreement_count=len(views)),
+                         reward_risk=rep.reward_risk, agreement_count=len(views),
+                         freshness=freshness, trend_alignment=rep.trend_alignment),
         ))
     return tuple(sorted(candidates, key=lambda c: (-c.score, c.asset, c.direction)))
 
@@ -424,7 +495,7 @@ def cross_reference(
     asset_rank: int | None = None,
     agreement_count: int = 0,
     weights: SetupWeights = DEFAULT_WEIGHTS,
-    stale_after: StaleAfter = DEFAULT_STALE_AFTER,
+    half_life: HalfLife = DEFAULT_HALF_LIFE,
     min_reward_risk: float = MIN_REWARD_RISK,
     max_target_atr: float = MAX_TARGET_ATR,
 ) -> Outcome:
@@ -445,20 +516,29 @@ def cross_reference(
     def refuse(reason: str) -> NotASetup:
         return NotASetup(thesis_id=ident, asset=asset, person=person, reason=reason)
 
-    # ── freshness, before anything expensive or opinionated ──
+    # ── freshness: scored, not gated. Only the *absence* of a date still refuses. ──
     published = parse_date(getattr(row, "published_at", None))
     if published is None:
         return refuse("undated")
-    horizon = stale_after.days_for(timeframe)
-    if horizon is None:
+    window = half_life.days_for(timeframe)
+    if window is None:
         return refuse("unknown_timeframe")
-    if context.as_of - published > timedelta(days=horizon):
-        return refuse("stale")
+    freshness = freshness_signal((context.as_of - published).days, window)
 
     # ── Rule 8: weekly sets direction, and daily may not contradict it ──
+    #
+    # A weekly that *contradicts* is discarded — "the macro is much stronger". A weekly that
+    # is merely **ranging** is a different fact: no macro opinion exists to defer to. Those
+    # two shared this refusal until the live corpus showed them to be 1,617 and 630 rows
+    # respectively — a fifth of everything reaching this gate thrown away for the absence of
+    # an opinion rather than the presence of a contrary one. Ranging now scores unaligned.
     family = _DIRECTION_FAMILY.get(direction)
-    if family is None or _family_of(context.weekly_trend) != family:
+    if family is None:
+        return refuse("unknown_direction")
+    weekly_family = _family_of(context.weekly_trend)
+    if weekly_family is not None and weekly_family != family:
         return refuse("weekly_disagrees")
+    trend_alignment = ALIGNED if weekly_family == family else UNALIGNED
     daily_family = _family_of(context.daily_trend)
     if daily_family is not None and daily_family != family:
         return refuse("timeframe_conflict")
@@ -520,13 +600,15 @@ def cross_reference(
         stop=block.stop, invalidation=block.invalidation,
         target=target, target_source=target_source,
         reward_risk=reward_risk, depth=depth, proximity=proximity,
+        freshness=freshness, trend_alignment=trend_alignment,
         weekly_trend=context.weekly_trend, daily_trend=context.daily_trend,
         # Domain comes off the row so a cross-domain ticker collision can't leak a crypto
         # market-cap rank onto a stock or a macro instrument. See tier_for.
         zone=zone_label or "",
         tier=tier_for(asset_rank, domain=getattr(row, "domain", "crypto")),
         score=_score(weights, proximity=proximity, depth=depth,
-                     reward_risk=reward_risk, agreement_count=agreement_count),
+                     reward_risk=reward_risk, agreement_count=agreement_count,
+                     freshness=freshness, trend_alignment=trend_alignment),
     )
 
 

@@ -14,13 +14,14 @@ from core.setups import (
     TIER_UNRANKED,
     Candidate,
     Context,
+    HalfLife,
     NotASetup,
     Setup,
-    StaleAfter,
     View,
     Zone,
     collapse,
     cross_reference,
+    freshness_signal,
     proximity_to,
     tier_for,
 )
@@ -156,11 +157,22 @@ def test_weekly_downtrend_refuses_a_long():
     assert _reason(outcome) == "weekly_disagrees"
 
 
-def test_ranging_weekly_permits_nothing():
-    """Rule 8 needs a macro direction to defer to. Ranging supplies none, so there is no
-    setup rather than a setup with a weak bias."""
-    outcome = cross_reference(_row(), _ctx(weekly_trend=RANGING), published_close=100.0)
-    assert _reason(outcome) == "weekly_disagrees"
+def test_ranging_weekly_is_permitted_but_unaligned():
+    """A ranging weekly is the *absence* of a macro opinion, not a macro opinion against —
+    two opposite situations that used to share the ``weekly_disagrees`` label and the same
+    fate. Measured on the live corpus: 630 rows died to ranging versus 1,617 to a genuine
+    contradiction. Rule 8 discards what fights the macro; it says nothing about what the
+    macro declines to answer, so that is scored down rather than thrown away."""
+    setup = cross_reference(_row(), _ctx(weekly_trend=RANGING), published_close=100.0)
+    assert isinstance(setup, Setup)
+    assert setup.trend_alignment == 0.0
+
+
+def test_an_aligned_weekly_scores_above_a_ranging_one():
+    aligned = cross_reference(_row(), _ctx(), published_close=100.0)
+    ranging = cross_reference(_row(), _ctx(weekly_trend=RANGING), published_close=100.0)
+    assert aligned.trend_alignment == 1.0
+    assert aligned.score > ranging.score
 
 
 def test_a_failed_weekly_breakout_still_permits_a_long():
@@ -226,32 +238,70 @@ def test_the_most_recently_confirmed_zone_wins():
     assert reversed_.entry_bottom == 105.0
 
 
-# ── staleness ───────────────────────────────────────────────────────────────
+# ── freshness ───────────────────────────────────────────────────────────────
 
-def test_a_stale_view_is_refused():
-    outcome = cross_reference(
-        _row(published_at="2024-01-01"), _ctx(), published_close=100.0
+def test_freshness_is_one_half_at_the_half_life():
+    """The curve's whole contract: the configured window is where confidence halves, not
+    where the view dies."""
+    assert freshness_signal(0, 21) == 1.0
+    assert freshness_signal(21, 21) == pytest.approx(0.5)
+    assert freshness_signal(42, 21) == pytest.approx(1 / 3)
+
+
+def test_freshness_decays_forever_without_reaching_zero():
+    """Age must never be able to eliminate a view on its own — that is the cliff we removed.
+    Something said two years ago ranks near the bottom; it does not vanish."""
+    ages = [0, 7, 30, 90, 365, 1000]
+    scores = [freshness_signal(age, 21) for age in ages]
+    assert scores == sorted(scores, reverse=True)
+    assert scores[-1] > 0.0
+
+
+def test_a_view_older_than_its_window_still_becomes_a_setup():
+    """Was ``stale``, the single biggest killer in the corpus: 2,913 of 3,459 rejections. Age
+    is a measurement on a continuum, so it belongs in the score, not in a gate."""
+    setup = cross_reference(_row(published_at="2024-01-01"), _ctx(), published_close=100.0)
+    assert isinstance(setup, Setup)
+    assert 0.0 < setup.freshness < 0.1
+
+
+def test_a_fresher_view_outscores_an_older_one():
+    fresh = cross_reference(_row(published_at="2025-01-09"), _ctx(), published_close=100.0)
+    old = cross_reference(_row(published_at="2024-01-01"), _ctx(), published_close=100.0)
+    assert fresh.freshness > old.freshness
+    assert fresh.score > old.score
+
+
+def test_freshness_scales_with_the_stated_timeframe():
+    """One rule, different durations: a swing call ages in weekly candles and a position call
+    in monthly ones, so the same elapsed days cost them different amounts of confidence."""
+    swing = cross_reference(_row(published_at="2024-10-01"), _ctx(), published_close=100.0)
+    position = cross_reference(
+        _row(published_at="2024-10-01", timeframe="position"), _ctx(), published_close=100.0
     )
-    assert _reason(outcome) == "stale"
+    assert position.freshness > swing.freshness
 
 
-def test_staleness_scales_with_the_stated_timeframe():
-    """A four-month-old swing call is dead; a position call of the same age is not. One rule,
-    different durations, because the candle length scales with the horizon."""
-    old = _row(published_at="2024-10-01")
-    assert _reason(cross_reference(old, _ctx(), published_close=100.0)) == "stale"
-    position = _row(published_at="2024-10-01", timeframe="position")
-    assert isinstance(cross_reference(position, _ctx(), published_close=100.0), Setup)
-
-
-def test_staleness_is_configurable():
-    outcome = cross_reference(
-        _row(), _ctx(), published_close=100.0, stale_after=StaleAfter(swing=1)
+def test_the_half_life_is_configurable():
+    impatient = cross_reference(
+        _row(), _ctx(), published_close=100.0, half_life=HalfLife(swing=1)
     )
-    assert _reason(outcome) == "stale"
+    patient = cross_reference(
+        _row(), _ctx(), published_close=100.0, half_life=HalfLife(swing=1000)
+    )
+    assert impatient.freshness < patient.freshness
+
+
+def test_a_view_published_after_the_as_of_date_is_not_more_than_fresh():
+    """Clamped rather than allowed to exceed 1.0, so a clock skew or a mis-parsed date cannot
+    manufacture a score above the scale everything else is measured on."""
+    setup = cross_reference(_row(published_at="2025-06-01"), _ctx(), published_close=100.0)
+    assert setup.freshness == 1.0
 
 
 def test_an_undated_view_is_refused_rather_than_assumed_fresh():
+    """Still a gate: a missing date is an absent fact, not a low measurement. There is
+    nothing to score."""
     outcome = cross_reference(_row(published_at=None), _ctx(), published_close=100.0)
     assert _reason(outcome) == "undated"
 
@@ -505,6 +555,28 @@ def test_collapsing_recomputes_agreement_from_the_group():
     alone = collapse(_setups_for(["Mayne"]))[0]
     crowded = collapse(_setups_for(["Mayne", "Cred", "DonAlt", "Pierre"]))[0]
     assert crowded.score > alone.score
+
+
+def test_a_candidate_takes_the_freshness_of_its_freshest_supporter():
+    """The question a candidate answers is "is anyone still saying this", so one current voice
+    carries the zone even when the others have gone quiet. Taking the freshest member also
+    avoids threading ``as_of`` into ``collapse``, which has no business knowing the date."""
+    ctx = _ctx()
+    stale_voice = cross_reference(_row(id="a", person="Cowen", published_at="2024-01-01"),
+                                  ctx, published_close=100.0)
+    live_voice = cross_reference(_row(id="b", person="Mayne", published_at="2025-01-09"),
+                                 ctx, published_close=100.0)
+    candidate = collapse([stale_voice, live_voice])[0]
+    assert candidate.freshness == live_voice.freshness
+
+
+def test_a_candidate_everyone_has_gone_quiet_on_outscores_nothing_but_ranks_low():
+    ctx = _ctx()
+    quiet = collapse([cross_reference(_row(published_at="2024-01-01"), ctx,
+                                      published_close=100.0)])[0]
+    current = collapse([cross_reference(_row(published_at="2025-01-09"), ctx,
+                                        published_close=100.0)])[0]
+    assert 0.0 < quiet.score < current.score
 
 
 def test_the_nearest_target_wins_among_disagreeing_views():

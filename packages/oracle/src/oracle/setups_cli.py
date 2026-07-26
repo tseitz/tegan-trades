@@ -32,6 +32,7 @@ from pathlib import Path
 
 from core.canon import Registry, load_registry, resolve_asset
 from core.setups import (
+    SCORE_VERSION,
     TIER_LARGE,
     TIER_MAJOR,
     TIER_NONCRYPTO,
@@ -60,6 +61,15 @@ DEFAULT_DECISIONS = REPO_ROOT / "data" / "setups" / "decisions.jsonl"
 DEFAULT_VAULT_NOTE = Path.home() / "vault" / "Trading" / "Trade Logs" / "Setups.md"
 
 TIER_CHOICES = (TIER_MAJOR, TIER_LARGE, TIER_SMALL, TIER_UNRANKED, TIER_NONCRYPTO)
+
+# How many candidates a default run puts in front of you.
+#
+# There is a cap at all because age stopped being a gate: every dated thesis now reaches the
+# later gates, so the queue is bounded by *attention* rather than by a hidden constant
+# deciding on your behalf what was too old to look at. The queue is score-ordered, so the cap
+# always keeps the best — and the count of what it held back is printed, because a silently
+# truncated list reads as "this is everything". TUNE: it should be a sitting's worth.
+DEFAULT_LIMIT = 25
 
 # Decision vocabulary. Deliberately distinct spelling from distill.triage_cli's
 # "promoted"/"skipped"/"archived" — a setup is "approved" for execution, not "promoted"
@@ -265,7 +275,14 @@ def decision_record(candidate: Candidate, decision: str, *, decided_at: str,
         "target": candidate.target,
         "target_source": candidate.target_source,
         "score": candidate.score,
+        # Which scale ``score`` is on. Weights change as the ranker is tuned, and the sidecar
+        # is the only record of what a candidate was worth at the moment it was judged — so
+        # correlating decisions against scores across a re-weighting compares two different
+        # scales unless the generation travels with the number.
+        "score_version": SCORE_VERSION,
         "proximity": candidate.proximity,
+        "freshness": candidate.freshness,
+        "trend_alignment": candidate.trend_alignment,
         "inside_zone": is_inside_zone(candidate),
         "agreement": candidate.agreement,
         "newest_at": candidate.newest_at,
@@ -291,14 +308,18 @@ def format_candidate(candidate: Candidate, *, rank: int | None = None) -> str:
     c = candidate
     header = f"[{rank}] " if rank is not None else ""
     span = "" if c.newest_at == c.oldest_at else f", oldest {c.oldest_at}"
+    # Age and macro alignment stopped being gates, so the queue has to show them. A soft gate
+    # that isn't displayed is strictly worse than a hard one: the candidate arrives looking
+    # like every other, and the judgement it was softened to enable can't actually be made.
+    unaligned = "  ·  no macro alignment" if not c.trend_alignment else ""
     lines = [
         f"\n{header}{c.asset} {c.direction.upper()} · tier {c.tier} · score {c.score:.2f}",
-        f"  last called {c.newest_at}{span}",
+        f"  last called {c.newest_at}{span}  ·  freshness {c.freshness:.2f}",
         f"  entry zone {c.entry_bottom:g}–{c.entry_top:g}  ·  entry {c.entry:g}",
         f"  stop {c.stop:g}  ·  invalidation {c.invalidation:g}",
         f"  target {c.target:g}  [{c.target_source}]",
         f"  reward:risk {c.reward_risk:.2f}  ·  proximity {c.proximity:.2f}  ·  depth {c.depth:.2f}",
-        f"  weekly {c.weekly_trend} · daily {c.daily_trend} · zone {c.zone}",
+        f"  weekly {c.weekly_trend} · daily {c.daily_trend} · zone {c.zone}{unaligned}",
         f"  people: {format_views(c)}  ·  agreement {c.agreement}",
     ]
     return "\n".join(lines)
@@ -471,7 +492,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         description="Cross-reference the roster against price structure and triage the candidates.")
     parser.add_argument("--as-of", type=date.fromisoformat, default=None,
                         help="as-of date, ISO format (default: today)")
-    parser.add_argument("--limit", type=int, default=None, help="cap how many candidates to review")
+    parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT,
+                        help=f"cap how many candidates to review (default: {DEFAULT_LIMIT}; "
+                             f"0 for no cap)")
     parser.add_argument("--min-score", type=float, default=None, help="drop candidates below this score")
     parser.add_argument("--tier", action="append", dest="tiers", choices=TIER_CHOICES,
                         help="restrict to this tier; repeatable")
@@ -514,11 +537,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {returning} deferred earlier, back because price arrived or support grew")
 
     tiers = tuple(args.tiers) if args.tiers else None
-    queue = filter_candidates(undecided, min_score=args.min_score, tiers=tiers, limit=args.limit)
+    qualified = filter_candidates(undecided, min_score=args.min_score, tiers=tiers)
+    queue = filter_candidates(qualified, limit=None if args.limit == 0 else args.limit)
+    held_back = len(qualified) - len(queue)
 
     if not queue:
         print("Nothing to review.")
         return 0
+
+    if held_back:
+        print(f"  showing the top {len(queue)} by score — {held_back} more qualify "
+              f"(--limit 0 for all)")
 
     if args.list:
         for i, c in enumerate(queue, start=1):
