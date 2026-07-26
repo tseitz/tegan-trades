@@ -304,6 +304,10 @@ class Setup:
     reward_risk: float
     depth: float
     proximity: float
+    # What the asset was actually trading at when this was built. ``depth`` and ``proximity``
+    # are both derived from it but neither can be read back as a price, so without it the
+    # queue can state where a trade is wrong without ever stating where the market is.
+    price: float
     freshness: float         # 1.0 the day it was said, halving every ``HalfLife`` days
     trend_alignment: float   # ALIGNED, or UNALIGNED when the weekly is merely ranging
     weekly_trend: str
@@ -336,6 +340,7 @@ class Candidate:
     reward_risk: float
     depth: float
     proximity: float
+    price: float          # the asset's price when built — see ``Setup.price``
     weekly_trend: str
     daily_trend: str
     zone: str
@@ -468,6 +473,7 @@ def collapse(outcomes, *, weights: SetupWeights = DEFAULT_WEIGHTS) -> tuple[Cand
             stop=rep.stop, invalidation=rep.invalidation,
             target=rep.target, target_source=rep.target_source,
             reward_risk=rep.reward_risk, depth=rep.depth, proximity=rep.proximity,
+            price=rep.price,
             weekly_trend=rep.weekly_trend, daily_trend=rep.daily_trend,
             zone=rep.zone, zone_timeframe=rep.zone_timeframe, tier=rep.tier,
             freshness=freshness, trend_alignment=rep.trend_alignment,
@@ -688,7 +694,7 @@ def cross_reference(
         entry=entry, entry_top=block.top, entry_bottom=block.bottom,
         stop=block.stop, invalidation=block.invalidation,
         target=target, target_source=target_source,
-        reward_risk=reward_risk, depth=depth, proximity=proximity,
+        reward_risk=reward_risk, depth=depth, proximity=proximity, price=context.price,
         freshness=freshness, trend_alignment=trend_alignment,
         weekly_trend=context.weekly_trend, daily_trend=context.daily_trend,
         # Domain comes off the row so a cross-domain ticker collision can't leak a crypto

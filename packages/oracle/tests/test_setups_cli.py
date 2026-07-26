@@ -46,7 +46,7 @@ def _candidate(**overrides) -> Candidate:
         entry=110.0, entry_top=110.0, entry_bottom=100.0,
         stop=100.0, invalidation=90.0,
         target=140.0, target_source=STRUCTURAL,
-        reward_risk=3.0, depth=0.0, proximity=1.0,
+        reward_risk=3.0, depth=0.0, proximity=1.0, price=105.0,
         weekly_trend="uptrend", daily_trend="uptrend", zone="discount",
         zone_timeframe=DAILY,
         tier=TIER_MAJOR,
@@ -242,17 +242,29 @@ def test_two_candidates_with_different_zones_have_distinct_keys_and_are_tracked_
 # ── display formatter ─────────────────────────────────────────────────────────
 
 def test_format_candidate_shows_stop_and_invalidation_as_distinct_labelled_values():
+    """They answer different questions — "where is this trade wrong" vs "where does the zone
+    itself die" — so when they differ they must occupy two rungs, not be blurred into one."""
     c = _candidate(stop=100.0, invalidation=90.0)
-    text = setups_cli.format_candidate(c)
-    assert "stop 100" in text
-    assert "invalidation 90" in text
+    rungs = [ln for ln in setups_cli.format_candidate(c).splitlines() if "100" in ln or "90" in ln]
+    stop_rung = next(ln for ln in rungs if "stop" in ln)
+    inval_rung = next(ln for ln in rungs if "invalidation" in ln)
+    assert stop_rung != inval_rung
+    assert "100" in stop_rung and "90" in inval_rung
+
+
+def test_format_candidate_collapses_stop_and_invalidation_onto_one_rung_when_equal():
+    """The far edge is often the origin swing too. Two rungs carrying the same number implies
+    two distinct places the trade can be wrong, when there is only one."""
+    text = setups_cli.format_candidate(_candidate(stop=100.0, invalidation=100.0))
+    assert "stop = invalidation" in text
+    assert len([ln for ln in text.splitlines() if "100 " in ln]) == 1
 
 
 def test_format_candidate_always_shows_target_source():
     stated = setups_cli.format_candidate(_candidate(target_source="stated"))
     structural = setups_cli.format_candidate(_candidate(target_source=STRUCTURAL))
-    assert "[stated]" in stated
-    assert "[structural]" in structural
+    assert "stated" in stated
+    assert STRUCTURAL in structural
 
 
 def test_format_candidate_shows_freshness_so_an_old_view_reads_as_one():
@@ -274,6 +286,114 @@ def test_format_candidate_flags_a_ranging_weekly_rather_than_hiding_it():
 def test_format_candidate_shows_entry_zone_and_entry_price():
     text = setups_cli.format_candidate(_candidate(entry=110.0, entry_top=110.0, entry_bottom=100.0))
     assert "100" in text and "110" in text
+
+
+# ── the price ladder ──────────────────────────────────────────────────────────
+
+def _rungs(text: str) -> list[str]:
+    """Ladder rows that carry a label — the rail-only spacer rows are not rungs."""
+    return [ln for ln in text.splitlines()
+            if any(w in ln for w in ("target", "entry", "stop", "invalidation", "price now"))
+            and "trend" not in ln and "who" not in ln and "zone" not in ln]
+
+
+def test_the_ladder_is_ordered_by_price_not_by_field_name():
+    """The whole reason for a ladder: levels read in the order a chart shows them."""
+    text = setups_cli.format_candidate(_candidate(
+        target=140.0, entry=110.0, price=105.0, stop=100.0, invalidation=90.0))
+    rungs = _rungs(text)
+    order = [next(w for w in ("target", "invalidation", "stop", "entry", "price now")
+                  if w in ln) for ln in rungs]
+    assert order == ["target", "entry", "price now", "stop", "invalidation"]
+
+
+def test_a_short_reads_correctly_without_special_casing():
+    """A short's target sits *below* its stop. Sorting by price is what makes that free —
+    a layout that hardcoded target-on-top would render every short upside down."""
+    text = setups_cli.format_candidate(_candidate(
+        direction="short", target=80.0, entry=100.0, price=102.0, stop=110.0,
+        invalidation=120.0, entry_top=110.0, entry_bottom=100.0))
+    rungs = _rungs(text)
+    order = [next(w for w in ("target", "invalidation", "stop", "entry", "price now") if w in ln)
+             for ln in rungs]
+    assert order.index("invalidation") < order.index("stop") < order.index("target")
+
+
+def test_each_level_carries_its_percent_move_from_entry():
+    """What position sizing actually needs. Entry itself carries none — a move measured from
+    entry to entry is zero by definition and printing it invites reading it as a real number."""
+    text = setups_cli.format_candidate(_candidate(entry=100.0, target=150.0, stop=90.0))
+    target_rung = next(ln for ln in _rungs(text) if "target" in ln)
+    stop_rung = next(ln for ln in _rungs(text) if "stop" in ln)
+    entry_rung = next(ln for ln in _rungs(text) if "entry" in ln)
+    assert "+50.0%" in target_rung
+    assert "-10.0%" in stop_rung
+    assert "%" not in entry_rung
+
+
+def test_prices_align_on_the_decimal_point_without_inventing_precision():
+    """Right-alignment alone puts the tens column of one number under the hundredths of
+    another when precision varies within a ladder — real on CL (109.47 / 97 / 88.45 / 50)."""
+    text = setups_cli.format_candidate(_candidate(
+        target=50.0, entry=88.45, price=89.31, stop=97.0, invalidation=109.47,
+        entry_top=97.0, entry_bottom=88.45, direction="short"))
+    rungs = _rungs(text)
+    columns = {ln.index(".") for ln in rungs if "." in ln.strip().split()[0]}
+    assert len(columns) == 1, "every decimal point sits in the same column"
+    assert "97.00" not in text and " 97 " in text
+
+
+def test_the_ladder_shows_where_price_actually_is():
+    """``depth`` and ``proximity`` both derive from price but neither can be read back as one,
+    so without this the queue states where a trade is wrong but never where the market is."""
+    text = setups_cli.format_candidate(_candidate(price=107.5))
+    assert "107.5" in text and "price now" in text
+
+
+def test_age_in_days_is_shown_beside_the_date():
+    """A bare date makes the reader do subtraction to notice a zone is months old, and
+    staleness is what rejections actually get written about."""
+    text = setups_cli.format_candidate(
+        _candidate(views=(View(person="Mayne", published_at="2026-04-23"),)),
+        as_of=date(2026, 7, 26))
+    assert "(94d ago)" in text
+
+
+def test_age_is_omitted_rather_than_guessed_when_as_of_is_unknown():
+    text = setups_cli.format_candidate(_candidate())
+    assert "d ago)" not in text
+
+
+def test_a_view_past_its_half_life_is_flagged_stale():
+    """0.50 is where ``freshness_signal`` sits at exactly one half-life — the curve's own
+    midpoint, not a threshold invented for the display."""
+    assert "STALE" in setups_cli.format_candidate(_candidate(freshness=0.50))
+    assert "STALE" not in setups_cli.format_candidate(_candidate(freshness=0.51))
+
+
+def test_the_rank_carries_the_queue_depth():
+    assert "[3/25]" in setups_cli.format_candidate(_candidate(), rank=3, total=25)
+    assert "[3]" in setups_cli.format_candidate(_candidate(), rank=3)
+
+
+def test_color_is_off_by_default_so_piped_output_stays_clean():
+    """Escape codes in a redirected queue would corrupt every downstream reader of it."""
+    assert "\033" not in setups_cli.format_candidate(_candidate(), rank=1)
+    assert "\033" in setups_cli.format_candidate(_candidate(), rank=1, color=True)
+
+
+def test_color_does_not_disturb_column_alignment():
+    """Alignment is computed on painted strings, so measuring their raw length would push
+    every coloured row out of line by exactly the width of its escape codes."""
+    import re
+    painted = setups_cli.format_candidate(_candidate(), rank=1, color=True)
+    plain = setups_cli.format_candidate(_candidate(), rank=1)
+    assert re.sub(r"\033\[[0-9;]*m", "", painted) == plain
+
+
+def test_no_color_env_var_disables_color(monkeypatch):
+    monkeypatch.setenv("NO_COLOR", "1")
+    assert setups_cli.supports_color() is False
 
 
 # ── vault note is optional ────────────────────────────────────────────────────
@@ -315,17 +435,50 @@ def test_blank_input_defers_rather_than_burying(tmp_path):
 def test_reject_records_the_reason(tmp_path):
     """'Bad trade' calibrates the setups scorer; 'their view is wrong' calibrates the roster
     trust score. Different consumers, so they must not collapse into one verdict."""
-    _, trade = _run(["r", "t"], _candidate(), tmp_path)
+    _, trade = _run(["r", "t", ""], _candidate(), tmp_path)
     assert trade["decision"] == setups_cli.REJECTED
     assert trade["reason"] == setups_cli.REASON_TRADE
 
-    _, view = _run(["r", "v"], _candidate(), tmp_path / "b")
+    _, view = _run(["r", "v", ""], _candidate(), tmp_path / "b")
     assert view["reason"] == setups_cli.REASON_VIEW
+
+
+def test_a_one_keystroke_reason_still_gets_asked_for_a_note(tmp_path):
+    """The enum says which loop to calibrate; only the note says what to change. Recorded
+    verbatim — this is the field a later mining pass reads to find the actual pattern."""
+    _, record = _run(["r", "t", "2.7R on a small tier isn't worth it"], _candidate(), tmp_path)
+    assert record["reason"] == setups_cli.REASON_TRADE
+    assert record["reason_note"] == "2.7R on a small tier isn't worth it"
+
+
+def test_an_empty_note_is_omitted_rather_than_stored_blank(tmp_path):
+    """Absent must be distinguishable from 'declined to say' when mining — a blank string
+    would count as a note that exists and reads as nothing."""
+    _, record = _run(["r", "t", "   "], _candidate(), tmp_path)
+    assert "reason_note" not in record
+
+
+def test_a_typed_out_reason_is_kept_as_the_note_not_discarded(tmp_path):
+    """Typing a sentence at the reason prompt used to be silently thrown away — only its first
+    letter survived. Anything past one character is a note, so nothing typed is ever lost."""
+    _, record = _run(["r", "view is wrong, ETH broke down"], _candidate(), tmp_path)
+    assert record["reason"] == setups_cli.REASON_VIEW
+    assert record["reason_note"] == "view is wrong, ETH broke down"
 
 
 def test_an_unrecognised_reject_reason_falls_back_to_other(tmp_path):
     _, record = _run(["r", "zzz"], _candidate(), tmp_path)
     assert record["reason"] == setups_cli.REASON_OTHER
+    assert record["reason_note"] == "zzz"
+
+
+def test_only_rejections_are_asked_for_a_reason(tmp_path):
+    """Approve/later/archive must not consume a second answer — a stray prompt there would
+    shift every subsequent keystroke onto the wrong candidate."""
+    for answer, verdict in (("l", setups_cli.LATER), ("x", setups_cli.ARCHIVED)):
+        _, record = _run([answer], _candidate(), tmp_path / answer)
+        assert record["decision"] == verdict
+        assert "reason_note" not in record
 
 
 def test_the_summary_names_every_verdict_triage_can_return(tmp_path):

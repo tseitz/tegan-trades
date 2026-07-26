@@ -51,6 +51,9 @@ from core.rank import parse_date
 from oracle import cache, corpus, listings
 from oracle.resample import to_weekly
 from oracle.route import OracleRef, RoutingTable, load_routing_table, route
+# Re-exported: the queue's layout lives in its own module, but ``format_candidate`` remains
+# part of this CLI's surface for callers and tests that reach for it here.
+from oracle.setups_render import format_candidate, format_views, supports_color  # noqa: F401
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 CONFIG_DIR = REPO_ROOT / "cfg"
@@ -275,7 +278,7 @@ def drop_decided(candidates, decided: dict[str, dict]) -> list[Candidate]:
 
 
 def decision_record(candidate: Candidate, decision: str, *, decided_at: str,
-                    reason: str | None = None) -> dict:
+                    reason: str | None = None, note: str | None = None) -> dict:
     """A JSON-serializable decision, keyed on the candidate's content-addressed zone.
 
     ``inside_zone`` and ``agreement`` are the state a later run compares against to decide
@@ -313,48 +316,11 @@ def decision_record(candidate: Candidate, decision: str, *, decided_at: str,
     }
     if reason is not None:
         record["reason"] = reason
+    # Omitted rather than written blank: a mining pass has to tell "no note given" apart from
+    # a note that exists and says nothing, and an empty string reads as the latter.
+    if note:
+        record["reason_note"] = note
     return record
-
-
-def format_candidate(candidate: Candidate, *, rank: int | None = None) -> str:
-    """Render one candidate for the interactive prompt. Stop and invalidation are shown as
-    two distinct labelled values on purpose — they answer different questions ("where is
-    this trade wrong" vs "where does the zone itself die") and blurring them into one number
-    would hide that. ``target_source`` is always shown so an inferred target never reads as
-    a clean, stated one.
-
-    Every candidate leads with **when it was last called**, and each supporting person carries
-    their own date. A bare agreement count hides that one of four people last spoke months ago,
-    and a queue without dates was already fixed once in ``triage_cli`` for exactly that reason.
-    """
-    c = candidate
-    header = f"[{rank}] " if rank is not None else ""
-    span = "" if c.newest_at == c.oldest_at else f", oldest {c.oldest_at}"
-    # Age and macro alignment stopped being gates, so the queue has to show them. A soft gate
-    # that isn't displayed is strictly worse than a hard one: the candidate arrives looking
-    # like every other, and the judgement it was softened to enable can't actually be made.
-    unaligned = "  ·  no macro alignment" if not c.trend_alignment else ""
-    lines = [
-        # The zone timeframe leads the heading because the same asset can now appear twice —
-        # once per timeframe — and the two differ in exactly the numbers a glance skips over.
-        # Unlabelled, a weekly and a daily GOOGL long read as a duplicate rather than as two
-        # setups with different risk.
-        f"\n{header}{c.asset} {c.direction.upper()} · {c.zone_timeframe} zone"
-        f" · tier {c.tier} · score {c.score:.2f}",
-        f"  last called {c.newest_at}{span}  ·  freshness {c.freshness:.2f}",
-        f"  entry zone {c.entry_bottom:g}–{c.entry_top:g}  ·  entry {c.entry:g}",
-        f"  stop {c.stop:g}  ·  invalidation {c.invalidation:g}",
-        f"  target {c.target:g}  [{c.target_source}]",
-        f"  reward:risk {c.reward_risk:.2f}  ·  proximity {c.proximity:.2f}  ·  depth {c.depth:.2f}",
-        f"  weekly {c.weekly_trend} · daily {c.daily_trend} · zone {c.zone}{unaligned}",
-        f"  people: {format_views(c)}  ·  agreement {c.agreement}",
-    ]
-    return "\n".join(lines)
-
-
-def format_views(candidate: Candidate) -> str:
-    """``Person (date)`` per supporter, newest first — so a stale voice is visible as one."""
-    return ", ".join(f"{v.person} ({v.published_at})" for v in candidate.views)
 
 
 def render_note(candidate: Candidate, *, decided_on: str) -> str:
@@ -455,25 +421,33 @@ def append_note(vault_path, section: str) -> None:
 
 # ── interactive triage loop ──────────────────────────────────────────────────────────────────
 
-def triage(candidates, *, decisions_path, vault_path, input_fn=input, out=print) -> dict[str, int]:
+def triage(candidates, *, decisions_path, vault_path, input_fn=input, out=print,
+           as_of: date | None = None, color: bool | None = None) -> dict[str, int]:
     """Present each candidate, highest score first; approve -> vault note (if given) + sidecar,
-    all decisions -> sidecar. Quit stops immediately without consuming further input."""
+    all decisions -> sidecar. Quit stops immediately without consuming further input.
+
+    ``as_of`` is only used to age each candidate for display, so it stays optional — a caller
+    that doesn't supply one gets the date without the day count rather than an exception.
+    ``color`` defaults to autodetection, and is an explicit argument so tests pin it off.
+    """
     counts = {APPROVED: 0, LATER: 0, REJECTED: 0, ARCHIVED: 0}
     decided_at = datetime.now(UTC).isoformat(timespec="seconds")
+    color = supports_color() if color is None else color
+    total = len(candidates)
     for i, c in enumerate(candidates, start=1):
-        out(format_candidate(c, rank=i))
+        out(format_candidate(c, rank=i, total=total, as_of=as_of, color=color))
         ans = input_fn("[a]pprove / [l]ater / [r]eject / [x]archive / [q]uit: ").strip().lower()
         if ans in ("q", "quit"):
             break
 
-        reason = None
+        reason, note = None, None
         if ans in ("a", "approve"):
             decision = APPROVED
             if vault_path is not None:
                 append_note(vault_path, render_note(c, decided_on=decided_at[:10]))
         elif ans in ("r", "reject"):
             decision = REJECTED
-            reason = _ask_reason(input_fn)
+            reason, note = _ask_reason(input_fn)
         elif ans in ("x", "archive"):
             decision = ARCHIVED
         else:
@@ -481,8 +455,9 @@ def triage(candidates, *, decisions_path, vault_path, input_fn=input, out=print)
             # stray keypress defers rather than permanently burying a setup.
             decision = LATER
 
-        append_decision(decisions_path,
-                        decision_record(c, decision, decided_at=decided_at, reason=reason))
+        append_decision(
+            decisions_path,
+            decision_record(c, decision, decided_at=decided_at, reason=reason, note=note))
         counts[decision] += 1
     return counts
 
@@ -501,15 +476,28 @@ def format_counts(counts: dict[str, int]) -> str:
 _REASONS = {"t": REASON_TRADE, "v": REASON_VIEW, "o": REASON_OTHER}
 
 
-def _ask_reason(input_fn) -> str:
-    """Why the reject — one keystroke.
+def _ask_reason(input_fn) -> tuple[str, str | None]:
+    """Why the reject — a keystroke, plus a free-text note.
 
-    Worth the extra key because the two answers feed different things: bad trade quality
-    calibrates the setups scorer, a wrong view calibrates the roster's trust score. Collapsing
-    them would discard the distinction that matters most to what the roster is actually for.
+    The keystroke is worth its own key because the answers feed different things: bad trade
+    quality calibrates the setups scorer, a wrong view calibrates the roster's trust score.
+    Collapsing them would discard the distinction that matters most to what the roster is for.
+
+    But the enum only says *which* loop to calibrate, never *what to change* — three buckets
+    cannot distinguish "reward:risk too thin at this tier" from "the zone is four months
+    stale". That is the whole content of a tuning pass, so the note is recorded verbatim
+    alongside it and left unparsed.
+
+    Anything longer than the one keystroke is taken as the note itself, so typing a whole
+    sentence at this prompt works and nothing typed is ever discarded — previously only the
+    first letter survived. A bare keystroke falls through to a second prompt instead.
     """
-    ans = input_fn("  why? [t]rade quality / [v]iew wrong / [o]ther: ").strip().lower()
-    return _REASONS.get(ans[:1], REASON_OTHER)
+    ans = input_fn("  why? [t]rade quality / [v]iew wrong / [o]ther: ").strip()
+    reason = _REASONS.get(ans[:1].lower(), REASON_OTHER)
+    if len(ans) > 1:
+        return reason, ans
+    note = input_fn("  note (enter to skip): ").strip()
+    return reason, note or None
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────────────────────
@@ -578,8 +566,9 @@ def main(argv: list[str] | None = None) -> int:
               f"(--limit 0 for all)")
 
     if args.list:
+        color = supports_color()
         for i, c in enumerate(queue, start=1):
-            print(format_candidate(c, rank=i))
+            print(format_candidate(c, rank=i, total=len(queue), as_of=as_of, color=color))
         return 0
 
     # Resolved before the first prompt: a vault that turns out to be unreachable must fail
@@ -596,7 +585,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  approvals append to {vault_note}")
 
     counts = triage(  # pragma: no cover - interactive
-        queue, decisions_path=DEFAULT_DECISIONS, vault_path=vault_note)
+        queue, decisions_path=DEFAULT_DECISIONS, vault_path=vault_note, as_of=as_of)
     print("\n" + format_counts(counts))
     return 0
 
