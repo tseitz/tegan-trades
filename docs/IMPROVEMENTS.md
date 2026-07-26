@@ -97,6 +97,34 @@ not a `distill-roster` run.
 
 **Output:** update `Trading/_Structure.md`, which is the spec `core/structure.py` implements.
 
+### The course is already ingested and already queryable · found 2026-07-26
+
+It's a **complete 15-episode "whiteboard series"**, weekly on Mondays, 2026-04-16 → 2026-07-20,
+all indexed. Episodes located by topic:
+
+| ep | date | topic | ep | date | topic |
+|---|---|---|---|---|---|
+| 1 | 04-16 | liquidity, judas swing, displacement, premium/discount | 9 | 06-08 | OTE |
+| 2 | 04-20 | market structure break vs. shift | 10 | 06-15 | AMD |
+| 3 | 04-27 | liquidity sweeps | 11 | 06-22 | — |
+| 4 | 05-04 | dealing ranges | 12 | 06-29 | — |
+| 6 | 05-18 | fair value gaps | 13 | 07-07 | trade grading |
+| 7 | 05-25 | order blocks | 15 | 07-20 | internal/external range liquidity |
+| 8 | 06-01 | order blocks vs. FVGs | | | |
+
+**This lowers the cost of §3 considerably.** An extraction pass is needed to *update the spec*;
+it is NOT needed to *answer questions*, which `brain_search` now does for $0. Three of the four
+listed unknowns have a dedicated episode (premium/discount → ep1, dealing range → ep4, FVG
+displacement → ep6+ep8). Read them via `brain_search(..., person="TraderMayne")` before
+committing to an extraction pass — the pass may only need to cover what's left.
+
+**The fourth unknown is not in the corpus at all.** "15m entry trigger — failed breakdown,
+reclaim" was the single worst-retrieving query of 12 (top1 0.634, 3/5 hits were Pierre's
+chart-request chatter and an off-topic Magic Lines passage about crypto builders). Everything
+else in the probe pulled clean course material, so this is a corpus gap, not a retrieval miss.
+**Mining the courses will not resolve it** — and §3 calls it "the whole of slice 2's layer 3".
+That needs a different source, or Tegan's own definition, and it blocks slice 2 either way.
+
 ---
 
 ## 4. Nothing is validated against revealed preference · `OPEN` — highest leverage
@@ -518,14 +546,42 @@ classified_as_one` asserts exact set equality, so it will fail loudly. That fixt
 
 ---
 
-## 8. Evidence-leg retrieval doesn't discriminate · `OPEN`
+## 8. Evidence-leg retrieval doesn't discriminate · `NARROWED 2026-07-26` — it's the query shape, not the index
 
-Brain retrieval scores compress into **0.72–0.81** — cosine barely separates anything, because
-every chunk is "a person talking about markets in ASR speech." Queries return Discord-giveaway
-chatter above real analysis.
+**The original claim was too broad, and the statistic behind it was the wrong one.**
 
-**Not a coverage problem** — all 666 transcripts are indexed (18,108 chunks). Adding corpus does
-not fix it. Hypothesis: chunk granularity plus a missing lexical/BM25 leg.
+Original: scores compress into **0.72–0.81**, cosine barely separates anything, queries return
+Discord-giveaway chatter above real analysis.
+
+**Absolute cosine is not comparable across queries** — it depends on how the *query* embeds.
+The real measure of discrimination is separation from the corpus baseline for the *same* query.
+Measured that way (`scripts/probe_retrieval.py`, 12 concept queries, 18,108 chunks):
+
+| query | top1 | corpus p99 | corpus p50 | quality of top 5 |
+|---|---|---|---|---|
+| judas swing | 0.645 | 0.486 | 0.415 | 5/5 instructional |
+| displacement, defined | 0.701 | 0.597 | 0.518 | 5/5 |
+| FVG middle candle / displacement | 0.824 | 0.730 | 0.605 | 5/5 |
+| dealing range boundaries | 0.800 | 0.698 | 0.560 | 5/5 |
+| liquidity sweep / stop hunt | 0.817 | 0.669 | 0.588 | 5/5 |
+| **15m entry trigger, failed breakdown** | **0.634** | 0.562 | 0.462 | **3/5 — Pierre chatter** |
+
+**Top-1 landed above the corpus 99th percentile on all 12.** Mean separation (top1 − p50) =
+**0.208**. Zero chatter hits across 60 passages. Note "displacement" at a weak-looking 0.701 with
+five on-topic hits including a flat definition — low absolute score, good retrieval.
+
+**So the split is by query shape:**
+
+- **Concept / methodology queries discriminate well.** The query carries real semantic content
+  for cosine to grip. This is now the basis of the `brain_search` MCP tool.
+- **Asset-faceted queries ("where is my roster on ETH") still fail as originally described** —
+  reproduced live 2026-07-26: passages [5] and [7] were Pierre advertising his paid Discord and
+  taking chart requests. An asset name is a *facet*, not a concept; there is nothing semantic to
+  match, so cosine ranks noise. **This half of §8 stands and is still `OPEN`.**
+
+**Implication for the fix:** a lexical/BM25 leg would help the asset case and is largely wasted
+on the concept case. Don't rebuild retrieval wholesale — the facet path is what needs work, and
+facets are better served by filtering (the `assets` column) than by ranking.
 
 **Dead end, do not re-test:** `query_embed` is identical to `embed` for this model, so the bge
 query-prefix theory is disproven.

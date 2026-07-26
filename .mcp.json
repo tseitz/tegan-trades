@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "brain": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/Users/tseitz/code/projects/tegan-trades",
+        "brain-mcp"
+      ],
+      "env": {}
+    }
+  }
+}
