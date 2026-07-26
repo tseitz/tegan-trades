@@ -124,6 +124,26 @@ packages. Every command below is run as `uv run <command>` **from the repo root*
 | `ingest-x` | 💸 **REAL MONEY** | The only command billed in actual dollars — see below. Measured ~$0.22–0.25/run with charts on the 11-handle digest. |
 | `verify-roster` | 🟢 | Probes declared YouTube channels against the watchlist. No key, no proxy. Exits non-zero on disagreement. |
 | `scripts/nightly.sh` | 💸 + 🔴 | The whole cycle. ~$0.25 xAI + the day's distillation. Totals both and writes one line to `~/vault/Trading/Trade Logs/Nightly.md`. |
+
+### Stopping the nightly job
+
+```bash
+touch data/nightly.pause     # stop everything; remove the file to resume
+touch data/nightly.no-x      # keep the free work, stop spending real money
+XAI_MONTHLY_CAP=5.00 …       # automatic backstop, default $15/month
+launchctl bootout gui/$(id -u)/com.tseitz.tegan-trades.nightly   # unschedule entirely
+```
+
+Sentinel **files** rather than flags, because the thing you want to stop runs while you are not
+at the keyboard, and a file left lying around explains its own silence. `launchctl bootout`
+leaves nothing behind — and a job that silently stopped looks exactly like a quiet market.
+
+**Pausing loses nothing.** `ingest-x` resumes from the last captured day, so a paused week is
+picked up when you resume, within its 7-day auto-lookback. Past that it warns rather than
+silently skipping.
+
+The cap is a **trailing** check: spend is recorded after a run, so the run that crosses the
+line completes and the *next* one is skipped. Overshoot is bounded by one run, ~$0.25.
 | `fetch-prices` | 🟡 | Free public APIs. Cached to `data/prices/`. |
 | `score-roster` | 🟢 | Reads ore, writes a report. Never mutates `data/theses/`. |
 | `setups` | 🟢 | Pure cross-reference over cached prices + theses. |

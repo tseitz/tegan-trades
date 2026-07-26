@@ -31,7 +31,46 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$P
 STAMP="$(date +%Y%m%d-%H%M)"
 LOG_DIR="$REPO/data/logs/nightly"
 LOG="$LOG_DIR/$STAMP.log"
+SPEND="$LOG_DIR/spend.json"
 mkdir -p "$LOG_DIR"
+
+# ── stop switches ────────────────────────────────────────────────────────────────
+#
+# Three of them, because they answer different questions:
+#
+#   data/nightly.pause   stop everything      "not now"
+#   data/nightly.no-x    stop only ingest-x   "keep the free work, stop spending"
+#   XAI_MONTHLY_CAP      automatic backstop   "stop before I run out of credits"
+#
+# Files rather than a flag on the command, because the thing you want to stop runs while you
+# are not at the keyboard. `touch data/nightly.pause` from anywhere kills the next run, and the
+# file's existence is its own reminder that you did it — a launchctl bootout leaves nothing
+# behind to explain the silence, and silence is indistinguishable from a quiet market.
+PAUSE_FILE="$REPO/data/nightly.pause"
+NO_X_FILE="$REPO/data/nightly.no-x"
+
+if [ -f "$PAUSE_FILE" ]; then
+  echo "paused — $PAUSE_FILE exists. Remove it to resume." | tee -a "$LOG"
+  exit 0
+fi
+
+# Monthly ceiling on real money. Only ingest-x spends dollars; everything else bills against
+# the Max subscription. Default is deliberately loose relative to the ~$7/mo the 11-handle
+# digest actually costs, so it is a runaway backstop rather than a budget you fight.
+#
+# **It is a trailing check, not a pre-authorisation.** Spend is recorded after a run, so the
+# run that crosses the line still completes and the *next* one is skipped. Overshoot is
+# bounded by one run — about $0.25 — which is not worth pre-estimating a call's cost to avoid.
+XAI_MONTHLY_CAP="${XAI_MONTHLY_CAP:-15.00}"
+MONTH="$(date +%Y-%m)"
+SPENT_THIS_MONTH=$(uv run python - "$SPEND" "$MONTH" <<'PY' 2>/dev/null || echo "0.00"
+import json, sys
+try:
+    print(f'{json.load(open(sys.argv[1])).get(sys.argv[2], 0.0):.2f}')
+except Exception:
+    print("0.00")
+PY
+)
 
 WORST=0
 declare -a STATUS_LINES
@@ -63,7 +102,19 @@ echo "tegan-trades nightly · $(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$LOG"
 
 step verify-roster  uv run verify-roster
 step ingest-roster  uv run ingest-roster
-step ingest-x       uv run ingest-x
+
+# The only step that spends real money, so the only one with a way to skip it. Skipping it
+# does NOT lose the days it would have covered — `ingest-x` resumes from the last capture, so
+# a paused week is picked up on resume (up to its own 7-day lookback cap).
+if [ -f "$NO_X_FILE" ]; then
+  STATUS_LINES+=("  skip  ingest-x — $NO_X_FILE exists")
+elif awk -v s="$SPENT_THIS_MONTH" -v c="$XAI_MONTHLY_CAP" 'BEGIN{exit !(s>=c)}'; then
+  STATUS_LINES+=("  skip  ingest-x — \$$SPENT_THIS_MONTH spent this month, cap \$$XAI_MONTHLY_CAP")
+  [ $WORST -lt 1 ] && WORST=1
+else
+  step ingest-x     uv run ingest-x
+fi
+
 step distill-roster uv run distill-roster --concurrency 3
 step fetch-prices   uv run fetch-prices
 step setups         uv run setups --list
@@ -81,12 +132,33 @@ XAI_COST=$(grep -o '^\[ingest-x\] cost: \$[0-9.]*' "$LOG" \
 CANDIDATES=$(grep -oE '^[0-9]+ candidates' "$LOG" | tail -1 | cut -d' ' -f1)
 DROPPED=$(grep -oE '[0-9]+ theses dropped' "$LOG" | tail -1 | cut -d' ' -f1)
 
+# Accumulate real spend into its own small file rather than re-deriving it from the logs — the
+# logs rotate at 30 nights, which would silently reset the cap partway through a long month.
+uv run python - "$SPEND" "$MONTH" "$XAI_COST" <<'PY' 2>/dev/null || true
+import json, sys
+path, month, amount = sys.argv[1], sys.argv[2], float(sys.argv[3])
+try:
+    data = json.load(open(path))
+except Exception:
+    data = {}
+data[month] = round(data.get(month, 0.0) + amount, 4)
+json.dump(data, open(path, "w"), indent=2, sort_keys=True)
+PY
+SPENT_TOTAL=$(uv run python - "$SPEND" "$MONTH" <<'PY' 2>/dev/null || echo "$XAI_COST"
+import json, sys
+try:
+    print(f'{json.load(open(sys.argv[1])).get(sys.argv[2], 0.0):.2f}')
+except Exception:
+    print("0.00")
+PY
+)
+
 {
   echo ""
   echo "───── summary ─────"
   printf '%s\n' "${STATUS_LINES[@]}"
   echo ""
-  echo "  xAI (real money):      \$${XAI_COST}"
+  echo "  xAI (real money):      \$${XAI_COST}  ·  \$${SPENT_TOTAL}/${XAI_MONTHLY_CAP} this month"
   echo "  claude (Max allowance): \$${CLAUDE_COST} over ${CLAUDE_CALLS} calls"
   echo "  candidates:            ${CANDIDATES:-?}"
   echo "  theses dropped:        ${DROPPED:-0}"
