@@ -1,0 +1,77 @@
+"""MCP surface wiring.
+
+The tools themselves are thin — `brain.report` and `brain.retrieve` carry the judgment
+and are tested directly. What these tests pin is the wiring that a type checker can't:
+that both tools are registered, that their descriptions reach the model, and that a
+missing index degrades to an honest empty answer instead of raising at the server.
+"""
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+
+from brain import mcp_server
+
+
+def _tools():
+    return {t.name: t for t in asyncio.run(mcp_server.mcp.list_tools())}
+
+
+def test_both_tools_are_registered():
+    assert set(_tools()) == {"brain_search", "brain_roster"}
+
+
+def test_tool_descriptions_are_non_empty():
+    """The description IS the routing signal — a model with no docstring picks the wrong
+    tool, and the two here differ in corpus coverage, not just in shape."""
+    for name, tool in _tools().items():
+        assert tool.description and len(tool.description) > 80, name
+
+
+def test_search_advertises_the_query_should_be_natural_language():
+    """Keyword-style input retrieves measurably worse against a sentence embedder, and
+    a model will default to keywords unless told otherwise."""
+    assert "natural language" in _tools()["brain_search"].description.lower()
+
+
+def test_instructions_state_the_coverage_asymmetry():
+    """666/666 indexed vs. far fewer extracted is the single fact that decides whether
+    an empty roster answer means "nobody said anything" or "extraction hasn't run"."""
+    assert "666" in mcp_server._INSTRUCTIONS
+    assert "brain_roster" in mcp_server._INSTRUCTIONS
+
+
+def test_missing_index_returns_no_hits_rather_than_raising(monkeypatch, tmp_path):
+    """A missing index is a normal early state. The server must stay up and say so."""
+    from brain import vector_store
+
+    monkeypatch.setattr(vector_store, "DB_PATH", tmp_path / "absent.db")
+    assert mcp_server._search("anything", k=5, person=None, since=None) == []
+
+
+def test_search_tool_reports_an_empty_index_honestly(monkeypatch, tmp_path):
+    from brain import vector_store
+
+    monkeypatch.setattr(vector_store, "DB_PATH", tmp_path / "absent.db")
+    out = mcp_server.brain_search("what is a judas swing")
+    assert "No passages" in out
+    assert "do not fill the gap from outside knowledge" in out
+
+
+def test_empty_index_does_not_construct_the_embedder(monkeypatch, tmp_path):
+    """Loading the ONNX model to search a database that isn't there wastes seconds on
+    every call in a fresh checkout."""
+    from brain import vector_store
+
+    monkeypatch.setattr(vector_store, "DB_PATH", tmp_path / "absent.db")
+    monkeypatch.setattr(mcp_server, "_embed",
+                        lambda _q: pytest.fail("embedder built for a missing index"))
+    assert mcp_server._search("anything", k=5, person=None, since=None) == []
+
+
+def test_roster_without_stances_distinguishes_gap_from_silence(monkeypatch):
+    monkeypatch.setattr("brain.stance_store.load_all_stances", list)
+    out = mcp_server.brain_roster("ETH")
+    assert "coverage gap" in out
+    assert "brain_search" in out

@@ -33,6 +33,56 @@ def _staleness(published_at: str | None, horizon: str | None, today: date | None
     return f"  [STALE — {age}d old, {horizon or 'no horizon'} view]" if age > limit else ""
 
 
+def format_passages(hits, *, query: str | None = None) -> str:
+    """Render raw retrieved passages — the answer shape for a *concept* question.
+
+    `format_view` answers "where does the roster stand on X" and needs the structured
+    leg. A methodology question ("what is a judas swing") has no asset and no split;
+    the passages ARE the answer, and the corpus answers it in the speaker's own words.
+
+    Two deliberate differences from the EVIDENCE block in `format_view`:
+
+    - **No truncation.** `format_view` cuts passages to 280 chars because there they
+      merely corroborate a split that already stands on its own. Here a clipped passage
+      is a clipped answer, and a half-sentence cannot be quoted or trusted.
+    - **The score gets a health warning.** Absolute cosine is NOT comparable across
+      queries — it depends on how the query itself embeds. "displacement" tops out at
+      0.70 with five on-topic hits while "order block" tops out at 0.80; the first is
+      not worse. IMPROVEMENTS.md §8 read the absolute numbers as "retrieval doesn't
+      discriminate" and stood unchallenged for months. The consumer of this output is
+      a model that will anchor on a number unless told what it means.
+    """
+    lines: list[str] = []
+    if query:
+        lines += [f"Q: {query}", ""]
+
+    if not hits:
+        return "\n".join(lines + [
+            "No passages retrieved.",
+            "",
+            "The index covers the whole corpus, so this means the corpus genuinely does",
+            "not cover it — not that extraction is lagging. Answer from what is here or",
+            "say it isn't covered; do not fill the gap from outside knowledge.",
+        ])
+
+    lines.append(f"{len(hits)} passage(s), ranked by cosine similarity.")
+    lines.append(f"{_INDENT}Scores are not comparable across queries — only against "
+                 f"other hits for THIS one.")
+    lines.append("")
+
+    for i, hit in enumerate(hits, 1):
+        person = getattr(hit, "person", "?")
+        when = getattr(hit, "published_at", None) or "undated"
+        ref = getattr(hit, "transcript_ref", "?")
+        score = getattr(hit, "score", 0.0)
+        text = " ".join(str(getattr(hit, "text", "")).split())
+        lines.append(f"[{i}] {person} · {when} · {score:.3f} · {ref}")
+        lines.append(f"{_INDENT}{text}")
+        lines.append("")
+
+    return "\n".join(lines).rstrip()
+
+
 def _feed_label(name: str, view: RosterView) -> str:
     """Annotate a multi-author feed with its members at every mention. Attribution is
     feed-level, so an unlabelled `Technical Roundup` reads as one independent opinion

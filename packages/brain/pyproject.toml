@@ -14,12 +14,17 @@ dependencies = [
     # database would earn its dependency at 100k+, not here.
     "fastembed>=0.4",
     "numpy>=2",
+    # Exposes retrieval as MCP tools so a Claude Code session can query the corpus
+    # directly. Deliberately NOT a new workspace member: this is a surface over brain,
+    # exactly like query_cli.py, and it adds no logic of its own.
+    "mcp>=1.2",
 ]
 
 [project.scripts]
 brain = "brain.query_cli:main"
 brain-extract = "brain.cli:extract_main"
 brain-index = "brain.index_cli:main"
+brain-mcp = "brain.mcp_server:main"
 
 [build-system]
 requires = ["uv_build>=0.10.4,<0.11.0"]
