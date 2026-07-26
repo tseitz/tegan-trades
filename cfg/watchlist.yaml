@@ -112,6 +112,30 @@ people:
       - { platform: x, id: "pierre_crypt0", access: grok }
     notes: "Active, French + English. Krillin (@LSDinmycoffee) also appears via The Haven / Pierre's streams."
 
+  - name: "TraderSZ"
+    handle: "@TraderSZ"
+    # Two corrections on 2026-07-26, and they compounded — worth reading before touching this.
+    #
+    # 1. UN-MERGED. This entry used to be `TraderSZ (Z$1)` with handle `@trader1sz` and the
+    #    note "DEDUPED: this is Tegan's 'Z$1 @traderzs1' and 'TraderSZ' — same person." They
+    #    are NOT the same person. The bad merge is what attached an X handle belonging to
+    #    someone else to this person's YouTube channel, and it would have credited a stranger's
+    #    posts to him in every agreement count. Z$1 / @traderzs1 / @trader1sz is removed
+    #    entirely — Tegan doesn't follow him closely enough to want him.
+    #
+    # 2. NOT DORMANT. Phase 0 filed him dormant on the strength of the **uploads** tab, whose
+    #    newest video really is 2023-10-01. He moved to livestreaming: /streams carries
+    #    "Bitcoin for Ledges" through 2026-07-28. `channel.resolve_recent` already reads both
+    #    tabs, so only the marker was stopping him. Second stale channel marker found the same
+    #    day as @RealVision — the roster's channel metadata drifts and is worth re-probing.
+    status: active
+    domains: [crypto]
+    why: "Pure price-action swing (ICT/SMC-adjacent). 'Bitcoin for Ledges' livestreams — the format Tegan actually wants from him."
+    channels:
+      - { platform: youtube, id: "@TraderSZ", access: ok }
+    backfill: { max_videos: 20, max_age_days: 270 }
+    notes: "Uploads dormant since 2023; ACTIVE via livestreams (7 ingested 2026-07-26). Paid tradersz.com exists but the free streams are transcribable."
+
   - name: "Mark Newton CMT"
     handle: "@MarkNewtonCMT"
     # Reclassified active -> candidate 2026-07-24: per this file's own convention, `active`
@@ -195,16 +219,6 @@ people:
     notes: "Partial long-form via The Haven / @pierre_crypt0."
 
   # ══════════ DORMANT — kept for the record, not ingesting ══════════
-  - name: "TraderSZ (Z$1)"
-    handle: "@trader1sz"
-    status: dormant
-    domains: [crypto]
-    why: "Pure price-action swing (ICT/SMC-adjacent). Decent alpha when active."
-    channels:
-      - { platform: youtube, id: "@TraderSZ", access: dormant }
-      - { platform: x, id: "trader1sz", access: grok }
-    notes: "DEDUPED: this is Tegan's 'Z$1 @traderzs1' and 'TraderSZ' — same person. Free YouTube dormant since ~2022; content moved behind paid tradersz.com. Grok digest catches X posts."
-
   - name: "GCR"
     handle: "@GiganticRebirth"
     status: dormant
@@ -332,4 +346,5 @@ x_grok_digest:
   - MarkNewtonCMT
   - LSDinmycoffee
   - Tradermayne
-  - trader1sz
+  # trader1sz removed 2026-07-26 — his YouTube livestreams turned out to be live, and that is
+  # what's wanted from him. Was 29 posts/day at ~$3.04/mo, the second-largest line on the bill.

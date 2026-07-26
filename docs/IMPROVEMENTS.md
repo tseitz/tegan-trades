@@ -348,6 +348,40 @@ the value of adding them is partly gated behind it.
 
 ---
 
+## 6h. The roster's channel metadata is unverified and drifts · `OPEN` — new 2026-07-26
+
+Three roster facts were checked against reality on 2026-07-26. **Two were wrong**, and both had
+been recorded by Phase 0 as verified:
+
+| entry | recorded | actual |
+|---|---|---|
+| `@RealVision` | `access: ok`, verified | **does not exist** — no videos or streams tab |
+| `@TraderSZ` | `status: dormant`, "dormant since ~2022" | **actively livestreaming** — /streams runs to 2026-07-28 |
+| `TraderSZ (Z$1)` | "DEDUPED … same person" | **two different people** merged into one entry |
+
+Each failed differently, and each failure was silent:
+
+- **The RealVision typo** produced `0 ingested, 0 skipped, 0 stale, 0 failed` — see §6d.
+- **The TraderSZ dormancy** was *right about the uploads tab* and wrong about the channel. His
+  newest upload really is 2023-10-01; he moved to livestreams. `channel.resolve_recent` already
+  reads both tabs, so only the marker was suppressing him — a voice sat unreachable for a
+  research error nobody would ever re-check.
+- **The bad merge** attached an X handle belonging to a *different trader* to his YouTube
+  channel. Left alone it would have credited a stranger's posts to him in every agreement
+  count, which is the exact failure mode the `aliases:` field exists to prevent — inverted.
+
+**Why this is a class, not three incidents:** every `access:` and `status:` value in
+`watchlist.yaml` is a hand-recorded research finding with no expiry and no verification. A
+channel that renames, dies, or changes format does not announce it, and nothing in the sweep
+distinguishes "correctly skipped" from "wrongly skipped".
+
+**Cheapest fix:** a `verify-roster` command that probes every declared channel (both tabs) and
+diffs reality against the recorded `access`/`status`. It is free — `list_tab` needs no key and
+no proxy — and would have caught all three of these in one run. Worth doing before the nightly
+loop, since the loop will otherwise faithfully reproduce whatever the roster gets wrong.
+
+---
+
 ## 6d. An unreachable channel reports as an up-to-date one · `OPEN` — new 2026-07-26
 
 `@RealVision` was recorded in `cfg/watchlist.yaml` as a verified `access: ok` channel and does
