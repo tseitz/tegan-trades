@@ -26,6 +26,10 @@ class DistillResult:
     empty: list[str] = field(default_factory=list)       # 0 theses (still processed)
     skipped: list[str] = field(default_factory=list)     # already had a thesis file
     failed: list[tuple[str, str]] = field(default_factory=list)
+    # Theses that failed validation while the rest of their document survived. Counted rather
+    # than swallowed: a document that quietly lost half its calls and one that genuinely had
+    # two are otherwise indistinguishable.
+    dropped: list[tuple[str, str]] = field(default_factory=list)
 
 
 def _source_from_sidecar(sidecar: dict) -> Source:
@@ -40,21 +44,26 @@ def _source_from_sidecar(sidecar: dict) -> Source:
 
 def _distill_one(sidecar_path: Path, *, force, model, distilled_at, extract, exists, save_theses):
     """Runs in a worker thread. Returns (person, vid, bucket, reason) — bucket is one
-    of 'skipped' | 'distilled' | 'empty' | 'failed' (reason is None unless failed)."""
+    of 'skipped' | 'distilled' | 'empty' | 'failed' (reason is None unless failed).
+
+    Also returns per-thesis validation drops, which are a different animal from a failure: the
+    document survived and was saved, but not everything in it stood up."""
     sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
     platform, vid = sidecar["platform"], sidecar["source_id"]
     source = _source_from_sidecar(sidecar)
 
     if not force and exists(platform, vid):
-        return source.person, vid, "skipped", None
+        return source.person, vid, "skipped", None, []
     text = sidecar_path.with_suffix(".txt").read_text(encoding="utf-8")
+    drops: list[str] = []
     try:
-        theses = extract(text, source, model=model, extracted_at=distilled_at)
+        theses = extract(text, source, model=model, extracted_at=distilled_at,
+                         on_drop=drops.append)
     except Exception as exc:  # noqa: BLE001 - log-and-continue per spec
         print(f"[distill] {platform}/{vid}: {exc!r}", file=sys.stderr)
-        return source.person, vid, "failed", str(exc)
+        return source.person, vid, "failed", str(exc), []
     save_theses(platform, vid, theses)
-    return source.person, vid, ("distilled" if theses else "empty"), None
+    return source.person, vid, ("distilled" if theses else "empty"), None, drops
 
 
 def distill_all(
@@ -97,12 +106,13 @@ def distill_all(
             for p in sidecar_paths
         ]
         for future in as_completed(futures):
-            person, vid, bucket, reason = future.result()
+            person, vid, bucket, reason, drops = future.result()
             result = by_person.setdefault(person, DistillResult(person=person))
             if bucket == "failed":
                 result.failed.append((vid, reason))
             else:
                 getattr(result, bucket).append(vid)
+            result.dropped.extend((vid, d) for d in drops)
     return list(by_person.values())
 
 
@@ -115,14 +125,18 @@ def format_summary(results: list[DistillResult]) -> str:
         )
         for vid, reason in r.failed:
             lines.append(f"    ! {vid}: {reason}")
+        for vid, reason in r.dropped:
+            lines.append(f"    ~ {vid}: dropped {reason}")
     totals = {
         "distilled": sum(len(r.distilled) for r in results),
         "empty": sum(len(r.empty) for r in results),
         "skipped": sum(len(r.skipped) for r in results),
         "failed": sum(len(r.failed) for r in results),
+        "dropped": sum(len(r.dropped) for r in results),
     }
     lines.append(
         f"TOTAL: {totals['distilled']} distilled, {totals['empty']} empty, "
-        f"{totals['skipped']} skipped, {totals['failed']} failed"
+        f"{totals['skipped']} skipped, {totals['failed']} failed, "
+        f"{totals['dropped']} theses dropped"
     )
     return "\n".join(lines)

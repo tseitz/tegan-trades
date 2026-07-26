@@ -293,29 +293,37 @@ invisibly, but it is a TUNE.
 
 ---
 
-## 6g. One missing `invalidation` discards a whole video's extraction · `OPEN` — new 2026-07-26
+## 6g. One missing `invalidation` discarded a whole document · `FIXED 2026-07-26`
 
-The trial-cohort distill pass: **124 distilled, 17 empty, 670 skipped, 1 failed**. The single
-failure, Capital Flows `udGgR-6lyCQ`:
+**Fixed.** `extract.py` validates theses **one at a time** (`TypeAdapter(ExtractedThesis)`)
+instead of validating the whole payload, so a bad row is dropped and counted while its
+document survives. `distill-roster` reports the count — `TOTAL: … N theses dropped`, and a
+`~ <doc>: dropped thesis[i] invalidation: …` line per drop.
 
-    1 validation error for ThesisExtraction
-    theses.3.trade.invalidation
-      Input should be a valid string [type=string_type, input_value=None]
+**The retry rule changed with it, deliberately.** All-rows-invalid still retries: that points at
+the prompt or the schema rather than one awkward call. One bad row among good ones does not —
+the document is usable, and re-asking would cost a second call to lose the same row again.
 
-The fourth call in that video had no invalidation, so **all** of the video's theses were
-rejected. This is the same defect §1 recorded for `key_levels` `min_length=1` — "13 of the 98
-re-distill failures were exactly this constraint rejecting a whole video's extraction because
-one call had no explicit level" — surviving in a different field after that one was fixed.
+**Honest caveat: the fix is unit-tested but has not yet fired on live data.** It hit twice in
+two days (below), but the second occurrence was rescued by an accidental duplicate
+`distill-roster` invocation, whose retry happened to produce a valid extraction — so that row
+was transiently malformed, not unsalvageable. The next genuine occurrence is the real proof.
 
-`invalidation` being required is *correct* and deliberate (architecture.md: "a thesis without
-an invalidation is incomplete"). The defect is that validation is **batch-atomic**: one bad
-call in a list of N discards N. Drop the offending thesis, keep the rest, and count it.
+### The two occurrences that motivated it
 
-**Also worth noting: 17 of 141 new transcripts (12%) distilled to nothing**, and they are
-concentrated in the two macro voices — Real Vision 8, Capital Flows 7, versus Traders Reality
-2 and DataDash 0. Consistent with §6f: those two talk in CPI/FEDFUNDS/liquidity terms, which
-yields no gradeable directional call. Not a bug, but it does mean a macro voice's value is
-mostly Brain-head, and judging them by setups contribution alone will undercount them.
+- **Capital Flows `udGgR-6lyCQ`**, 2026-07-26 trial-cohort pass: `theses.3.trade.invalidation`
+  was `None`; the whole video's extraction was rejected. 124 distilled, 1 failed.
+- **krillin `x/LSDinmycoffee-2026-07-24`**, first nightly cycle: `theses.0.trade.invalidation`
+  was `None`.
+
+Same defect §1 recorded for `key_levels` `min_length=1` — "13 of the 98 re-distill failures
+were exactly this constraint rejecting a whole video's extraction because one call had no
+explicit level" — surviving in a different field after that one was fixed.
+
+`invalidation` being required on a `trade` is *correct* and deliberate (architecture.md: "a
+thesis without an invalidation is incomplete"). The defect was that validation was
+**batch-atomic**. Expected to bite hardest on X, where a chart post carrying drawn levels but
+no stated stop is the ordinary case rather than the exception.
 
 ---
 

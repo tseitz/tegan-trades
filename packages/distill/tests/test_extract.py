@@ -78,3 +78,64 @@ def test_extract_raises_after_retry_exhausted():
     with pytest.raises(ExtractionFailed):
         extract_theses("body", SOURCE, client=client, extracted_at="t")
     assert client.calls == 2
+
+
+# ── one bad thesis must not discard the whole document ──────────────────────────
+#
+# Hit twice in two days on live data — Capital Flows `udGgR-6lyCQ` and krillin
+# `x/LSDinmycoffee-2026-07-24`, both `trade.invalidation = None`. Whole-payload validation meant
+# one bad call in a list of N threw away all N, and the call was paid for regardless. It gets
+# worse on X specifically: a chart post with drawn levels and no stated stop is the normal case
+# there, so a missing invalidation is common rather than exceptional.
+
+MIXED_INPUT = {"theses": [
+    # a trade with no invalidation — invalid, and the exact shape seen in production
+    {"thesis_type": "trade", "domain": "crypto", "asset": "SOL", "direction": "long",
+     "timeframe": "swing", "conviction": "high", "summary": "no invalidation",
+     "confidence": 0.9},
+    {"thesis_type": "macro_lean", "domain": "crypto", "asset": "BTC", "direction": "long",
+     "timeframe": "macro", "conviction": "med", "summary": "Bullish BTC", "confidence": 0.6},
+    {"thesis_type": "macro_lean", "domain": "crypto", "asset": "ETH", "direction": "short",
+     "timeframe": "swing", "conviction": "low", "summary": "ETH soft", "confidence": 0.4},
+]}
+
+
+def test_one_invalid_thesis_does_not_discard_the_valid_ones():
+    client = _FakeClient(MIXED_INPUT)
+    out = extract_theses("body", SOURCE, client=client, extracted_at="t")
+    assert [t.asset for t in out] == ["BTC", "ETH"]
+    assert client.calls == 1  # no retry: the response was usable
+
+
+def test_a_dropped_thesis_is_reported_rather_than_silently_swallowed():
+    """`core.setups` keeps its NotASetup tally for the same reason: a document that quietly
+    lost half its theses and one that genuinely had two are indistinguishable otherwise."""
+    dropped = []
+    client = _FakeClient(MIXED_INPUT)
+    extract_theses("body", SOURCE, client=client, extracted_at="t", on_drop=dropped.append)
+    assert len(dropped) == 1
+    assert "invalidation" in dropped[0]
+
+
+def test_a_response_where_every_thesis_is_invalid_still_retries():
+    """All-invalid is a different failure from one-bad-row — it points at the prompt or the
+    schema rather than at one awkward call, so it is worth the retry it always got."""
+    client = _FakeClient(INVALID_INPUT, VALID_INPUT)
+    out = extract_theses("body", SOURCE, client=client, extracted_at="t")
+    assert client.calls == 2
+    assert [t.asset for t in out] == ["BTC"]
+
+
+def test_a_genuinely_empty_extraction_is_not_retried():
+    """Nothing offered is a real answer — methodology videos and banter days legitimately
+    contain no calls. Retrying would double the cost of every quiet document."""
+    client = _FakeClient({"theses": []})
+    assert extract_theses("body", SOURCE, client=client, extracted_at="t") == []
+    assert client.calls == 1
+
+
+def test_a_structurally_broken_payload_still_retries():
+    client = _FakeClient({"nonsense": True}, VALID_INPUT)
+    out = extract_theses("body", SOURCE, client=client, extracted_at="t")
+    assert client.calls == 2
+    assert len(out) == 1
