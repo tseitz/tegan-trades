@@ -10,7 +10,14 @@
 #                       paid      — behind a paywall
 #                       manual    — needs a human/bespoke path (e.g. Telegram channel)
 #                       dormant   — feed inactive
+#                       excluded  — reachable, deliberately not ingested (a judgment, not a gap)
 #                       unknown
+#
+# `excluded` exists so the gap reports stay meaningful. `x_roster.undigested` flags handles
+# declared on a person but absent from x_grok_digest — a real config gap worth catching, and
+# the same silent-supply-gap class as the @RealVision typo. Once deliberate removals appear in
+# it, the report nags on every run and starts getting ignored, which is exactly how that typo
+# hid. A deliberate drop is marked, not silently left to look like an oversight.
 #
 # members: [..]  — for a multi-author feed, the people actually speaking on it. A feed is
 #                  scored and counted as ONE voice (attribution is feed-level), so anything
@@ -128,7 +135,7 @@ people:
     status: candidate
     domains: [crypto]
     why: "'Front-running the front-runners' — flow/quant. ~68K followers."
-    channels: [{ platform: x, id: "QuantMeta", access: grok }]
+    channels: [{ platform: x, id: "QuantMeta", access: excluded }]
     notes: "X-only, no long-form."
 
   - name: "fhd"
@@ -136,7 +143,7 @@ people:
     status: candidate
     domains: [crypto]
     why: "Full-time trader (Hyperliquid-era perps/flow). Some Substack writing."
-    channels: [{ platform: x, id: "0xfhd_", access: grok }]
+    channels: [{ platform: x, id: "0xfhd_", access: excluded }]
     notes: "X-only."
 
   - name: "thiccy"
@@ -144,7 +151,7 @@ people:
     status: candidate
     domains: [crypto]
     why: "Trader; @scimitarcapital. Guest on Decypher/Steady Lads/Crypto Banter + Fidenza Spaces."
-    channels: [{ platform: x, id: "thiccyth0t", access: grok }]
+    channels: [{ platform: x, id: "thiccyth0t", access: excluded }]
     notes: "Guest-only for long-form; capturable when he appears on other channels."
 
   - name: "Loma"
@@ -168,7 +175,7 @@ people:
     status: candidate
     domains: [crypto]
     why: "CEO/CIO DeFiance Capital — liquid-asset fundamentals. Guest on Crypto Market Wizards / Uncommon Core / Yield TV."
-    channels: [{ platform: x, id: "arthur0x", access: grok }]
+    channels: [{ platform: x, id: "arthur0x", access: excluded }]
     notes: "Guest-only for long-form."
 
   - name: "Andrew Kang"
@@ -176,7 +183,7 @@ people:
     status: candidate
     domains: [crypto]
     why: "Mechanism Capital — big directional calls, perps/flow. Guest on Delphi."
-    channels: [{ platform: x, id: "Rewkang", access: grok }]
+    channels: [{ platform: x, id: "Rewkang", access: excluded }]
     notes: "Crypto commentary mostly X threads now; some non-crypto (robotics) lately."
 
   - name: "krillin"
@@ -301,19 +308,27 @@ people:
 # ─── Machine-readable list for the daily Grok x_search digest (allowed_x_handles, max 20) ───
 # Feeds the Brain-head sentiment layer. Honor the `degraded` flag = silence, not signal.
 x_grok_digest:
-  - QuantMeta
-  - 0xfhd_
-  - thiccyth0t
-  - GiganticRebirth
+  # Pruned 17 -> 12 on 2026-07-26 by Tegan, on the follow-list itself rather than on measured
+  # output — these are "not what I want from X", which no signal metric can tell you.
+  # Dropped: QuantMeta, 0xfhd_ (unfollowed) · thiccyth0t, Rewkang (meta/alpha, not calls —
+  # moved to another list) · arthur0x (removed).
+  #
+  # Handle count drives xAI cost directly: the bill is dominated by *input tokens*, i.e. reading
+  # each searched account's posts into context (measured: $0.59 of $0.82 on a text run). Every
+  # handle removed is a real saving; filtering posts afterwards is not.
+  - GiganticRebirth   # dormant for ages, kept deliberately — legendary, catches him if he surfaces
   - JustDeauIt
-  - LomahCrypto
-  - CryptoCred
+  - LomahCrypto       # returned nothing in the 07-24..26 window; unexplained, see below
+  - CryptoCred        # meta more than calls — kept for the Brain head
   - DonAlt
-  - cryptoalle
-  - arthur0x
-  - Rewkang
+  - cryptoalle        # posts chart images more than prose; needs --images to be worth anything
   - 0xmagiclines
-  - pierre_crypt0
+  - pierre_crypt0     # KEEP. His YouTube is effectively dead (newest video 2026-07-01, 4 theses
+                      # in 60 days) so X is his only live channel. A first pass flagged him as
+                      # 3% signal and redundant; both were wrong — the metric was `$TICKER`-or-
+                      # chart, which kept "Bonked by it indeed" and discarded "a fight for 65.5k
+                      # ish: - If reclaimed, give another shot at mid June highs". He also posts
+                      # in French, which the distiller has to handle or those vanish silently.
   - MarkNewtonCMT
   - LSDinmycoffee
   - Tradermayne

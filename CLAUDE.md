@@ -14,7 +14,7 @@ Personal signal/trading platform: ingest trusted people → distill theses → c
 
 Six workspace members under `packages/`, in pipeline order:
 
-- `ingestion/` — transcript pullers + raw-transcript store. CLIs: `ingest-roster`, `ingest-channel`.
+- `ingestion/` — transcript pullers + raw-transcript store. CLIs: `ingest-roster`, `ingest-channel`, `ingest-x`. **`ingest-x` is the only command in the repo that spends real money** (xAI, metered) — every other cost in the repo bills against the Max subscription. Read `docs/ARCHITECTURE.md` before running it.
 - `distill/` — 🔴 LLM: transcripts → structured theses. CLIs: `distill-roster`, `distill-transcript`, `distill-canon`, `distill-triage`, `distill-migrate-ids`, `fetch-tickers`.
 - `brain/` — 🔴 LLM: narrative stance extraction, retrieval, synthesis. CLIs: `brain`, `brain-extract`, `brain-index`.
 - `oracle/` — price fetching, routing, grading, cross-reference. CLIs: `fetch-prices`, `score-roster`, `setups`.

@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import json
+import sys
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
+from ingestion import x_roster
 from ingestion.env import load_env
+from ingestion.store import DATA_ROOT
+from ingestion.x_search import SearchNotRun, group_by_author_day, harvest, search
 from ingestion.roster import (
     DEFAULT_MAX_AGE_DAYS,
     DEFAULT_MAX_VIDEOS,
@@ -47,4 +54,86 @@ def channel_main(argv: list[str] | None = None) -> int:
     except RunAborted as exc:
         result = exc.result
     print(format_summary([result]))
+    return 0
+
+
+# The raw responses are kept, not just the documents they produced. They are the only copy of
+# the annotations, the usage counters, and the model's own narration — all three were needed to
+# diagnose the silent tool-suppression failure once already, and a window cannot be replayed
+# from the documents alone.
+RAW_ROOT = Path(__file__).resolve().parents[4] / "data" / "raw" / "x"
+
+
+def x_main(argv: list[str] | None = None) -> int:
+    load_env()
+    parser = argparse.ArgumentParser(
+        prog="ingest-x",
+        description="Pull X posts for the roster's digest handles via xAI x_search.")
+    yesterday = (datetime.now(UTC).date() - timedelta(days=1)).isoformat()
+    parser.add_argument("--from", dest="from_date", default=yesterday,
+                        help=f"window start, YYYY-MM-DD (default: {yesterday})")
+    parser.add_argument("--to", dest="to_date", default=None,
+                        help="window end, YYYY-MM-DD (default: today)")
+    # Charts are ON by default. Measured: ~$0.07 per chart actually viewed, and image tokens
+    # are billed per image read — so enabling it for someone who rarely charts costs nothing on
+    # their text posts. It roughly doubles the bill (~$10 -> ~$25/mo) and buys the most precise
+    # price levels anywhere in the system: `SOL 1h — 83.609, 81.612, 79.614, ...` off a
+    # screenshot, against a corpus where §1 records that spoken levels were largely fabricated.
+    parser.add_argument("--no-images", dest="images", action="store_false", default=True,
+                        help="skip chart reading (~60%% cheaper, loses the best level data)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="search and report, but write nothing")
+    args = parser.parse_args(argv)
+    to_date = args.to_date or datetime.now(UTC).date().isoformat()
+
+    watchlist = load_watchlist()
+    handles = x_roster.search_handles(watchlist)
+    if not handles:
+        print("no handles in watchlist.x_grok_digest — nothing to search", file=sys.stderr)
+        return 1
+
+    # Config gaps first, while they cost nothing. A handle nobody owns produces posts that
+    # cannot be credited, and the run should say so before spending the call rather than
+    # silently dropping them afterwards.
+    for handle in x_roster.unattributable(watchlist):
+        print(f"  ! {handle}: in the digest but no person declares it — posts will be dropped",
+              file=sys.stderr)
+    for handle in x_roster.undigested(watchlist):
+        print(f"  · {handle}: declared on a person but not in the digest — not searched")
+
+    print(f"searching {len(handles)} handles, {args.from_date}..{to_date}"
+          f"{' with charts' if args.images else ''}")
+    response = search(handles, args.from_date, to_date, images=args.images)
+
+    # The raw response is written even on a dry run. A dry run withholds *corpus* writes; the
+    # raw file is diagnostic, and the run most worth diagnosing is the one that just failed.
+    stamp = f"{args.from_date}_{to_date}{'_img' if args.images else ''}"
+    raw_path = RAW_ROOT / f"{stamp}.json"
+    raw_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_path.write_text(json.dumps(response, indent=2), encoding="utf-8")
+
+    try:
+        result = harvest(response, allowed=handles)
+    except SearchNotRun as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        print(f"  raw response kept at {raw_path}", file=sys.stderr)
+        return 1
+
+    orphans = x_roster.dropped_unattributable(result.posts, watchlist)
+    print(f"{result.tool_calls} x_search calls -> {len(result.posts)} verified posts")
+    if result.dropped:
+        print("  dropped: " + ", ".join(f"{k}={v}" for k, v in result.dropped.most_common()))
+    if orphans:
+        print(f"  unattributable: {len(orphans)} "
+              f"({', '.join(sorted({p.handle for p in orphans}))})")
+
+    if args.dry_run:
+        for (handle, day), posts in sorted(group_by_author_day(result.posts).items()):
+            print(f"  {handle} {day}: {len(posts)} posts")
+        return 0
+
+    written = x_roster.store_posts(result.posts, watchlist, root=DATA_ROOT)
+    print(f"wrote {len(written)} documents")
+    for path in written:
+        print(f"  {path.name}")
     return 0
