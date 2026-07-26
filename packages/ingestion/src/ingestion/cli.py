@@ -9,7 +9,13 @@ from pathlib import Path
 from ingestion import verify, x_roster
 from ingestion.env import load_env
 from ingestion.store import DATA_ROOT
-from ingestion.x_search import SearchNotRun, group_by_author_day, harvest, search
+from ingestion.x_search import (
+    SearchNotRun,
+    cost_usd,
+    group_by_author_day,
+    harvest,
+    search,
+)
 from ingestion.roster import (
     DEFAULT_MAX_AGE_DAYS,
     DEFAULT_MAX_VIDEOS,
@@ -120,6 +126,10 @@ def x_main(argv: list[str] | None = None) -> int:
         return 1
 
     orphans = x_roster.dropped_unattributable(result.posts, watchlist)
+    # Printed in a fixed, greppable shape: this is the only step in the nightly cycle that
+    # spends real money, and the run summary reads this line rather than trying to work the
+    # figure out afterwards from files on disk.
+    print(f"[ingest-x] cost: ${cost_usd(response):.4f} (xAI, real money)")
     print(f"{result.tool_calls} x_search calls -> {len(result.posts)} verified posts")
     if result.dropped:
         print("  dropped: " + ", ".join(f"{k}={v}" for k, v in result.dropped.most_common()))

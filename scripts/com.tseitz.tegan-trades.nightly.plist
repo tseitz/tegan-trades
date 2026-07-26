@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Nightly cycle for tegan-trades.
+
+  Install:
+    cp scripts/com.tseitz.tegan-trades.nightly.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.tseitz.tegan-trades.nightly.plist
+
+  Run it once by hand without waiting for the schedule:
+    launchctl kickstart -p gui/$(id -u)/com.tseitz.tegan-trades.nightly
+
+  Remove:
+    launchctl bootout gui/$(id -u)/com.tseitz.tegan-trades.nightly
+
+  Why launchd rather than cron or a Claude session: this must not depend on a terminal or an
+  agent being open, and on a laptop that sleeps, launchd runs a missed StartCalendarInterval
+  job on wake — cron simply skips it. `claude -p` needs the GUI session's keychain for its
+  subscription auth, which is why this is a LaunchAgent (gui/) and not a LaunchDaemon.
+
+  06:15 local: after the US close and the overnight session, before the morning. Late enough
+  that a sleeping laptop has usually woken; if it hasn't, launchd fires on wake instead.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.tseitz.tegan-trades.nightly</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/tseitz/code/projects/tegan-trades/scripts/nightly.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/tseitz/code/projects/tegan-trades</string>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>6</integer>
+    <key>Minute</key><integer>15</integer>
+  </dict>
+
+  <!-- The script writes its own dated log; these catch anything that escapes it, including a
+       failure to start at all — which is the case the script by definition cannot record. -->
+  <key>StandardOutPath</key>
+  <string>/Users/tseitz/code/projects/tegan-trades/data/logs/nightly/launchd.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/tseitz/code/projects/tegan-trades/data/logs/nightly/launchd.err</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- launchd hands over a minimal PATH. uv and claude both live in ~/.local/bin; the script
+         re-exports this too, so either alone is sufficient. -->
+    <key>PATH</key>
+    <string>/Users/tseitz/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>/Users/tseitz</string>
+  </dict>
+
+  <!-- Off: the job spends real money, so a crash-loop must not become a spend-loop. -->
+  <key>KeepAlive</key>
+  <false/>
+  <key>RunAtLoad</key>
+  <false/>
+
+  <!-- A stuck yt-dlp or a hung API call should not hold the slot until tomorrow. Generous:
+       the observed full run is a few minutes, but a backfill after several quiet days is
+       legitimately longer. -->
+  <key>ExitTimeOut</key>
+  <integer>3600</integer>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>LowPriorityIO</key>
+  <true/>
+</dict>
+</plist>

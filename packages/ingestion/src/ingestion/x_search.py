@@ -135,6 +135,21 @@ def build_request(handles, from_date: str, to_date: str, *, images: bool,
 
 # ── reading the response ────────────────────────────────────────────────────────
 
+# xAI reports spend in ticks of 1e-10 USD. Verified against token prices on four runs; tool
+# invocations appear to sit outside it, so treat this as a floor rather than the whole bill.
+USD_PER_TICK = 1e-10
+
+
+def cost_usd(response: dict) -> float:
+    """What this call cost in real dollars.
+
+    Reported by the command that spends it, rather than reconstructed later by scanning
+    ``data/raw/x/`` by modification time — that was tried, and it silently re-counted earlier
+    runs from the same day into the nightly total.
+    """
+    return float((response.get("usage") or {}).get("cost_in_usd_ticks") or 0) * USD_PER_TICK
+
+
 def tool_calls(response: dict) -> int:
     """How many times ``x_search`` actually ran.
 

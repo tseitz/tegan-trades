@@ -121,7 +121,9 @@ packages. Every command below is run as `uv run <command>` **from the repo root*
 | `brain "<question>" --no-llm` | 🟢 | Structured + evidence legs only. Completely free. |
 | `brain-index` | 🟢 | Local embedding model (`BAAI/bge-small-en-v1.5`) on CPU. Slow first run (downloads weights), zero dollars. |
 | `ingest-roster` / `ingest-channel` | 🟡 | Needs the Webshare proxy for the caption endpoint. Idempotent; skips existing. |
-| `ingest-x` | 💸 **REAL MONEY** | The only command billed in actual dollars — see below. ~$0.30–0.85/run with charts, ~$25/mo daily. |
+| `ingest-x` | 💸 **REAL MONEY** | The only command billed in actual dollars — see below. Measured ~$0.22–0.25/run with charts on the 11-handle digest. |
+| `verify-roster` | 🟢 | Probes declared YouTube channels against the watchlist. No key, no proxy. Exits non-zero on disagreement. |
+| `scripts/nightly.sh` | 💸 + 🔴 | The whole cycle. ~$0.25 xAI + the day's distillation. Totals both and writes one line to `~/vault/Trading/Trade Logs/Nightly.md`. |
 | `fetch-prices` | 🟡 | Free public APIs. Cached to `data/prices/`. |
 | `score-roster` | 🟢 | Reads ore, writes a report. Never mutates `data/theses/`. |
 | `setups` | 🟢 | Pure cross-reference over cached prices + theses. |
