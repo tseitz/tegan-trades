@@ -9,6 +9,7 @@ from core.levels import NEAREST, STATED
 from core.setups import (
     ARRIVAL,
     DAILY,
+    PROXIMITY_SPAN,
     STRUCTURAL,
     WEEKLY,
     ZONE_LEVEL_REASONS,
@@ -346,6 +347,44 @@ def test_a_stated_target_below_entry_is_unreasonable():
     assert setup.target_source == STRUCTURAL
 
 
+def test_a_stated_target_price_has_already_reached_is_unreasonable():
+    """Measured on the live queue: 5 of 69 candidates carried a target price was already past,
+    every one of them author-supplied. SPX showed a target of 6000 against a price of 7403,
+    read from a call published at 5842 — the author's claim had been satisfied 14 months
+    earlier, but 6000 still sits beyond the zone's near edge, which was the only thing checked.
+
+    Here the zone entry is 110 and price is 130, so a stated 125 clears the entry and the R:R
+    floor and would once have been believed. It is not a target any more; it is history."""
+    setup = cross_reference(_row(key_levels=[125.0]), _ctx(price=130.0), published_close=100.0)
+    assert setup.target == 140.0
+    assert setup.target_source == STRUCTURAL
+
+
+def test_a_short_target_price_has_already_reached_is_unreasonable():
+    """The same rule on the other side, where 'already reached' means price is *below* the
+    target. Asserted separately because the check is sign-dependent, and a sign error would
+    leave the long case green while inverting the short one into rejecting live targets."""
+    ctx = _ctx(
+        weekly_trend=DOWNTREND, daily_trend=DOWNTREND, price=150.0,
+        zones=(Zone(block=_block(BEARISH, top=190.0, bottom=180.0, invalidation=200.0),
+                    structural_target=140.0),),
+    )
+    setup = cross_reference(_row(direction="short", key_levels=[160.0]), ctx,
+                            published_close=185.0)
+    assert setup.target == 140.0
+    assert setup.target_source == STRUCTURAL
+
+
+def test_a_stated_target_still_ahead_of_price_is_untouched():
+    """The guard rejects reached targets, not distant ones. Price at 130 is past the entry and
+    well into the zone, and a stated 150 is still ahead of it — 'if they call something, we
+    listen' has to keep firing for the ordinary case, or the fix would quietly delete the
+    stated leg of target selection instead of cleaning it."""
+    setup = cross_reference(_row(key_levels=[150.0]), _ctx(price=130.0), published_close=100.0)
+    assert setup.target == 150.0
+    assert setup.target_source == STATED
+
+
 def test_a_stated_target_with_reward_risk_below_one_is_unreasonable():
     # entry 110, stop 100 -> risk 10. A target at 115 is only 5 of reward.
     setup = cross_reference(_row(key_levels=[115.0]), _ctx(), published_close=100.0)
@@ -475,8 +514,37 @@ def test_approach_rises_monotonically_from_a_span_away_to_the_far_edge():
     assert approach_to(block, 100.0) == pytest.approx(1.0)       # the far edge
 
 
-def test_approach_is_zero_beyond_the_span():
-    assert approach_to(_block(), 400.0) == 0.0
+def test_approach_keeps_falling_beyond_the_span_instead_of_flooring():
+    """The span is a half-distance now, not a cliff — same change ``freshness_signal`` made,
+    for the same reason: a bounded term that saturates stops measuring.
+
+    Measured on the live queue 2026-07-27: **16 of 69 candidates sat at exactly 0.00**, which
+    made SPX 26% from its zone and SOL *135%* from its zone indistinguishable from each other
+    and from one 10.01% away. Those are not the same trade, and the queue could not say so."""
+    block = _block()  # bullish, 100-110, approached from above
+    one_span = approach_to(block, 110.0 / (1 - PROXIMITY_SPAN))
+    two_spans = approach_to(block, 110.0 / (1 - 2 * PROXIMITY_SPAN))
+    far = approach_to(block, 400.0)
+    assert one_span > two_spans > far > 0.0
+    # Never reaches zero: distance alone must not be able to eliminate a candidate, exactly as
+    # age alone cannot. Only ``price_past_stop`` and the gates end a candidate outright.
+    assert approach_to(block, 1e9) > 0.0
+
+
+def test_the_span_is_the_distance_at_which_approach_is_worth_half_of_arrival():
+    """What ``PROXIMITY_SPAN`` now names. Pinning it here because the constant's meaning
+    changed without its name changing — it used to be where the ramp hit zero."""
+    block = _block()  # near edge 110
+    assert approach_to(block, 110.0 / (1 - PROXIMITY_SPAN)) == pytest.approx(ARRIVAL / 2)
+
+
+def test_approach_is_continuous_across_the_near_edge():
+    """The travelling and traversing branches meet at ``ARRIVAL`` exactly. A discontinuity here
+    would put a cliff back in a different place — a hair outside the zone scoring materially
+    differently from a hair inside it."""
+    block = _block()  # bullish, 100-110
+    assert approach_to(block, 110.0) == pytest.approx(ARRIVAL)
+    assert approach_to(block, 110.0001) == pytest.approx(ARRIVAL, abs=1e-5)
 
 
 def test_approach_is_zero_once_price_has_traded_through_the_zone():

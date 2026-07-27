@@ -126,8 +126,13 @@ MAX_TARGET_ATR = 20.0
 # Reward-to-risk at which the score's RR term saturates. TUNE.
 RR_SATURATION = 3.0
 
-# How far from a zone, as a fraction of price, the approach ramp decays to zero. Measured as a
-# fraction so BTC and SOL are comparable. TUNE.
+# How far from a zone, as a fraction of price, ``approach`` is worth **half** of ``ARRIVAL``.
+# Measured as a fraction so BTC and SOL are comparable. TUNE.
+#
+# This named the distance at which the ramp decayed *to zero* until 2026-07-27. The value is
+# unchanged; what changed is that the curve no longer terminates there, so the constant is now
+# the shape parameter of a decay rather than a cutoff — the same promotion ``HalfLife`` got
+# when the staleness cliff became a slope. See ``approach_to``.
 PROXIMITY_SPAN = 0.10
 
 # Where on the approach ramp the near edge sits: 0.625 of it is spent reaching the zone, the
@@ -206,11 +211,25 @@ DEFAULT_WEIGHTS = SetupWeights()
 # was judged, and correlating decisions against scores across a re-weighting would silently
 # compare two different scales. 1 = proximity/depth/RR/agreement; 2 = + freshness/alignment;
 # 3 = proximity and depth collapsed into ``approach``, and price past the stop refused.
+# 4 = a stated target price had already reached is no longer believed.
+# 5 = ``approach``'s outward leg decays instead of flooring at zero.
 #
 # v2 scores are not comparable to v3 ones even where the weights are unchanged: the 13 of 82
 # candidates that v2 paid full depth for having traded through the zone are gone from v3
 # entirely, so the population being ranked is different, not just the scale.
-SCORE_VERSION = 3
+#
+# v4 is the milder case and still warrants the bump. No term, weight, or candidate changed —
+# the population is the same 69 — but 5 of them resolve to a different target and therefore a
+# different reward:risk, so the same zone scores differently than it did when it was judged.
+# Pooling those into the v3 bucket is exactly the silent comparison this constant exists to
+# prevent, and §4's revealed-preference work reads the sidecar grouped by this field.
+#
+# v5 changes the *shape* of a term rather than its weight, and moves 47 of 69 candidates' ranks.
+# Note the direction, because it is counterintuitive and was measured rather than assumed: the
+# 16 candidates previously pinned at 0.00 move **up** a mean of 1.2 places, not down. A floored
+# term cannot be pushed lower, so restoring its tail can only add score. v5 buys resolution,
+# not demotion — see ``approach_to`` and §19.
+SCORE_VERSION = 5
 
 # Weekly trend agrees with the thesis, versus has no opinion at all. There is no third value:
 # a weekly that genuinely contradicts is still refused outright, so it never reaches scoring.
@@ -221,11 +240,30 @@ UNALIGNED = 0.0
 def approach_to(block: OrderBlock, price: float, *, span: float = PROXIMITY_SPAN) -> float:
     """How far price has travelled toward and into ``block``, on one 0.0–1.0 ramp.
 
-    0.0 a ``span`` away, ``ARRIVAL`` at the near edge, 1.0 at the far edge — and 0.0 again once
-    price is past the far edge, because a zone price has traded clean through is not a near
-    one. That last case is what the old two-term form got backwards; ``cross_reference`` also
-    refuses it outright as ``price_past_stop``, so within the engine this branch is belt and
-    braces rather than the only guard.
+    ``ARRIVAL`` at the near edge, 1.0 at the far edge, and decaying toward — never reaching —
+    0.0 as price gets further away. 0.0 exactly once price is past the far edge, because a zone
+    price has traded clean through is not a near one. That last case is what the old two-term
+    form got backwards; ``cross_reference`` also refuses it outright as ``price_past_stop``, so
+    within the engine this branch is belt and braces rather than the only guard.
+
+    **The outward leg was a cliff and is now a slope**, the same correction ``freshness_signal``
+    already applies to age, for the same reason and in the same shape. It was
+    ``ARRIVAL * max(0, 1 - gap/span)``, which hit zero at one span and stayed there. Measured on
+    the live queue 2026-07-27: **16 of 69 candidates sat at exactly 0.00**, so SPX 26% from its
+    zone, SOL *135%* from its zone, and anything 10.01% away were mutually indistinguishable.
+    A term that saturates stops measuring, and this is the only term that expresses whether a
+    trade can actually be taken — the queue had no way to say "this needs a 26% drawdown first".
+
+    ``1 / (1 + gap/span)`` introduces **no second constant**: ``span`` stops being the distance
+    where the ramp dies and becomes the distance where approach is worth half of ``ARRIVAL``,
+    exactly as ``HalfLife`` became the shape parameter of the freshness curve rather than a
+    cutoff. It meets the traversing branch at ``ARRIVAL`` with no discontinuity.
+
+    **This does not, on its own, demote a distant candidate** — the term was already floored at
+    0.0, so nothing could push it lower, and a continuous tail necessarily scores *above* that
+    floor. What it buys is resolution: distance becomes rankable instead of collapsing to one
+    value. Demoting them means fixing the reward:risk term, which currently *rises* with the
+    same distance. See ``docs/IMPROVEMENTS.md`` §19.
     """
     if block.traded_through(price):
         return 0.0
@@ -234,8 +272,8 @@ def approach_to(block: OrderBlock, price: float, *, span: float = PROXIMITY_SPAN
         return ARRIVAL + (1.0 - ARRIVAL) * depth
     if price <= 0 or span <= 0:
         return 0.0
-    reach = 1.0 - (abs(price - block.near_edge) / price) / span
-    return ARRIVAL * max(0.0, reach)
+    gap = abs(price - block.near_edge) / price
+    return ARRIVAL / (1.0 + gap / span)
 
 
 def freshness_signal(age_days: int, half_life: int) -> float:
@@ -706,7 +744,7 @@ def cross_reference(
     target, target_source = None, ""
     if not stated.abstained and _reasonable(
         stated.target, entry=entry, risk=risk, sign=sign,
-        atr_now=context.atr,
+        price_now=context.price, atr_now=context.atr,
         min_reward_risk=min_reward_risk, max_target_atr=max_target_atr,
     ):
         # Propagate the reading's own source rather than flattening to STATED — a NEAREST
@@ -778,19 +816,35 @@ def _newest_zone(zones, family: str, timeframe: str) -> Zone | None:
     return max(matching, key=lambda zone: (zone.block.confirmed_at, zone.block.index))
 
 
-def _reasonable(target, *, entry: float, risk: float, sign: int,
+def _reasonable(target, *, entry: float, risk: float, sign: int, price_now: float,
                 atr_now: float | None, min_reward_risk: float,
                 max_target_atr: float) -> bool:
     """Whether a stated target is worth believing over the structural one.
 
-    Three ways to fail: it's behind the entry (so it isn't a target any more, whatever it was
-    when stated), it doesn't clear the stop by enough to be worth taking, or it's further away
-    than the instrument plausibly travels.
+    Four ways to fail: it's behind the entry (so it isn't a target any more, whatever it was
+    when stated), **price has already reached it**, it doesn't clear the stop by enough to be
+    worth taking, or it's further away than the instrument plausibly travels.
 
     An unknown ATR skips the distance check rather than failing it — inability to judge must
     not read as a verdict, the same rule ``imbalance.is_displacement`` follows.
     """
     if (target - entry) * sign <= 0:
+        return False
+    # A target price has already traded to is a satisfied claim, not a forecast. Checking only
+    # against ``entry`` let one through whenever the zone sat below where price had since gone:
+    # on the live queue that was 5 of 69 candidates, headed by an SPX long showing a target of
+    # 6000 against a price of 7403 — read from a call published at 5842, whose author had been
+    # right and finished being right more than a year earlier.
+    #
+    # It belongs here, as a *believability* test on the author's number, rather than as a gate
+    # beside ``price_past_stop``. The two are not the same fact: a taken stop kills the trade,
+    # while a reached target kills only that target, and structure still has a live one to
+    # supply. Refusing outright would have discarded all five candidates including an OIL long
+    # eight people are on, whose structural target sits 43% above price. Note also that a
+    # structural target can *never* fail this check by construction — ``_extreme_since`` is a
+    # realized high or low — so all this can reject is a stale authored number, which is
+    # exactly the failure observed; every one of the five was ``stated`` or ``nearest``.
+    if (target - price_now) * sign <= 0:
         return False
     if abs(target - entry) / risk < min_reward_risk:
         return False
