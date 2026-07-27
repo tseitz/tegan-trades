@@ -99,7 +99,7 @@ DEFAULT_LIMIT = 25
 #   REJECTED  judged and declined. Carries a reason, because "bad trade" calibrates the setups
 #             scorer while "their view is wrong" calibrates the roster trust score, and those
 #             are feedback to different consumers.
-#   ARCHIVED  suppress permanently, explicitly NOT a judgment ("I don't trade this").
+#   ARCHIVED  suppress permanently. Asked WHICH KIND — see ARCHIVE_ASSET/ARCHIVE_SETUP.
 APPROVED = "approved"
 LATER = "later"
 REJECTED = "rejected"
@@ -115,6 +115,23 @@ _PERMANENT = frozenset({APPROVED, REJECTED, ARCHIVED, SKIPPED})
 REASON_TRADE = "trade_quality"
 REASON_VIEW = "view_wrong"
 REASON_OTHER = "other"
+
+# Which kind of archive. Recorded in the same ``reason`` field as the rejection vocabulary —
+# distinct values, and ``decision`` already namespaces them, so a mining pass partitions on the
+# pair rather than needing a sixth column.
+#
+# **Why archive is asked at all**, when it was documented for months as "explicitly NOT a
+# judgment": one key was doing two jobs. In the 2026-07-27 session 8 of 25 decisions were
+# archives, none carried a reason, and they were confirmed afterwards to be a *mix* of "I don't
+# trade this asset" and "this setup is stale". That made all 8 unminable — and §4 mines exactly
+# this file — while leaving the asset-level ones ineffective anyway, because ``drop_decided``
+# keys on the zone. One keystroke separates them at the only moment the meaning is known.
+#
+# ASSET also writes ``cfg/exclusions.yaml``, which is what makes an asset-level "no" stick.
+# SETUP is the conservative default for anything unrecognised: guessing ASSET from a stray
+# keypress would delete a whole market from the queue permanently.
+ARCHIVE_ASSET = "asset"
+ARCHIVE_SETUP = "setup"
 
 _NOTE_TITLE = "# Approved Setups"
 
@@ -421,13 +438,18 @@ def append_note(vault_path, section: str) -> None:
 
 def triage(candidates, *, decisions_path, vault_path, input_fn=input, out=print,
            as_of: date | None = None, color: bool | None = None,
-           mirror_path=None) -> dict[str, int]:
+           mirror_path=None, exclusions_path=None) -> dict[str, int]:
     """Present each candidate, highest score first; approve -> vault note (if given) + sidecar,
     all decisions -> sidecar. Quit stops immediately without consuming further input.
 
     ``as_of`` is only used to age each candidate for display, so it stays optional — a caller
     that doesn't supply one gets the date without the day count rather than an exception.
     ``color`` defaults to autodetection, and is an explicit argument so tests pin it off.
+
+    ``exclusions_path`` is where an asset-level archive writes its standing rule. Optional, and
+    its absence downgrades rather than fails: the archive is still recorded, it just doesn't
+    stick across zones. Every write here is subordinate to the sidecar for the same reason the
+    vault mirror is — losing a config line is recoverable, losing the judgement is not.
     """
     counts = {APPROVED: 0, LATER: 0, REJECTED: 0, ARCHIVED: 0}
     decided_at = datetime.now(UTC).isoformat(timespec="seconds")
@@ -449,6 +471,9 @@ def triage(candidates, *, decisions_path, vault_path, input_fn=input, out=print,
             reason, note = _ask_reason(input_fn)
         elif ans in ("x", "archive"):
             decision = ARCHIVED
+            reason, note = _ask_archive_kind(input_fn)
+            if reason == ARCHIVE_ASSET:
+                _record_exclusion(c.asset, note, path=exclusions_path, out=out)
         else:
             # Blank falls through to LATER on purpose: it is the only reversible answer, so a
             # stray keypress defers rather than permanently burying a setup.
@@ -498,6 +523,63 @@ def _ask_reason(input_fn) -> tuple[str, str | None]:
         return reason, ans
     note = input_fn("  note (enter to skip): ").strip()
     return reason, note or None
+
+
+_ARCHIVE_KINDS = {"a": ARCHIVE_ASSET, "s": ARCHIVE_SETUP}
+
+
+def _ask_archive_kind(input_fn) -> tuple[str, str | None]:
+    """Which of the two archives this is, plus the note that becomes the exclusion's reason.
+
+    Same shape as ``_ask_reason`` deliberately — one keystroke, and anything longer is taken as
+    the note — so the two prompts behave identically under the fingers and nothing typed is
+    discarded.
+
+    **Unrecognised falls to ``ARCHIVE_SETUP``, not to a third "unknown" bucket.** The asymmetry
+    is the point: a setup archive is inert, while an asset archive writes a standing rule that
+    removes a market from the queue for good. Defaulting the ambiguous case to the destructive
+    one is exactly how a stray keypress becomes folklore. Note this is the opposite default from
+    ``_ask_reason``, which falls to ``REASON_OTHER`` — there, every branch is equally inert.
+    """
+    ans = input_fn("  archive: [a]sset (never show this asset) / [s]etup (just this zone): ").strip()
+    kind = _ARCHIVE_KINDS.get(ans[:1].lower(), ARCHIVE_SETUP)
+    if len(ans) > 1:
+        return kind, ans
+    prompt = ("  reason (required, becomes the exclusion): " if kind == ARCHIVE_ASSET
+              else "  note (enter to skip): ")
+    return kind, input_fn(prompt).strip() or None
+
+
+def _record_exclusion(asset: str, reason: str | None, *, path, out) -> None:
+    """Make an asset-level archive stick, or say clearly why it didn't.
+
+    Subordinate to the sidecar in every branch — this runs *after* nothing and *before* nothing
+    that matters, and it never raises. The decision is recorded by the caller either way, which
+    is the same rule ``oracle.decisions`` applies to the vault mirror: a convenience that fails
+    must not take a judgement down with it.
+
+    Silence is the one unacceptable outcome, so all four cases print. A gate everyone believes
+    is running and isn't is worse than no gate — §6h's whole failure class.
+    """
+    if path is None:
+        out(f"  ! archived {asset} for the asset, but no exclusions file is configured"
+            f" — it will resurface on the next zone")
+        return
+    if not reason:
+        out(f"  ! no reason given, so {asset} was NOT added to {Path(path).name}"
+            f" — the decision is recorded, but the asset will resurface on the next zone")
+        return
+    try:
+        added = exclusions.append(path, asset, reason)
+    except (OSError, ValueError) as exc:
+        out(f"  ! could not write {Path(path).name}: {exc}"
+            f" — the decision is recorded; add {asset} by hand to make it stick")
+        return
+    if added:
+        out(f"  + {Path(path).name}: {asset.upper()} — {reason}")
+        out("    review before committing")
+    else:
+        out(f"  = {asset.upper()} is already excluded in {Path(path).name}; left as it is")
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────────────────────
@@ -619,7 +701,7 @@ def main(argv: list[str] | None = None) -> int:
 
     counts = triage(  # pragma: no cover - interactive
         queue, decisions_path=DEFAULT_DECISIONS, vault_path=vault_note, as_of=as_of,
-        mirror_path=mirror_path)
+        mirror_path=mirror_path, exclusions_path=args.exclusions)
     print("\n" + format_counts(counts))
     return 0
 

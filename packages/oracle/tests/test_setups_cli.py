@@ -19,7 +19,7 @@ from core.setups import (
 )
 from core.structure import BULLISH, SWING_HIGH, SWING_LOW, Break, OrderBlock, Swing
 
-from oracle import setups_cli
+from oracle import exclusions, setups_cli
 
 
 def _swing(price, kind, *, index=0, day=1):
@@ -472,10 +472,11 @@ def test_an_unrecognised_reject_reason_falls_back_to_other(tmp_path):
     assert record["reason_note"] == "zzz"
 
 
-def test_only_rejections_are_asked_for_a_reason(tmp_path):
-    """Approve/later/archive must not consume a second answer — a stray prompt there would
-    shift every subsequent keystroke onto the wrong candidate."""
-    for answer, verdict in (("l", setups_cli.LATER), ("x", setups_cli.ARCHIVED)):
+def test_approve_and_later_are_not_asked_for_a_reason(tmp_path):
+    """Approve and later must not consume a second answer — a stray prompt there would shift
+    every subsequent keystroke onto the wrong candidate. Archive *is* asked (see below); it was
+    not until 2026-07-27, and one session recorded 8 unexplained permanent suppressions."""
+    for answer, verdict in (("l", setups_cli.LATER), ("a", setups_cli.APPROVED)):
         _, record = _run([answer], _candidate(), tmp_path / answer)
         assert record["decision"] == verdict
         assert "reason_note" not in record
@@ -495,12 +496,110 @@ def test_the_summary_names_every_verdict_triage_can_return(tmp_path):
         assert verdict in line
 
 
-def test_archive_is_recorded_without_a_reason(tmp_path):
-    """Archive is suppression, explicitly not judgment — so there is nothing to explain."""
-    counts, record = _run(["x"], _candidate(), tmp_path)
+# ── archive says which kind it is ─────────────────────────────────────────────
+
+def _run_x(answers, candidate, tmp_path, *, exclusions_path=None):
+    """``_run`` with an exclusions file in play, since archive can now write one."""
+    it = iter(answers)
+    path = tmp_path / "decisions.jsonl"
+    lines = []
+    counts = setups_cli.triage(
+        [candidate], decisions_path=path, vault_path=None,
+        exclusions_path=exclusions_path,
+        input_fn=lambda _: next(it), out=lines.append,
+    )
+    return counts, setups_cli.load_decisions(path).get(candidate.key), "\n".join(lines)
+
+
+def test_archive_records_which_kind_of_archive_it_was(tmp_path):
+    """One key was doing two jobs. Measured 2026-07-27: 8 of 25 decisions in a session were
+    archives, they carried no reason at all, and they were confirmed afterwards to be a *mix*
+    of "I don't trade this asset" and "this setup is stale" — which made all 8 unminable, and
+    §4 mines exactly this file. The keystroke is what separates them at the moment the meaning
+    is known, rather than leaving it to be guessed from prose later."""
+    _, asset, _ = _run_x(["x", "a", "zero interest"], _candidate(), tmp_path / "a")
+    assert asset["decision"] == setups_cli.ARCHIVED
+    assert asset["reason"] == setups_cli.ARCHIVE_ASSET
+    assert asset["reason_note"] == "zero interest"
+
+    _, setup, _ = _run_x(["x", "s", "this zone is done"], _candidate(), tmp_path / "s")
+    assert setup["reason"] == setups_cli.ARCHIVE_SETUP
+
+
+def test_an_asset_archive_writes_the_exclusion_that_makes_it_stick(tmp_path):
+    """The point of asking. `drop_decided` keys on the *zone*, so an asset-level archive buries
+    one order block and the next to form on the same instrument asks again — OIL and CL came
+    back on 4 of 59 rows the same day they were rejected. Only cfg/exclusions.yaml makes an
+    asset-level "no" permanent."""
+    excl = tmp_path / "exclusions.yaml"
+    _, record, printed = _run_x(["x", "a", "zero interest"], _candidate(asset="PNUT"),
+                                tmp_path, exclusions_path=excl)
+    assert exclusions.load(excl) == {"PNUT": "zero interest"}
+    assert record["reason"] == setups_cli.ARCHIVE_ASSET
+    assert "PNUT" in printed and "exclusions.yaml" in printed
+
+
+def test_a_setup_archive_never_touches_the_exclusions_file(tmp_path):
+    """"Just this zone" is the conservative half and must stay conservative — silently
+    excluding a whole market from one ambiguous keystroke is the failure the exclusions header
+    warns about at length."""
+    excl = tmp_path / "exclusions.yaml"
+    _run_x(["x", "s", "done with this zone"], _candidate(asset="PNUT"), tmp_path,
+           exclusions_path=excl)
+    assert not excl.exists()
+
+
+def test_an_unrecognised_archive_kind_falls_back_to_the_setup_only_half(tmp_path):
+    """Ambiguity must resolve toward the reversible-ish answer. Guessing "asset" from a stray
+    keystroke would delete a market from the queue permanently."""
+    excl = tmp_path / "exclusions.yaml"
+    _, record, _ = _run_x(["x", "zzz"], _candidate(asset="PNUT"), tmp_path,
+                          exclusions_path=excl)
+    assert record["reason"] == setups_cli.ARCHIVE_SETUP
+    assert record["reason_note"] == "zzz"
+    assert not excl.exists()
+
+
+def test_an_asset_archive_with_no_reason_records_the_decision_but_writes_no_rule(tmp_path):
+    """`exclusions.load` refuses a reason-less entry, so writing one would make the next run
+    unstartable. The judgement still reaches the sidecar — losing a config line is recoverable,
+    losing the decision is not — and the skip is announced rather than silent."""
+    excl = tmp_path / "exclusions.yaml"
+    _, record, printed = _run_x(["x", "a", "   "], _candidate(asset="PNUT"), tmp_path,
+                                exclusions_path=excl)
+    assert record["reason"] == setups_cli.ARCHIVE_ASSET
+    assert not excl.exists()
+    assert "no reason" in printed.lower()
+
+
+def test_archiving_an_already_excluded_asset_says_so_and_changes_nothing(tmp_path):
+    """Ordinary across sessions. The committed reason wins — it is the reviewed one."""
+    excl = tmp_path / "exclusions.yaml"
+    excl.write_text('assets:\n  PNUT: "the original reason"\n')
+    _, _, printed = _run_x(["x", "a", "a newer reason"], _candidate(asset="PNUT"), tmp_path,
+                           exclusions_path=excl)
+    assert exclusions.load(excl) == {"PNUT": "the original reason"}
+    assert "already" in printed.lower()
+
+
+def test_a_failed_exclusion_write_does_not_lose_the_decision(tmp_path):
+    """The sidecar write must not be hostage to the config write. Archive is judgement; the
+    exclusion is a convenience that makes it stick."""
+    excl = tmp_path / "nope" / "exclusions.yaml"  # parent does not exist
+    counts, record, printed = _run_x(["x", "a", "zero interest"], _candidate(asset="PNUT"),
+                                     tmp_path, exclusions_path=excl)
     assert counts[setups_cli.ARCHIVED] == 1
     assert record["decision"] == setups_cli.ARCHIVED
-    assert "reason" not in record
+    assert record["reason"] == setups_cli.ARCHIVE_ASSET
+    assert "exclusions.yaml" in printed
+
+
+def test_archive_still_works_with_no_exclusions_path_configured(tmp_path):
+    """`triage` is called directly by tests and could be by anything else; the exclusions path
+    is optional and its absence must not turn an archive into a crash."""
+    _, record, _ = _run_x(["x", "a", "zero interest"], _candidate(), tmp_path)
+    assert record["decision"] == setups_cli.ARCHIVED
+    assert record["reason"] == setups_cli.ARCHIVE_ASSET
 
 
 # ── empty queue and quit ──────────────────────────────────────────────────────

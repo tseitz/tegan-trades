@@ -316,13 +316,43 @@ Three consequences, in increasing order of how much they cost:
   `candidate.key`, the *zone* — so archiving PENDLE buries one order block and the next PENDLE
   zone asks again. That is precisely the defect `cfg/exclusions.yaml` was built for a day
   earlier (§4, the gate), and archive does not feed it.
-- **It recurs every session until the prompt changes.** This is the cheapest fix in the entry
-  and the only one that compounds: `_ask_reason` already exists, and the asset-level answers it
-  collects are what `cfg/exclusions.yaml` needs hand-curating from.
+- **It recurs every session until the prompt changes.** This was the cheapest fix in the entry
+  and the only one that compounds.
 
 **Do not derive `cfg/exclusions.yaml` entries from these 8 automatically** — that file's own
 header explains why, and the mix confirmed here is exactly the case it warns about: a temporary
 reservation promoted into a permanent rule silently deletes a market from the queue for good.
+
+### Archive now asks which kind it is · `FIXED 2026-07-27`
+
+`x` prompts `[a]sset (never show this asset) / [s]etup (just this zone)`, records the answer as
+`reason` (`ARCHIVE_ASSET` / `ARCHIVE_SETUP`) alongside the note, and — for an asset-level
+archive — appends the asset to `cfg/exclusions.yaml` with the note as its required reason. That
+is the half that makes it *stick*: `drop_decided` keys on the zone, so before this an
+asset-level archive buried one order block and the next one asked again.
+
+**This is not the automatic derivation `exclusions.py` refuses**, and the distinction is worth
+keeping straight: that rule is about reading permanence out of free prose, and here the prompt
+*asks* and you answer. The reason you type is the entry's reason; nothing is inferred.
+
+Four deliberate choices, each of which could have gone the other way:
+
+- **Unrecognised input falls to `setup`, not `asset`** — the opposite default from `_ask_reason`,
+  which falls to `other`. There every branch is inert; here one branch removes a market from the
+  queue permanently, so the ambiguous case must land on the harmless side.
+- **The exclusion write is subordinate to the sidecar and never raises.** Missing file, missing
+  reason, unwritable path and already-excluded all record the decision and print what happened.
+  A blank reason writes *nothing*, because `load` refuses reason-less entries and a bad write
+  would turn a mistyped prompt into a queue that cannot start.
+- **All four outcomes print**, including the ones that did nothing. A gate everyone believes is
+  running and isn't is the §6h failure class exactly.
+- **The append is textual and verified in memory before it lands**, so the ~35-line header —
+  where the rejection-versus-exclusion distinction is actually written down — survives, and a
+  file that gates the whole queue is never left half-edited.
+
+Verified end-to-end against the real `cfg/exclusions.yaml` shape: asset-level wrote and quoted
+the entry, setup-level left the file untouched, a blank reason recorded the decision and skipped
+the write, and re-archiving an already-excluded asset kept the committed reason.
 
 ## 4b. The decision sidecars are irreplaceable and unbacked · `PARTIAL 2026-07-27` — setups mirrored, triage still not
 

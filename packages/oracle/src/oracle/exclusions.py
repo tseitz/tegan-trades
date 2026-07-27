@@ -18,9 +18,21 @@ the queue means the rejections that remain are all about trade quality.
 
 **A conditional pass is a rejection, not an exclusion.** "not sure I'm shorting oil at these
 prices with the Iran conflict going on" is about *now*; "Zero interest in PNUT" is about the
-asset. Only the second belongs here, which is why the file is hand-curated rather than derived
-automatically from ``reason_note`` — the notes cannot be told apart mechanically, and inferring
-a permanent rule from a temporary one would silently delete a market from the queue forever.
+asset. Only the second belongs here, which is why the file is not derived automatically from
+``reason_note`` — the notes cannot be told apart mechanically, and inferring a permanent rule
+from a temporary one would silently delete a market from the queue forever.
+
+**``append`` does not weaken that rule, and the distinction is worth stating precisely.** It is
+only ever called when the archive prompt has *asked which kind this is* and been told "asset".
+That is a stated meaning, not an inference from prose — the thing the paragraph above refuses
+is reading permanence out of free text, and no such reading happens. The reason typed at that
+prompt becomes the entry's required reason.
+
+The append is textual rather than a ``safe_dump`` of the parsed file, because re-dumping would
+round-trip the data faithfully and destroy this header — which is where the whole
+rejection-versus-exclusion distinction is written down, and is the part a future session needs
+most. Every write is parsed and verified *before* it lands, so a file that gates the entire
+queue can never be left half-edited by a mistyped prompt.
 """
 from __future__ import annotations
 
@@ -29,6 +41,23 @@ from pathlib import Path
 import yaml
 
 DEFAULT_EXCLUSIONS = "exclusions.yaml"
+
+
+class _Quoted(str):
+    """A reason, marked so the dumper emits it double-quoted like the hand-written entries.
+
+    Cosmetic but not pointless: this file is curated and reviewed by hand, and an appended
+    entry that renders in a different style than its neighbours reads as machine spoor in a
+    file whose whole value is that a human vouched for every line. Escaping is still entirely
+    the dumper's job — this only selects a style, which is the difference between it and the
+    hand-formatting ``append`` deliberately avoids.
+    """
+
+
+yaml.SafeDumper.add_representer(
+    _Quoted,
+    lambda dumper, value: dumper.represent_scalar("tag:yaml.org,2002:str", value, style='"'),
+)
 
 
 def load(path: Path) -> dict[str, str]:
@@ -50,6 +79,57 @@ def load(path: Path) -> dict[str, str]:
             raise ValueError(f"excluded asset {symbol!r} needs a reason")
         out[str(symbol).upper()] = str(reason).strip()
     return out
+
+
+def append(path: Path, symbol: str, reason: str) -> bool:
+    """Add ``symbol`` to the gate. ``True`` if written, ``False`` if already excluded.
+
+    Called from the archive prompt once you have said the archive is about the *asset*. See the
+    module docstring for why that is not the automatic derivation this file otherwise refuses.
+
+    Already-excluded returns ``False`` rather than raising or appending: archiving the same
+    asset again across sessions is ordinary, and a duplicate mapping key is the one edit that
+    would make the file quietly lose an entry, since PyYAML keeps only the last. The existing
+    reason wins — it is the one that has been reviewed and committed.
+
+    A blank reason raises, because ``load`` refuses reason-less entries. Writing one would turn
+    a mistyped prompt into a queue that cannot start, which is far worse than a failed archive:
+    the caller still records the decision in the sidecar either way.
+    """
+    path = Path(path)
+    symbol = str(symbol).strip().upper()
+    reason = str(reason).strip()
+    if not reason:
+        raise ValueError(f"excluded asset {symbol!r} needs a reason")
+    if symbol in load(path):
+        return False
+
+    original = path.read_text(encoding="utf-8") if path.exists() else ""
+    body = original if original.endswith("\n") or not original else original + "\n"
+    # ``safe_dump`` of the single pair, indented — never an f-string. The reason is free text
+    # typed at a prompt, so it will eventually hold a colon, a quote or a leading '#', and the
+    # dumper is what decides when those need quoting. Hand-formatting is how this breaks.
+    entry = "  " + yaml.safe_dump({symbol: _Quoted(reason)}, allow_unicode=True,
+                                  default_flow_style=False, sort_keys=False)
+    if "assets" not in (yaml.safe_load(body) or {}):
+        body += "assets:\n"
+    candidate = body + entry
+
+    # Verify before writing, not after. This file gates the whole queue, so the failure mode
+    # worth designing against is a half-written edit that makes the next run unstartable.
+    # Unparseable and parses-to-the-wrong-thing are the same outcome here, so both surface as
+    # ValueError — the caller's contract is "the file is untouched", not which way it failed.
+    try:
+        parsed = yaml.safe_load(candidate) or {}
+        entries = parsed.get("assets") or {}
+        round_tripped = str(entries.get(symbol, "")).strip()
+    except yaml.YAMLError as exc:
+        raise ValueError(f"appending {symbol!r} would not parse; file left untouched") from exc
+    if round_tripped != reason:
+        raise ValueError(f"appending {symbol!r} would not round-trip; file left untouched")
+
+    path.write_text(candidate, encoding="utf-8")
+    return True
 
 
 def unmatched_symbols(excluded: dict[str, str], corpus_assets) -> tuple[str, ...]:
