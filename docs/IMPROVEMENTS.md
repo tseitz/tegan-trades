@@ -251,6 +251,11 @@ hand-curated rather than mined from `reason_note`.
 It is now the *second* pending scoring change behind §16, and shipping it before the next
 session would leave two changes and one measurement.
 
+**Measured 2026-07-27 across v3/v4/v5 — and it should stay unbuilt for a better reason now.
+See §20.** The separation reported here and in the session below is a *daily*-population
+effect; the weekly population is ordered by `approach` instead, and four of five terms sit at
+or below chance on it. The re-weight is not "pending", it is refused in its global form.
+
 **d. `reward_risk` and `price` were never recorded · `FIXED 2026-07-27`.** `decision_record`
 wrote neither. R:R is a weighted term in `_score` *and* the headline number in the queue, so its
 weight was the one thing decisions could not be mined against at all; `price` fixes a decision
@@ -279,6 +284,45 @@ recorded, so the correlation could only ever see part of the ramp. Reconstructin
 `0.15·depth + 0.20·rr_term` from the stored scores gives **0.243 approved vs 0.246 rejected** —
 no signal in the hidden half either, and not separable into which of the two terms carried it.
 That gap is closed going forward: v3 records `approach`, which is the whole ramp.
+
+### Third session · 2026-07-27 — 25 rows on v5, and `archived` has quietly become the reject key
+
+The sidecar is now **54 rows: 14 v2 · 8 v3 · 7 v4 · 25 v5**. The v5 pass is larger than every
+earlier session combined and is the first *mixed* one (18 daily / 7 weekly); v2, v3 and v4 were
+weekly-only runs, which turns out to matter more than the row count — see §20, which is the
+real result of mining this session and which **refuses the freshness re-weight** this entry had
+queued up.
+
+Verdicts: **10 approved · 8 archived · 6 later · 1 rejected.**
+
+**`rejected` is scarce again, and this time the negatives went somewhere that records nothing.**
+`_ask_reason` fires only on reject (`setups_cli.py:448-451`), so `archived` writes no `reason`
+and no `reason_note`. Eight permanent suppressions this session carry no stated why — and
+§4(c) is explicit that the notes, not the enum, are what made the last session's rejections
+legible.
+
+**Confirmed with Tegan 2026-07-27: `x` was used for a mix of both meanings** — some "I don't
+trade this asset", some "stale/bad, bury it". So those 8 rows are **not minable and cannot be
+made minable retroactively**, for the same reason §4(a) refuses backfilling: the meaning was
+never recorded and a re-run cannot recover it. They are counted as negatives in §20 with that
+contamination stated at every point of use.
+
+Three consequences, in increasing order of how much they cost:
+
+- **The vocabulary no longer matches usage.** `ARCHIVED` is documented as "explicitly NOT a
+  judgment", and §4's mining rule therefore excludes it — which would discard 8 of the 9
+  negatives. Excluding them leaves n=1.
+- **Archive doesn't do what "suppress permanently" implies.** `drop_decided` keys on
+  `candidate.key`, the *zone* — so archiving PENDLE buries one order block and the next PENDLE
+  zone asks again. That is precisely the defect `cfg/exclusions.yaml` was built for a day
+  earlier (§4, the gate), and archive does not feed it.
+- **It recurs every session until the prompt changes.** This is the cheapest fix in the entry
+  and the only one that compounds: `_ask_reason` already exists, and the asset-level answers it
+  collects are what `cfg/exclusions.yaml` needs hand-curating from.
+
+**Do not derive `cfg/exclusions.yaml` entries from these 8 automatically** — that file's own
+header explains why, and the mix confirmed here is exactly the case it warns about: a temporary
+reservation promoted into a permanent rule silently deletes a market from the queue for good.
 
 ## 4b. The decision sidecars are irreplaceable and unbacked · `PARTIAL 2026-07-27` — setups mirrored, triage still not
 
@@ -988,6 +1032,105 @@ actual fix. The flags cost nothing when they can't be honoured.
 
 ---
 
+## 19. Nothing measures how far price must travel to reach the entry · `PARTLY DONE 2026-07-27`
+
+Found by triaging the live queue: SPX long with entry 5459.46 against price 7403.70 (a 26%
+drawdown away), SOL short with entry 177.24 against price 75.41 — **price would have to 2.35x
+to reach the entry**. Both were in the visible top 2. Verbatim: "entry is absurdly high here
+relative to what will most likely happen."
+
+These are *legitimate zones*. The SPX block is real structure and price genuinely could return
+to it. What is broken is that nothing in the engine measures the journey, so the queue cannot
+distinguish "needs a 26% drawdown first" from "needs 0.5%". Five mechanisms compound:
+
+**(a) Zone selection has no reachability criterion.** `_newest_zone` takes the most recently
+*confirmed live* zone in the timeframe; distance is never consulted. SOL had three live bearish
+weekly zones — 169.22–295.00, **121.69–136.18**, and 177.24–202.19. Newest won. The 121.69 zone
+was 61% away instead of 135%, and equally live.
+
+**(b) Survivorship selects *for* distance, structurally.** Invalidation is the origin swing, so
+a zone near price has a nearby invalidation and dies on any ordinary correction, while a zone
+price has run far from has a distant one and survives indefinitely. Every SPX weekly bullish
+block ever formed:
+
+| OB candle | zone | invalidation | fate |
+|---|---|---|---|
+| 2024-09-06 | 5402.62–5623.89 | 5402.62 | died 2025-04-04 |
+| 2024-11-01 | 5702.86–5850.94 | 5402.62 | died 2025-04-04 |
+| 2025-01-10 | 5807.78–6021.04 | 5696.51 | died 2025-03-14 |
+| **2025-04-17** | **5220.79–5459.46** | **4835.04** | **LIVE — 26% away** |
+| 2025-12-19 | 6720.43–6861.59 | 6521.92 | died 2026-03-20 |
+
+The December zone was **7% from price** and died on a normal pullback. The April 2025 zone
+survives *because* price is 26% above it. Across the 16 unreachable candidates, **8 had at
+least one nearer zone that died first** (SPX had four, at 7%, 19%, 21% and 24%).
+
+**(c) `approach` floored at zero — `FIXED 2026-07-27`, `SCORE_VERSION` 5.** See `approach_to`.
+16 of 69 candidates sat at exactly 0.00, making 26%, 135% and 10.01% indistinguishable. Now
+`ARRIVAL / (1 + gap/span)`, mirroring `freshness_signal`. Those 16 now take 15 distinct values
+spanning 0.043–0.312. **This bought resolution, not demotion** — measured, they moved *up* a
+mean of 1.2 ranks, because a floored term cannot be pushed lower and restoring a tail can only
+add score. Fixing (d) is what demotes them.
+
+**(d) `reward_risk` *rewards* the same distance · `OPEN` — the load-bearing one.**
+`R:R = |target − entry| / zone height`. With a structural target — the post-break extreme — the
+numerator is literally *how far price ran away from the zone*, while the denominator is a fixed
+candle height. Distance inflates it. And it saturates at `RR_SATURATION = 3.0`, so SPX's 9.06,
+CLSK's 10.17, CL's 14.54 and TSLA's **23.24** all collect the full 0.20, indistinguishable from
+a genuine 3.0. SPX's decomposition: approach 0.000/0.40, and **0.593 of the 0.60** available
+from the other four terms — near-perfect, with a chunk of it earned by being unreachable.
+
+The module already knows the number is a symptom — the `WEEKLY` docstring calls a 14.19 R:R
+"a symptom of a broken denominator, not a good trade" — but nothing acts on it. Candidate fixes,
+unmeasured: measure reward from *price* rather than entry; or treat R:R above a ceiling as the
+symptom it is rather than a maximum.
+
+**(e) Weekly-first ordering concentrates them at the top · `OPEN`.** `collapse` sorts weekly
+before daily unconditionally. Weekly zones are systematically the far ones — mean gap **28.2%**
+for the unreachable set vs **3.7%** for the rest. The live queue put CL (21.3% away, score
+0.297) at #7 and TSLA (2.0% away, score **0.906**) at #8. A 0.61 inversion, by rule. The rule is
+defensible on its own terms ("the macro is much stronger"); what was never measured is that it
+promotes precisely the unreachable population.
+
+Reproduce any of this with the probes in the 2026-07-27 session; all are free and local.
+
+---
+
+## 18. `collapse` picks the group's *oldest* target by construction · `OPEN` — new 2026-07-27
+
+Found while fixing the stale-target defect (`SCORE_VERSION` 4, `_reasonable` now rejects a
+stated target price has already reached). That fix stops the number being *wrong*; this entry
+is about why it was reliably the **worst available** number, which is a separate mechanism and
+is still live.
+
+**The defect.** `collapse` picks a group's representative as
+`rep = min(authored or members, key=lambda s: abs(s.target - s.entry))` (`core/setups.py:477`)
+— documented as "if they can't agree how far price goes, the smallest claim is the one to hold
+them to". In a market that has trended, the smallest stated target is *mechanically* the oldest
+one: targets are set relative to the price at publication, so the earliest call in a rising
+market is the lowest number in the group. Conservatism and staleness are the same sort order.
+
+**Evidence.** The SPX weekly candidate had **12 people** in the group. The rep chosen was
+TraderMayne, **2025-05-22**, published at 5842 with `key_levels=[6000, 5700]` — the single
+oldest authored target of the twelve. Price was 7403.7. Eleven fresher views, several with
+levels above spot (DataDash 2026-07-20 `[7400, 7700]`, TraderMayne 2026-06-17 `[8000]`), lost
+to a 14-month-old one *because* it was the smallest.
+
+**Why it was invisible.** The header date is the freshest view's (`views[0]`) and `freshness` is
+`max(...)` over members, but `target`, `reward_risk`, `approach` and `price` all come from `rep`.
+So the row read `called 2026-07-26 (1d ago) · freshness 0.95` directly above a target from a
+call made 2025-05-22, with nothing marking them as different theses. Whatever replaces the
+rep rule, **the queue should name the thesis the target came from** — one line, and it would
+have made this self-evident rather than something to go find.
+
+**Not obvious what the rule should be**, which is why this is `OPEN` and not `DECIDED`. "Newest
+authored target" reintroduces the recency bias `min` was chosen to avoid; "nearest to price"
+re-derives the smallest-claim logic against a better reference; median-of-authored discards the
+"listen to them" provenance that `target_source` exists to preserve. Needs measuring against
+§4's sidecar, not picking by argument.
+
+---
+
 ## 16. A zone price had traded clean through scored *maximum* depth · `FIXED 2026-07-27`
 
 Found by running §4's correlation, which is why §4's "accumulate another session first" was the
@@ -1045,6 +1188,113 @@ field discriminates where it previously could not — see the §4 caveat.
 **Not fixed here, deliberately:** the queue is still ordered by a scorer that has never been
 validated, and `freshness` is still 0.15 despite being the cleanest separator in the sidecar.
 One change, then re-measure. §4's next session is now the measurement.
+
+**That measurement happened 2026-07-27 and refused the change — see §20.** `freshness` is the
+cleanest separator on the *daily* population only; on the weekly one it is near-chance (AUC
+0.583) and `approach` is the separator instead. Raising it globally would help one population
+and hurt the other. Do not ship it off the sweep in `scripts/probe_freshness_weight.py`; the
+sweep has no interior maximum, which is the artefact rather than the answer.
+
+---
+
+## 20. One weight vector is ranking two populations that disagree about which term matters · `OPEN` — new 2026-07-27
+
+**This blocks the freshness re-weight that §4, §6 and §16 all queued up as the next change.
+Do not ship that re-weight globally.** Found by going to measure *how far* to raise it.
+
+Reproduce with `scripts/probe_freshness_weight.py` — free, local, re-runnable, reads the
+sidecar only. It replays the shipped scorer exactly (`max |recomputed − stored| = 0.00e+00`),
+so the numbers below are the real ranker and not a model of it.
+
+**The statistic is AUC** (P(a random approval outranks a random negative); 0.5 is a coin flip,
+**below 0.5 is ordering backwards**). Chosen over the mean gap because the queue is consumed as
+an *ordering* and because a mean gap can look healthy while the distributions interleave —
+which is exactly how §4's first correlation read as "no signal" when it was two terms
+cancelling. This entry is that same lesson one level up.
+
+### The finding
+
+| population | n (appr v neg) | approach | freshness | agreement | reward_risk | trend_align |
+|---|---|---|---|---|---|---|
+| **weekly** | 11 v 17 | **0.738** | 0.583 | 0.455 | 0.456 | 0.463 |
+| **daily** | 9 v 4 | **0.333** | **0.861** | 0.444 | **0.833** | 0.597 |
+
+`approach` orders the weekly queue and runs **backwards** on the daily one. `freshness` orders
+the daily queue and is near-chance on the weekly one. They swap, and the scorer has one
+`SetupWeights` for both.
+
+**The mechanism is visible in the spread, and it is the §16 lesson again — a term that doesn't
+vary cannot discriminate:**
+
+| | n | min | median | max | sd |
+|---|---|---|---|---|---|
+| weekly `approach` | 18 | 0.000 | 0.240 | 0.893 | 0.301 |
+| daily `approach` | 13 | **0.464** | 0.628 | 0.915 | **0.146** |
+| weekly `freshness` | 28 | 0.005 | 0.434 | 0.976 | 0.300 |
+| daily `freshness` | 13 | 0.082 | 0.755 | 0.968 | 0.250 |
+
+Daily zones are all *near* price — half the spread and a floor at 0.464 — so `approach` has
+almost nothing to say there. Weekly `freshness` has plenty of spread but doesn't track the
+decision, because the weekly rejections are §19's unreachable ones, which are *fresh* and
+heavily agreed: SPX rejected at freshness 0.955 with 12 people, OIL at 0.968 with 8. Those two
+notes are explicit that distance, not staleness, was the reason — "the entry is absurdly low
+relative to the price", "Price now is greater than target".
+
+**So the pooled sweep is a cancellation artefact.** Pooling both timeframes, AUC climbs
+monotonically with the freshness weight and never turns over — 0.856 at the current 0.15,
+0.911 by 0.50, flat thereafter. The data's unconstrained answer is "weight freshness at 1.0",
+i.e. rank the queue by recency and delete structure from the ordering. A sweep with no interior
+maximum is the tell that one weight vector is being fitted to two populations.
+
+### Two more saturated terms, found the same way
+
+Both are the `RR_SATURATION` shape §16 already fixed once for `proximity`/`depth`:
+
+- **`agreement_signal` caps at 3 and the recorded counts run to 12.** It is pinned at 1.0 for
+  **12 of 13 daily rows** and 9 of 28 weekly, which is why it sits at 0.455/0.444 — below
+  chance on both — despite raw counts that look separated (v5 approved mean 6.1 vs 2.9).
+  §11 asks whether agreement should be recency-weighted; this says the cap is the more urgent
+  half, because at n≥3 the term currently carries no information at all.
+- **`reward_risk` splits exactly the way §19(d) predicts**: 0.833 on daily, 0.456 on weekly,
+  pinned at 3.0 for 12 of 18 weekly rows. That is direct evidence for §19(d)'s claim that
+  distance inflates R:R — the term is meaningful where zones are near and noise where they are
+  far. It also means "R:R is broken" is too broad; it is broken *on the far population*.
+
+### Caveats, all of which cut against acting fast
+
+- **n is small everywhere.** The daily arm is 9 approvals vs 4 negatives — 36 pairs.
+- **Timeframe is confounded with session.** v2, v3 and v4 were weekly-only runs and v5 was
+  mixed, so "weekly" is largely the earlier sessions. v5 splits the same way internally
+  (daily freshness 0.861 / approach 0.333; weekly freshness 1.000 / approach 0.800) but its
+  weekly arm has **one** approval, so that within-session control is thin. **The cheapest way
+  to break the confound is one mixed session, not more code.**
+- **`archived` is mixed evidence** — confirmed 2026-07-27 as part asset-disinterest, part
+  staleness — and it is 8 of the 9 v5 negatives. `archived` alone scores AUC 0.887 against
+  approvals while the single `rejected` row scores 0.600. One archived row, CRV, is the
+  dominant inversion under current weights: it outranks 6 of the 10 approvals on its own, and
+  dropping it lifts the composite v5 AUC from 0.856 to 0.912.
+
+### What to do
+
+Not obvious, which is why this is `OPEN`. Ruled out: a global freshness raise — it would help
+the daily rows and hurt the weekly ones, and §19(e) puts weekly at the *top* of the queue via
+the unconditional weekly-first sort, so the damage lands where it is most visible.
+
+The live options, none measured:
+
+1. **Per-timeframe weights.** Honest about what was measured, and `SetupWeights` is already a
+   dataclass so `WEEKLY`/`DAILY` variants are cheap. Costs the ability to compare two scores
+   across timeframes — which §19(e) shows the queue is already doing badly by rule.
+2. **Fix the saturations instead of the weights.** Three of five terms are pinned for much of
+   the queue. A term restored to varying may separate on both populations, which would make
+   the split unnecessary. Strictly less invasive and addresses a defect rather than fitting to
+   n=13.
+3. **Score the two queues separately** rather than collapsing them, which subsumes §19(e).
+
+**Take the cheap measurement before any of them:** run one *mixed* session (do not pass a
+timeframe filter), which breaks the confound and roughly doubles the daily arm. That is the
+same "accumulate one more session" conclusion §4 reached, now with a specific reason and a
+specific thing to look at.
 
 ---
 
