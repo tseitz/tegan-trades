@@ -235,8 +235,21 @@ depth, agreement — tracks the decision this cleanly. Ties directly to §6.
 
 **What this argues for**, per the gate/score rule: "Zero interest in PNUT" is a rule a human
 would write, so it wants a **gate** — an asset exclusion list — not a score term. Staleness is
-a continuum, so it stays a score, but underweighted. Neither is built; do not build both at
-once, and re-measure after each.
+a continuum, so it stays a score, but underweighted. Do not build both at once, and re-measure
+after each.
+
+**The gate shipped 2026-07-27** (`cfg/exclusions.yaml`, `oracle/exclusions.py`). It was more
+urgent than it looked: `drop_decided` keys on the *zone*, so rejecting a candidate buries one
+order block and the next to form on the same instrument asks again — OIL and CL were back on 4
+of the 59 undecided v3 rows the same day they were rejected, one at score 0.711. Seeded with
+PNUT alone, deliberately: "not sure I'm shorting oil at these prices with the Iran conflict
+going on" is a *conditional* pass and belongs in the sidecar as a rejection, not here as a
+standing rule. The two are indistinguishable mechanically, which is why the list is
+hand-curated rather than mined from `reason_note`.
+
+**The freshness re-weight is still unbuilt, and should stay that way until v3 is measured.**
+It is now the *second* pending scoring change behind §16, and shipping it before the next
+session would leave two changes and one measurement.
 
 **d. `reward_risk` and `price` were never recorded · `FIXED 2026-07-27`.** `decision_record`
 wrote neither. R:R is a weighted term in `_score` *and* the headline number in the queue, so its
