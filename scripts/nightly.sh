@@ -9,7 +9,8 @@
 #   3. ingest-x        $$      xAI — the ONLY step that spends real money
 #   4. distill-roster  Max     LLM extraction, subscription-billed
 #   5. fetch-prices    free
-#   6. setups --list   free    the queue you actually read
+#   6. fetch-funding   free    what holding a position costs — must precede setups
+#   7. setups --list   free    the queue you actually read
 #
 # **A failing step does not abort the run.** A YouTube outage should not cost you the price
 # refresh, and a bad roster marker should not cost you the whole night. Every step's status is
@@ -117,6 +118,21 @@ fi
 
 step distill-roster uv run distill-roster --concurrency 3
 step fetch-prices   uv run fetch-prices
+
+# Ordered before `setups` deliberately — the queue reads this log to price each candidate's
+# carry, so running it after would cost the queue a day of freshness for no reason.
+#
+# **A snapshot, not `--backfill`.** The backfill pulls *realised* settlements and would be the
+# better series — complete hourly data instead of one sample a night — but neither venue
+# honours the day window (see IMPROVEMENTS §23): Hyperliquid returns its full 500-row cap per
+# symbol and Aster its 1000, so a nightly backfill would append ~39,000 mostly-duplicate rows
+# every night to save nothing. Run `fetch-funding --backfill 30` by hand after an outage, or
+# fix §23 and revisit. The snapshot is ~1,180 rows a night.
+#
+# This is also the only way Lighter is ever captured — it serves no reconcilable history
+# (§22), so a night this step misses is a night of Lighter coverage that cannot be recovered.
+step fetch-funding  uv run fetch-funding
+
 step setups         uv run setups --list
 
 # ── what it cost, from the two places cost is actually reported ──
@@ -131,6 +147,18 @@ XAI_COST=$(grep -o '^\[ingest-x\] cost: \$[0-9.]*' "$LOG" \
 
 CANDIDATES=$(grep -oE '^[0-9]+ candidates' "$LOG" | tail -1 | cut -d' ' -f1)
 DROPPED=$(grep -oE '[0-9]+ theses dropped' "$LOG" | tail -1 | cut -d' ' -f1)
+
+# Funding is reported separately from the step's exit code because it fails in a way the exit
+# code cannot see: `fetch-funding` records what it *did* reach and returns 0, so losing one
+# venue of three looks identical to a clean run. That matters more here than elsewhere —
+# Hyperliquid and Aster can be backfilled afterwards, Lighter cannot (§22), so a silently
+# skipped venue is silently unrecoverable data.
+FUNDING=$(grep -oE '^[0-9]+ observations logged' "$LOG" | tail -1 | cut -d' ' -f1)
+FUNDING_FAILED=$(grep -cE '^  ! (hyperliquid|lighter|aster)' "$LOG" || true)
+if [ "${FUNDING_FAILED:-0}" -gt 0 ]; then
+  STATUS_LINES+=("  WARN  fetch-funding — ${FUNDING_FAILED} venue(s) unreachable, see log")
+  [ $WORST -lt 1 ] && WORST=1
+fi
 
 # Accumulate real spend into its own small file rather than re-deriving it from the logs — the
 # logs rotate at 30 nights, which would silently reset the cap partway through a long month.
@@ -161,6 +189,7 @@ PY
   echo "  xAI (real money):      \$${XAI_COST}  ·  \$${SPENT_TOTAL}/${XAI_MONTHLY_CAP} this month"
   echo "  claude (Max allowance): \$${CLAUDE_COST} over ${CLAUDE_CALLS} calls"
   echo "  candidates:            ${CANDIDATES:-?}"
+  echo "  funding observations:  ${FUNDING:-0}"
   echo "  theses dropped:        ${DROPPED:-0}"
   echo "  exit:                  $WORST"
 } | tee -a "$LOG"
