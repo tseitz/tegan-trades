@@ -156,6 +156,33 @@ class FundingStats:
     p90: float | None
 
 
+@dataclass(frozen=True, slots=True)
+class FundingOutlook:
+    """What one venue's funding on one asset has actually been doing, ready to price a trade.
+
+    Distinct from ``FundingStats`` on purpose: stats describe a sample, an outlook is the
+    thing a setup is costed against. It names its venue because carry is only real on the
+    venue you would actually trade — pricing a Hyperliquid-depth position at Aster's zero
+    would flatter every candidate for a book you cannot get size into.
+
+    ``median`` prices the trade, ``p90`` stresses it. ``n`` travels with them so a reader can
+    tell a measured rate from one observation.
+    """
+
+    venue: str
+    median: float
+    p90: float
+    n: int = 0
+
+    @classmethod
+    def from_stats(cls, venue: str, stats: FundingStats) -> "FundingOutlook | None":
+        """None when there is nothing to price with — the caller then skips the adjustment
+        rather than costing a trade at an invented zero."""
+        if not stats.n or stats.median is None or stats.p90 is None:
+            return None
+        return cls(venue=venue, median=stats.median, p90=stats.p90, n=stats.n)
+
+
 def _percentile(values: list[float], q: float) -> float:
     """Nearest-rank percentile. No interpolation: with the handful of samples a nightly
     logger accumulates in its first weeks, interpolating invents precision we don't have."""

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from core.dealing_range import DealingRange
+from core.funding import FundingOutlook
 from core.levels import NEAREST, STATED
 from core.setups import (
     ARRIVAL,
@@ -848,6 +849,11 @@ def test_every_zone_level_refusal_the_engine_emits_is_classified_as_one():
             _row(), _ctx(zones=(Zone(block=_block(), structural_target=115.0),)),
             published_close=100.0)),
         _reason(cross_reference(_row(), _ctx(price=95.0), published_close=100.0)),
+        # Funding so extreme that carry eats the whole target — the trade loses money at its
+        # own target. A zone-level fact, so it belongs in this set rather than the thesis one.
+        _reason(cross_reference(
+            _row(), _ctx(funding=FundingOutlook(venue="hyperliquid", median=20.0, p90=25.0, n=1)),
+            published_close=100.0)),
     }
     assert emitted == ZONE_LEVEL_REASONS
 

@@ -1429,11 +1429,32 @@ fires on an arbitrary average is worse than none, since it would launder a guess
 
 ---
 
-## 21. Funding is a real cost and nothing in the scorer sees it · `OPEN` — new 2026-07-27
+## 21. Funding is a real cost and nothing in the scorer sees it · `PARTLY DONE 2026-07-27`
 
-`fetch-funding` now logs it (32,277 observations, 30 days of realised settlements across
-Hyperliquid and Aster). Nothing consumes the log yet. `core.funding.carry_adjusted_rr` exists
-and is tested; `core/setups.py` does not call it.
+**Done: it is computed, displayed and recorded.** `Context.funding` carries a `FundingOutlook`
+(median + p90, injected by `oracle.carry` — `core` still does no I/O); `cross_reference`
+reports `funding_annual`, `carry`, `carry_reward_risk`, `carry_reward_risk_p90`; the queue
+prints `adj` beside `R:R`; `decision_record` writes two new fields. `CARRY_HOLD_DAYS = 21`
+prices it, deliberately not a horizon and invisible to `_score`.
+
+**`_score` is untouched and `score_version` stays at 5** — ranking cannot have moved, which is
+what makes the next session's decisions a clean measurement rather than a confound.
+
+**Live effect on 44 candidates, 13 of which are carry-priced:** `MU short` 2.41 → **3.04**
+(3.04 → 7.14 at p90 — a short collects when the crowd is long); `NVDA long` 2.85 → 2.27 →
+**1.62** at p90; `SPX long` 9.06 → **9.43**, because SPX funding is *negative* and longs are
+paid. No candidate tripped `carry_dominates`, so the gate is not over-firing.
+
+**Residual — coverage.** Only 13 of 44 candidates priced, because `cfg/venue_map.yaml` covers
+the 30 approved assets and the queue is mostly crypto alts outside it. Every unmapped asset
+correctly gets `None` rather than a guessed zero, but a correlation over 13 rows is thin.
+Widening the map is the cheap lever; do it before mining, not after.
+
+**Residual — the measurement itself.** Still unrun, and still the point: does
+`carry_reward_risk` separate approve from reject better than `reward_risk`? Needs one session
+of decisions carrying both. Only then decide whether the existing 0.20 `reward_risk` weight
+should consume the adjusted number (that is a term-input correction, not a re-weight, but it
+would bump `score_version` to 6).
 
 **Why it matters more than it looks.** Carry hits both legs of R:R in opposite directions —
 subtracted from reward, added to risk — so a rate that sounds small moves the ratio a lot. A

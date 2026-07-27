@@ -26,13 +26,14 @@ import argparse
 import json
 import sys
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 
 from core.canon import Registry, load_registry, resolve_asset
 from core.setups import (
     ARRIVAL,
+    CARRY_HOLD_DAYS,
     SCORE_VERSION,
     TIER_LARGE,
     TIER_MAJOR,
@@ -49,7 +50,7 @@ from core.setups import (
 )
 from core.rank import parse_date
 
-from oracle import cache, corpus, exclusions, listings
+from oracle import cache, carry, corpus, exclusions, listings
 # Re-exported: the sidecar's storage and its vault mirror live in their own module, but both
 # remain part of this CLI's surface for callers and tests that reach for them here.
 from oracle.decisions import append_decision, load_decisions, sync_mirror  # noqa: F401
@@ -180,6 +181,7 @@ def build_candidates(
     as_of: date,
     listings_map,
     config_dir: Path = CONFIG_DIR,
+    funding_venue: str | None = carry.DEFAULT_VENUE,
 ) -> tuple[tuple[Candidate, ...], BuildStats]:
     """Route every asset the corpus mentions, build one ``Context`` each, gate every row
     against its asset's context, and collapse the outcome stream into candidates."""
@@ -187,6 +189,13 @@ def build_candidates(
         config_dir, [(r.asset, r.domain) for r in rows], listings=listings_map
     )
     assets = sorted({r.asset for r in rows})
+
+    # What holding each asset costs, on the venue it would actually trade on. Empty when the
+    # funding log has not been seeded — every carry field then stays None and the engine
+    # behaves exactly as it did before, which is the point of shipping this display-only.
+    outlooks = (
+        carry.outlooks_for(assets, venue=funding_venue) if funding_venue else {}
+    )
 
     series_cache: dict = {}
     contexts: dict[str, tuple] = {}
@@ -202,6 +211,11 @@ def build_candidates(
         if ctx is None:
             no_context += 1
             continue
+        # Attached after the fact rather than threaded through ``build_context``, which
+        # computes structure from bars and has no business knowing about venues.
+        outlook = outlooks.get(asset)
+        if outlook is not None:
+            ctx = replace(ctx, funding=outlook)
         contexts[asset] = (daily, ctx)
 
     rank_cache: dict[str, int | None] = {}
@@ -350,6 +364,14 @@ def decision_record(candidate: Candidate, decision: str, *, decided_at: str,
         "approach": candidate.approach,
         "freshness": candidate.freshness,
         "trend_alignment": candidate.trend_alignment,
+        # Carry, recorded so §21's question — does carry-adjusted R:R predict the decision
+        # better than nominal R:R does — becomes minable from the next session onward. Both
+        # are None for an asset with no funding observations, which is itself a fact worth
+        # recording: it says the decision was made without carry information, not that carry
+        # was zero. Additive fields, so per §4(d) no ``score_version`` bump — and the 54
+        # existing rows must NOT be backfilled, for the same reason §4(a) refuses it.
+        "funding_annual": candidate.funding_annual,
+        "carry_reward_risk": candidate.carry_reward_risk,
         "inside_zone": is_inside_zone(candidate),
         "agreement": candidate.agreement,
         "newest_at": candidate.newest_at,
@@ -385,7 +407,13 @@ def render_note(candidate: Candidate, *, decided_on: str) -> str:
         f"- **Stop:** {c.stop:g}",
         f"- **Invalidation:** {c.invalidation:g}",
         f"- **Target:** {c.target:g} ({c.target_source})",
-        f"- **Reward:risk:** {c.reward_risk:.2f}",
+        f"- **Reward:risk:** {c.reward_risk:.2f}"
+        + (
+            ""
+            if c.carry_reward_risk is None
+            else f" (carry-adjusted {c.carry_reward_risk:.2f}"
+                 f" at {c.funding_annual:.1%}/yr funding over {CARRY_HOLD_DAYS}d)"
+        ),
         f"- **Trend:** weekly {c.weekly_trend} · daily {c.daily_trend} · zone {c.zone}",
         f"- **Supporting:** {format_views(c)} (agreement {c.agreement})",
         f"- **Theses:** {', '.join(c.thesis_ids)}",
@@ -606,6 +634,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
                         help="skip the vault mirror; the sidecar under data/ is then the only copy")
     parser.add_argument("--exclusions", type=Path, default=CONFIG_DIR / DEFAULT_EXCLUSIONS,
                         help="assets to keep out of the queue entirely (cfg/exclusions.yaml)")
+    parser.add_argument("--funding-venue", default=carry.DEFAULT_VENUE,
+                        help="venue whose funding prices the carry (default: %(default)s)")
+    parser.add_argument("--no-funding", action="store_true",
+                        help="ignore the funding log; carry is not computed or displayed")
     parser.add_argument("--list", action="store_true",
                         help="print the queue and exit, no prompting")
     return parser.parse_args(argv)
@@ -630,7 +662,10 @@ def main(argv: list[str] | None = None) -> int:
     rows = list(corpus.iter_rows(registry))
     listings_map = listings.load_or_fetch(cache.DATA_ROOT / "_listings.json")
 
-    candidates, stats = build_candidates(rows, registry, as_of=as_of, listings_map=listings_map)
+    candidates, stats = build_candidates(
+        rows, registry, as_of=as_of, listings_map=listings_map,
+        funding_venue=None if args.no_funding else args.funding_venue,
+    )
 
     print(f"{stats.assets_total} assets -> {stats.assets_priced} priced, "
           f"{stats.assets_unpriced} with no price source, "

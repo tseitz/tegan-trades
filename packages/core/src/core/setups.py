@@ -46,6 +46,7 @@ from core.dealing_range import DealingRange
 from core.dealing_range import dealing_range as resolve_dealing_range
 from core.imbalance import atr
 from core.levels import STATED, read_target
+from core.funding import FundingOutlook, carry_adjusted_rr
 from core.rank import agreement_signal, parse_date
 from core.structure import (
     BEARISH,
@@ -96,6 +97,7 @@ ZONE_LEVEL_REASONS = frozenset({
     "price_past_stop",
     "no_target",
     "reward_risk_too_low",
+    "carry_dominates",
 })
 
 TIER_MAJOR = "major"
@@ -125,6 +127,18 @@ MAX_TARGET_ATR = 20.0
 
 # Reward-to-risk at which the score's RR term saturates. TUNE.
 RR_SATURATION = 3.0
+
+# How long a position is assumed to be held, **for costing carry and nothing else**.
+#
+# This is deliberately NOT a horizon and must not become one. §2 removed the 7/30/180/365-day
+# constants because they were unvalidated and load-bearing in grading and staleness; this one
+# is load-bearing in neither. It prices funding and is invisible to `_score`, `HalfLife`, and
+# `core.grade`. It does not vary by timeframe — reintroducing a per-label duration here is
+# exactly how the deleted horizons would grow back.
+#
+# 21 days sits inside the measured restatement cadence (swing 11d, position 14d, scalp 28d).
+# Carry is linear in time, so a reader can rescale any reported figure by inspection. TUNE.
+CARRY_HOLD_DAYS = 21
 
 # How far from a zone, as a fraction of price, ``approach`` is worth **half** of ``ARRIVAL``.
 # Measured as a fraction so BTC and SOL are comparable. TUNE.
@@ -336,6 +350,12 @@ class Context:
     # there is too little history to judge, in which case the check is skipped rather than
     # guessed at.
     atr: float | None = None
+    # What holding a position on this asset costs, on the venue it would actually trade on.
+    # Injected rather than read, because this module does no I/O — ``oracle.setups_cli`` loads
+    # ``data/funding/`` and summarises it. None follows ``atr``'s precedent exactly: the
+    # adjustment is skipped, never costed at an invented zero. A measured zero (Aster charges
+    # nothing on equities) is a different fact and is representable.
+    funding: FundingOutlook | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -381,6 +401,13 @@ class Setup:
     zone_timeframe: str   # WEEKLY | DAILY — which series ``block`` was read from
     tier: str
     score: float
+    # ── carry: what holding this costs. Reported, never scored — see CARRY_HOLD_DAYS. ──
+    # All four are None together when ``Context.funding`` was absent.
+    funding_annual: float | None = None      # the median rate used, as a fraction per year
+    carry: float | None = None               # fraction of notional over CARRY_HOLD_DAYS;
+                                             # positive = paid, negative = collected
+    carry_reward_risk: float | None = None       # R:R once carry is charged to both legs
+    carry_reward_risk_p90: float | None = None   # the same at the venue's p90 rate
 
 
 @dataclass(frozen=True, slots=True)
@@ -420,6 +447,11 @@ class Candidate:
     views: tuple[View, ...]
     thesis_ids: tuple[str, ...]
     score: float
+    # Carry, taken from the representative setup — see ``Setup``. Reported, never scored.
+    funding_annual: float | None = None
+    carry: float | None = None
+    carry_reward_risk: float | None = None
+    carry_reward_risk_p90: float | None = None
 
     @property
     def people(self) -> tuple[str, ...]:
@@ -546,6 +578,13 @@ def collapse(outcomes, *, weights: SetupWeights = DEFAULT_WEIGHTS) -> tuple[Cand
             score=_score(weights, approach=rep.approach,
                          reward_risk=rep.reward_risk, agreement_count=len(views),
                          freshness=freshness, trend_alignment=rep.trend_alignment),
+            # From the representative, like every other price-derived field: carry is a
+            # property of the trade (zone, direction, asset), and every member of a group
+            # shares all three. Taking a max or mean the way ``freshness`` does would be
+            # wrong here — there is nothing to disagree about.
+            funding_annual=rep.funding_annual, carry=rep.carry,
+            carry_reward_risk=rep.carry_reward_risk,
+            carry_reward_risk_p90=rep.carry_reward_risk_p90,
         ))
     return tuple(sorted(candidates, key=lambda c: (
         ZONE_TIMEFRAMES.index(c.zone_timeframe) if c.zone_timeframe in ZONE_TIMEFRAMES
@@ -763,6 +802,40 @@ def cross_reference(
     if reward_risk < min_reward_risk:
         return refuse("reward_risk_too_low")
 
+    # ── carry: what holding this costs, once the trade itself is known to be a setup ──
+    #
+    # Runs last because it is the only term that depends on ``direction`` *and* on both legs:
+    # funding is subtracted from reward and added to risk, so a long and a short on the same
+    # zone at the same levels do not cost the same. That asymmetry is the whole point.
+    #
+    # Reported, never scored. `_score` does not see these fields and `score_version` does not
+    # move — per §21, the weighting decision waits on a session of decisions recorded with
+    # both numbers, so this run cannot change any ranking.
+    funding_annual = carry = carry_rr = carry_rr_p90 = None
+    if context.funding is not None:
+        # Fractions of entry price, matching what ``carry_adjusted_rr`` expects.
+        reward_frac = abs(target - entry) / entry
+        risk_frac = risk / entry
+        # Derived from ``family``, not from ``direction`` verbatim: the corpus's direction
+        # vocabulary is wider than long/short, and ``_DIRECTION_FAMILY`` is the mapping that
+        # already resolves it. Passing a raw label through would raise on the first synonym.
+        side = "long" if family == BULLISH else "short"
+        adjusted = carry_adjusted_rr(
+            reward_frac, risk_frac, context.funding.median, CARRY_HOLD_DAYS, side
+        )
+        stressed = carry_adjusted_rr(
+            reward_frac, risk_frac, context.funding.p90, CARRY_HOLD_DAYS, side
+        )
+        funding_annual = context.funding.median
+        carry, carry_rr, carry_rr_p90 = adjusted.carry, adjusted.ratio, stressed.ratio
+
+        # A gate, not a score — the trade loses money *at its own target*, which is a fact
+        # about the arithmetic rather than a judgement on a continuum. It can only fire when
+        # funding was actually measured; an unpriced asset is never refused for an unmeasured
+        # cost, mirroring how ``atr`` skips the plausibility ceiling.
+        if adjusted.carry_dominates:
+            return refuse("carry_dominates")
+
     approach = approach_to(block, context.price)
     return Setup(
         thesis_id=ident, asset=asset, person=person, direction=direction,
@@ -781,6 +854,8 @@ def cross_reference(
         score=_score(weights, approach=approach,
                      reward_risk=reward_risk, agreement_count=agreement_count,
                      freshness=freshness, trend_alignment=trend_alignment),
+        funding_annual=funding_annual, carry=carry,
+        carry_reward_risk=carry_rr, carry_reward_risk_p90=carry_rr_p90,
     )
 
 
