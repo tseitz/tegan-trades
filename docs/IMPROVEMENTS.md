@@ -1321,6 +1321,56 @@ The live options, none measured:
    n=13.
 3. **Score the two queues separately** rather than collapsing them, which subsumes §19(e).
 
+### The sample doubled the same day, and almost all of the above dissolved · 2026-07-27
+
+Two more sittings added 23 daily decisions (48 v5 rows: 19 approved, 16 negative, 13 later).
+**Every headline number above fell, and the probe now prints 95% bootstrap intervals because
+the point estimates were being over-read — including by me, in the tables above.**
+
+| term (v5 pooled, 19v16) | first sitting only | after both sittings |
+|---|---|---|
+| `score` | 0.856 | **0.671 [0.48, 0.84]** — includes chance |
+| `freshness` | 0.922 | **0.727 [0.54, 0.88]** — the only term that clears it |
+| `agreement` | 0.722 | 0.627 [0.46, 0.79] |
+| `reward_risk` | 0.672 | 0.618 [0.45, 0.78] |
+| `approach` | 0.678 | 0.559 [0.36, 0.75] |
+| `trend_alignment` | 0.367 | 0.408 [0.25, 0.58] |
+
+The first sitting's 0.856 had a CI of [0.66, 1.00] — consistent with almost anything above
+chance. It was one sitting read as a result. **The per-timeframe table's cells now all carry a
+'?': the weekly-versus-daily split above does not survive its own intervals.** Treat §20's
+central claim as *unproven*, not disproven — the point estimates still differ in the direction
+described, but 11v17 and 18v11 cannot establish it.
+
+**The real finding is that the measurement design is broken, not just underpowered.** A sitting
+is not a random sample of the queue. The queue is score-ordered and capped, so the first sitting
+spans a wide score range and each later one works a narrower slice of the tail — and a term
+cannot order what barely varies:
+
+| sitting | n | score range | `score` AUC |
+|---|---|---|---|
+| 18:38 | 10v9 | 0.397–0.812 | 0.856 [0.66, 1.00] |
+| 19:53 | 3v3 | 0.540–0.580 | 0.222 [0.00, 0.67] |
+| 20:00 | 6v4 | 0.403–0.527 | 0.458 [0.04, 0.88] |
+
+The only sitting whose interval clears chance is the only one with a wide range. That is
+restricted range doing the work, not the scorer improving and then failing.
+
+**And the approval threshold moves between sittings.** The later sitting approved candidates at
+a median score of 0.484 while the earlier one had *rejected* at a median of 0.518 —
+`AUC(later approvals > earlier negatives) = 0.444`. "Approved" is not an absolute quality label;
+it is relative to what else was on screen that sitting. **So decisions cannot simply be pooled
+across sittings and treated as one labelled dataset, which is what §4's whole revealed-preference
+programme has assumed.** Partly confounded — most of the earlier sitting's negatives are
+`archived`, which is mixed evidence — so this is a strong hypothesis rather than a settled
+finding, and the clean test is a sitting with a wide score range and real rejections in it.
+
+**What this changes:** the freshness re-weight stays refused, now for a better-supported reason.
+And §4's next step is no longer "accumulate more decisions" — it is "make the decisions
+comparable". Candidates: triage a *randomised* or score-stratified slice rather than the top of
+the queue, so range stops tracking sitting order; or record decisions with the sitting's score
+range so the analysis can condition on it. Neither is built.
+
 ### Correcting the obvious next step — it is not "run a mixed session"
 
 A first draft of this entry said to run one mixed session to break the confound. **Both halves
