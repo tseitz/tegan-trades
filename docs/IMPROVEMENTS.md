@@ -1540,3 +1540,81 @@ Milder than the decision sidecars: this is measurement, not judgement, and most 
 re-pulled within the venues' windows. But a machine asleep for a month costs a month of
 Lighter coverage outright. Decide whether it wants the vault mirror `oracle/decisions.py`
 already implements before the log is long enough to be worth losing.
+
+---
+
+## 25. Route each order to the venue that is actually cheapest · `DECIDED` — gated on measurement, new 2026-07-27
+
+**The intent:** once a candidate is approved, pick the venue to execute it on rather than
+assuming one. The machinery to *price* that choice shipped with §21; what is missing is the
+choice itself.
+
+### The finding that matters, so it is not re-derived: split by DIRECTION, not asset class
+
+The obvious-looking split — "crypto on Hyperliquid, equities on Aster" — is **strictly worse
+than either single venue**, and the reason is not obvious until the numbers are in front of
+you. Hyperliquid's funding is positive on every approved equity; Aster's is zero on every one.
+Zero funding is only an advantage when you would be *paying* it:
+
+| | Hyperliquid | Aster | better |
+|---|---|---|---|
+| **long** NVDA | pay 0.68% | pay 0.00% | Aster |
+| **short** NVDA | **collect 0.68%** | collect 0.00% | Hyperliquid |
+| **long** CRCL | pay 1.04% | pay 0.00% | Aster |
+| **short** CRCL | **collect 1.04%** | collect 0.00% | Hyperliquid |
+
+Across all 11 mapped equities: **longs cheaper on Aster 11/11, shorts better on Hyperliquid
+11/11** (21-day carry, 30-day medians, measured 2026-07-27). Routing all equities to Aster
+would send every short to the venue that pays nothing — and the corpus is 1,082 shorts against
+2,524 longs, so that is ~30% of theses handed the worst available side of the trade.
+
+### The thin-book objection was tested and does not hold at retail size
+
+Walking both real order books (NVDA, 21-day hold, all-in round trip):
+
+| size | HL slippage | HL total | Aster slippage | Aster total |
+|---|---|---|---|---|
+| $2,000 | 1.5bp | 0.88% | 18.1bp | **0.25%** |
+| $10,000 | 2.6bp | 0.89% | 23.3bp | **0.30%** |
+| $50,000 | 5.3bp | 0.91% | 47.6bp | **0.55%** |
+
+Hyperliquid carries a fixed 0.86% drag (0.68% carry + 0.18% fees). Aster's slippage is ~10x
+worse and still never catches up. **Do not re-argue this from liquidity alone** — the 24h
+volume gap (NVDA $90M vs $82k) predicts the opposite of what the books actually do at this size.
+
+### Why it is not built yet
+
+- **Aster's zero is a policy, not a structural property.** NVDA's p90 on Aster is already
+  12.97%. If it starts charging, the entire rationale evaporates and the position is sitting on
+  a book with **$426 available within 10bp of mid**, against Hyperliquid's **$317,593**.
+- **Exit risk is not entry risk.** The table above is a calm snapshot with US cash markets
+  closed. Entries are chosen; stops are not. A stop-market into that book during a gap is
+  where the 0.68% saving gets returned several times over.
+- **Two collateral pools.** Hyperliquid settles USDC, Aster USDT, with no cross-margin — a
+  winning crypto position cannot margin a losing equity one. For a small account that
+  fragmentation plausibly costs more than the 0.3–1.0% being chased.
+- **Aster rate-limits by IP with escalating bans up to 3 days**, which is a live hazard for
+  anything running from the nightly job.
+
+### The trigger, so this is a measurement and not a judgement call
+
+Build it when **Aster's equity funding median is still ~0% over 60+ days** of logged data
+(`uv run fetch-funding --report --window 60`) and typical size stays under ~$25k. Until then a
+single venue — Hyperliquid, for unified margin and one integration — is the right default.
+
+### What is already in place, and what is left
+
+Already built: `cfg/venue_map.yaml` is keyed `(asset, venue)`; `carry.outlooks_for(venue=…)`
+re-prices the whole queue; `setups --funding-venue aster` runs today. So the residual is small
+— roughly, choose the venue per candidate by the sign of funding and record which venue the
+decision assumed.
+
+**Keep execution routing separate from price routing.** `cfg/oracle_map.yaml` answers "what is
+this worth" and must keep pointing at the index (`^GSPC`); `cfg/venue_map.yaml` answers "where
+do I trade it" and points at whatever instrument the venue lists (`SPY`, `xyz:SP500`,
+`US500`). Collapsing the two regrades every stored thesis against an instrument at ~1/10 scale
+— see that file's header on the SPX scale trap.
+
+**One measurement caveat that flatters Aster:** Hyperliquid's `l2Book` returns only ~20 levels
+per side, so its depth above is a floor and its slippage a ceiling. Aster was queried at
+`limit=500`. Re-measure both at equal depth before committing capital to the split.
