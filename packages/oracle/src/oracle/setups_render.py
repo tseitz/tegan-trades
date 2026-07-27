@@ -20,7 +20,7 @@ import sys
 from dataclasses import dataclass
 from datetime import date
 
-from core.setups import Candidate
+from core.setups import ARRIVAL, Candidate
 
 # ── colour ────────────────────────────────────────────────────────────────────────────────────
 
@@ -291,6 +291,21 @@ def _headline(c: Candidate, *, rank: int | None, total: int | None, color: bool)
     return f"{head}  {meta}   {stats}"
 
 
+def approach_phrase(c: Candidate) -> str:
+    """``approach`` in words as well as digits.
+
+    The number alone is ambiguous in the way that matters: 0.40 and 0.80 are both "partway",
+    but one is price still travelling toward the zone and the other is price sitting inside it,
+    and that is exactly the distinction being judged. Reporting the raw ramp only would repeat
+    the mistake the two-term form made — a figure that is precise and doesn't say where price
+    is.
+    """
+    if c.approach < ARRIVAL:
+        return f"price approaching · approach {c.approach:.2f}"
+    depth = (c.approach - ARRIVAL) / (1.0 - ARRIVAL)
+    return f"price in zone, {depth:.0%} deep · approach {c.approach:.2f}"
+
+
 def _summary(c: Candidate, *, as_of: date | None, color: bool) -> list[str]:
     """The four lines under the ladder: age, structure, trend, and who is behind it."""
     age = _age_days(c.newest_at, as_of)
@@ -312,7 +327,7 @@ def _summary(c: Candidate, *, as_of: date | None, color: bool) -> list[str]:
     return [
         f"  {label('called')}{called}{paint(span, 'dim', color=color)}"
         f"{paint(f' · freshness {c.freshness:.2f}', 'dim', color=color)}",
-        f"  {label('zone')}{c.zone} · depth {c.depth:.2f} · proximity {c.proximity:.2f}",
+        f"  {label('zone')}{c.zone} · {approach_phrase(c)}",
         f"  {label('trend')}weekly {c.weekly_trend} · daily {c.daily_trend}{unaligned}",
         f"  {label('who')}{format_views(c)} · agreement {c.agreement}",
     ]

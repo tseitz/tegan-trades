@@ -438,6 +438,21 @@ def test_order_block_depth_runs_from_the_near_edge():
     assert 0.4 < ob.depth_at(10.1) < 0.6
 
 
+def test_depth_refuses_a_price_outside_the_zone_rather_than_clamping():
+    """``position_in_range`` clamps deliberately, which is right for premium/discount — a price
+    above the range really is "at the extreme". Read as *depth* it inverts: a bullish zone price
+    has fallen clean through clamps to position 0.0 and so reported depth **1.0**, paying a
+    dead zone the maximum for having been abandoned.
+
+    Measured on the live queue 2026-07-27: ``depth == 1.0`` in exactly 13 of 82 candidates, and
+    those 13 were precisely the ones price had traded past — nothing legitimately rests at the
+    far edge. They outscored the rest (mean 0.621 vs 0.562) and took 4 of the top 13 places.
+    """
+    ob = _bull_ob()
+    assert ob.depth_at(9.1) is None    # through the far edge — the trade is already stopped
+    assert ob.depth_at(11.5) is None   # short of the near edge — price has not arrived
+
+
 def test_a_wick_into_the_zone_counts_as_a_touch():
     ob = _bull_ob()
     wick_in = SimpleNamespace(date=START, open=13, high=13, low=10.5, close=12.5)

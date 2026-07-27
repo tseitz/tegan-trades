@@ -249,7 +249,23 @@ scale comparability, and these two are additive, so no version bump.
 
 **Next:** accumulate a second real session before acting on (a) or (b) — n=3 approvals is not
 enough to re-weight against. When acting, change one term and re-measure; the sidecar now
-records enough to tell whether it helped.
+records enough to tell whether it helped. **Partly overtaken 2026-07-27 — mining (a) found a
+defect rather than a weighting problem. See §16, and re-read (a) with this correction:**
+
+**Correction to (a): the wash was cancellation, not absence of signal, and one term was
+measuring the wrong thing.** Broken into components, three of the four recorded terms separate
+approvals from rejections in the right direction — `freshness` 0.884 vs 0.406, `agreement`
+3.67 vs 2.14, `trend_alignment` 0.667 vs 0.286. `proximity`, the *heaviest* weight at 0.25,
+ran backwards: 0.523 approved vs **1.000** rejected, with all 7 rejections pinned at exactly
+1.00 and no candidate below 1.00 ever rejected. `corr(proximity, freshness) = −0.599`, so this
+is (b) seen from the other side rather than a second finding. Net of the two, `score` came out
+0.696 vs 0.695.
+
+**A caveat that matters for how much weight to put on the above:** `depth` (0.15) was never
+recorded, so the correlation could only ever see part of the ramp. Reconstructing the residual
+`0.15·depth + 0.20·rr_term` from the stored scores gives **0.243 approved vs 0.246 rejected** —
+no signal in the hidden half either, and not separable into which of the two terms carried it.
+That gap is closed going forward: v3 records `approach`, which is the whole ramp.
 
 ## 4b. The decision sidecars are irreplaceable and unbacked · `PARTIAL 2026-07-27` — setups mirrored, triage still not
 
@@ -604,10 +620,14 @@ score, because `proximity` and `depth` reward being close to price and a tight z
 price is sitting in. So the ATR check is still the right fix; it just isn't urgent.
 
 **Separate and unfixed: there is no stop buffer at all.** `OrderBlock.stop` returns the far edge
-exactly, so `Candidate.stop == Candidate.entry_bottom` in every row the queue prints. Two
-consequences: a wick one tick into the zone is a stop-out, and a fill at the far edge is a
-zero-risk trade whose RR divides by ~0. (The docstring claiming "just past the far edge" was
+exactly, so `Candidate.stop == Candidate.entry_bottom` in every row the queue prints, and a wick
+one tick into the zone is a stop-out. (The docstring claiming "just past the far edge" was
 corrected 2026-07-26; the behaviour was always the edge itself.)
+
+**Correction 2026-07-27:** this entry also claimed "a fill at the far edge is a zero-risk trade
+whose RR divides by ~0". It cannot happen — `cross_reference` always enters at `near_edge`
+(`setups.py:684`), so risk is the zone's full height and the zero case is already refused as
+`degenerate_zone`. The ATR argument below is unaffected; only that one consequence was wrong.
 
 **Correction — this is NOT independent of the ATR question, and NOT a one-line change.** An
 earlier version of this entry said both; both were wrong.
@@ -891,6 +911,66 @@ so he's uncovered too.
 the per-item LLM economics are inverted — batching many posts into one `distill` call is the
 obvious shape, and the current one-call-per-document `distill_all` loop does not fit it.
 Interacts with §9 (the extractive pre-filter) — X needs no pre-filter at all.
+
+---
+
+## 16. A zone price had traded clean through scored *maximum* depth · `FIXED 2026-07-27`
+
+Found by running §4's correlation, which is why §4's "accumulate another session first" was the
+wrong call: the mining pass was worth doing for what it revealed about the *scorer*, not for the
+n it could support.
+
+**The defect.** `OrderBlock.depth_at` delegated to `position_in_range`, which **clamps**. For a
+bullish block, price below `bottom` clamped to position 0.0, so depth came back `1.0 - 0.0` =
+**1.0** — the maximum — for a zone price had abandoned. Nothing gated it either: `wrong_side_of_
+range` is about the dealing range, a different object, and zones only die at `invalidation`,
+which sits *past* the stop.
+
+The clamp is correct for its other caller. Premium/discount genuinely does want "a price beyond
+the range is at the extreme". Read as depth it inverts, so the fix is a containment check in
+`depth_at` and **not** a change to `position_in_range`.
+
+**Measured on the live queue, 2026-07-27 (`scripts/probe_zone_side.py`, re-runnable, free):**
+
+| | before | after |
+|---|---|---|
+| candidates | 82 | **69** |
+| price approaching | 47 (57.3%) | 47 (68.1%) |
+| price inside the zone | 22 (26.8%) | 22 (31.9%) |
+| **price past its own stop** | **13 (15.9%)** | **0** |
+
+`depth == 1.0` held in exactly 13 of 82, and those 13 were precisely the wrong-side set —
+nothing legitimately rests at the far edge, which makes that value a clean diagnostic. They
+**outscored everything else** (mean 0.621 vs 0.562) and took ranks 2, 9, 11, 13, 22, 23, 29, 33,
+41, 53, 54, 67, 75. `GBPUSD long` was **#2 of 82** with an entry *above* spot. The extremes were
+not marginal wicks: APP +27.6%, TSLA +14.0%, AMZN +13.4%, MSFT +10.4%, ASML +9.9% past entry.
+
+**Two changes, one pass, both in `SCORE_VERSION` 3:**
+
+- **`price_past_stop`**, a new zone-level refusal. `block.stop` is the far edge, so price beyond
+  it means an entry at `near_edge` is already stopped. A **gate**, per the gates-vs-scores rule:
+  whether the stop has been taken is a fact about the trade, not a measurement. It fires 100
+  outcomes → 13 candidates, and sits *after* `degenerate_zone` because a zero-height zone puts
+  every price on its far side.
+- **`proximity` + `depth` → one `approach` term** at their combined 0.40. They were never
+  independent — disjoint domains, so neither varied while the other did, and together they
+  already formed one monotone ramp. `ARRIVAL = 0.625` reproduces the old 0.25/0.15 split
+  exactly, so the collapse changed the signal's *shape* and not its calibration, keeping the
+  measured effect attributable to the gate.
+
+**Why the collapse was worth doing rather than deferring as cosmetic** — an earlier draft of
+this said it was a pure refactor with zero behaviour change. That was wrong, and the reason is
+the point: the two-term form could express `proximity 0.00, depth 1.00` — "no progress toward
+the zone" and "all the way through it" at once. TSLA, MSFT, AMZN and APP all carried exactly
+that pair. A single ramp cannot be written down that way.
+
+**Side effect worth noting:** `approach` now takes 52 distinct values across 69 candidates,
+where `proximity` was pinned at 1.00 for every one of the 22 inside their zone. The recorded
+field discriminates where it previously could not — see the §4 caveat.
+
+**Not fixed here, deliberately:** the queue is still ordered by a scorer that has never been
+validated, and `freshness` is still 0.15 despite being the cleanest separator in the sidecar.
+One change, then re-measure. §4's next session is now the measurement.
 
 ---
 

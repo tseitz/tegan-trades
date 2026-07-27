@@ -46,7 +46,7 @@ def _candidate(**overrides) -> Candidate:
         entry=110.0, entry_top=110.0, entry_bottom=100.0,
         stop=100.0, invalidation=90.0,
         target=140.0, target_source=STRUCTURAL,
-        reward_risk=3.0, depth=0.0, proximity=1.0, price=105.0,
+        reward_risk=3.0, approach=1.0, price=105.0,
         weekly_trend="uptrend", daily_trend="uptrend", zone="discount",
         zone_timeframe=DAILY,
         tier=TIER_MAJOR,
@@ -199,7 +199,7 @@ def test_a_legacy_skip_is_still_honoured_as_permanent():
 
 
 def test_a_deferred_candidate_stays_hidden_while_nothing_has_changed():
-    c = _candidate(proximity=0.4)
+    c = _candidate(approach=0.4)
     assert setups_cli.drop_decided([c], _decided(c, setups_cli.LATER)) == []
 
 
@@ -207,16 +207,16 @@ def test_a_deferred_candidate_returns_once_price_reaches_the_zone():
     """The reason deferral had to become reversible: on the first live run every candidate sat
     outside its zone, so burying them permanently would discard each setup at exactly the
     moment it became actionable."""
-    away = _candidate(proximity=0.4)
-    arrived = _candidate(proximity=1.0)
+    away = _candidate(approach=0.4)
+    arrived = _candidate(approach=1.0)
     assert arrived.key == away.key       # same zone, different moment
     assert setups_cli.drop_decided([arrived], _decided(away, setups_cli.LATER)) == [arrived]
 
 
 def test_a_deferred_candidate_returns_when_another_person_backs_it():
-    before = _candidate(proximity=0.4)
+    before = _candidate(approach=0.4)
     after = _candidate(
-        proximity=0.4,
+        approach=0.4,
         views=(View(person="Mayne", published_at="2026-07-20"),
                View(person="Cowen", published_at="2026-07-19")),
     )
@@ -225,8 +225,8 @@ def test_a_deferred_candidate_returns_when_another_person_backs_it():
 
 def test_a_rejected_candidate_does_not_come_back_even_when_price_arrives():
     """Rejection is a judgment about the trade, not about its timing."""
-    away = _candidate(proximity=0.4)
-    arrived = _candidate(proximity=1.0)
+    away = _candidate(approach=0.4)
+    arrived = _candidate(approach=1.0)
     assert setups_cli.drop_decided([arrived], _decided(away, setups_cli.REJECTED)) == []
 
 
@@ -344,8 +344,8 @@ def test_prices_align_on_the_decimal_point_without_inventing_precision():
 
 
 def test_the_ladder_shows_where_price_actually_is():
-    """``depth`` and ``proximity`` both derive from price but neither can be read back as one,
-    so without this the queue states where a trade is wrong but never where the market is."""
+    """``approach`` derives from price but cannot be read back as one, so without this the
+    queue states where a trade is wrong but never where the market is."""
     text = setups_cli.format_candidate(_candidate(price=107.5))
     assert "107.5" in text and "price now" in text
 

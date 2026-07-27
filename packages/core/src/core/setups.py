@@ -93,6 +93,7 @@ ZONE_LEVEL_REASONS = frozenset({
     "no_live_zone",
     "no_invalidation",
     "degenerate_zone",
+    "price_past_stop",
     "no_target",
     "reward_risk_too_low",
 })
@@ -125,9 +126,17 @@ MAX_TARGET_ATR = 20.0
 # Reward-to-risk at which the score's RR term saturates. TUNE.
 RR_SATURATION = 3.0
 
-# How far from a zone, as a fraction of price, proximity decays to zero. Measured as a
+# How far from a zone, as a fraction of price, the approach ramp decays to zero. Measured as a
 # fraction so BTC and SOL are comparable. TUNE.
 PROXIMITY_SPAN = 0.10
+
+# Where on the approach ramp the near edge sits: 0.625 of it is spent reaching the zone, the
+# remaining 0.375 traversing it. Not a new knob — it reproduces the old ``proximity`` 0.25 and
+# ``depth`` 0.15 split within their 0.40 total exactly, so collapsing the two terms into one
+# changed the *shape* of the signal without touching its calibration. That separation is
+# deliberate: it keeps the measured effect attributable to the defect that was fixed rather
+# than to a silent re-weighting riding along with it. TUNE.
+ARRIVAL = 0.625
 
 _BULLISH_STATES = frozenset({UPTREND, UPTREND_FAILED_BREAKOUT})
 _BEARISH_STATES = frozenset({DOWNTREND, DOWNTREND_FAILED_BREAKDOWN})
@@ -169,17 +178,21 @@ DEFAULT_HALF_LIFE = HalfLife()
 class SetupWeights:
     """How a surviving candidate is ordered. v1 best-guess, like ``core.rank.RankWeights``.
 
-    ``proximity`` and ``depth`` are complementary halves of one continuum: proximity rises as
-    price approaches the zone and saturates on arrival, depth takes over once inside. Both are
-    needed because a live zone 1% away and one 30% away would otherwise score identically —
-    measured on real data, every candidate sat outside its zone with ``depth`` pinned at 0.
+    ``approach`` was two terms until 2026-07-27 — ``proximity`` (0.25), rising as price neared
+    the zone and saturating on arrival, plus ``depth`` (0.15), taking over once inside. They
+    were never independent: their domains are disjoint, so neither ever varied while the other
+    did, and together they already formed one continuous monotone ramp. Splitting a single
+    ramp across two weights bought nothing and cost the ability to state it coherently — the
+    pair could express ``proximity 0.00, depth 1.00``, meaning "no progress toward the zone"
+    and "all the way through it" at once. That state is unrepresentable here, which is the
+    point: it was the shape of a real defect (see ``OrderBlock.depth_at``), and a single ramp
+    could not have been written down wrong the same way.
 
     ``trend_alignment`` carries a deliberately small weight. A ranging weekly is genuinely
     worse than an aligned one, and we have no idea how much worse; a small weight says that
     honestly instead of pretending to a precision we don't have.
     """
-    proximity: float = 0.25
-    depth: float = 0.15
+    approach: float = 0.40
     reward_risk: float = 0.20
     agreement: float = 0.20
     freshness: float = 0.15
@@ -191,8 +204,13 @@ DEFAULT_WEIGHTS = SetupWeights()
 # Scoring generation, recorded alongside every decision. Bumped whenever the terms or their
 # weights change, because the decisions sidecar stores the score a candidate carried when it
 # was judged, and correlating decisions against scores across a re-weighting would silently
-# compare two different scales. 1 = proximity/depth/RR/agreement; 2 = + freshness/alignment.
-SCORE_VERSION = 2
+# compare two different scales. 1 = proximity/depth/RR/agreement; 2 = + freshness/alignment;
+# 3 = proximity and depth collapsed into ``approach``, and price past the stop refused.
+#
+# v2 scores are not comparable to v3 ones even where the weights are unchanged: the 13 of 82
+# candidates that v2 paid full depth for having traded through the zone are gone from v3
+# entirely, so the population being ranked is different, not just the scale.
+SCORE_VERSION = 3
 
 # Weekly trend agrees with the thesis, versus has no opinion at all. There is no third value:
 # a weekly that genuinely contradicts is still refused outright, so it never reaches scoring.
@@ -200,13 +218,24 @@ ALIGNED = 1.0
 UNALIGNED = 0.0
 
 
-def proximity_to(block: OrderBlock, price: float, *, span: float = PROXIMITY_SPAN) -> float:
-    """1.0 inside the zone, decaying to 0.0 ``span`` away from its near edge."""
-    if block.bottom <= price <= block.top:
-        return 1.0
+def approach_to(block: OrderBlock, price: float, *, span: float = PROXIMITY_SPAN) -> float:
+    """How far price has travelled toward and into ``block``, on one 0.0–1.0 ramp.
+
+    0.0 a ``span`` away, ``ARRIVAL`` at the near edge, 1.0 at the far edge — and 0.0 again once
+    price is past the far edge, because a zone price has traded clean through is not a near
+    one. That last case is what the old two-term form got backwards; ``cross_reference`` also
+    refuses it outright as ``price_past_stop``, so within the engine this branch is belt and
+    braces rather than the only guard.
+    """
+    if block.traded_through(price):
+        return 0.0
+    depth = block.depth_at(price)
+    if depth is not None:
+        return ARRIVAL + (1.0 - ARRIVAL) * depth
     if price <= 0 or span <= 0:
         return 0.0
-    return max(0.0, 1.0 - (abs(price - block.near_edge) / price) / span)
+    reach = 1.0 - (abs(price - block.near_edge) / price) / span
+    return ARRIVAL * max(0.0, reach)
 
 
 def freshness_signal(age_days: int, half_life: int) -> float:
@@ -226,11 +255,10 @@ def freshness_signal(age_days: int, half_life: int) -> float:
     return 1.0 / (1.0 + max(age_days, 0) / half_life)
 
 
-def _score(weights: SetupWeights, *, proximity: float, depth: float, reward_risk: float,
+def _score(weights: SetupWeights, *, approach: float, reward_risk: float,
            agreement_count: int, freshness: float, trend_alignment: float) -> float:
     return (
-        weights.proximity * proximity
-        + weights.depth * depth
+        weights.approach * approach
         + weights.reward_risk * min(reward_risk / RR_SATURATION, 1.0)
         + weights.agreement * agreement_signal(agreement_count)
         + weights.freshness * freshness
@@ -297,16 +325,15 @@ class Setup:
     entry: float          # the near edge — the shallowest fill, so RR is conservative
     entry_top: float
     entry_bottom: float
-    stop: float           # just past the far edge: where this trade is wrong
+    stop: float           # the far edge: where this trade is wrong
     invalidation: float   # the origin swing: where the zone itself dies
     target: float
     target_source: str    # STATED | NEAREST | STRUCTURAL
     reward_risk: float
-    depth: float
-    proximity: float
-    # What the asset was actually trading at when this was built. ``depth`` and ``proximity``
-    # are both derived from it but neither can be read back as a price, so without it the
-    # queue can state where a trade is wrong without ever stating where the market is.
+    approach: float       # 0 a span away, ARRIVAL at the near edge, 1 at the far
+    # What the asset was actually trading at when this was built. ``approach`` is derived from
+    # it but cannot be read back as a price, so without it the queue can state where a trade is
+    # wrong without ever stating where the market is.
     price: float
     freshness: float         # 1.0 the day it was said, halving every ``HalfLife`` days
     trend_alignment: float   # ALIGNED, or UNALIGNED when the weekly is merely ranging
@@ -338,8 +365,7 @@ class Candidate:
     target: float
     target_source: str
     reward_risk: float
-    depth: float
-    proximity: float
+    approach: float       # see ``Setup.approach``
     price: float          # the asset's price when built — see ``Setup.price``
     weekly_trend: str
     daily_trend: str
@@ -472,14 +498,14 @@ def collapse(outcomes, *, weights: SetupWeights = DEFAULT_WEIGHTS) -> tuple[Cand
             entry=rep.entry, entry_top=rep.entry_top, entry_bottom=rep.entry_bottom,
             stop=rep.stop, invalidation=rep.invalidation,
             target=rep.target, target_source=rep.target_source,
-            reward_risk=rep.reward_risk, depth=rep.depth, proximity=rep.proximity,
+            reward_risk=rep.reward_risk, approach=rep.approach,
             price=rep.price,
             weekly_trend=rep.weekly_trend, daily_trend=rep.daily_trend,
             zone=rep.zone, zone_timeframe=rep.zone_timeframe, tier=rep.tier,
             freshness=freshness, trend_alignment=rep.trend_alignment,
             views=views,
             thesis_ids=tuple(sorted(s.thesis_id for s in members)),
-            score=_score(weights, proximity=rep.proximity, depth=rep.depth,
+            score=_score(weights, approach=rep.approach,
                          reward_risk=rep.reward_risk, agreement_count=len(views),
                          freshness=freshness, trend_alignment=rep.trend_alignment),
         ))
@@ -661,6 +687,19 @@ def cross_reference(
     if risk == 0:
         return refuse("degenerate_zone")
 
+    # ── price has already traded out the far side ──
+    #
+    # ``block.stop`` is the far edge, so price beyond it means an entry at ``near_edge`` would
+    # already have been stopped. Not a judgment about the zone — that lives until
+    # ``invalidation``, further out still, and ``build_context`` is right to keep serving it.
+    #
+    # A gate rather than a score, per the rule at the top of this module: whether the stop has
+    # been taken is a *fact* about the trade, not a measurement on a continuum. It is checked
+    # after ``degenerate_zone`` because a zero-height zone puts every price on its far side,
+    # which would relabel that refusal without changing what it refuses.
+    if block.traded_through(context.price):
+        return refuse("price_past_stop")
+
     # ── target: theirs if reasonable, else structure ──
     stated = read_target(row, published_close)
     sign = 1 if family == BULLISH else -1
@@ -686,15 +725,14 @@ def cross_reference(
     if reward_risk < min_reward_risk:
         return refuse("reward_risk_too_low")
 
-    depth = block.depth_at(context.price) or 0.0
-    proximity = proximity_to(block, context.price)
+    approach = approach_to(block, context.price)
     return Setup(
         thesis_id=ident, asset=asset, person=person, direction=direction,
         timeframe=timeframe, published_at=published.isoformat(), block=block,
         entry=entry, entry_top=block.top, entry_bottom=block.bottom,
         stop=block.stop, invalidation=block.invalidation,
         target=target, target_source=target_source,
-        reward_risk=reward_risk, depth=depth, proximity=proximity, price=context.price,
+        reward_risk=reward_risk, approach=approach, price=context.price,
         freshness=freshness, trend_alignment=trend_alignment,
         weekly_trend=context.weekly_trend, daily_trend=context.daily_trend,
         # Domain comes off the row so a cross-domain ticker collision can't leak a crypto
@@ -702,7 +740,7 @@ def cross_reference(
         zone=zone_label or "",
         zone_timeframe=zone_timeframe,
         tier=tier_for(asset_rank, domain=getattr(row, "domain", "crypto")),
-        score=_score(weights, proximity=proximity, depth=depth,
+        score=_score(weights, approach=approach,
                      reward_risk=reward_risk, agreement_count=agreement_count,
                      freshness=freshness, trend_alignment=trend_alignment),
     )

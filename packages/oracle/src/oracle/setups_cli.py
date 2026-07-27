@@ -32,6 +32,7 @@ from pathlib import Path
 
 from core.canon import Registry, load_registry, resolve_asset
 from core.setups import (
+    ARRIVAL,
     SCORE_VERSION,
     TIER_LARGE,
     TIER_MAJOR,
@@ -254,8 +255,9 @@ def filter_candidates(
 
 
 def is_inside_zone(candidate: Candidate) -> bool:
-    """Has price actually reached the zone? ``proximity`` saturates at 1.0 on arrival."""
-    return candidate.proximity >= 1.0
+    """Has price actually reached the zone? ``ARRIVAL`` is where the near edge sits on the
+    approach ramp, so at or above it price is in the zone rather than still travelling."""
+    return candidate.approach >= ARRIVAL
 
 
 def resurfaces(candidate: Candidate, record: dict | None) -> bool:
@@ -321,7 +323,13 @@ def decision_record(candidate: Candidate, decision: str, *, decided_at: str,
         # correlating decisions against scores across a re-weighting compares two different
         # scales unless the generation travels with the number.
         "score_version": SCORE_VERSION,
-        "proximity": candidate.proximity,
+        # One number where v2 recorded ``proximity`` and silently omitted ``depth``. That gap
+        # made the mining pass structurally unable to see 0.15 of the score: for the 14 v2
+        # rows the combined depth-and-RR contribution can only be recovered as a single
+        # residual (measured 0.243 approved vs 0.246 rejected — no signal either way, but not
+        # separable into which term carried it). ``approach`` is the whole ramp, so v3 rows
+        # leave nothing unrecorded.
+        "approach": candidate.approach,
         "freshness": candidate.freshness,
         "trend_alignment": candidate.trend_alignment,
         "inside_zone": is_inside_zone(candidate),

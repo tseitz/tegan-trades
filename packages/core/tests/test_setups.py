@@ -7,6 +7,7 @@ import pytest
 from core.dealing_range import DealingRange
 from core.levels import NEAREST, STATED
 from core.setups import (
+    ARRIVAL,
     DAILY,
     STRUCTURAL,
     WEEKLY,
@@ -23,10 +24,10 @@ from core.setups import (
     Setup,
     View,
     Zone,
+    approach_to,
     collapse,
     cross_reference,
     freshness_signal,
-    proximity_to,
     tier_for,
 )
 from core.structure import (
@@ -146,9 +147,12 @@ def test_reward_risk_is_measured_from_entry_to_stop():
 
 
 def test_depth_reflects_how_far_price_has_travelled_into_the_zone():
+    """The half of the ramp the sidecar could never see: v2 recorded ``proximity``, which
+    saturates at 1.0 for every price inside the zone, so two candidates differing only in
+    depth were indistinguishable in the decision record."""
     shallow = cross_reference(_row(), _ctx(price=109.0), published_close=100.0)
     deep = cross_reference(_row(), _ctx(price=101.0), published_close=100.0)
-    assert deep.depth > shallow.depth
+    assert deep.approach > shallow.approach
     assert deep.score > shallow.score
 
 
@@ -457,39 +461,69 @@ def test_score_stays_within_zero_and_one():
     assert 0.0 <= setup.score <= 1.0
 
 
-# ── proximity ───────────────────────────────────────────────────────────────
+# ── approach ────────────────────────────────────────────────────────────────
 
-def test_proximity_is_one_inside_the_zone():
-    assert proximity_to(_block(), 105.0) == 1.0
-    assert proximity_to(_block(), 110.0) == 1.0
-    assert proximity_to(_block(), 100.0) == 1.0
-
-
-def test_proximity_decays_with_distance_from_the_near_edge():
-    near = proximity_to(_block(), 111.0)
-    far = proximity_to(_block(), 118.0)
-    assert 0.0 < far < near < 1.0
-
-
-def test_proximity_is_zero_beyond_the_span():
-    assert proximity_to(_block(), 400.0) == 0.0
+def test_approach_rises_monotonically_from_a_span_away_to_the_far_edge():
+    """One ramp, three regimes: travelling, arrived, traversing. The old two-term form split
+    this across ``proximity`` and ``depth``, whose domains were disjoint — so neither ever
+    varied while the other did, and the pair was already this function written twice."""
+    block = _block()  # bullish, 100-110, approached from above
+    ramp = [approach_to(block, price) for price in (118.0, 111.0, 110.0, 105.0, 100.0)]
+    assert ramp == sorted(ramp)
+    assert ramp[0] > 0.0
+    assert approach_to(block, 110.0) == pytest.approx(ARRIVAL)   # the near edge
+    assert approach_to(block, 100.0) == pytest.approx(1.0)       # the far edge
 
 
-def test_proximity_is_scale_free():
+def test_approach_is_zero_beyond_the_span():
+    assert approach_to(_block(), 400.0) == 0.0
+
+
+def test_approach_is_zero_once_price_has_traded_through_the_zone():
+    """The defect this collapse exists to make unwriteable. ``depth_at`` clamped, so a bullish
+    zone price had crashed through reported depth 1.0 — the maximum — and the old pair could
+    hold ``proximity 0.00, depth 1.00`` simultaneously. On the live queue that state was 13 of
+    82 candidates, and they outscored everything else."""
+    block = _block()  # bullish, 100-110
+    assert approach_to(block, 95.0) == 0.0
+    bear = _block(BEARISH, top=110.0, bottom=100.0, invalidation=120.0)
+    assert approach_to(bear, 115.0) == 0.0
+
+
+def test_approach_is_scale_free():
     """Expressed as a fraction of price so a 1%-away BTC zone and a 1%-away SOL zone score the
     same — an absolute distance would make every cheap asset look imminent."""
     big = _block(top=110000.0, bottom=100000.0, invalidation=90000.0)
     small = _block(top=1.10, bottom=1.00, invalidation=0.90)
-    assert proximity_to(big, 111000.0) == pytest.approx(proximity_to(small, 1.11))
+    assert approach_to(big, 111000.0) == pytest.approx(approach_to(small, 1.11))
 
 
 def test_an_approaching_zone_outscores_a_distant_one():
-    """The finding that motivated proximity: on real data every candidate sat outside its zone
+    """The finding that motivated the ramp: on real data every candidate sat outside its zone
     with depth pinned at 0, so a zone 1% away and one 30% away scored identically."""
     approaching = cross_reference(_row(), _ctx(price=111.0), published_close=100.0)
     distant = cross_reference(_row(), _ctx(price=118.0), published_close=100.0)
-    assert approaching.proximity > distant.proximity
+    assert approaching.approach > distant.approach
     assert approaching.score > distant.score
+
+
+def test_a_zone_price_has_traded_out_the_far_side_is_refused():
+    """``block.stop`` is the far edge, so price beyond it means an entry at the near edge would
+    already have been stopped. The zone itself is untouched — it dies at ``invalidation`` (90
+    here), further out still — which is why this is a refusal about the trade and not a reason
+    to drop the zone."""
+    outcome = cross_reference(_row(), _ctx(price=95.0), published_close=100.0)
+    assert _reason(outcome) == "price_past_stop"
+
+
+def test_price_past_the_stop_is_refused_rather_than_scored_as_maximally_deep():
+    """The regression proper. Under v2 this same candidate scored *higher* than one price had
+    genuinely reached, because the clamp in ``position_in_range`` read "past the far edge" as
+    "at the far edge" and paid it full depth."""
+    through = cross_reference(_row(), _ctx(price=95.0), published_close=100.0)
+    arrived = cross_reference(_row(), _ctx(price=105.0), published_close=100.0)
+    assert isinstance(through, NotASetup)
+    assert isinstance(arrived, Setup)
 
 
 # ── collapsing to one candidate per zone ────────────────────────────────────
@@ -745,6 +779,7 @@ def test_every_zone_level_refusal_the_engine_emits_is_classified_as_one():
         _reason(cross_reference(
             _row(), _ctx(zones=(Zone(block=_block(), structural_target=115.0),)),
             published_close=100.0)),
+        _reason(cross_reference(_row(), _ctx(price=95.0), published_close=100.0)),
     }
     assert emitted == ZONE_LEVEL_REASONS
 

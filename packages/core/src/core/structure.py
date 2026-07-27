@@ -330,9 +330,11 @@ class OrderBlock:
         the correct behaviour — structure hasn't broken just because one entry failed.
 
         **There is no buffer, and the omission is real rather than intended.** This returns the
-        edge itself, so ``Setup.stop`` equals ``Setup.entry_bottom`` on every long: a wick one
-        tick through the zone is a stop-out, and a fill at the far edge is a zero-risk trade
-        whose reward-to-risk divides by ~0.
+        edge itself, so ``Setup.stop`` equals ``Setup.entry_bottom`` on every long and a wick
+        one tick through the zone is a stop-out. (An earlier version of this note also claimed
+        a fill at the far edge divides reward-to-risk by ~0. It cannot: ``cross_reference``
+        always enters at ``near_edge``, so risk is the zone's full height and the zero case is
+        refused as ``degenerate_zone``.)
 
         A buffer does not belong here. Padding by a fraction of the zone's own height would give
         the *tightest* zones the smallest cushion, which is backwards — a 5.51-wide daily block
@@ -346,6 +348,15 @@ class OrderBlock:
         """
         return self.bottom if self.kind == BULLISH else self.top
 
+    def traded_through(self, price: float) -> bool:
+        """Whether ``price`` has passed clean through the zone, out past ``stop``.
+
+        The zone is untouched by this — it dies at ``invalidation``, which sits further out
+        still. What has ended is any *trade* on it: ``stop`` is the far edge, so price beyond
+        it means the entry, had it filled, is already stopped. See ``stop``.
+        """
+        return price < self.stop if self.kind == BULLISH else price > self.stop
+
     def depth_at(self, price: float) -> float | None:
         """How far into the zone ``price`` has travelled — 0 at the near edge, 1 at the far.
 
@@ -353,7 +364,17 @@ class OrderBlock:
         mirror. Deliberately not a boolean: "more confidence as you dive deeper into that
         candle", and a graded depth is where fib levels land later without redefining
         anything.
+
+        ``None`` outside the zone, in both directions — price short of the near edge has no
+        depth *yet*, and price past the far edge has no depth *any more*. **The containment
+        check is doing real work and must not be replaced by the clamp inside
+        ``position_in_range``.** That clamp is correct for its other caller, premium/discount,
+        where a price beyond the range genuinely is "at the extreme". Read as depth it inverts:
+        a bullish zone price has crashed through clamps to position 0.0, which this then
+        reports as depth 1.0 — maximum confidence for the zone having failed.
         """
+        if price < self.bottom or price > self.top:
+            return None
         position = position_in_range(self.bottom, self.top, price)
         if position is None:
             return None
