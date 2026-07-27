@@ -49,10 +49,11 @@ from core.setups import (
 )
 from core.rank import parse_date
 
-from oracle import cache, corpus, listings
+from oracle import cache, corpus, exclusions, listings
 # Re-exported: the sidecar's storage and its vault mirror live in their own module, but both
 # remain part of this CLI's surface for callers and tests that reach for them here.
 from oracle.decisions import append_decision, load_decisions, sync_mirror  # noqa: F401
+from oracle.exclusions import DEFAULT_EXCLUSIONS
 from oracle.resample import to_weekly
 from oracle.route import OracleRef, RoutingTable, load_routing_table, route
 # Re-exported: the queue's layout lives in its own module, but ``format_candidate`` remains
@@ -521,6 +522,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
                         help=f"second copy of the decisions sidecar (default: {DEFAULT_MIRROR})")
     parser.add_argument("--no-mirror", action="store_true",
                         help="skip the vault mirror; the sidecar under data/ is then the only copy")
+    parser.add_argument("--exclusions", type=Path, default=CONFIG_DIR / DEFAULT_EXCLUSIONS,
+                        help="assets to keep out of the queue entirely (cfg/exclusions.yaml)")
     parser.add_argument("--list", action="store_true",
                         help="print the queue and exit, no prompting")
     return parser.parse_args(argv)
@@ -553,6 +556,19 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{stats.candidate_count} candidates")
     if stats.rejections:
         print("  rejected: " + ", ".join(f"{k}={v}" for k, v in stats.rejections.most_common()))
+
+    # Before the decision filter, because an excluded asset is not a judgment being remembered
+    # — it is a question that should never have been asked. Reported either way: a filter
+    # nobody can see is indistinguishable from a corpus that went quiet.
+    excluded = exclusions.load(args.exclusions)
+    unmatched = exclusions.unmatched_symbols(excluded, {r.asset for r in rows})
+    if unmatched:
+        print(f"  warning: no thesis mentions {', '.join(unmatched)} — check {args.exclusions} "
+              f"for a typo; these suppress nothing", file=sys.stderr)
+    candidates, dropped = exclusions.partition(candidates, excluded)
+    if dropped:
+        assets = sorted({c.asset for c in dropped})
+        print(f"  {len(dropped)} on excluded assets — hidden ({', '.join(assets)})")
 
     decided = load_decisions(DEFAULT_DECISIONS)
     undecided = drop_decided(candidates, decided)

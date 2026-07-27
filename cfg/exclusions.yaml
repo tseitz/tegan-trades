@@ -1,0 +1,41 @@
+# Assets to keep out of the `setups` queue entirely, whatever the structure says.
+#
+# A GATE, not a score — "I don't trade this" is a rule, and no amount of confluence makes it
+# false. Rejecting the candidate is not the same thing: `drop_decided` keys on the *zone*, so
+# a rejection buries one order block and the next one to form on the same instrument asks
+# again. OIL and CL were rejected for the asset on 2026-07-27 and were back on 4 of the 59
+# undecided rows the same day, one at score 0.711.
+#
+# It also protects the ground truth. These decisions are what `docs/IMPROVEMENTS.md` §4 mines
+# to calibrate the scorer, and an asset-level "no" carries no information about setup quality
+# — 3 of 7 rejections in the first real session were disinterest in the instrument, 43% of the
+# negative labels. Filtered here, every rejection left in the sidecar is about the trade.
+#
+# ── What belongs here ────────────────────────────────────────────────────────────────────
+#
+# Only a *standing* rule about the instrument. A conditional pass is a rejection, not an
+# exclusion, and the difference is the whole point:
+#
+#   "Zero interest in PNUT"                              -> exclusion. About the asset.
+#   "not sure I'm shorting oil at these prices with the  -> rejection. About right now; the
+#    Iran conflict going on"                                setup may be fine next month.
+#
+# This is why the list is hand-written rather than derived from `reason_note` automatically:
+# the two read alike to a machine, and promoting a temporary reservation into a permanent rule
+# would silently delete a market from the queue for good.
+#
+# Every entry needs a reason. It is the only record of why an asset stopped appearing, and a
+# blank one turns this file into folklore inside a month. A missing reason is an error, not a
+# default.
+#
+# Symbols are matched against the assets the corpus actually mentions, NOT against
+# cfg/assets.yaml — `CL` resolves as unresolved in the canon registry and still produces real
+# candidates, so a registry check would call a correct entry a typo. A symbol nothing mentions
+# fails *open* (it suppresses nothing while looking correct), so `setups` warns about it on
+# every run. Heed that warning; it is the same silent-config failure class as §6h.
+#
+# Remove an entry to bring an asset back; nothing else is needed, and previously-recorded
+# decisions on it are untouched.
+
+assets:
+  PNUT: "Zero interest in PNUT — rejected 2026-07-27, and it is about the asset, not the setup"
