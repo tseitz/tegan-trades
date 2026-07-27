@@ -1426,3 +1426,96 @@ SMA computed from it is as-of last week's close.
 **Open question before building:** which averages. 50W and 52W were the two named, but nothing
 has measured whether either actually marks turns in this corpus — and a confluence term that
 fires on an arbitrary average is worse than none, since it would launder a guess into the score.
+
+---
+
+## 21. Funding is a real cost and nothing in the scorer sees it · `OPEN` — new 2026-07-27
+
+`fetch-funding` now logs it (32,277 observations, 30 days of realised settlements across
+Hyperliquid and Aster). Nothing consumes the log yet. `core.funding.carry_adjusted_rr` exists
+and is tested; `core/setups.py` does not call it.
+
+**Why it matters more than it looks.** Carry hits both legs of R:R in opposite directions —
+subtracted from reward, added to risk — so a rate that sounds small moves the ratio a lot. A
+nominal 8% target / 4% stop is R:R 2.0. Held 21 days:
+
+| venue | NVDA median funding | long R:R | short R:R |
+|---|---|---|---|
+| Hyperliquid | 11.86%/yr | 1.56 | 2.62 |
+| Hyperliquid at p90 | 31.44%/yr | 1.07 | 4.48 |
+| Aster | 0.00%/yr | 2.00 | 2.00 |
+
+At HOOD's p90 (38.39%/yr) a nominal 2.0 long lands at **0.93** — below 1. Same levels, same thesis —
+the direction and the venue decide whether the edge survives. The queue currently prints one
+R:R and it is the nominal one.
+
+**This collides with §2 (rip out horizons), and the collision is real, not incidental.** Carry
+is `rate × holding_period`, so pricing it needs *some* expected hold. §2's replacement is
+event-based ("live until the person restates"), which yields a duration only in hindsight. The
+cheap resolution is a single global constant for costing purposes only — explicitly not a
+horizon, not per-timeframe, and not load-bearing for grading — measured from realised
+restatement cadence (11–28d, §2). Do not rebuild per-label horizons to get this.
+
+**Per the gate/score rule this is a score, not a gate.** Funding is a continuum. The one
+plausible gate is "carry exceeds the target" — `CarryAdjustedRR.carry_dominates` — which is a
+fact about the setup being dead rather than a judgement about how good it is.
+
+**Measure before weighting.** The scorer already has six terms and §20 refuses a global
+re-weight; adding a seventh blind would compound that. Baseline to measure against: the v5
+population in `data/setups/decisions.jsonl`.
+
+---
+
+## 22. Lighter's funding history feed does not reconcile with its snapshot feed · `OPEN` — new 2026-07-27
+
+`fetch-funding --backfill` covers Hyperliquid and Aster. **Lighter is snapshot-only**, so its
+column is `n=1` in `--report` and will stay thin until enough nights accumulate.
+
+**The evidence, and why it was not worked around.** Two Lighter endpoints disagree by roughly
+10x with no derivable conversion:
+
+| feed | BTC | ETH | shape |
+|---|---|---|---|
+| `/api/v1/funding-rates` | `2.4e-05` | `9.6e-05` | signed, 8-hourly |
+| `/api/v1/fundings?resolution=1h` | `0.0002` | `0.0008` | unsigned magnitude + `direction` |
+
+The snapshot feed's unit *is* established: it publishes Hyperliquid's rate at exactly 8.000x
+Hyperliquid's own hourly figure on every symbol sampled (ETH, HYPE, ZEC, LINK, AVAX, DOGE),
+so it is 8-hourly. The history feed is neither that value nor 8x nor 1/8 of it, and its sign
+lives in a separate `direction` field. Guessing a factor here would put an 8x error into a
+carry model — the exact failure `sources/lighter.py` is written to prevent.
+
+**Next:** ask Lighter directly, or infer the unit by reconciling a realised payment against a
+funded position. Do not ship a conversion inferred only from the ratio of the two feeds.
+
+---
+
+## 23. `--backfill DAYS` is a request, not a window — both venues cap it · `WATCHING` — new 2026-07-27
+
+Neither venue honours the requested span, and they miss it in opposite directions:
+
+- **Hyperliquid** returns at most **500 rows per symbol**. At hourly settlement that is
+  ~20.8 days, so `--backfill 30` silently yields 21. Needs pagination on `startTime`.
+- **Aster** ignores the window entirely — `limit=1000` reaches back as far as the rows exist,
+  which is why the first backfill wrote partitions from **2025-08** onward. Harmless (more
+  history is better) but the flag does not mean what it says.
+
+Not urgent: the log is append-only and the reader dedupes, so re-running costs nothing and
+the extra Aster depth is a bonus. It matters the moment anyone reads "30 days" as a
+guarantee — a distribution computed over 21 days of one venue and 11 months of another is
+not a comparison.
+
+---
+
+## 24. `data/funding/` is not regenerable ore, and the tree says it is · `OPEN` — new 2026-07-27
+
+Same class as §4b. `docs/ARCHITECTURE.md` describes everything under `data/` as
+machine-generated and regenerable; that is true of `data/prices/` and false here in the
+degree that matters. Hyperliquid and Aster serve bounded history (500 rows / 1000 rows), so a
+gap older than that window is **permanently unrecoverable**, and Lighter has no usable
+history at all (§22) — its column exists only for nights the logger actually ran.
+
+Milder than the decision sidecars: this is measurement, not judgement, and most of it can be
+re-pulled within the venues' windows. But a machine asleep for a month costs a month of
+Lighter coverage outright. Decide whether it wants the vault mirror `oracle/decisions.py`
+already implements before the log is long enough to be worth losing.

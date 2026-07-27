@@ -1,0 +1,79 @@
+# Canonical asset -> the symbol each execution venue actually lists. Hand-curated, and
+# authoritative over every heuristic — for exactly the reasons cfg/oracle_map.yaml exists.
+#
+# WHY THIS FILE EXISTS. Matching a canonical symbol to a venue ticker by name is silently
+# catastrophic, and the same collision that motivated oracle_map reproduces on the trading
+# venues, where it would spend money instead of mis-grading a thesis:
+#
+#   SPX -> Hyperliquid's core book lists SPX6900, a memecoin, under "SPX" (mark 0.3309).
+#          Lighter lists the same memecoin under "SPX" (mark 0.3309).
+#          Aster lists it under "SPXUSDT" (mark 0.3329).
+#          The S&P 500 is "SP500" (HL/xyz), "US500" (HL/km, Lighter) or "SPYUSDT" (Aster).
+#          204 theses reference SPX. A name match here shorts a memecoin.
+#
+# THE SCALE TRAP. Where a venue only offers an ETF proxy, the instrument tracks the index at
+# a ratio that is NOT shared and NOT stable: SPY is ~1/10.03 of SPX, QQQ is ~1/41.08 of NDX.
+# A thesis that says "S&P to 7500" is quoting the index; the order goes on an instrument at
+# ~739. `scale` records the observed ratio (index / venue instrument) so the mismatch is at
+# least visible — but it drifts with dividends and expense ratio, so prefer converting a
+# thesis target to a PERCENTAGE move at signal time over multiplying by this number.
+#
+# `pricing` is deliberately absent from this file. Price routing stays in oracle_map.yaml
+# against the index itself (^GSPC). Execution and pricing are different questions and
+# collapsing them regrades every stored thesis against the wrong instrument.
+#
+# Venues: hyperliquid (core), hyperliquid:<dex> (HIP-3 builder), lighter, aster.
+# An asset a venue does not list is OMITTED, never guessed. Absence is a real answer.
+
+assets:
+  # ── crypto: all three venues list these natively ────────────────────────────
+  BTC:    {hyperliquid: BTC,  lighter: BTC,  aster: BTCUSDT}
+  ETH:    {hyperliquid: ETH,  lighter: ETH,  aster: ETHUSDT}
+  SOL:    {hyperliquid: SOL,  lighter: SOL,  aster: SOLUSDT}
+  HYPE:   {hyperliquid: HYPE, lighter: HYPE, aster: HYPEUSDT}
+  ZEC:    {hyperliquid: ZEC,  lighter: ZEC,  aster: ZECUSDT}
+  CRV:    {hyperliquid: CRV,  lighter: CRV,  aster: CRVUSDT}
+  XPL:    {hyperliquid: XPL,  lighter: XPL,  aster: XPLUSDT}
+  MON:    {hyperliquid: MON,  lighter: MON,  aster: MONUSDT}
+  MNT:    {hyperliquid: MNT,  lighter: MNT}          # Aster does not list MNT
+
+  # ── indices: proxies, with the scale trap above in force ────────────────────
+  SPX:
+    hyperliquid: "xyz:SP500"      # the index itself, 1:1
+    lighter: US500                # the index itself, 1:1
+    aster: SPYUSDT                # ETF proxy
+    scale: {aster: 10.03}
+  NDX:
+    hyperliquid: "xyz:XYZ100"     # the index itself, 1:1
+    lighter: US100                # the index itself, 1:1
+    aster: QQQUSDT                # ETF proxy
+    scale: {aster: 41.08}
+  RUT:
+    lighter: IWM                  # ETF proxy; both books are effectively dead (<$2k/day)
+    aster: IWMUSDT
+  DXY:
+    hyperliquid: "xyz:DXY"        # listed but zero open interest as of 2026-07-27
+
+  # ── commodities ─────────────────────────────────────────────────────────────
+  GOLD:    {hyperliquid: "xyz:GOLD",     lighter: XAU, aster: XAUUSDT}
+  SILVER:  {hyperliquid: "xyz:SILVER",   lighter: XAG, aster: XAGUSDT}
+  OIL:     {hyperliquid: "xyz:CL",       lighter: WTI, aster: CLUSDT}   # WTI, not Brent
+  URANIUM: {hyperliquid: "xyz:URNM",     lighter: URA, aster: URNMUSDT} # ETF proxies, all thin
+
+  # ── equities: HIP-3 only on Hyperliquid; none are on the core book ──────────
+  TSLA:  {hyperliquid: "xyz:TSLA",  lighter: TSLA,  aster: TSLAUSDT}
+  NVDA:  {hyperliquid: "xyz:NVDA",  lighter: NVDA,  aster: NVDAUSDT}
+  MSTR:  {hyperliquid: "xyz:MSTR",  lighter: MSTR,  aster: MSTRUSDT}
+  HOOD:  {hyperliquid: "xyz:HOOD",  lighter: HOOD,  aster: HOODUSDT}
+  GOOGL: {hyperliquid: "xyz:GOOGL", lighter: GOOGL, aster: GOOGLUSDT}
+  META:  {hyperliquid: "xyz:META",  lighter: META,  aster: METAUSDT}
+  MU:    {hyperliquid: "xyz:MU",    lighter: MU,    aster: MUUSDT}
+  COIN:  {hyperliquid: "xyz:COIN",  lighter: COIN,  aster: COINUSDT}
+  CRCL:  {hyperliquid: "xyz:CRCL",  lighter: CRCL,  aster: CRCLUSDT}
+  NFLX:  {hyperliquid: "xyz:NFLX",  aster: NFLXUSDT}   # Lighter does not list NFLX
+  RIVN:  {hyperliquid: "xyz:RIVN",  aster: RIVNUSDT}   # Lighter does not list RIVN
+
+  # ── approved but listed by NO venue researched. Left here deliberately, so the
+  #    gap is recorded rather than rediscovered. These need a real broker. ──────
+  GLXY:  {}
+  ILMN:  {}

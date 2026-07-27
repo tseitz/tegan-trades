@@ -23,6 +23,33 @@ class FetchError(RuntimeError):
     rather than aborting a multi-hundred-symbol backfill."""
 
 
+def post_json(url: str, body: dict, *, timeout: int = TIMEOUT) -> Any:
+    """POST a JSON body + parse the JSON reply, with the same retry policy as ``get_json``.
+
+    Hyperliquid's ``/info`` endpoint is read-only but POST-only — it discriminates queries by
+    a ``type`` field in the body rather than by path, so a GET helper cannot reach it.
+    """
+    last: Exception | None = None
+    for attempt in range(RETRIES):
+        try:
+            resp = requests.post(
+                url,
+                json=body,
+                timeout=timeout,
+                headers={"User-Agent": USER_AGENT, "Content-Type": "application/json"},
+            )
+            if resp.status_code == 429 or resp.status_code >= 500:
+                time.sleep(BACKOFF * (attempt + 1))
+                last = FetchError(f"{resp.status_code} for {url}")
+                continue
+            resp.raise_for_status()
+            return resp.json()
+        except requests.RequestException as exc:
+            last = exc
+            time.sleep(BACKOFF * (attempt + 1))
+    raise FetchError(f"failed after {RETRIES} attempts: {url}") from last
+
+
 def get_json(url: str, params: dict | None = None, *, timeout: int = TIMEOUT) -> Any:
     """GET + parse JSON, retrying rate limits and transient 5xx with linear backoff."""
     last: Exception | None = None
