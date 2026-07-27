@@ -1321,10 +1321,32 @@ The live options, none measured:
    n=13.
 3. **Score the two queues separately** rather than collapsing them, which subsumes §19(e).
 
-**Take the cheap measurement before any of them:** run one *mixed* session (do not pass a
-timeframe filter), which breaks the confound and roughly doubles the daily arm. That is the
-same "accumulate one more session" conclusion §4 reached, now with a specific reason and a
-specific thing to look at.
+### Correcting the obvious next step — it is not "run a mixed session"
+
+A first draft of this entry said to run one mixed session to break the confound. **Both halves
+of that are wrong, and the reason is itself part of the finding.**
+
+**There is no timeframe filter to avoid.** `setups` has no such flag; the queue is always both.
+What made v2-v4 weekly-only is §19(e)'s unconditional weekly-first sort meeting the default
+`--limit 25`: when the weekly pool is at least 25, the visible queue *is* the weekly pool and
+nothing else is reachable. So the confound is structural, not a session choice — the ranker
+decides which population gets judged, and it has been feeding itself weekly rows.
+
+**And the next session will not be mixed either — it will be all daily.** Measured on the live
+queue, 2026-07-27: `uv run setups --list --limit 0` returns **23 candidates, every one daily,
+zero weekly**, because v5 decided all 7 weekly rows and `drop_decided` removes them. The
+population flipped entirely between one session and the next.
+
+That is still worth running, but for a narrower reason than "breaks the confound": right now
+`daily` is almost exactly `v5` and `weekly` is almost exactly `v2-v4`, so a second, independent
+daily session at least stops the daily arm being one sitting. **The weekly arm cannot be
+improved this way at all** — it needs weekly candidates to exist, which is a supply question,
+not a triage one.
+
+**So the honest reading is that the two populations are measured at different times by
+construction**, and that is a stronger argument for options 1 and 3 than any of the AUC numbers
+above: whatever the weights should be, the queue currently cannot present both populations in
+one sitting, so it cannot be calibrated against both in one sitting either.
 
 ---
 
