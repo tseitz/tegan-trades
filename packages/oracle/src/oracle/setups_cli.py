@@ -49,6 +49,9 @@ from core.setups import (
 from core.rank import parse_date
 
 from oracle import cache, corpus, listings
+# Re-exported: the sidecar's storage and its vault mirror live in their own module, but both
+# remain part of this CLI's surface for callers and tests that reach for them here.
+from oracle.decisions import append_decision, load_decisions, sync_mirror  # noqa: F401
 from oracle.resample import to_weekly
 from oracle.route import OracleRef, RoutingTable, load_routing_table, route
 # Re-exported: the queue's layout lives in its own module, but ``format_candidate`` remains
@@ -64,6 +67,12 @@ DEFAULT_DECISIONS = REPO_ROOT / "data" / "setups" / "decisions.jsonl"
 # default is portable. The filename matches the note that already exists, whose title
 # is the ``_NOTE_TITLE`` below — this is the file that was being passed by hand.
 DEFAULT_VAULT_NOTE = Path.home() / "vault" / "Trading" / "Trade Logs" / "Setups.md"
+
+# The sidecar's second copy. Sits beside the approvals note because it is the same kind of
+# thing — hand-entered judgement, which ``architecture.md`` puts on the vault side of the
+# repo/vault boundary — and because ``data/`` is gitignored, so the sidecar is otherwise
+# unbacked. See ``oracle.decisions`` and ``docs/IMPROVEMENTS.md`` §4b.
+DEFAULT_MIRROR = DEFAULT_VAULT_NOTE.parent / "decisions.jsonl"
 
 TIER_CHOICES = (TIER_MAJOR, TIER_LARGE, TIER_SMALL, TIER_UNRANKED, TIER_NONCRYPTO)
 
@@ -299,6 +308,13 @@ def decision_record(candidate: Candidate, decision: str, *, decided_at: str,
         "stop": candidate.stop,
         "target": candidate.target,
         "target_source": candidate.target_source,
+        # Both are inputs the correlation needs and neither was recoverable after the fact.
+        # ``reward_risk`` is a weighted term in ``_score`` *and* the headline number in the
+        # queue, so its weight was the one thing decisions could not be mined against;
+        # ``price`` fixes the decision to a market state, without which "was this judged in
+        # the zone or halfway to the target" is unanswerable once prices move on.
+        "reward_risk": candidate.reward_risk,
+        "price": candidate.price,
         "score": candidate.score,
         # Which scale ``score`` is on. Weights change as the ranker is tuned, and the sidecar
         # is the only record of what a candidate was worth at the moment it was judged — so
@@ -353,33 +369,6 @@ def render_note(candidate: Candidate, *, decided_on: str) -> str:
 
 # ── decisions sidecar (JSONL, append-only) ──────────────────────────────────────────────────
 
-def load_decisions(path) -> dict[str, dict]:
-    """Latest decision record per candidate key.
-
-    The whole record is returned, not just the verdict, because deciding whether a deferral has
-    become actionable needs the state captured at the time. Later lines win, so re-deciding a
-    zone supersedes the earlier answer without rewriting history.
-    """
-    path = Path(path)
-    if not path.exists():
-        return {}
-    decisions: dict[str, dict] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        rec = json.loads(line)
-        decisions[rec["candidate_key"]] = rec
-    return decisions
-
-
-def append_decision(path, record: dict) -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record) + "\n")
-
-
 class VaultNoteUnavailable(Exception):
     """The vault note's directory does not exist, so the approvals note cannot be written."""
 
@@ -422,7 +411,8 @@ def append_note(vault_path, section: str) -> None:
 # ── interactive triage loop ──────────────────────────────────────────────────────────────────
 
 def triage(candidates, *, decisions_path, vault_path, input_fn=input, out=print,
-           as_of: date | None = None, color: bool | None = None) -> dict[str, int]:
+           as_of: date | None = None, color: bool | None = None,
+           mirror_path=None) -> dict[str, int]:
     """Present each candidate, highest score first; approve -> vault note (if given) + sidecar,
     all decisions -> sidecar. Quit stops immediately without consuming further input.
 
@@ -457,7 +447,8 @@ def triage(candidates, *, decisions_path, vault_path, input_fn=input, out=print,
 
         append_decision(
             decisions_path,
-            decision_record(c, decision, decided_at=decided_at, reason=reason, note=note))
+            decision_record(c, decision, decided_at=decided_at, reason=reason, note=note),
+            mirror=mirror_path, warn=out)
         counts[decision] += 1
     return counts
 
@@ -518,6 +509,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
                         help=f"running approvals note to append to (default: {DEFAULT_VAULT_NOTE})")
     parser.add_argument("--no-vault-note", action="store_true",
                         help="record approvals to the decisions sidecar only, skipping the vault")
+    parser.add_argument("--decisions-mirror", type=Path, default=DEFAULT_MIRROR,
+                        help=f"second copy of the decisions sidecar (default: {DEFAULT_MIRROR})")
+    parser.add_argument("--no-mirror", action="store_true",
+                        help="skip the vault mirror; the sidecar under data/ is then the only copy")
     parser.add_argument("--list", action="store_true",
                         help="print the queue and exit, no prompting")
     return parser.parse_args(argv)
@@ -526,6 +521,17 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     as_of = args.as_of or datetime.now(UTC).date()
+
+    # Reconciled up front, before the queue is built: a restore has to land before
+    # ``load_decisions`` reads the sidecar, or a session run against a lost ``data/`` would
+    # re-ask every question the mirror already holds the answers to.
+    mirror_path = None if args.no_mirror else args.decisions_mirror
+    if mirror_path is not None:
+        sync = sync_mirror(DEFAULT_DECISIONS, mirror_path)
+        if sync.message:
+            print(f"  {sync.message}")
+        if sync.diverged:
+            mirror_path = None
 
     registry = load_registry(CONFIG_DIR)
     rows = list(corpus.iter_rows(registry))
@@ -584,8 +590,12 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"  approvals append to {vault_note}")
 
+    if mirror_path is not None:
+        print(f"  decisions mirrored to {mirror_path}")
+
     counts = triage(  # pragma: no cover - interactive
-        queue, decisions_path=DEFAULT_DECISIONS, vault_path=vault_note, as_of=as_of)
+        queue, decisions_path=DEFAULT_DECISIONS, vault_path=vault_note, as_of=as_of,
+        mirror_path=mirror_path)
     print("\n" + format_counts(counts))
     return 0
 

@@ -175,7 +175,7 @@ current verdict.
 **Next:** nothing to build — accumulate sessions until `rejected` has real rows, then correlate.
 Do not start the correlation before then. Note this makes §4 gated on **decision volume**, which
 is in turn gated on candidate supply (§5) and thesis freshness (§6) — those are the buildable
-work that accelerates it.
+work that accelerates it. **Superseded 2026-07-27 — (b) is cleared, see below.**
 
 **c. The score scale changed on 2026-07-26** (freshness + trend_alignment added, all four
 existing weights cut — see §6). Every record now carries `score_version`; the 10 pre-existing
@@ -193,9 +193,65 @@ than preserving them. **One knowingly-accepted cost:** the `AI long` archive was
 score-independent ("I don't trade this") and comes back once; press `x` again. Building a
 carry-forward path for a single row was not worth it.
 
----
+### Second session · 2026-07-27 — the blocker is cleared, and the scorer does not predict the decision
 
-## 4b. The decision sidecars are irreplaceable and unbacked · `OPEN` — new 2026-07-26
+`data/setups/decisions.jsonl` (v2) holds **14 rows over 14 distinct candidates**: 7 `rejected`,
+3 `approved`, 4 `later`. All 14 carry `score_version: 2` and every ranker field, so defect (a)
+does not recur. **(b) is cleared** — rejections exist, all 7 carry a reason, and all 7 carry a
+free-text `reason_note` (added 2026-07-27, `f04fff3`).
+
+**The correlation §4 has been waiting for is now runnable, and the first look is negative.**
+
+| verdict | n | score min / median / max | freshness |
+|---|---|---|---|
+| approved | 3 | 0.596 / 0.734 / 0.756 | 0.70, 0.98, 0.98 |
+| rejected | 7 | 0.595 / 0.741 / 0.777 | 0.00–0.88, six of seven ≤ 0.54 |
+| later | 4 | 0.564 / 0.616 / 0.648 | 0.42–0.84 |
+
+**a. `score` does not separate approve from reject.** The two distributions overlap almost
+exactly and the rejected *median is higher*. The highest-scoring candidate of the session —
+MON at 0.777 — was rejected, and the lowest approval (HOOD 0.596) sits 0.001 above the lowest
+rejection (RIVN 0.595). With n=3 approvals this cannot support a strong claim, but the shape is
+"no signal", not "weak signal", and that is the thing §4 existed to find out.
+
+**b. `freshness` does separate — and it is the smallest weight in `_score` (0.15).** All three
+approvals are ≥ 0.70; six of seven rejections are ≤ 0.54. The one exception, OIL at 0.88, was
+rejected for the *asset* rather than the setup (note: "Same as CL"). Nothing else — proximity,
+depth, agreement — tracks the decision this cleanly. Ties directly to §6.
+
+**c. The notes say why, and the three-way enum could not have.** Of 7 rejections:
+
+- **3 are staleness** — MON "Stale, the levels are a bit all over the place… may refer to the
+  time it was called (april)", PUMP "Very stale", RIVN "Very stale at this point". Consistent
+  with (b), and the reason they are legible at all is the note: two of the three were filed
+  under different enum values.
+- **3 are asset-level disinterest, not setup quality** — CL "not sure I'm shorting oil at these
+  prices with the Iran conflict going on", OIL "Same as CL", PNUT "Zero interest in PNUT".
+  These are **not scorer signal** and pooling them with trade-quality rejects would poison the
+  correlation. Two were filed `other`, one `view_wrong`; the enum has no bucket for "I don't
+  trade this asset", which is why the free-text field was worth adding.
+- **1 is genuine setup quality** — PLUME "That exit is pretty high and I'm not sure I see the
+  structure you're referring to here" (target/structure doubt).
+
+**What this argues for**, per the gate/score rule: "Zero interest in PNUT" is a rule a human
+would write, so it wants a **gate** — an asset exclusion list — not a score term. Staleness is
+a continuum, so it stays a score, but underweighted. Neither is built; do not build both at
+once, and re-measure after each.
+
+**d. `reward_risk` and `price` were never recorded · `FIXED 2026-07-27`.** `decision_record`
+wrote neither. R:R is a weighted term in `_score` *and* the headline number in the queue, so its
+weight was the one thing decisions could not be mined against at all; `price` fixes a decision
+to a market state, without which "was this judged at the zone or halfway to target" is
+unanswerable once prices move. Both are now written. **The 14 existing rows lack both and must
+not be backfilled** — a re-run yields today's values, not the decision-time ones, which is the
+same trap as (a). This is the third shape change to the sidecar; `score_version` still covers
+scale comparability, and these two are additive, so no version bump.
+
+**Next:** accumulate a second real session before acting on (a) or (b) — n=3 approvals is not
+enough to re-weight against. When acting, change one term and re-measure; the sidecar now
+records enough to tell whether it helped.
+
+## 4b. The decision sidecars are irreplaceable and unbacked · `PARTIAL 2026-07-27` — setups mirrored, triage still not
 
 `data/setups/decisions*.jsonl` and `data/triage/decisions.jsonl` sit under `data/`, which
 `.gitignore:2` excludes and `docs/ARCHITECTURE.md` describes as machine-generated ore —
@@ -214,6 +270,39 @@ every reason you passed on something.
 Per the vault/repo boundary in `architecture.md` — "human-curated judgment lives in the vault"
 — these belong on the vault side, or at minimum need a mirrored write. Decide before decision
 volume accumulates, not after.
+
+### `data/setups/decisions.jsonl` is mirrored · `FIXED 2026-07-27`
+
+`oracle/decisions.py`. Every write goes to the sidecar first and then to
+`~/vault/Trading/Trade Logs/decisions.jsonl`, beside the approvals note. Reconciled once at
+startup, before the queue is built, so a restore lands before `load_decisions` reads the file.
+
+**The mirror is subordinate, never a gate.** A vault that is unmounted or read-only warns and is
+skipped — losing a backup is recoverable, losing a session's judgement is not. It warns rather
+than passing silently, because a mirror everyone believes is running and isn't is worse than no
+mirror: it is only ever consulted once the primary is already gone.
+
+Both files are append-only, so one is normally a prefix of the other, which gives three cases
+real meaning: mirror behind → copy forward; **mirror ahead → restore the primary from it**;
+neither a prefix → touch nothing and warn, because splicing two histories invents a sequence
+that never happened. Verified on real data — 14 rows seeded byte-identical, then the primary was
+deleted and restored byte-identical from the mirror, with the run reporting
+`restored 14 decision(s)` and correctly hiding all 14 as already decided.
+
+Disable with `--no-mirror`; relocate with `--decisions-mirror`.
+
+### `data/triage/decisions.jsonl` is still unmirrored · `OPEN`
+
+20 rows, equally irreplaceable, and **blocked on a real layering question rather than on effort**.
+`distill/triage_cli.py:166` has its own `record_decision`, and the obvious fix — import
+`oracle.decisions` — is a **backwards dependency**: pipeline order is ingestion → distill → brain
+→ oracle, and distill currently knows nothing about oracle. The other placement, `core/`, is
+explicitly barred from I/O by CLAUDE.md ("pure logic and shared schema. Zero I/O").
+
+So the choice is: (i) accept a small duplicate mirror in `distill`, (ii) add a seventh workspace
+member for shared file plumbing, or (iii) let `distill` depend on `oracle`. **Not decided — pick
+before the triage sidecar grows.** Note the loss here is milder than the setups one: triage
+records `approve`/`skip` only, with no reason and no note, so it is thinner ground truth.
 
 ---
 
