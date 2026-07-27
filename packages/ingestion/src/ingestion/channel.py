@@ -133,3 +133,18 @@ def is_recent_enough(published_at: str | None, max_age_days: int, *, today: date
         return False
     cutoff = today - timedelta(days=max_age_days)
     return date.fromisoformat(published_at) >= cutoff
+
+
+def age_in_days(published_at: str | None, *, today: date) -> int | None:
+    """Days since publication, or None when the date is missing or unparseable.
+
+    None rather than a sentinel like -1 or 0: callers decide permanently on this (see
+    ``roster.CAPTION_GRACE_DAYS``), and a number that silently means "don't know" is exactly
+    how "unknown" gets treated as "old".
+    """
+    if not published_at:
+        return None
+    try:
+        return (today - date.fromisoformat(published_at)).days
+    except ValueError:
+        return None

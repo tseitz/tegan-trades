@@ -19,6 +19,21 @@
 
   06:15 local: after the US close and the overnight session, before the morning. Late enough
   that a sleeping laptop has usually woken; if it hasn't, launchd fires on wake instead.
+
+  `caffeinate` wraps the script so the run is not spread across three hours of sleep. Observed
+  2026-07-27: launchd fired the missed 06:15 job at 06:30 during a DarkWake, the lid stayed
+  shut on battery, and the job crawled through ~2-second darkwake slices until the lid opened
+  at 09:38 — finishing at 09:50. Wall clock said `ingest-roster (8881s)`; actual work was a
+  few minutes.
+
+  What the flags can and cannot do, because the difference matters here:
+    -s  prevent system sleep — **only honoured on AC power** (see caffeinate(8))
+    -i  prevent idle sleep — honoured on battery, but a *closed lid* is not idle sleep
+    -m  prevent disk idle sleep
+  So: plugged in, the run completes in a few minutes at 06:15. Lid open on battery, likewise.
+  **Lid closed on battery, macOS sleeps regardless and the run still crawls** — that is a
+  platform policy, not a setting we are missing. Leaving it plugged in overnight is the whole
+  fix. The flags cost nothing when they cannot be honoured.
 -->
 <plist version="1.0">
 <dict>
@@ -27,6 +42,10 @@
 
   <key>ProgramArguments</key>
   <array>
+    <string>/usr/bin/caffeinate</string>
+    <string>-s</string>
+    <string>-i</string>
+    <string>-m</string>
     <string>/bin/bash</string>
     <string>/Users/tseitz/code/projects/tegan-trades/scripts/nightly.sh</string>
   </array>

@@ -3,6 +3,9 @@ from datetime import date
 
 import pytest
 
+from youtube_transcript_api import TranscriptsDisabled
+
+from ingestion import deadletters
 from ingestion.channel import VideoMeta, VideoStub
 from ingestion.roster import (
     ChannelResult,
@@ -213,14 +216,218 @@ def test_format_summary_reports_counts():
     r.ingested = ["a", "b"]
     r.skipped = ["c"]
     r.stale = ["d"]
-    r.failed = [("e", "transcript: no captions")]
+    r.dead = ["e"]
+    r.pending = ["f"]
+    r.failed = [("g", "transcript: something nobody expected")]
     text = format_summary([r])
     assert "Alice" in text
     assert "2 ingested" in text
     assert "1 skipped" in text
     assert "1 stale" in text
+    assert "1 dead" in text
+    assert "1 pending" in text
     assert "1 failed" in text
-    assert "no captions" in text  # failure reasons surfaced
+    assert "nobody expected" in text  # failure reasons surfaced
+
+
+# ── permanently dead videos ─────────────────────────────────────────────────
+
+def test_captions_disabled_is_recorded_dead_rather_than_failed(tmp_path):
+    """The nightly of 2026-07-27 reported `10 failed` and all ten were expected, so an
+    eleventh — a genuinely new failure — could not have been noticed. Permanent outcomes move
+    out so `failed` goes back to meaning "nobody expected this"."""
+    target = ChannelTarget("Alice", "@alice", 50, 730)
+
+    def transcript(vid):
+        raise TranscriptsDisabled(vid)
+
+    result = ingest_channel(
+        target,
+        today=date(2026, 7, 27),
+        resolve=lambda ch, n: [_stub("nocaption01")],
+        hydrate=lambda vid: _meta(vid, "2026-07-01"),
+        fetch_transcript=transcript,
+        exists=lambda platform, vid: False,
+        save_video=lambda *a: pytest.fail("nothing to save"),
+    )
+    assert result.dead == ["nocaption01"]
+    assert result.failed == []
+    assert result.dead_registry["nocaption01"]["reason"] == deadletters.NO_CAPTIONS
+
+
+def test_a_fresh_upload_without_captions_yet_is_pending_not_dead(tmp_path):
+    """The regression this rule was written for, from live data. TTrades' `Je7cd9HJUBE`
+    ("Morning Q&A", published 2026-07-27) raised `TranscriptsDisabled` in the 06:30 nightly and
+    ingested cleanly at 11:00 the same day — YouTube generates automatic captions well after
+    the upload lands. Without the grace period the registry would have buried a same-day video
+    from an active roster member forever, which is precisely the false positive it exists to
+    be too careful to make."""
+    target = ChannelTarget("Alice", "@alice", 50, 730)
+
+    def transcript(vid):
+        raise TranscriptsDisabled(vid)
+
+    result = ingest_channel(
+        target,
+        today=date(2026, 7, 27),
+        resolve=lambda ch, n: [_stub("Je7cd9HJUBE")],
+        hydrate=lambda vid: _meta(vid, "2026-07-27"),   # published today
+        fetch_transcript=transcript,
+        exists=lambda platform, vid: False,
+        save_video=lambda *a: pytest.fail("nothing to save"),
+    )
+    assert result.pending == ["Je7cd9HJUBE"]
+    assert result.dead == [] and result.failed == []
+    assert result.dead_registry == {}
+
+
+def test_an_already_dead_video_is_not_re_fetched(tmp_path):
+    target = ChannelTarget("Alice", "@alice", 50, 730)
+    registry = deadletters.record(
+        "nocaption01", deadletters.NO_CAPTIONS, registry={}, today=date(2026, 7, 1)
+    )
+    result = ingest_channel(
+        target,
+        today=date(2026, 7, 27),
+        resolve=lambda ch, n: [_stub("nocaption01")],
+        hydrate=lambda vid: pytest.fail("should not hydrate a dead video"),
+        fetch_transcript=lambda vid: pytest.fail("should not fetch a dead video"),
+        exists=lambda platform, vid: False,
+        save_video=lambda *a: pytest.fail("nothing to save"),
+        dead=registry,
+    )
+    assert result.dead == ["nocaption01"]
+
+
+def test_a_dead_video_is_still_counted_rather_than_vanishing(tmp_path):
+    """A registry whose entries stopped appearing anywhere would be unfalsifiable — "correctly
+    skipped" and "quietly lost" would look identical, which is the failure `verify-roster`
+    exists to catch one level up."""
+    target = ChannelTarget("Alice", "@alice", 50, 730)
+    registry = deadletters.record(
+        "nocaption01", deadletters.NO_CAPTIONS, registry={}, today=date(2026, 7, 1)
+    )
+    result = ingest_channel(
+        target,
+        today=date(2026, 7, 27),
+        resolve=lambda ch, n: [_stub("nocaption01")],
+        hydrate=lambda vid: _meta(vid, "2026-07-20"),
+        fetch_transcript=lambda vid: "x",
+        exists=lambda platform, vid: False,
+        save_video=lambda *a: None,
+        dead=registry,
+    )
+    assert "1 dead" in format_summary([result])
+
+
+def test_a_deleted_video_is_pending_not_buried(tmp_path):
+    """A metadata failure happens *before* hydration, so there is no `published_at` to
+    age-gate against — the grace period that makes a transcript verdict safe cannot apply
+    here. Retried forever rather than buried on a prose match alone: a couple of wasted
+    hydrates a night against the risk of discarding a video because yt-dlp reworded something.
+    `failed` still ends up clean, which was the point."""
+    target = ChannelTarget("Alice", "@alice", 50, 730)
+
+    def hydrate(vid):
+        raise RuntimeError("ERROR: [youtube] gone0000001: This video is not available")
+
+    result = ingest_channel(
+        target,
+        today=date(2026, 7, 27),
+        resolve=lambda ch, n: [_stub("gone0000001")],
+        hydrate=hydrate,
+        fetch_transcript=lambda vid: pytest.fail("should not reach the transcript"),
+        exists=lambda platform, vid: False,
+        save_video=lambda *a: pytest.fail("nothing to save"),
+    )
+    assert result.pending == ["gone0000001"]
+    assert result.dead == [] and result.failed == []
+    assert result.dead_registry == {}
+
+
+def test_a_scheduled_livestream_is_pending_not_dead_and_not_failed(tmp_path):
+    """It becomes fetchable on its own, so retrying is right — but it is not a failure, and
+    burying it would discard the stream permanently the day before it aired."""
+    target = ChannelTarget("Alice", "@alice", 50, 730)
+
+    def hydrate(vid):
+        raise RuntimeError("ERROR: [youtube] soon0000001: This live event will begin in 2 days.")
+
+    result = ingest_channel(
+        target,
+        today=date(2026, 7, 27),
+        resolve=lambda ch, n: [_stub("soon0000001")],
+        hydrate=hydrate,
+        fetch_transcript=lambda vid: pytest.fail("should not reach the transcript"),
+        exists=lambda platform, vid: False,
+        save_video=lambda *a: pytest.fail("nothing to save"),
+    )
+    assert result.pending == ["soon0000001"]
+    assert result.dead == [] and result.failed == []
+    assert result.dead_registry == {}
+
+
+def test_an_unrecognised_error_stays_a_failure(tmp_path):
+    """The safe direction. A mis-parse that leaves something in `failed` costs one wasted
+    fetch a night; a mis-parse that buries it discards the video for good."""
+    target = ChannelTarget("Alice", "@alice", 50, 730)
+
+    def hydrate(vid):
+        raise RuntimeError("ERROR: [youtube] weird000001: something new and unclassified")
+
+    result = ingest_channel(
+        target,
+        today=date(2026, 7, 27),
+        resolve=lambda ch, n: [_stub("weird000001")],
+        hydrate=hydrate,
+        fetch_transcript=lambda vid: pytest.fail("should not reach the transcript"),
+        exists=lambda platform, vid: False,
+        save_video=lambda *a: pytest.fail("nothing to save"),
+    )
+    assert result.dead == []
+    assert [vid for vid, _ in result.failed] == ["weird000001"]
+
+
+def test_a_blocked_video_is_never_buried(tmp_path):
+    """The one case that must not become permanent: an IP block is systemic and temporary, so
+    recording it would discard a video forever over one bad night's egress."""
+    target = ChannelTarget("Alice", "@alice", 50, 730)
+
+    def transcript(vid):
+        raise TranscriptBlocked("ip blocked")
+
+    with pytest.raises(RunAborted) as caught:
+        ingest_channel(
+            target,
+            today=date(2026, 7, 27),
+            resolve=lambda ch, n: [_stub("blocked0001")],
+            hydrate=lambda vid: _meta(vid, "2026-07-20"),
+            fetch_transcript=transcript,
+            exists=lambda platform, vid: False,
+            save_video=lambda *a: pytest.fail("nothing to save"),
+        )
+    result = caught.value.result
+    assert result.dead == []
+    assert result.dead_registry == {}
+    assert [vid for vid, _ in result.failed] == ["blocked0001"]
+
+
+def test_the_registry_persists_across_a_sweep(tmp_path):
+    """Written once at the end of the sweep, so tomorrow's run starts from what today learned."""
+    wl = load_watchlist(_write(tmp_path, WATCHLIST))
+    dead_path = tmp_path / "_dead.json"
+
+    def fake_ingest_channel(target, *, root, today, dead):
+        r = ChannelResult(target.person, target.channel)
+        r.dead = [f"dead-{target.person}"]
+        r.dead_registry = deadletters.record(
+            f"dead-{target.person}", deadletters.NO_CAPTIONS,
+            registry=dead, today=date(2026, 7, 27),
+        )
+        return r
+
+    ingest_roster(wl, _ingest_channel=fake_ingest_channel, dead_path=dead_path)
+    assert set(deadletters.load(dead_path)) == {"dead-Alice", "dead-Bob"}
 
 
 # ── silently-skipped active people ──────────────────────────────────────────

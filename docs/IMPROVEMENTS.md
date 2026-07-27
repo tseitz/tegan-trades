@@ -914,6 +914,67 @@ Interacts with §9 (the extractive pre-filter) — X needs no pre-filter at all.
 
 ---
 
+## 17. The nightly's `failed` count was never zero, so it could not report anything · `FIXED 2026-07-27`
+
+The 06:30 run reported `10 failed` and **every one was expected**: 6 with captions disabled, 2
+deleted, 2 livestreams that had not aired. A counter that always reads ten cannot report the
+eleventh. That is exactly the silent-failure shape §6 asks the nightly to design against, and it
+had been sitting in the summary line the whole time.
+
+The cost was never the network — none of these reach the retry backoff, because the exceptions
+marking them permanent are not `RequestException` and so bypass `_TRANSIENT` on the first
+attempt. The cost was the signal.
+
+**Split into three, `ingestion/deadletters.py` + `ChannelResult`:** `dead` ("never going to
+work, stop asking", recorded in `data/transcripts/_dead.json`), `pending` ("not yet, ask again
+tomorrow"), `failed` ("nobody expected this"). Live result, verified twice:
+
+    TOTAL: 0 ingested, 818 skipped, 107 stale, 5 dead, 4 pending, 0 failed
+
+Second pass byte-identical — dead videos are counted, not silently dropped, and not re-fetched.
+
+### The live run found a defect the unit tests did not · worth not re-deriving
+
+The first version buried anything raising `TranscriptsDisabled`. TTrades' **`Je7cd9HJUBE`
+("Morning Q&A", published 2026-07-27) raised exactly that in the 06:30 nightly and ingested
+cleanly at 11:00 the same day** — YouTube generates automatic captions hours after an upload.
+That rule would have permanently discarded a same-day video from an active roster member.
+
+Hence `CAPTION_GRACE_DAYS = 2`: a missing transcript on a video younger than the grace is
+`pending`, not dead. An unknown publication date counts as young, because burying on a fact we
+don't have is the same mistake.
+
+**Metadata-side failures are never buried at all, and the asymmetry is deliberate.** yt-dlp
+reports them as prose on a `DownloadError` *before* hydration succeeds, so there is no
+`published_at` to age-gate against — the thing that makes a transcript verdict safe cannot be
+applied. Both "This video is not available" and "This live event will begin" route to `pending`
+and retry forever. Cost: two wasted hydrates a night. Alternative: discarding a video for good
+because yt-dlp reworded something. `failed` still lands on zero, which was the point.
+
+`_IRMBuen60Y` and `VXL1FPbgW7E` are genuinely deleted (§13) and will therefore be retried
+nightly forever. Accepted knowingly — the registry is for things we can prove are permanent
+*and* age-check.
+
+### The nightly is spread across three hours of sleep, and only partly fixable
+
+Same run, from `pmset -g log`: launchd fired the missed 06:15 job at **06:30:03 during a
+DarkWake** — not on lid-open — then the machine stayed shut on battery, surfacing for ~2-second
+darkwake slices every ~15 minutes. The lid opened at **09:38:04**; the job finished at **09:50**.
+So `ingest-roster (8881s)` is 2h28m of wall clock over a few minutes of work, and the run
+effectively completed *because* the laptop was opened.
+
+The plist now wraps the script in `caffeinate -s -i -m`. **This only helps where macOS allows
+it**, and the limits are policy rather than configuration:
+
+- `-s` (prevent system sleep) is **only honoured on AC power** — caffeinate(8) says so outright.
+- `-i` (prevent idle sleep) works on battery, but **a closed lid is not idle sleep**.
+
+So: plugged in → completes in minutes at 06:15. Lid open on battery → likewise. **Lid closed on
+battery → still crawls, and no setting changes that.** Leaving it plugged in overnight is the
+actual fix. The flags cost nothing when they can't be honoured.
+
+---
+
 ## 16. A zone price had traded clean through scored *maximum* depth · `FIXED 2026-07-27`
 
 Found by running §4's correlation, which is why §4's "accumulate another session first" was the
