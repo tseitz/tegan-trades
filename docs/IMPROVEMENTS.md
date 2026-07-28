@@ -19,22 +19,28 @@ be a problem; revisit if it bites) · `PARTLY DONE` (a residual is named in the 
 
 ## Where to start
 
-**The thing that blocked the most work is fixed, and now wants one sitting.** §4's sampling
+**The thing that blocked the most work is fixed, and the bottleneck moved.** §4's sampling
 defect — each sitting judging a narrower slice than the last, with the approval threshold
-moving with it — was fixed on 2026-07-28: the queue draws a stratified sample and every
-decision records what else was on screen. **What it now needs is decisions.** Every entry that
-says "measure this against the sidecar first" is waiting on a single `uv run setups` sitting.
+moving with it — was fixed on 2026-07-28: the queue draws a stratified sample, every decision
+records what else was on screen, and §11 and §19(d) unclipped the two terms that could not
+vary. Every entry that says "measure this against the sidecar first" now waits on one
+`uv run setups` sitting.
+
+**And that sitting has nothing to judge.** 67 of 69 candidates are already decided, so the
+command prints `Nothing to review`. The bottleneck is no longer measurement design, or code, or
+attention — it is **candidate supply**, which is why §6f leads the table below.
 
 | | Entry | Why now | Cost |
 |---|---|---|---|
-| 1 | **§4** — run one stratified sitting | Unblocks §11's recency half, §18, §19(d)'s open half, §21. The machinery is built and the scorer is now worth measuring; nothing else in the file has that fan-out. | your attention, ~25 candidates |
-| 2 | **§6f** — `ETH/BTC` ratio, then `BTC.D` | 28 rows routed nowhere and both legs are already cached. A division, not a new source. | free, local |
-| 3 | **§27** — audit 20 `timeframe_conflict` rejections | 1,000 outcomes discarded by a gate nobody has read a single example from. | free, local |
-| 4 | **§7** — ATR-relative stop padding | Needs `k` measured against the 84-candidate baseline, but nothing gates that measurement. | free, local |
+| 1 | **§6f** — `ETH/BTC` ratio, then `BTC.D` | 28 and 44 rows routed nowhere, both legs already cached. A division, not a new source — **and it is the only lever in reach that refills the queue**, which §4 now needs. | free, local |
+| 2 | **§27** — audit 20 `timeframe_conflict` rejections | 1,000 outcomes discarded by a gate nobody has read a single example from. | free, local |
+| 3 | **§7** — ATR-relative stop padding | Needs `k` measured against the 84-candidate baseline, but nothing gates that measurement. | free, local |
+| 4 | **§4** — one stratified sitting | Unblocks §11's recency half, §18, §19(d)'s open half, §21. Machinery built and the scorer is finally worth measuring — but **the queue is currently empty**, so this waits on row 1 or on the nightly. | your attention, once there is a queue |
 
-**Done 2026-07-28, and the reason row 1 is now worth spending attention on:** §11's cap and
-§19(d)'s inflation both shipped as `SCORE_VERSION` 6, so the two terms that structurally could
-not vary now do. A sitting held before that would have re-confirmed two dead terms.
+**Done 2026-07-28:** §4's sampler and decision context; §11's cap and §19(d)'s distance
+inflation, both as `SCORE_VERSION` 6. The two terms that structurally could not vary now do, so
+a sitting is finally worth holding — which is exactly when it turned out there was nothing left
+to judge. See §4's residual.
 
 **Waiting on §4's first stratified sitting, not on code:** §18 (`collapse` rep rule) · §21
 (funding weighting) · §11's recency half. Each defers to a sidecar correlation that is now
@@ -270,12 +276,29 @@ build; the probe asserts that rather than assuming it.
 itself a score-ordered slice. The correction makes the old data readable; it does not make it
 sufficient.
 
-### Residual: no stratified sitting has happened yet
+### Residual: no stratified sitting has happened yet, and the queue is empty · `2026-07-28`
 
 Everything above is machinery plus a retrospective correction. **The next `uv run setups`
 sitting is the first one whose decisions need no conditioning at all** — and until a few exist,
-`queue_band == "tail"` selects an empty set. That is the one thing left, and it is Tegan's
-attention rather than code.
+`queue_band == "tail"` selects an empty set.
+
+**But the sitting cannot currently be held, and this is the thing to know before planning
+around it.** `uv run setups` prints `Nothing to review`: of 69 candidates, **67 are already
+decided** (29 approved · 20 later · 16 rejected · 12 archived across 77 zones) and the other 2
+are on excluded assets. Decisions are keyed on `Candidate.key`, which is content-addressed on
+the zone, so the `SCORE_VERSION` 6 bump correctly does *not* resurface them — a zone is not
+re-judged because the scorer changed, and it should not be.
+
+**So §4 is now gated on queue supply, not on attention or code.** Three things refill it, in
+increasing order of how much control you have:
+
+- **`later` rows resurfacing.** 20 of them, and `resurfaces` returns them once price enters the
+  zone or another person backs it. Free, but it happens on the market's schedule.
+- **Corpus growth via the nightly job.** Also passive, and slow at the margin — adding four
+  voices took the corpus 3,851 → 4,471 rows and the queue only 49 → 53.
+- **§6f, which is the lever actually in reach.** 429 rows sit on assets the oracle cannot
+  price; `ETH/BTC` (28 rows) and `BTC.D` (44) are computable from series already cached. That
+  is the cheapest way to put judgeable candidates in front of a stratified draw.
 
 **Consequently §11, §18 and §21 are no longer blocked on a fix — they are blocked on a
 sitting.** Each still defers to a sidecar correlation; that correlation is now *possible*,
