@@ -1137,6 +1137,47 @@ the 30 approved assets and the queue is mostly crypto alts outside it. Every unm
 correctly gets `None` rather than a guessed zero, but a correlation over 13 rows is thin.
 Widening the map is the cheap lever; do it before mining, not after.
 
+### The coverage gap now blocks execution, not just carry · measured 2026-07-28
+
+§27 released 23 candidates and the queue turned over, so this residual stopped being a thin-
+correlation problem and became a "you cannot act on the queue" problem. Of the **15 rows in the
+live queue, exactly one — `SILVER` — has any entry in `cfg/venue_map.yaml`.** Approving anything
+else prints `! not executable — <asset> has no listing on this venue`.
+
+**That message is mostly false.** Checked against the July funding log, which records every
+market each venue actually reported:
+
+| asset | hyperliquid | lighter | aster | in venue_map? |
+|---|---|---|---|---|
+| `WLD` | yes | yes | yes | **no** |
+| `TAO` | yes | yes | yes | **no** |
+| `DASH` | yes | yes | yes | **no** |
+| `RKLB` | `xyz` | yes | yes | **no** |
+| `BE` | `xyz` | yes | yes | **no** |
+| `USAR` | `xyz` | — | yes | **no** |
+| `ZM` | `xyz` | — | yes | **no** |
+| `SPX6900` | as `SPX` | as `SPX` | as `SPXUSDT` | **no** |
+| `HL`, `SGML`, `SBSW`, `INTL` | — | — | — | correctly absent |
+
+So at least **8 of the 12** unmapped assets are listed somewhere and are being reported as
+untradeable purely because the map has no row for them.
+
+**`SPX6900` is the sharp one, and the file's own header predicted it.** That header documents
+the collision in detail — "Hyperliquid's core book lists SPX6900, a memecoin, under `SPX`" — and
+then maps only the `SPX` (index) side. The memecoin side, which the corpus also carries and which
+is sitting at the top of the queue, has no entry, so the one asset the header warns about
+loudest is the one that cannot be executed.
+
+**Widening it is not a mechanical paste.** The header's whole argument is that name-matching a
+venue ticker is "silently catastrophic", and `SPX6900 -> SPX` is precisely why: the right entry
+for the memecoin is the symbol that would be *wrong* for the index. Each row needs the instrument
+confirmed, not the string matched. Crypto majors (`WLD`, `TAO`, `DASH`) are low risk; the HIP-3
+equities (`RKLB`, `BE`, `USAR`, `ZM`) need checking against the builder's listing; `SPX6900`
+needs care in both directions.
+
+**Do not let the four genuine absences be filled by guessing.** `HL`, `SGML`, `SBSW` and `INTL`
+are listed by no venue in the log, and per this file's rule absence is a real answer.
+
 **Residual — the measurement itself.** Was blocked on §4; **unblocked 2026-07-28**, when the
 queue started drawing a stratified sample so a sidecar correlation is valid again. The point
 stands: does `carry_reward_risk` separate approve from reject better than `reward_risk`? Needs
