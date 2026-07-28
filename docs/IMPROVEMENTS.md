@@ -374,7 +374,88 @@ weight vector is fitting two populations.
 - **4 of the 6 rejections used `other`.** That bucket calibrates nothing: `trade_quality` feeds
   the setups scorer and `view_wrong` feeds roster trust, and `other` is only readable if the
   free-text note happens to say something — which is exactly how the `SPX6900` confound above
-  was recoverable at all. Prefer the specific reasons where they fit.
+  was recoverable at all. **This was investigated on 2026-07-28 and the diagnosis inverted —
+  see the next subsection.** The answer was not "prefer the specific reasons"; it was that the
+  specific reasons were the wrong five.
+
+### The reason vocabulary was cutting across the categories, not along them · `FIXED 2026-07-28`
+
+Hand-labelling all 29 vocabulary-1 rows against what their free text *literally says*, rather
+than against the bucket they were filed under:
+
+| What the note says | Rows | Filed as |
+|---|---|---|
+| **stale** — the call aged out | 8 | `trade_quality` ×4, `other` ×3, `archive/setup` ×1 |
+| **not_my_market** / **unknown_asset** | 8 | `archive/asset` ×4, `archive/setup` ×3, `other`(reject!) ×1 |
+| **far** — entry/target implausible vs price | 5 | `trade_quality` ×4, `view_wrong` ×1 |
+| **dupe** — better zone already queued | 3 | `other` ×2, `view_wrong` ×1 |
+| **view** — I read it differently right now | 3 | `view_wrong` ×1, `other` ×2 |
+| price already past target (§19's gate, since fixed) | 1 | `trade_quality` |
+| no note | 1 | `trade_quality` |
+
+Three findings, each of which independently condemns the old vocabulary:
+
+- **`other` was never a residue bucket.** All 9 rows have a nameable category — 3 stale,
+  2 not-my-market, 2 dupe, 2 view. **Zero** are genuinely miscellaneous. Telling yourself to
+  "prefer the specific reasons" cannot work when the specific reasons are the wrong five.
+- **`trade_quality` was 80% not about trade quality** — 4 stale, 4 far, 1 dead gate, 1 blank of
+  10. That is the bucket this section mines to calibrate the setups scorer.
+- **`view_wrong` was 1-for-3** — `SPX` was far, `WLD` was a dupe.
+
+**The reject/archive split was the mechanism.** The prompt asked scope first (reject vs archive)
+and cause second, but the notes decide cause first and the cause implies the scope every time —
+so the first question was asked before it had an answer, and it mis-routed in *both* directions.
+All 3 `archive`+`setup` rows read as asset-level (`DOW` "not familiar with this asset", `CLSK`
+"sideways **forever**", `INTL` "not really interested in this asset") and are therefore inert,
+because `drop_decided` keys on the zone — they will resurface. Meanwhile `PNUT` "Zero interest in
+PNUT" went in as `reject`+`other` and had to be hand-added to `cfg/exclusions.yaml` afterwards.
+Behaviourally the two verdicts were already identical: both in `_PERMANENT`, both keyed on the
+zone, differing only in whether the exclusions file was written.
+
+**Vocabulary 2 is flat and derives scope from the reason** — `s`/`f`/`d`/`b`/`v` bury the zone,
+`n`/`?` gate the asset and write `cfg/exclusions.yaml`. One keystroke, then an optional note.
+Rows carry `reason_vocab: 2`; every vocabulary-2 string is distinct from every vocabulary-1
+string, so a mining pass can partition on `reason` alone if it prefers. `?` also prints a
+canon-review warning: "I don't recognise this ticker" is a *data* complaint, and `UROY` ("I see
+URC?") and `DASH` ("able to know Doordash from DASH the crypto") are two live routing bugs that
+were filed as decisions nobody would ever grep.
+
+**The 29 rows keep their vocabulary-1 values** — the sidecar is append-only and §4(a) forbids
+rewriting. Mine them through the table above, which is why it is recorded here rather than
+applied to the file. Row identity by asset plus note snippet:
+
+- **stale** — `MON` "levels a bit all over the place" · `PUMP` "Very stale" · `RIVN` "Very stale
+  at this point" · `AVAX` "524 days old" · `RIVN` "tried this trade back when" · `SHIB` "Just
+  old, not interested" · `DASH` "This one in particular is stale" · `INTL` "Stale, not really
+  interested"
+- **far** — `PLUME` "That exit is pretty high" · `XMR` "$799 at 130% is pretty optimistic" ·
+  `SPX` "entry is absurdly low" · `SOL` "entry is absurdly high" · `TAO` "Target is pretty high"
+- **not_my_market** — `PNUT` "Zero interest" · `ADBE` "not my edge" · `MELANIA` "do not want to
+  trade this asset" · `CLSK` "sideways forever"
+- **unknown_asset** — `DOW` "not familiar" · `TRAC` "probably a dead asset" · `UROY` "I see
+  URC?" · `STABLE` "Never heard of this one"
+- **dupe** — `SPX6900` "already have an spx6900 entry" · `WLD` "not as good as weekly" · `DASH`
+  "Weekly already presented"
+- **view** — `CL` "Iran conflict" · `OIL` "Same as CL" · `MU` "Memory is hot right now"
+- **gate defect, not a judgement** — `OIL` "Price now is greater than target"
+- **no note** — `ZEC`
+
+**One check this unblocks, and it should be run on the next mining pass.** `freshness` is the
+strongest term in the table above at AUC **0.789** — and **8 of 29 rejections say, in words,
+"this is old"**. The AUC is therefore partly measuring the scorer agreeing with Tegan about age
+rather than fresh setups performing better. Re-run it excluding `reason == "stale"` rows and see
+whether it survives. Note this does not make the term useless even if it collapses: ranking by
+freshness still surfaces what he will *look* at. It would only mean the term has no demonstrated
+relationship to outcome, which is a different claim from the one this section currently implies.
+
+**45% of negative decisions are queue defects, not judgements** — 8 stale + 5 far of 29. As
+their own keys they become a per-sitting count that drives §6 and §18/§19 directly, instead of
+being buried inside `trade_quality`.
+
+**`b` (bad setup) has almost no support yet** — 1 row of 29, and that one has no note. Expected:
+the queue has been serving so much stale and too-far material that genuine setup critique has
+not had a fair shot. It is the bucket this section actually wants to grow. **If `b` is still
+near zero after a few sittings, that is itself the finding** and should be written here.
 
 ### Do not re-derive these
 
@@ -397,9 +478,12 @@ weight vector is fitting two populations.
   weekly rows sorted ahead of 39 daily ones, `--limit 25` was **25 weekly and zero daily**.
   The stratified draw spans both by construction, so this is now fixed rather than merely
   understood — but it is fixed only for sittings held *after* that date.
-- **Do not mine the 12 `archived` rows as clean negatives.** Confirmed with Tegan 2026-07-27:
-  `x` was used for both "I don't trade this asset" and "stale, bury it". The meaning was never
-  recorded and cannot be recovered. `x` now asks which kind it is, so this does not recur.
+- **Do not mine the 8 reason-less `archived` rows as clean negatives.** Confirmed with Tegan
+  2026-07-27: `x` was used for both "I don't trade this asset" and "stale, bury it". The
+  meaning was never recorded and cannot be recovered — they carry no `reason` and no
+  `reason_vocab`, which is how you identify them. The 4 archives that *do* carry a
+  vocabulary-1 reason are labelled in the table above and are minable. Vocabulary 2 removed
+  the key that produced the unlabelled ones.
 - **Do not derive `cfg/exclusions.yaml` entries from decision prose automatically.** That
   file's header explains why: a temporary reservation promoted into a permanent rule silently
   deletes a market from the queue for good.

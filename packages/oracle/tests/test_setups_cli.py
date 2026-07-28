@@ -514,50 +514,129 @@ def test_blank_input_defers_rather_than_burying(tmp_path):
     assert record["decision"] == setups_cli.LATER
 
 
-def test_reject_records_the_reason(tmp_path):
-    """'Bad trade' calibrates the setups scorer; 'their view is wrong' calibrates the roster
-    trust score. Different consumers, so they must not collapse into one verdict."""
-    _, trade = _run(["r", "t", ""], _candidate(), tmp_path)
-    assert trade["decision"] == setups_cli.REJECTED
-    assert trade["reason"] == setups_cli.REASON_TRADE
+def test_every_key_settles_the_verdict_and_the_reason_together(tmp_path):
+    """The whole point of vocabulary 2. One keystroke says what happens *and* why; scope is
+    derived from the reason rather than asked first. Vocabulary 1 asked scope first and
+    mis-routed in both directions — all 3 archive+setup rows read as asset-level and are
+    therefore inert, while "Zero interest in PNUT" went in as reject+other."""
+    expected = {
+        "a": (setups_cli.APPROVED, None),
+        "l": (setups_cli.LATER, None),
+        "s": (setups_cli.REJECTED, setups_cli.REASON_STALE),
+        "f": (setups_cli.REJECTED, setups_cli.REASON_FAR),
+        "d": (setups_cli.REJECTED, setups_cli.REASON_DUPE),
+        "b": (setups_cli.REJECTED, setups_cli.REASON_SETUP),
+        "v": (setups_cli.REJECTED, setups_cli.REASON_DISAGREE),
+        "n": (setups_cli.ARCHIVED, setups_cli.REASON_NOT_MY_MARKET),
+        "?": (setups_cli.ARCHIVED, setups_cli.REASON_UNKNOWN_ASSET),
+    }
+    assert set(expected) == set(setups_cli._CHOICES), "every key must be exercised"
+    for key, (verdict, reason) in expected.items():
+        answers = [key] if reason is None else [key, "why"]
+        _, record = _run(answers, _candidate(), tmp_path / key.replace("?", "q_"))
+        assert record["decision"] == verdict, key
+        assert record.get("reason") == reason, key
 
-    _, view = _run(["r", "v", ""], _candidate(), tmp_path / "b")
-    assert view["reason"] == setups_cli.REASON_VIEW
+
+def test_only_the_two_asset_keys_gate_the_asset():
+    """Scope is a property of the key, and exactly two keys carry it. If a per-zone key ever
+    starts writing exclusions.yaml, a single keystroke deletes a market from the queue."""
+    gating = {k for k, c in setups_cli._CHOICES.items() if c.excludes}
+    assert gating == {"n", "?"}
+    assert all(setups_cli._CHOICES[k].decision == setups_cli.ARCHIVED for k in gating)
 
 
-def test_a_one_keystroke_reason_still_gets_asked_for_a_note(tmp_path):
-    """The enum says which loop to calibrate; only the note says what to change. Recorded
-    verbatim — this is the field a later mining pass reads to find the actual pattern."""
-    _, record = _run(["r", "t", "2.7R on a small tier isn't worth it"], _candidate(), tmp_path)
-    assert record["reason"] == setups_cli.REASON_TRADE
-    assert record["reason_note"] == "2.7R on a small tier isn't worth it"
+def test_a_reason_is_stamped_with_its_vocabulary(tmp_path):
+    """29 rows carry vocabulary 1 and cannot be rewritten — the sidecar is append-only. The
+    marker is what lets a mining pass partition them without inferring from the string."""
+    _, record = _run(["s", "524 days old"], _candidate(), tmp_path)
+    assert record["reason_vocab"] == setups_cli.REASON_VOCAB == 2
+
+
+def test_a_row_with_no_reason_carries_no_vocabulary_marker(tmp_path):
+    """The 8 reason-less archives from 2026-07-27 must stay exactly as unminable as they are.
+    A vocab marker on a reason-less row would imply a meaning nobody recorded."""
+    _, record = _run(["l"], _candidate(), tmp_path)
+    assert "reason_vocab" not in record and "reason" not in record
+
+
+def test_a_bare_key_is_asked_for_a_note(tmp_path):
+    """The key says which loop to calibrate; only the note says what to change. 28 of the 29
+    vocabulary-1 rows carry one, and that rate is what makes the sidecar minable at all."""
+    _, record = _run(["f", "$799 at 130% is a pretty optimistic target"], _candidate(), tmp_path)
+    assert record["reason"] == setups_cli.REASON_FAR
+    assert record["reason_note"] == "$799 at 130% is a pretty optimistic target"
 
 
 def test_an_empty_note_is_omitted_rather_than_stored_blank(tmp_path):
     """Absent must be distinguishable from 'declined to say' when mining — a blank string
     would count as a note that exists and reads as nothing."""
-    _, record = _run(["r", "t", "   "], _candidate(), tmp_path)
+    _, record = _run(["s", "   "], _candidate(), tmp_path)
     assert "reason_note" not in record
 
 
-def test_a_typed_out_reason_is_kept_as_the_note_not_discarded(tmp_path):
-    """Typing a sentence at the reason prompt used to be silently thrown away — only its first
-    letter survived. Anything past one character is a note, so nothing typed is ever lost."""
-    _, record = _run(["r", "view is wrong, ETH broke down"], _candidate(), tmp_path)
-    assert record["reason"] == setups_cli.REASON_VIEW
+def test_a_key_and_a_note_on_one_line_skips_the_second_prompt(tmp_path):
+    """A space after the key drops the key from the note. This is the shape that reaches
+    exclusions.yaml, where a stored "?never heard of this" would be machine spoor in a file
+    whose whole value is that a human vouched for every line."""
+    _, record = _run(["s  very stale"], _candidate(), tmp_path)
+    assert record["reason"] == setups_cli.REASON_STALE
+    assert record["reason_note"] == "very stale"
+
+
+def test_a_typed_out_sentence_is_kept_whole_not_beheaded(tmp_path):
+    """No space at position 1 means the first letter is part of a word, not a key followed by
+    a note — so the string is stored verbatim. Vocabulary 1 behaved this way and it is why
+    "view is wrong, ETH broke down" survived rather than losing its 'v'."""
+    _, record = _run(["view is wrong, ETH broke down"], _candidate(), tmp_path)
+    assert record["reason"] == setups_cli.REASON_DISAGREE
     assert record["reason_note"] == "view is wrong, ETH broke down"
 
 
-def test_an_unrecognised_reject_reason_falls_back_to_other(tmp_path):
-    _, record = _run(["r", "zzz"], _candidate(), tmp_path)
-    assert record["reason"] == setups_cli.REASON_OTHER
-    assert record["reason_note"] == "zzz"
+def test_a_spelled_out_word_is_not_misread_as_a_key_plus_a_note(tmp_path):
+    """Typing the whole word must mean the key, not key-plus-note. Without this, "approve"
+    approves with the note "approve" and "stale" stores its own name."""
+    _, approved = _run(["approve"], _candidate(), tmp_path / "a")
+    assert approved["decision"] == setups_cli.APPROVED
+    assert "reason_note" not in approved
+
+    _, stale = _run(["stale", "the levels are all over the place"], _candidate(), tmp_path / "s")
+    assert stale["reason"] == setups_cli.REASON_STALE
+    assert stale["reason_note"] == "the levels are all over the place"
 
 
-def test_approve_and_later_are_not_asked_for_a_reason(tmp_path):
-    """Approve and later must not consume a second answer — a stray prompt there would shift
-    every subsequent keystroke onto the wrong candidate. Archive *is* asked (see below); it was
-    not until 2026-07-27, and one session recorded 8 unexplained permanent suppressions."""
+def test_the_retired_vocabulary_one_keys_defer_and_name_their_replacement(tmp_path):
+    """`r` and `x` cannot be honoured — neither says which of the new reasons it was, which is
+    the entire defect vocabulary 2 fixes. Recognising them only to say so beats deferring
+    silently, because muscle memory is what will actually be typed for the first few sittings."""
+    for retired, hint in (("r", "s/f/d/b/v"), ("x", "n or ?")):
+        _, record, printed = _run_x([retired], _candidate(), tmp_path / retired)
+        assert record["decision"] == setups_cli.LATER, retired
+        assert "reason" not in record
+        assert hint in printed and "retired" in printed
+
+
+def test_an_unrecognised_key_defers_rather_than_burying(tmp_path):
+    """A deliberate change of default. Vocabulary 1 could fall through to `other` or `setup`
+    because every branch it reached was inert; now the destructive keys share one prompt with
+    everything else, so the only safe fall-through is the reversible verdict."""
+    _, record, printed = _run_x(["zzz"], _candidate(), tmp_path)
+    assert record["decision"] == setups_cli.LATER
+    assert "reason" not in record and "reason_note" not in record
+    assert "not one of the keys" in printed
+
+
+def test_quit_is_an_exact_match_so_a_note_starting_with_q_does_not_end_the_sitting(tmp_path):
+    """`q` ends the sitting without recording anything, so it must never be reached by prefix.
+    "quite stale actually" starts with `q` and would silently drop the row."""
+    _, record, _printed = _run_x(["quite stale actually"], _candidate(), tmp_path)
+    assert record is not None, "the candidate must still have been decided"
+    assert record["decision"] == setups_cli.LATER
+
+
+def test_approve_and_later_are_not_asked_for_a_note(tmp_path):
+    """They must not consume a second answer — a prompt they don't take would shift every
+    subsequent keystroke onto the wrong candidate."""
     for answer, verdict in (("l", setups_cli.LATER), ("a", setups_cli.APPROVED)):
         _, record = _run([answer], _candidate(), tmp_path / answer)
         assert record["decision"] == verdict
@@ -578,10 +657,10 @@ def test_the_summary_names_every_verdict_triage_can_return(tmp_path):
         assert verdict in line
 
 
-# ── archive says which kind it is ─────────────────────────────────────────────
+# ── the two asset keys gate the asset ─────────────────────────────────────────
 
 def _run_x(answers, candidate, tmp_path, *, exclusions_path=None):
-    """``_run`` with an exclusions file in play, since archive can now write one."""
+    """``_run`` with an exclusions file in play, since `n` and `?` can write one."""
     it = iter(answers)
     path = tmp_path / "decisions.jsonl"
     lines = []
@@ -593,95 +672,93 @@ def _run_x(answers, candidate, tmp_path, *, exclusions_path=None):
     return counts, setups_cli.load_decisions(path).get(candidate.key), "\n".join(lines)
 
 
-def test_archive_records_which_kind_of_archive_it_was(tmp_path):
-    """One key was doing two jobs. Measured 2026-07-27: 8 of 25 decisions in a session were
-    archives, they carried no reason at all, and they were confirmed afterwards to be a *mix*
-    of "I don't trade this asset" and "this setup is stale" — which made all 8 unminable, and
-    §4 mines exactly this file. The keystroke is what separates them at the moment the meaning
-    is known, rather than leaving it to be guessed from prose later."""
-    _, asset, _ = _run_x(["x", "a", "zero interest"], _candidate(), tmp_path / "a")
-    assert asset["decision"] == setups_cli.ARCHIVED
-    assert asset["reason"] == setups_cli.ARCHIVE_ASSET
-    assert asset["reason_note"] == "zero interest"
-
-    _, setup, _ = _run_x(["x", "s", "this zone is done"], _candidate(), tmp_path / "s")
-    assert setup["reason"] == setups_cli.ARCHIVE_SETUP
-
-
-def test_an_asset_archive_writes_the_exclusion_that_makes_it_stick(tmp_path):
-    """The point of asking. `drop_decided` keys on the *zone*, so an asset-level archive buries
-    one order block and the next to form on the same instrument asks again — OIL and CL came
-    back on 4 of 59 rows the same day they were rejected. Only cfg/exclusions.yaml makes an
-    asset-level "no" permanent."""
+def test_not_my_market_writes_the_exclusion_that_makes_it_stick(tmp_path):
+    """`drop_decided` keys on the *zone*, so an asset-level "no" buries one order block and the
+    next to form on the same instrument asks again — OIL and CL came back on 4 of 59 rows the
+    same day they were rejected. Only cfg/exclusions.yaml makes it permanent."""
     excl = tmp_path / "exclusions.yaml"
-    _, record, printed = _run_x(["x", "a", "zero interest"], _candidate(asset="PNUT"),
+    _, record, printed = _run_x(["n", "zero interest"], _candidate(asset="PNUT"),
                                 tmp_path, exclusions_path=excl)
     assert exclusions.load(excl) == {"PNUT": "zero interest"}
-    assert record["reason"] == setups_cli.ARCHIVE_ASSET
+    assert record["decision"] == setups_cli.ARCHIVED
+    assert record["reason"] == setups_cli.REASON_NOT_MY_MARKET
     assert "PNUT" in printed and "exclusions.yaml" in printed
 
 
-def test_a_setup_archive_never_touches_the_exclusions_file(tmp_path):
-    """"Just this zone" is the conservative half and must stay conservative — silently
-    excluding a whole market from one ambiguous keystroke is the failure the exclusions header
-    warns about at length."""
+def test_dont_know_it_excludes_and_also_flags_the_symbol_for_canon_review(tmp_path):
+    """"I don't recognise this ticker" is usually a data complaint, not a preference, and the
+    sidecar is where those went to die: UROY recorded "Not sure what this asset is. I see URC?"
+    and DASH asked whether Doordash could be told from the crypto. Both are live routing bugs
+    that nobody would ever grep a decisions file to find."""
     excl = tmp_path / "exclusions.yaml"
-    _run_x(["x", "s", "done with this zone"], _candidate(asset="PNUT"), tmp_path,
-           exclusions_path=excl)
-    assert not excl.exists()
+    _, record, printed = _run_x(["?", "never heard of this one"], _candidate(asset="STABLE"),
+                                tmp_path, exclusions_path=excl)
+    assert record["reason"] == setups_cli.REASON_UNKNOWN_ASSET
+    assert exclusions.load(excl) == {"STABLE": "never heard of this one"}
+    assert "canon review" in printed and "STABLE" in printed
 
 
-def test_an_unrecognised_archive_kind_falls_back_to_the_setup_only_half(tmp_path):
-    """Ambiguity must resolve toward the reversible-ish answer. Guessing "asset" from a stray
-    keystroke would delete a market from the queue permanently."""
+def test_only_dont_know_it_flags_for_canon_review(tmp_path):
+    """`n` is a preference and says nothing about the registry. Flagging both would make the
+    warning noise, which is how a line that matters stops being read — §6h's failure class."""
     excl = tmp_path / "exclusions.yaml"
-    _, record, _ = _run_x(["x", "zzz"], _candidate(asset="PNUT"), tmp_path,
-                          exclusions_path=excl)
-    assert record["reason"] == setups_cli.ARCHIVE_SETUP
-    assert record["reason_note"] == "zzz"
-    assert not excl.exists()
+    _, _, printed = _run_x(["n", "zero interest"], _candidate(asset="PNUT"), tmp_path,
+                           exclusions_path=excl)
+    assert "canon review" not in printed
 
 
-def test_an_asset_archive_with_no_reason_records_the_decision_but_writes_no_rule(tmp_path):
+def test_no_per_zone_key_ever_touches_the_exclusions_file(tmp_path):
+    """The per-zone half must stay conservative — silently excluding a whole market from one
+    keystroke is the failure the exclusions header warns about at length. Checked across every
+    per-zone key rather than one, so adding a key can't quietly acquire the power."""
+    for key in ("s", "f", "d", "b", "v"):
+        excl = tmp_path / key / "exclusions.yaml"
+        _run_x([key, "done with this zone"], _candidate(asset="PNUT"), tmp_path / key,
+               exclusions_path=excl)
+        assert not excl.exists(), key
+
+
+def test_an_asset_key_with_no_reason_records_the_decision_but_writes_no_rule(tmp_path):
     """`exclusions.load` refuses a reason-less entry, so writing one would make the next run
     unstartable. The judgement still reaches the sidecar — losing a config line is recoverable,
     losing the decision is not — and the skip is announced rather than silent."""
     excl = tmp_path / "exclusions.yaml"
-    _, record, printed = _run_x(["x", "a", "   "], _candidate(asset="PNUT"), tmp_path,
+    _, record, printed = _run_x(["n", "   "], _candidate(asset="PNUT"), tmp_path,
                                 exclusions_path=excl)
-    assert record["reason"] == setups_cli.ARCHIVE_ASSET
+    assert record["reason"] == setups_cli.REASON_NOT_MY_MARKET
     assert not excl.exists()
     assert "no reason" in printed.lower()
 
 
-def test_archiving_an_already_excluded_asset_says_so_and_changes_nothing(tmp_path):
+def test_gating_an_already_excluded_asset_says_so_and_changes_nothing(tmp_path):
     """Ordinary across sessions. The committed reason wins — it is the reviewed one."""
     excl = tmp_path / "exclusions.yaml"
     excl.write_text('assets:\n  PNUT: "the original reason"\n')
-    _, _, printed = _run_x(["x", "a", "a newer reason"], _candidate(asset="PNUT"), tmp_path,
+    _, _, printed = _run_x(["n", "a newer reason"], _candidate(asset="PNUT"), tmp_path,
                            exclusions_path=excl)
     assert exclusions.load(excl) == {"PNUT": "the original reason"}
     assert "already" in printed.lower()
 
 
 def test_a_failed_exclusion_write_does_not_lose_the_decision(tmp_path):
-    """The sidecar write must not be hostage to the config write. Archive is judgement; the
+    """The sidecar write must not be hostage to the config write. The verdict is judgement; the
     exclusion is a convenience that makes it stick."""
     excl = tmp_path / "nope" / "exclusions.yaml"  # parent does not exist
-    counts, record, printed = _run_x(["x", "a", "zero interest"], _candidate(asset="PNUT"),
+    counts, record, printed = _run_x(["n", "zero interest"], _candidate(asset="PNUT"),
                                      tmp_path, exclusions_path=excl)
     assert counts[setups_cli.ARCHIVED] == 1
     assert record["decision"] == setups_cli.ARCHIVED
-    assert record["reason"] == setups_cli.ARCHIVE_ASSET
+    assert record["reason"] == setups_cli.REASON_NOT_MY_MARKET
     assert "exclusions.yaml" in printed
 
 
-def test_archive_still_works_with_no_exclusions_path_configured(tmp_path):
+def test_gating_still_works_with_no_exclusions_path_configured(tmp_path):
     """`triage` is called directly by tests and could be by anything else; the exclusions path
-    is optional and its absence must not turn an archive into a crash."""
-    _, record, _ = _run_x(["x", "a", "zero interest"], _candidate(), tmp_path)
+    is optional and its absence must not turn a decision into a crash."""
+    _, record, printed = _run_x(["n", "zero interest"], _candidate(), tmp_path)
     assert record["decision"] == setups_cli.ARCHIVED
-    assert record["reason"] == setups_cli.ARCHIVE_ASSET
+    assert record["reason"] == setups_cli.REASON_NOT_MY_MARKET
+    assert "no exclusions file" in printed
 
 
 # ── empty queue and quit ──────────────────────────────────────────────────────

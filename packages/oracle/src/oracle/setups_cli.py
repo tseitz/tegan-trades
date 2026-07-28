@@ -111,16 +111,14 @@ DEFAULT_LIMIT = 25
 # Decision vocabulary. Deliberately distinct spelling from distill.triage_cli's
 # "promoted"/"skipped"/"archived" — a setup is "approved" for execution, not "promoted"
 # into a note; the two sidecars are unrelated and must never be confused on disk.
-# Decisions. Four of them, because there are four genuinely different things a person means
-# when they don't take a setup, and the original three all behaved identically — which made the
-# labels promise a distinction the code didn't deliver.
 #
 #   APPROVED  taking it
 #   LATER     the zone is fine, price isn't there yet. REVERSIBLE — see `is_stale_decision`.
-#   REJECTED  judged and declined. Carries a reason, because "bad trade" calibrates the setups
-#             scorer while "their view is wrong" calibrates the roster trust score, and those
-#             are feedback to different consumers.
-#   ARCHIVED  suppress permanently. Asked WHICH KIND — see ARCHIVE_ASSET/ARCHIVE_SETUP.
+#   REJECTED  this zone is buried. Carries a vocabulary-2 reason.
+#   ARCHIVED  the asset is gated out. Carries a vocabulary-2 reason and writes exclusions.yaml.
+#
+# These four are the *storage* vocabulary and are unchanged. They are no longer what you pick
+# at the prompt — see ``_CHOICES``, where the reason is chosen and the verdict derived from it.
 APPROVED = "approved"
 LATER = "later"
 REJECTED = "rejected"
@@ -132,27 +130,98 @@ SKIPPED = "skipped"
 
 _PERMANENT = frozenset({APPROVED, REJECTED, ARCHIVED, SKIPPED})
 
-# Why a candidate was rejected.
+# ── reason vocabulary 1 (retired 2026-07-28; kept because the sidecar is append-only) ───────
+#
+# 29 rows carry these and cannot be rewritten. They are NOT offered at the prompt any more.
+# Every string below is distinct from every vocabulary-2 string, so a mining pass can partition
+# on ``reason`` alone; ``reason_vocab`` is written as well, belt and braces.
 REASON_TRADE = "trade_quality"
 REASON_VIEW = "view_wrong"
 REASON_OTHER = "other"
-
-# Which kind of archive. Recorded in the same ``reason`` field as the rejection vocabulary —
-# distinct values, and ``decision`` already namespaces them, so a mining pass partitions on the
-# pair rather than needing a sixth column.
-#
-# **Why archive is asked at all**, when it was documented for months as "explicitly NOT a
-# judgment": one key was doing two jobs. In the 2026-07-27 session 8 of 25 decisions were
-# archives, none carried a reason, and they were confirmed afterwards to be a *mix* of "I don't
-# trade this asset" and "this setup is stale". That made all 8 unminable — and §4 mines exactly
-# this file — while leaving the asset-level ones ineffective anyway, because ``drop_decided``
-# keys on the zone. One keystroke separates them at the only moment the meaning is known.
-#
-# ASSET also writes ``cfg/exclusions.yaml``, which is what makes an asset-level "no" stick.
-# SETUP is the conservative default for anything unrecognised: guessing ASSET from a stray
-# keypress would delete a whole market from the queue permanently.
 ARCHIVE_ASSET = "asset"
 ARCHIVE_SETUP = "setup"
+
+# ── reason vocabulary 2 ─────────────────────────────────────────────────────────────────────
+#
+# **Derived from the notes, not designed a priori.** Hand-labelling all 29 vocabulary-1 rows
+# against what their free text literally says (the table is in ``docs/IMPROVEMENTS.md`` §4)
+# found the old five buckets cutting across the real categories rather than along them:
+#
+#   * ``other`` was not a residue bucket. All 9 rows had a nameable category — 3 stale,
+#     2 not-my-market, 2 duplicate, 2 disagreement. It was the shape of the missing keys.
+#   * ``trade_quality`` was 80% not about trade quality: of 10 rows, 4 stale, 4 level-too-far,
+#     1 dead gate, 1 blank. That is the bucket §4 mines to calibrate the setups scorer.
+#   * ``view_wrong`` was 1-for-3 — ``SPX`` was level-too-far, ``WLD`` was a duplicate.
+#
+# **Scope is derived from the reason, never asked separately.** The old prompt asked scope
+# first (reject vs archive) and cause second, but the notes decide cause first and the cause
+# implies the scope every time — so the first prompt asked a question that had no answer yet,
+# and mis-routed in both directions. All 3 ``archive``+``setup`` rows read as asset-level and
+# are therefore inert (``drop_decided`` keys on the zone, so they will resurface), while
+# "Zero interest in PNUT" went in as ``reject``+``other`` and had to be hand-added to
+# ``cfg/exclusions.yaml`` afterwards.
+#
+# Per-zone. These bury one candidate; the next zone on the same instrument asks again.
+REASON_STALE = "stale"           # the call has aged out — 8 of 29
+REASON_FAR = "far"               # entry or target too far from price to be real — 5 of 29
+REASON_DUPE = "dupe"             # a better zone for this same thesis is already queued — 3
+REASON_SETUP = "bad_setup"       # structure or R:R doesn't hold up on the chart — 1 of 29
+REASON_DISAGREE = "view"         # I read this differently, right now — 3 of 29
+#
+# ``REASON_DISAGREE`` measures agreement, NOT accuracy, and vocabulary 1's docstring got this
+# wrong: it claimed ``view_wrong`` "calibrates the roster's trust score". At decision time you
+# cannot know who was right — that needs the outcome, which arrives weeks later from price.
+# All three rows read as a present-tense reservation ("not sure I'm shorting oil at these
+# prices with the Iran conflict going on"), not a verdict on the analyst. So a mining pass may
+# read this as "Tegan disagreed with this person N times" and must not read it as "this person
+# was wrong N times".
+#
+# Asset-level. These write ``cfg/exclusions.yaml``, which is what makes the "no" stick.
+REASON_NOT_MY_MARKET = "not_my_market"   # I don't trade this instrument
+REASON_UNKNOWN_ASSET = "unknown_asset"   # unfamiliar ticker, possibly the wrong symbol
+
+# Stamped on every row that carries a reason, so a mining pass never has to infer which
+# vocabulary was in force from the value alone. Same role as ``SCORE_VERSION``.
+REASON_VOCAB = 2
+
+
+@dataclass(frozen=True)
+class _Choice:
+    """What one keystroke means: a verdict, a reason, and whether it gates the asset."""
+    decision: str
+    reason: str | None = None
+    excludes: bool = False
+
+
+# The whole vocabulary, flat — one keystroke settles both what happens and why.
+#
+# Ordered as the prompt prints it: take it, defer it, bury the zone, gate the asset.
+_CHOICES: dict[str, _Choice] = {
+    "a": _Choice(APPROVED),
+    "l": _Choice(LATER),
+    "s": _Choice(REJECTED, REASON_STALE),
+    "f": _Choice(REJECTED, REASON_FAR),
+    "d": _Choice(REJECTED, REASON_DUPE),
+    "b": _Choice(REJECTED, REASON_SETUP),
+    "v": _Choice(REJECTED, REASON_DISAGREE),
+    "n": _Choice(ARCHIVED, REASON_NOT_MY_MARKET, excludes=True),
+    "?": _Choice(ARCHIVED, REASON_UNKNOWN_ASSET, excludes=True),
+}
+
+# Spelled-out forms, so typing the whole word is not read as "first letter, then a note".
+# Only words whose first letter is itself a key need to be here; the rest cannot collide.
+_WORDS = {"approve": "a", "later": "l", "stale": "s", "far": "f", "dupe": "d",
+          "duplicate": "d", "bad": "b", "view": "v"}
+
+# Muscle memory from vocabulary 1. Both keys are gone, and neither can be honoured: "reject"
+# no longer says *which* of five things it was, and "archive" no longer says which scope.
+# Recognised only so the fall-through can name the replacement instead of silently deferring.
+_RETIRED = {"r": "s/f/d/b/v", "reject": "s/f/d/b/v", "x": "n or ?", "archive": "n or ?"}
+
+_PROMPT = ("[a]pprove  [l]ater  [q]uit\n"
+           "  pass  · [s]tale  [f]ar  [d]upe  [b]ad setup  [v]iew\n"
+           "  never · [n]ot my market  [?]don't know it\n"
+           "> ")
 
 _NOTE_TITLE = "# Approved Setups"
 
@@ -472,6 +541,10 @@ def decision_record(candidate: Candidate, decision: str, *, decided_at: str,
     }
     if reason is not None:
         record["reason"] = reason
+        # Which vocabulary that string belongs to. Written only alongside a reason, so the 8
+        # reason-less archives from 2026-07-27 stay exactly as unminable as they are — a
+        # ``reason_vocab`` on a row with no reason would imply a meaning nobody recorded.
+        record["reason_vocab"] = REASON_VOCAB
     # Omitted rather than written blank: a mining pass has to tell "no note given" apart from
     # a note that exists and says nothing, and an empty string reads as the latter.
     if note:
@@ -589,6 +662,10 @@ def triage(queue, *, decisions_path, vault_path, input_fn=input, out=print,
     that doesn't supply one gets the date without the day count rather than an exception.
     ``color`` defaults to autodetection, and is an explicit argument so tests pin it off.
 
+    **One prompt, not two.** ``_read_choice`` settles the verdict and the reason together —
+    see ``_CHOICES`` for why splitting them mis-routed decisions in both directions. The only
+    branching left here is what a verdict *causes*: a vault note, an exclusion, an order.
+
     ``exclusions_path`` is where an asset-level archive writes its standing rule. Optional, and
     its absence downgrades rather than fails: the archive is still recorded, it just doesn't
     stick across zones. Every write here is subordinate to the sidecar for the same reason the
@@ -610,27 +687,17 @@ def triage(queue, *, decisions_path, vault_path, input_fn=input, out=print,
         zones, index = pairing[i - 1]
         out(format_candidate(c, rank=i, total=total, as_of=as_of, color=color,
                              zones_in_thesis=zones, zone_index=index))
-        ans = input_fn("[a]pprove / [l]ater / [r]eject / [x]archive / [q]uit: ").strip().lower()
-        if ans in ("q", "quit"):
+        ans = input_fn(_PROMPT).strip()
+        if ans.lower() in ("q", "quit"):
             break
 
-        reason, note = None, None
-        if ans in ("a", "approve"):
-            decision = APPROVED
-            if vault_path is not None:
-                append_note(vault_path, render_note(c, decided_on=decided_at[:10]))
-        elif ans in ("r", "reject"):
-            decision = REJECTED
-            reason, note = _ask_reason(input_fn)
-        elif ans in ("x", "archive"):
-            decision = ARCHIVED
-            reason, note = _ask_archive_kind(input_fn)
-            if reason == ARCHIVE_ASSET:
-                _record_exclusion(c.asset, note, path=exclusions_path, out=out)
-        else:
-            # Blank falls through to LATER on purpose: it is the only reversible answer, so a
-            # stray keypress defers rather than permanently burying a setup.
-            decision = LATER
+        choice, note = _read_choice(ans, input_fn, out=out)
+        decision, reason = choice.decision, choice.reason
+        if decision == APPROVED and vault_path is not None:
+            append_note(vault_path, render_note(c, decided_on=decided_at[:10]))
+        if choice.excludes:
+            _record_exclusion(c.asset, note, path=exclusions_path, out=out,
+                              suspect_symbol=reason == REASON_UNKNOWN_ASSET)
 
         append_decision(
             decisions_path,
@@ -658,59 +725,64 @@ def format_counts(counts: dict[str, int]) -> str:
     return " · ".join(f"{verdict} {count}" for verdict, count in counts.items())
 
 
-_REASONS = {"t": REASON_TRADE, "v": REASON_VIEW, "o": REASON_OTHER}
+def _read_choice(ans: str, input_fn, *, out) -> tuple[_Choice, str | None]:
+    """Turn what was typed into a verdict, a reason and a note. One prompt, not two.
 
+    **The scope question is gone.** Vocabulary 1 asked reject-or-archive first and the cause
+    second; the cause determines the scope in every one of the 29 recorded notes, so the first
+    question was being asked before it had an answer. Here the reason *is* the answer and the
+    scope falls out of ``_CHOICES``.
 
-def _ask_reason(input_fn) -> tuple[str, str | None]:
-    """Why the reject — a keystroke, plus a free-text note.
+    Three input shapes, all preserved from the prompts this replaces:
 
-    The keystroke is worth its own key because the answers feed different things: bad trade
-    quality calibrates the setups scorer, a wrong view calibrates the roster's trust score.
-    Collapsing them would discard the distinction that matters most to what the roster is for.
+    * a bare keystroke → a second prompt for the note;
+    * a spelled-out word in ``_WORDS`` → the same, and not misread as key-plus-note;
+    * anything else longer than one character → first letter is the key, **the whole string is
+      the note**. Typing a sentence works and nothing typed is ever discarded.
 
-    But the enum only says *which* loop to calibrate, never *what to change* — three buckets
-    cannot distinguish "reward:risk too thin at this tier" from "the zone is four months
-    stale". That is the whole content of a tuning pass, so the note is recorded verbatim
-    alongside it and left unparsed.
-
-    Anything longer than the one keystroke is taken as the note itself, so typing a whole
-    sentence at this prompt works and nothing typed is ever discarded — previously only the
-    first letter survived. A bare keystroke falls through to a second prompt instead.
+    **Unrecognised defers.** ``LATER`` is the only reversible verdict, so a stray keypress —
+    or vocabulary-1 muscle memory — costs you one re-prompt next session rather than burying a
+    candidate for good. That is a deliberate change of default: with the destructive keys now
+    sharing one prompt with everything else, falling through to any permanent verdict would be
+    the same trap the old ``_ask_archive_kind`` avoided by refusing to guess "asset".
     """
-    ans = input_fn("  why? [t]rade quality / [v]iew wrong / [o]ther: ").strip()
-    reason = _REASONS.get(ans[:1].lower(), REASON_OTHER)
-    if len(ans) > 1:
-        return reason, ans
-    note = input_fn("  note (enter to skip): ").strip()
-    return reason, note or None
+    lowered = ans.lower()
+    if not ans:
+        return _CHOICES["l"], None
+    if lowered in _RETIRED:
+        out(f"  ! '{ans}' was retired on 2026-07-28 — use {_RETIRED[lowered]}."
+            f" Deferred to later, so nothing is lost.")
+        return _CHOICES["l"], None
 
+    key = _WORDS.get(lowered, lowered[:1])
+    choice = _CHOICES.get(key)
+    if choice is None:
+        out(f"  ! '{ans}' is not one of the keys — deferred to later, so nothing is lost.")
+        return _CHOICES["l"], None
 
-_ARCHIVE_KINDS = {"a": ARCHIVE_ASSET, "s": ARCHIVE_SETUP}
+    # A key followed by a space drops the key from the note; anything else keeps the string
+    # whole. "s  very stale" is a key and a note, but "view is wrong" is one sentence whose
+    # first letter happens to be a key — and vocabulary 1 stored the latter verbatim, which is
+    # the behaviour worth keeping. The distinction matters most for ``n`` and ``?``, where the
+    # note becomes a line in a committed config file and "?never heard of this" would be spoor.
+    inline = None
+    if len(ans) > 1 and lowered not in _WORDS:
+        inline = ans[1:].strip() if ans[1:2].isspace() else ans
 
+    # Approve and later never consume a second answer: a prompt they don't take would shift
+    # every later keystroke onto the wrong candidate. An inline note still survives.
+    if choice.decision in (APPROVED, LATER):
+        return choice, inline
+    if inline is not None:
+        return choice, inline
 
-def _ask_archive_kind(input_fn) -> tuple[str, str | None]:
-    """Which of the two archives this is, plus the note that becomes the exclusion's reason.
-
-    Same shape as ``_ask_reason`` deliberately — one keystroke, and anything longer is taken as
-    the note — so the two prompts behave identically under the fingers and nothing typed is
-    discarded.
-
-    **Unrecognised falls to ``ARCHIVE_SETUP``, not to a third "unknown" bucket.** The asymmetry
-    is the point: a setup archive is inert, while an asset archive writes a standing rule that
-    removes a market from the queue for good. Defaulting the ambiguous case to the destructive
-    one is exactly how a stray keypress becomes folklore. Note this is the opposite default from
-    ``_ask_reason``, which falls to ``REASON_OTHER`` — there, every branch is equally inert.
-    """
-    ans = input_fn("  archive: [a]sset (never show this asset) / [s]etup (just this zone): ").strip()
-    kind = _ARCHIVE_KINDS.get(ans[:1].lower(), ARCHIVE_SETUP)
-    if len(ans) > 1:
-        return kind, ans
-    prompt = ("  reason (required, becomes the exclusion): " if kind == ARCHIVE_ASSET
+    prompt = ("  reason (required, becomes the exclusion): " if choice.excludes
               else "  note (enter to skip): ")
-    return kind, input_fn(prompt).strip() or None
+    return choice, input_fn(prompt).strip() or None
 
 
-def _record_exclusion(asset: str, reason: str | None, *, path, out) -> None:
+def _record_exclusion(asset: str, reason: str | None, *, path, out,
+                      suspect_symbol: bool = False) -> None:
     """Make an asset-level archive stick, or say clearly why it didn't.
 
     Subordinate to the sidecar in every branch — this runs *after* nothing and *before* nothing
@@ -720,7 +792,19 @@ def _record_exclusion(asset: str, reason: str | None, *, path, out) -> None:
 
     Silence is the one unacceptable outcome, so all four cases print. A gate everyone believes
     is running and isn't is worse than no gate — §6h's whole failure class.
+
+    ``suspect_symbol`` is set by the ``?`` key and prints an extra line naming the symbol for
+    canon review. "I don't recognise this ticker" is usually a *data* complaint rather than a
+    preference, and the sidecar is where those went to die: ``UROY`` recorded "Not sure what
+    this asset is. I see URC?" and ``DASH`` asked whether Doordash could be told from the
+    crypto — two live routing bugs, both filed as decisions nobody would ever grep. Note this
+    is the mirror image of ``exclusions.unmatched_symbols``, which warns when an excluded
+    symbol matches nothing in the corpus; this warns when the symbol matched but you couldn't
+    identify what it matched.
     """
+    if suspect_symbol:
+        out(f"  ? {asset.upper()} flagged for canon review — check cfg/assets.yaml and"
+            f" cfg/tickers.json for a collision or a wrong mapping before committing")
     if path is None:
         out(f"  ! archived {asset} for the asset, but no exclusions file is configured"
             f" — it will resurface on the next zone")
