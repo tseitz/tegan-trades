@@ -48,7 +48,7 @@ def _candidate(**overrides) -> Candidate:
         entry=110.0, entry_top=110.0, entry_bottom=100.0,
         stop=100.0, invalidation=90.0,
         target=140.0, target_source=STRUCTURAL,
-        reward_risk=3.0, approach=1.0, price=105.0,
+        reward_risk=3.0, reward_risk_from_price=3.5, approach=1.0, price=105.0,
         weekly_trend="uptrend", daily_trend="uptrend", zone="discount",
         zone_timeframe=DAILY,
         tier=TIER_MAJOR,

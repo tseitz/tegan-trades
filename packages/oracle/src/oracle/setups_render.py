@@ -288,6 +288,15 @@ def _headline(c: Candidate, *, rank: int | None, total: int | None, color: bool)
     stats = (f"{paint('score', 'dim', color=color)} {paint(f'{c.score:.2f}', 'bold', color=color)}"
              f"  {paint('R:R', 'dim', color=color)} "
              f"{paint(f'{c.reward_risk:.2f}', 'bold', color=color)}")
+    # The ratio the *score* actually uses, beside the one the trade actually pays. Shown for
+    # the reason a soft signal always is here: since `SCORE_VERSION` 6 the queue is ordered on
+    # this number and not on `R:R`, so leaving it off would explain the order of the queue with
+    # a figure the order does not use. The gap between the two is the reachability penalty —
+    # a big drop means price has run far from the zone (§19d).
+    if abs(c.reward_risk_from_price - c.reward_risk) >= 0.005:
+        drift = "green" if c.reward_risk_from_price >= c.reward_risk else "red"
+        stats += (f"  {paint('scored', 'dim', color=color)} "
+                  f"{paint(f'{c.reward_risk_from_price:.2f}', drift, color=color)}")
     # Carry-adjusted R:R sits beside the nominal one rather than replacing it. Both are shown
     # because the *gap* between them is the new information — and because the ranking is still
     # done on the nominal number, so displaying only the adjusted one would explain the order

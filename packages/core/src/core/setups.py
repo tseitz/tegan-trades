@@ -125,8 +125,11 @@ MIN_REWARD_RISK = 1.0
 # recently structure broke. TUNE.
 MAX_TARGET_ATR = 20.0
 
-# Reward-to-risk at which the score's RR term saturates. TUNE.
-RR_SATURATION = 3.0
+# Reward-to-risk at which the score's RR term is worth exactly half. **A half-way point, not
+# a clamp** — see ``reward_risk_signal``. It was ``RR_SATURATION`` and it clipped here, which
+# made 3.0 and TSLA's 23.24 contribute identically and pinned the term at 1.0 for 12 of 18
+# weekly rows (§4). TUNE.
+RR_HALF = 3.0
 
 # How long a position is assumed to be held, **for costing carry and nothing else**.
 #
@@ -243,7 +246,20 @@ DEFAULT_WEIGHTS = SetupWeights()
 # 16 candidates previously pinned at 0.00 move **up** a mean of 1.2 places, not down. A floored
 # term cannot be pushed lower, so restoring its tail can only add score. v5 buys resolution,
 # not demotion — see ``approach_to`` and §19.
-SCORE_VERSION = 5
+#
+# v6 unclips the two terms that could no longer order anything, and re-points the RR term at a
+# different input. §4's mining pass found both saturations as facts about the terms rather than
+# about the labels, so neither needed a correlation to justify: ``agreement_signal`` clamped at
+# 3 while counts ran to 12 (pinned at 1.0 for 12 of 13 daily rows) and the RR term clamped at
+# 3.0 while ratios ran to 23.24 (pinned for 12 of 18 weekly rows). Both are now hyperbolas, the
+# shape ``freshness_signal`` and ``approach_to`` already used.
+#
+# The re-pointing is the larger change and is §19(d): ``_score`` now consumes
+# ``reward_risk_from_price`` rather than ``reward_risk``, so distance stops inflating the term
+# meant to rank the trade. ``reward_risk`` itself is untouched — same value, same gate, same
+# headline — so this is a term-input correction, not a re-weight. Both numbers are recorded, so
+# which of them predicts a decision better is now a measurement rather than an argument.
+SCORE_VERSION = 6
 
 # Weekly trend agrees with the thesis, versus has no opinion at all. There is no third value:
 # a weekly that genuinely contradicts is still refused outright, so it never reaches scoring.
@@ -307,11 +323,30 @@ def freshness_signal(age_days: int, half_life: int) -> float:
     return 1.0 / (1.0 + max(age_days, 0) / half_life)
 
 
-def _score(weights: SetupWeights, *, approach: float, reward_risk: float,
+def reward_risk_signal(reward_risk: float, *, half: float = RR_HALF) -> float:
+    """Reward-to-risk as a 0-1 signal, with diminishing returns and no ceiling.
+
+    ``half`` is the ratio worth exactly 0.5, not a clamp. The old ``min(rr / 3.0, 1.0)`` made
+    3.0, SPX's 9.06, GOOGL's 14.19 and TSLA's **23.24** contribute identically, so the term was
+    pinned at its maximum for 12 of 18 weekly rows and could not order them at all (§4) — the
+    same defect ``agreement_signal`` carried, and the same fix.
+
+    Note this is only about *resolution*. That very high ratios are a symptom of a broken
+    denominator rather than a good trade is a separate claim, and §19(d) leaves it open; this
+    function still says 23.24 beats 3.0, it merely stops pretending they are equal.
+    """
+    if half <= 0:
+        return 0.0
+    return reward_risk / (reward_risk + half)
+
+
+def _score(weights: SetupWeights, *, approach: float, reward_risk_from_price: float,
            agreement_count: int, freshness: float, trend_alignment: float) -> float:
+    """The composite. Note the RR term is fed from **price**, not from entry — see
+    ``Setup.reward_risk_from_price`` for why the displayed ratio is a different number."""
     return (
         weights.approach * approach
-        + weights.reward_risk * min(reward_risk / RR_SATURATION, 1.0)
+        + weights.reward_risk * reward_risk_signal(reward_risk_from_price)
         + weights.agreement * agreement_signal(agreement_count)
         + weights.freshness * freshness
         + weights.trend_alignment * trend_alignment
@@ -388,6 +423,19 @@ class Setup:
     target: float
     target_source: str    # STATED | NEAREST | STRUCTURAL
     reward_risk: float
+    # The same ratio measured from **where price is now** rather than from entry, and the one
+    # ``_score`` actually uses. §19(d): with a structural target — the post-break extreme — the
+    # numerator of ``reward_risk`` is literally how far price ran away from the zone, so
+    # distance inflates the very number meant to rank the trade. SPX scored 9.06 that way, and
+    # a chunk of it was earned by being 26% out of reach.
+    #
+    # Both are kept, and neither is redundant. ``reward_risk`` is what the trade pays **if it
+    # fills**, which is what the queue prints and what ``MIN_REWARD_RISK`` gates on — and that
+    # gate must stay on it, because "risking more than it stands to make" is a rule, while
+    # reachability is a measurement on a continuum. Per the gates-vs-scores split, a rule is
+    # gated and a continuum is scored; feeding this number to the gate would quietly convert
+    # reachability into one.
+    reward_risk_from_price: float
     approach: float       # 0 a span away, ARRIVAL at the near edge, 1 at the far
     # What the asset was actually trading at when this was built. ``approach`` is derived from
     # it but cannot be read back as a price, so without it the queue can state where a trade is
@@ -430,6 +478,7 @@ class Candidate:
     target: float
     target_source: str
     reward_risk: float
+    reward_risk_from_price: float   # see ``Setup.reward_risk_from_price``
     approach: float       # see ``Setup.approach``
     price: float          # the asset's price when built — see ``Setup.price``
     weekly_trend: str
@@ -568,7 +617,8 @@ def collapse(outcomes, *, weights: SetupWeights = DEFAULT_WEIGHTS) -> tuple[Cand
             entry=rep.entry, entry_top=rep.entry_top, entry_bottom=rep.entry_bottom,
             stop=rep.stop, invalidation=rep.invalidation,
             target=rep.target, target_source=rep.target_source,
-            reward_risk=rep.reward_risk, approach=rep.approach,
+            reward_risk=rep.reward_risk,
+            reward_risk_from_price=rep.reward_risk_from_price, approach=rep.approach,
             price=rep.price,
             weekly_trend=rep.weekly_trend, daily_trend=rep.daily_trend,
             zone=rep.zone, zone_timeframe=rep.zone_timeframe, tier=rep.tier,
@@ -576,7 +626,8 @@ def collapse(outcomes, *, weights: SetupWeights = DEFAULT_WEIGHTS) -> tuple[Cand
             views=views,
             thesis_ids=tuple(sorted(s.thesis_id for s in members)),
             score=_score(weights, approach=rep.approach,
-                         reward_risk=rep.reward_risk, agreement_count=len(views),
+                         reward_risk_from_price=rep.reward_risk_from_price,
+                         agreement_count=len(views),
                          freshness=freshness, trend_alignment=rep.trend_alignment),
             # From the representative, like every other price-derived field: carry is a
             # property of the trade (zone, direction, asset), and every member of a group
@@ -799,8 +850,18 @@ def cross_reference(
     # A trade risking more than it stands to make is not a setup, whichever source supplied the
     # target. Left to scoring alone, a 0.32-RR candidate still surfaced mid-list on live data —
     # and a list padded with those is what feeds "I take way too many trades".
+    #
+    # Gated on the entry-based ratio deliberately, and ``reward_risk_from_price`` must never be
+    # substituted here. This gate encodes a rule about the *trade*; the price-based ratio is a
+    # statement about the *journey*, and a far zone has price sitting close to its structural
+    # target, so gating on it would refuse candidates for being out of reach. Reachability is a
+    # continuum and belongs in the score — which is exactly where it now is.
     if reward_risk < min_reward_risk:
         return refuse("reward_risk_too_low")
+
+    # What is left to be made from where the market actually is. See the field's own comment
+    # on ``Setup`` for why this, and not ``reward_risk``, is what ``_score`` consumes.
+    reward_risk_from_price = abs(target - context.price) / risk
 
     # ── carry: what holding this costs, once the trade itself is known to be a setup ──
     #
@@ -843,7 +904,8 @@ def cross_reference(
         entry=entry, entry_top=block.top, entry_bottom=block.bottom,
         stop=block.stop, invalidation=block.invalidation,
         target=target, target_source=target_source,
-        reward_risk=reward_risk, approach=approach, price=context.price,
+        reward_risk=reward_risk, reward_risk_from_price=reward_risk_from_price,
+        approach=approach, price=context.price,
         freshness=freshness, trend_alignment=trend_alignment,
         weekly_trend=context.weekly_trend, daily_trend=context.daily_trend,
         # Domain comes off the row so a cross-domain ticker collision can't leak a crypto
@@ -852,7 +914,8 @@ def cross_reference(
         zone_timeframe=zone_timeframe,
         tier=tier_for(asset_rank, domain=getattr(row, "domain", "crypto")),
         score=_score(weights, approach=approach,
-                     reward_risk=reward_risk, agreement_count=agreement_count,
+                     reward_risk_from_price=reward_risk_from_price,
+                     agreement_count=agreement_count,
                      freshness=freshness, trend_alignment=trend_alignment),
         funding_annual=funding_annual, carry=carry,
         carry_reward_risk=carry_rr, carry_reward_risk_p90=carry_rr_p90,

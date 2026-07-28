@@ -105,8 +105,24 @@ def recency_signal(published_at: str | None, *, newest: str | None, oldest: str 
 
 
 def agreement_signal(count: int, *, cap: int = 3) -> float:
-    """Distinct other-person agreement, saturating at ``cap``."""
-    return min(count / cap, 1.0) if cap > 0 else 0.0
+    """Distinct other-person agreement, with diminishing returns and no ceiling.
+
+    ``cap`` is the **half-way point**, not a clamp: three voices score 0.5, and every further
+    voice adds less than the one before without ever reaching 1.0.
+
+    It used to be ``min(count / cap, 1.0)``, and §11 is the account of why that failed. Recorded
+    agreement counts run to 12 while the clamp bit at 3, so the term sat pinned at 1.0 for **12
+    of 13 daily setup rows** — at n>=3 it carried no information whatsoever, and a §4 correlation
+    against it could only ever have measured noise. A term that cannot vary cannot order
+    anything, which is the same defect ``oracle.queue`` fixes one level up in the queue itself.
+
+    The hyperbola is deliberately the shape already used by ``freshness_signal`` and
+    ``approach_to`` (§19c), so "more is better, with diminishing returns" has one idiom in this
+    codebase rather than three. It also keeps the thing agreement is actually claiming honest:
+    the seventh voice on a zone genuinely is worth less than the second, but it is not worth
+    *nothing*, which is what the clamp asserted.
+    """
+    return count / (count + cap) if cap > 0 else 0.0
 
 
 def asset_rank_signal(rank: int | None, *, resolved: bool) -> float:

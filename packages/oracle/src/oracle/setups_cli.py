@@ -340,6 +340,11 @@ def decision_record(candidate: Candidate, decision: str, *, decided_at: str,
         # ``price`` fixes the decision to a market state, without which "was this judged in
         # the zone or halfway to the target" is unanswerable once prices move on.
         "reward_risk": candidate.reward_risk,
+        # The scored ratio, distinct from the one above since `SCORE_VERSION` 6 — §19(d). Both
+        # are recorded for the same reason §21 records both nominal and carry-adjusted R:R:
+        # which of them actually predicts an approval is a measurement nobody has made, and it
+        # stays unanswerable unless every decision carries both.
+        "reward_risk_from_price": candidate.reward_risk_from_price,
         "price": candidate.price,
         "score": candidate.score,
         # Which scale ``score`` is on. Weights change as the ranker is tuned, and the sidecar

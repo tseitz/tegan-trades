@@ -10,7 +10,9 @@ from core.levels import NEAREST, STATED
 from core.setups import (
     ARRIVAL,
     DAILY,
+    MIN_REWARD_RISK,
     PROXIMITY_SPAN,
+    RR_HALF,
     STRUCTURAL,
     WEEKLY,
     ZONE_LEVEL_REASONS,
@@ -30,6 +32,7 @@ from core.setups import (
     collapse,
     cross_reference,
     freshness_signal,
+    reward_risk_signal,
     tier_for,
 )
 from core.structure import (
@@ -146,6 +149,46 @@ def test_reward_risk_is_measured_from_entry_to_stop():
     setup = cross_reference(_row(), _ctx(), published_close=100.0)
     # entry 110, stop 100, structural target 140 -> risk 10, reward 30
     assert setup.reward_risk == 3.0
+
+
+def test_the_scored_reward_risk_is_measured_from_price_not_entry():
+    """§19(d): with a structural target — the post-break extreme — ``|target - entry|`` is
+    literally how far price ran away from the zone, so distance *inflates* the ratio that is
+    supposed to rank the trade. Measuring the remaining move from where the market actually
+    is removes that. Both numbers are kept; only the scored one changes."""
+    setup = cross_reference(_row(), _ctx(), published_close=100.0)
+    # entry 110, price 105, target 140, risk 10 -> 35/10, against reward_risk's 30/10
+    assert setup.reward_risk_from_price == 3.5
+    assert setup.reward_risk == 3.0
+
+
+def test_a_zone_price_has_run_far_from_keeps_its_headline_rr_and_loses_its_scored_one():
+    """The SPX case that opened §19: a legitimate zone 26% below price, whose R:R of 9.06 was
+    earned by being unreachable. The displayed number is still the trade's real reward:risk —
+    you would make that if filled — but it no longer buys rank."""
+    far = cross_reference(_row(), _ctx(price=138.0), published_close=100.0)
+    assert far.reward_risk == 3.0              # unchanged: |140 - 110| / 10
+    assert far.reward_risk_from_price == pytest.approx(0.2)   # |140 - 138| / 10
+
+
+def test_the_reward_risk_gate_still_judges_the_trade_not_the_journey():
+    """``MIN_REWARD_RISK`` is a *rule* — "a trade risking more than it stands to make is not a
+    setup" — and per the gates-vs-scores split a rule is gated while a measurement on a
+    continuum is scored. Reachability is a continuum, so it must not reach this gate: a
+    candidate whose remaining move is thin is demoted, never refused."""
+    far = cross_reference(_row(), _ctx(price=138.0), published_close=100.0)
+    assert isinstance(far, Setup)
+    assert far.reward_risk_from_price < MIN_REWARD_RISK
+
+
+def test_the_scored_reward_risk_never_saturates():
+    """It was ``min(rr / 3.0, 1.0)``, which made 3.0, 9.06, 14.19 and 23.24 contribute
+    identically — pinned at 1.0 for 12 of 18 weekly rows (§4). Same hyperbola as agreement."""
+    contributions = [reward_risk_signal(rr) for rr in (1.0, 3.0, 9.06, 14.19, 23.24)]
+    assert contributions == sorted(contributions)
+    assert len(set(contributions)) == 5
+    assert reward_risk_signal(RR_HALF) == pytest.approx(0.5)
+    assert all(c < 1.0 for c in contributions)
 
 
 def test_depth_reflects_how_far_price_has_travelled_into_the_zone():

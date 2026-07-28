@@ -90,11 +90,23 @@ def test_score_survives_an_undated_thesis():
     assert 0.0 <= s <= 1.0
 
 
-def test_agreement_signal_normalizes_with_cap():
+def test_agreement_signal_never_saturates_so_more_voices_always_rank_higher():
+    """It used to clamp at ``cap``, which pinned it at 1.0 for 12 of 13 daily setup rows while
+    recorded counts ran to 12 — at n>=3 the term carried no information at all (§11). The
+    hyperbola is the same shape ``freshness_signal`` and ``approach_to`` already use."""
     assert agreement_signal(0) == pytest.approx(0.0)
-    assert agreement_signal(3) == pytest.approx(1.0)
-    assert agreement_signal(6) == pytest.approx(1.0)      # clamped
-    assert agreement_signal(1, cap=2) == pytest.approx(0.5)
+    assert agreement_signal(3) == pytest.approx(0.5)      # cap is now the half-way point
+    assert agreement_signal(1, cap=2) == pytest.approx(1 / 3)
+
+    counts = [1, 2, 3, 4, 6, 8, 12]
+    signals = [agreement_signal(c) for c in counts]
+    assert signals == sorted(signals)
+    assert len(set(signals)) == len(counts)               # every count is distinguishable
+    assert all(s < 1.0 for s in signals)
+
+
+def test_agreement_signal_with_a_meaningless_cap_is_zero_not_a_division_error():
+    assert agreement_signal(5, cap=0) == pytest.approx(0.0)
 
 
 def test_asset_rank_signal_crypto_curve():
@@ -140,9 +152,10 @@ def test_score_is_weighted_sum_of_signals():
     resolved = _resolved(asset="BTC", person="TraderMayne", resolved=True, rank=1)
     idx = build_agreement_index([("BTC", "long", "TraderMayne"), ("BTC", "long", "Cowen")])
     s = score(thesis, resolved, idx, newest="2025-01-11", oldest="2025-01-01")
-    # all signals maxed except agreement (1 other / cap 3 = 0.333)
+    # all signals maxed except agreement — 1 other voice, so 1/(1+3) = 0.25 on the hyperbola
+    # that replaced the old min(1/3, 1.0) clamp (§11)
     expected = (0.30 * 1.0 + 0.25 * 1.0 + 0.20 * 1.0
-                + 0.15 * (1 / 3) + 0.10 * 1.0)
+                + 0.15 * 0.25 + 0.10 * 1.0)
     assert s == pytest.approx(expected)
 
 

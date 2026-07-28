@@ -64,7 +64,12 @@ from pathlib import Path
 from statistics import median, pstdev
 
 from core.rank import agreement_signal
-from core.setups import DEFAULT_WEIGHTS, RR_SATURATION, SCORE_VERSION, SetupWeights
+from core.setups import (
+    DEFAULT_WEIGHTS,
+    SCORE_VERSION,
+    SetupWeights,
+    reward_risk_signal,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DECISIONS = REPO_ROOT / "data" / "setups" / "decisions.jsonl"
@@ -87,6 +92,17 @@ def load(path: Path, *, version: int) -> list[dict]:
     return [r for r in rows if r.get("score_version") == version]
 
 
+def _scored_rr(row: dict) -> float:
+    """The reward:risk ``_score`` consumed for this row, whichever generation wrote it.
+
+    ``SCORE_VERSION`` 6 re-pointed the term at ``reward_risk_from_price`` (§19d), so a v6 row
+    carries both numbers and the scored one is the new field. Rows written before that only
+    have ``reward_risk``, and that genuinely *was* the scored input at the time — falling back
+    to it replays what happened rather than guessing, and no row is ever backfilled.
+    """
+    return row.get("reward_risk_from_price", row["reward_risk"])
+
+
 def rescore(row: dict, weights: SetupWeights) -> float:
     """``core.setups._score`` recomputed from the recorded terms.
 
@@ -98,7 +114,7 @@ def rescore(row: dict, weights: SetupWeights) -> float:
     """
     return (
         weights.approach * row["approach"]
-        + weights.reward_risk * min(row["reward_risk"] / RR_SATURATION, 1.0)
+        + weights.reward_risk * reward_risk_signal(_scored_rr(row))
         + weights.agreement * agreement_signal(int(row["agreement"]))
         + weights.freshness * row["freshness"]
         + weights.trend_alignment * row["trend_alignment"]
@@ -264,7 +280,8 @@ TERMS = (
     ("approach", "approach", lambda r: r["approach"]),
     ("freshness", "freshness", lambda r: r["freshness"]),
     ("agreement", "agreement", lambda r: agreement_signal(int(r["agreement"]))),
-    ("reward_risk", "reward_risk", lambda r: min(r["reward_risk"] / RR_SATURATION, 1.0)),
+    ("reward_risk", "reward_risk", lambda r: reward_risk_signal(r["reward_risk"])),
+    ("rr_from_price", "reward_risk_from_price", lambda r: reward_risk_signal(r["reward_risk_from_price"])),
     ("trend_alignment", "trend_alignment", lambda r: r["trend_alignment"]),
 )
 
@@ -412,6 +429,19 @@ def main() -> None:
     pos = [r for r in rows if r["decision"] in POSITIVE]
     neg = [r for r in rows if r["decision"] in NEGATIVE]
     later = [r for r in rows if r["decision"] == "later"]
+
+    # A version bump empties this bucket by design, and everything below replays the *shipped*
+    # scorer against rows judged under it — so on an empty cohort it would divide by zero while
+    # looking like a result. Saying so is the whole point: the tables above are the correction
+    # applied to history, and this one cannot exist until a sitting happens on the new scale.
+    if not pos or not neg:
+        print(f"=== the weight sweep, on score_version {SCORE_VERSION} only ===\n")
+        print(f"  {len(rows)} rows at score_version {SCORE_VERSION} "
+              f"({len(pos)} approved, {len(neg)} rejected/archived, {len(later)} later).")
+        print("  Not enough to sweep. This is expected immediately after a version bump —")
+        print("  older rows are on a different scale and pooling them is what §4 forbids.")
+        print("  Run `uv run setups` for one sitting, then re-run this probe.\n")
+        return
 
     print(f"=== the weight sweep, on score_version {SCORE_VERSION} only ===")
     print(f"score_version {SCORE_VERSION}: {len(rows)} rows "

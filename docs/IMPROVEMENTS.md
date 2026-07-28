@@ -27,11 +27,14 @@ says "measure this against the sidecar first" is waiting on a single `uv run set
 
 | | Entry | Why now | Cost |
 |---|---|---|---|
-| 1 | **§4** — run one stratified sitting | Unblocks §11, §18, §21. The machinery is built; nothing else in the file has that fan-out. | your attention, ~25 candidates |
+| 1 | **§4** — run one stratified sitting | Unblocks §11's recency half, §18, §19(d)'s open half, §21. The machinery is built and the scorer is now worth measuring; nothing else in the file has that fan-out. | your attention, ~25 candidates |
 | 2 | **§6f** — `ETH/BTC` ratio, then `BTC.D` | 28 rows routed nowhere and both legs are already cached. A division, not a new source. | free, local |
-| 3 | **§19(d)** — `reward_risk` rewards distance | Measured against candidate counts, so §4 does not gate it. §4 shows the term pinned at 3.0 for 12 of 18 weekly rows. | free, local |
-| 4 | **§11** — unsaturate the agreement cap | Pinned at 1.0 for 12 of 13 daily rows, so it currently carries no information. The cap needs no measurement; the recency half waits on §4's sitting. | free, local |
-| 5 | **§27** — audit 20 `timeframe_conflict` rejections | 1,000 outcomes discarded by a gate nobody has read a single example from. | free, local |
+| 3 | **§27** — audit 20 `timeframe_conflict` rejections | 1,000 outcomes discarded by a gate nobody has read a single example from. | free, local |
+| 4 | **§7** — ATR-relative stop padding | Needs `k` measured against the 84-candidate baseline, but nothing gates that measurement. | free, local |
+
+**Done 2026-07-28, and the reason row 1 is now worth spending attention on:** §11's cap and
+§19(d)'s inflation both shipped as `SCORE_VERSION` 6, so the two terms that structurally could
+not vary now do. A sitting held before that would have re-confirmed two dead terms.
 
 **Waiting on §4's first stratified sitting, not on code:** §18 (`collapse` rep rule) · §21
 (funding weighting) · §11's recency half. Each defers to a sidecar correlation that is now
@@ -204,15 +207,19 @@ and because a mean gap can look healthy while the distributions interleave.
 | `approach` | 0.678 | 0.559 [0.36, 0.75] |
 | `trend_alignment` | 0.367 | 0.408 [0.25, 0.58] |
 
-**Two saturation findings survive the intervals**, because they are facts about the terms
-rather than about the labels — both the `RR_SATURATION` shape already fixed once for
-`proximity`/`depth` in `SCORE_VERSION` 3:
+**Two saturation findings survived the intervals**, because they are facts about the terms
+rather than about the labels — both the same clipped shape already fixed once for
+`proximity`/`depth` in `SCORE_VERSION` 3. **Both are fixed as of 2026-07-28, `SCORE_VERSION` 6**,
+and neither needed a correlation to justify:
 
-- **`agreement_signal` caps at 3 while recorded counts run to 12**, pinning it at 1.0 for 12 of
-  13 daily rows. At n≥3 it carries no information at all. This is the urgent half of §11.
-- **`reward_risk` is pinned at 3.0 for 12 of 18 weekly rows** — direct evidence for §19(d):
-  distance inflates R:R, so the term is meaningful where zones are near and noise where they
-  are far. "R:R is broken" is too broad; it is broken *on the far population*.
+- **`agreement_signal` capped at 3 while recorded counts run to 12**, pinning it at 1.0 for 12
+  of 13 daily rows. At n≥3 it carried no information at all. Fixed — see §11, which also
+  records that the new shape moves the within-sitting AUC to 0.672 [0.53, 0.78], clearing
+  chance where the clamped version spanned it.
+- **`reward_risk` was pinned at 3.0 for 12 of 18 weekly rows** — direct evidence for §19(d):
+  distance inflates R:R, so the term was meaningful where zones are near and noise where they
+  are far. "R:R is broken" was too broad; it was broken *on the far population*. Fixed — see
+  §19(d), which unclipped the shape *and* re-pointed the term at a distance-corrected input.
 
 ### Both fixes are built · `2026-07-28` — the residual is that no stratified sitting exists yet
 
@@ -680,7 +687,7 @@ collision leaking in. A per-asset domain consensus in `core/canon.py` would be s
 
 ---
 
-## 11. Agreement is date-blind · `OPEN`
+## 11. Agreement is date-blind · `PARTLY DONE 2026-07-28` — cap fixed, recency half still `OPEN`
 
 `agreement_signal` counts distinct people and saturates at 3, so seven voices score 1.0 whether
 they all spoke this week or one spoke six months ago.
@@ -701,12 +708,31 @@ better defined and this may partly solve itself.
 Dates are now shown per supporter in the queue and the vault note, so this is at least visible
 rather than hidden.
 
-**Do the cap first, and it needs no measurement.** §4 found `agreement_signal` pinned at 1.0
-for 12 of 13 daily rows because it saturates at 3 while recorded counts run to 12 — so at n≥3
-the term carries no information at all, and recency-weighting a term that cannot vary would
-change nothing. Unsaturating it is the actionable half; the recency question needs a sidecar
-correlation, which §4's sampling fix (2026-07-28) made valid to run but which has no stratified
-rows yet. One triage sitting supplies them.
+### The cap is fixed · `2026-07-28`, `SCORE_VERSION` 6
+
+§4 found `agreement_signal` pinned at 1.0 for 12 of 13 daily rows because it clamped at 3 while
+recorded counts ran to 12 — at n≥3 it carried no information at all, and recency-weighting a
+term that cannot vary would have changed nothing. That needed no measurement, being a fact
+about the term rather than about the labels.
+
+`min(count / cap, 1.0)` → **`count / (count + cap)`**, the hyperbola `freshness_signal` and
+`approach_to` already use, so "more is better with diminishing returns" now has one idiom in
+this codebase instead of three. `cap` becomes the half-way point rather than a ceiling: 3
+voices score 0.50, 12 score 0.80, and every count is distinguishable from every other.
+
+**It measurably orders the existing decisions better.** Replaying the new shape against the old
+raw counts — legitimate, because `agreement` was always recorded as a head count, not as a
+transformed value — the within-sitting AUC moves **0.627 [0.49, 0.75] → 0.672 [0.53, 0.78]**.
+It now clears chance, where before it spanned it.
+
+Note this also fixes `core.rank.score`, the intrinsic thesis ranker, which shares the function
+and had the same clamp. That ranker carries no version stamp, so nothing partitions there.
+
+### The recency half is still open
+
+Weighting each voice by recency (`core.rank.recency_signal` already exists) rather than counting
+heads. Needs a sidecar correlation, which §4's sampling fix made valid to run but which has no
+stratified rows yet — one triage sitting supplies them.
 
 ---
 
@@ -861,18 +887,44 @@ spanning 0.043–0.312. **This bought resolution, not demotion** — measured, t
 mean of 1.2 ranks, because a floored term cannot be pushed lower and restoring a tail can only
 add score. Fixing (d) is what demotes them.
 
-**(d) `reward_risk` *rewards* the same distance · `OPEN` — the load-bearing one.**
+**(d) `reward_risk` *rewarded* the same distance · `FIXED 2026-07-28`, `SCORE_VERSION` 6.**
 `R:R = |target − entry| / zone height`. With a structural target — the post-break extreme — the
 numerator is literally *how far price ran away from the zone*, while the denominator is a fixed
-candle height. Distance inflates it. And it saturates at `RR_SATURATION = 3.0`, so SPX's 9.06,
-CLSK's 10.17, CL's 14.54 and TSLA's **23.24** all collect the full 0.20, indistinguishable from
-a genuine 3.0. SPX's decomposition: approach 0.000/0.40, and **0.593 of the 0.60** available
-from the other four terms — near-perfect, with a chunk of it earned by being unreachable.
+candle height. Distance inflated it. And it saturated at `RR_SATURATION = 3.0`, so SPX's 9.06,
+CLSK's 10.17, CL's 14.54 and TSLA's **23.24** all collected the full 0.20, indistinguishable
+from a genuine 3.0. SPX's decomposition: approach 0.000/0.40, and **0.593 of the 0.60**
+available from the other four terms — near-perfect, with a chunk of it earned by being
+unreachable.
 
-The module already knows the number is a symptom — the `WEEKLY` docstring calls a 14.19 R:R
-"a symptom of a broken denominator, not a good trade" — but nothing acts on it. Candidate fixes,
-unmeasured: measure reward from *price* rather than entry; or treat R:R above a ceiling as the
-symptom it is rather than a maximum.
+Both halves are fixed, and they were two defects rather than one:
+
+- **The inflation** (§19d's own argument). `_score` now consumes a new
+  `reward_risk_from_price = |target − price| / risk` — what is left to be made from where the
+  market actually is. Live effect, and it lands exactly on the two candidates this entry opened
+  with: **SPX weekly 9.06 → 0.91** and **SOL short 4.69 → 0.61**, the two largest demotions in
+  the queue. TSLA, 2.0% away and genuinely reachable, goes 23.24 → **24.15** and keeps its
+  rank. Far zones lose the ratio; near ones keep it.
+- **The saturation** (§4's finding). `min(rr / 3.0, 1.0)` → `rr / (rr + RR_HALF)`, the same
+  hyperbola §11's cap got. `RR_SATURATION` is renamed `RR_HALF` because 3.0 is now the value
+  worth 0.5, not a ceiling.
+
+**`reward_risk` itself is unchanged, deliberately, and must stay that way.** It is still
+`|target − entry| / risk` — what the trade pays *if it fills* — and it remains what the queue
+prints and what `MIN_REWARD_RISK` gates on. The gate must not be re-pointed at the price-based
+number: "risking more than it stands to make" is a **rule**, while reachability is a
+measurement on a continuum, and per §6's gates-vs-scores split a rule is gated and a continuum
+is scored. Feeding the journey to that gate would silently convert reachability into one. The
+evidence it stayed a score: candidate count and the whole rejection tally are byte-identical
+across the change (69 candidates, `reward_risk_too_low=10`).
+
+Both numbers are recorded on every decision, so which of them predicts an approval better is
+now a measurement rather than an argument — the pattern §21 set for carry.
+
+**Still open, and explicitly not done here:** the module's other claim, that a very high R:R is
+*itself* the symptom of a broken denominator (the `WEEKLY` docstring calls a 14.19 "a symptom
+of a broken denominator, not a good trade"). The new shape still says 23.24 beats 3.0; it
+merely stops pretending they are equal. Treating an above-ceiling ratio as a penalty rather
+than a maximum is a separate change and would need its own measurement.
 
 **(e) Weekly-first ordering concentrates them at the top · `OPEN`.** `collapse` sorts weekly
 before daily unconditionally. Weekly zones are systematically the far ones — mean gap **28.2%**
@@ -998,9 +1050,15 @@ Widening the map is the cheap lever; do it before mining, not after.
 queue started drawing a stratified sample so a sidecar correlation is valid again. The point
 stands: does `carry_reward_risk` separate approve from reject better than `reward_risk`? Needs
 one session of decisions carrying both — and now one session genuinely suffices, which it did
-not before. Only then decide whether the existing 0.20 `reward_risk` weight should consume the
-adjusted number (that is a term-input correction, not a re-weight, but it would bump
-`score_version` to 6).
+not before.
+
+**The comparison is now three-way, not two.** `SCORE_VERSION` 6 added
+`reward_risk_from_price` (§19d) and it is the number `_score` actually consumes, so the
+question is which of the three — nominal, carry-adjusted, or distance-corrected — best predicts
+an approval. All three are recorded on every decision from v6 onward. Only then decide whether
+the 0.20 `reward_risk` weight should consume the carry-adjusted number; that is a term-input
+correction of exactly the kind §19(d) just made, not a re-weight, and it would bump
+`score_version` to 7.
 
 **Why it matters more than it looks.** Carry hits both legs of R:R in opposite directions —
 subtracted from reward, added to risk — so a rate that sounds small moves the ratio a lot. A
