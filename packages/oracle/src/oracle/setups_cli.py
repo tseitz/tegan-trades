@@ -56,6 +56,11 @@ from oracle import cache, carry, corpus, exclusions, execute, listings
 # remain part of this CLI's surface for callers and tests that reach for them here.
 from oracle.decisions import append_decision, load_decisions, sync_mirror  # noqa: F401
 from oracle.exclusions import DEFAULT_EXCLUSIONS
+# Re-exported: choosing which candidates a sitting sees is its own concern now — see that
+# module's docstring for why it stopped being ``qualified[:limit]`` — but both names remain
+# part of this CLI's surface for callers and tests that reach for them here.
+from oracle import queue as queue_mod
+from oracle.queue import QueuePosition, build_queue, filter_candidates  # noqa: F401
 from oracle.resample import to_weekly
 from oracle.route import OracleRef, RoutingTable, load_routing_table, route
 # Re-exported: the queue's layout lives in its own module, but ``format_candidate`` remains
@@ -265,27 +270,7 @@ def build_candidates(
     return candidates, stats
 
 
-# ── pure: filtering, decision records, formatting ───────────────────────────────────────────
-
-def filter_candidates(
-    candidates,
-    *,
-    min_score: float | None = None,
-    tiers: tuple[str, ...] | None = None,
-    limit: int | None = None,
-) -> list[Candidate]:
-    """Filter (and cap) a candidate stream. ``candidates`` is assumed already best-score-first,
-    as ``collapse`` returns it, so ``limit`` after filtering is "the top N that qualify"."""
-    out = list(candidates)
-    if min_score is not None:
-        out = [c for c in out if c.score >= min_score]
-    if tiers:
-        wanted = set(tiers)
-        out = [c for c in out if c.tier in wanted]
-    if limit is not None:
-        out = out[:limit]
-    return out
-
+# ── pure: decision records, formatting ──────────────────────────────────────────────────────
 
 def is_inside_zone(candidate: Candidate) -> bool:
     """Has price actually reached the zone? ``ARRIVAL`` is where the near edge sits on the
@@ -322,12 +307,18 @@ def drop_decided(candidates, decided: dict[str, dict]) -> list[Candidate]:
 
 
 def decision_record(candidate: Candidate, decision: str, *, decided_at: str,
-                    reason: str | None = None, note: str | None = None) -> dict:
+                    reason: str | None = None, note: str | None = None,
+                    queue: QueuePosition | None = None) -> dict:
     """A JSON-serializable decision, keyed on the candidate's content-addressed zone.
 
     ``inside_zone`` and ``agreement`` are the state a later run compares against to decide
     whether a deferral has become actionable, so they are recorded even for decisions that are
     permanent — the file is the audit trail, not just a suppression list.
+
+    ``queue`` is what the candidate was judged *against* — see ``oracle.queue`` for why a
+    verdict is meaningless without it. Optional because it is genuinely absent on the 77 rows
+    written before it existed, and those must stay absent: a re-run would yield today's queue,
+    not the one that was on screen, which is the trap §4's do-not-backfill rule spells out.
     """
     record = {
         "candidate_key": candidate.key,
@@ -385,6 +376,25 @@ def decision_record(candidate: Candidate, decision: str, *, decided_at: str,
     # a note that exists and says nothing, and an empty string reads as the latter.
     if note:
         record["reason_note"] = note
+    if queue is not None:
+        # What else was on screen. ``queue_mode`` is the load-bearing one — it says whether
+        # this sitting may be pooled with another at all — and ``queue_band`` narrows that to
+        # the half that is genuinely a sample, since the head is still a score-ordered slice.
+        # ``queue_score_min``/``_max`` describe the rows that were *offered*, which is what a
+        # sitting abandoned halfway cannot otherwise report.
+        #
+        # Additive, so ``score_version`` deliberately does NOT move: ``core.setups._score`` is
+        # untouched here, and bumping it would re-partition the sidecar and strand the v5
+        # cohort this is trying to grow. Same precedent as §21's carry fields.
+        record.update({
+            "queue_mode": queue.mode,
+            "queue_band": queue.band,
+            "queue_rank": queue.rank,
+            "queue_size": queue.size,
+            "queue_score_min": queue.score_min,
+            "queue_score_max": queue.score_max,
+            "queue_population": queue.population,
+        })
     return record
 
 
@@ -465,11 +475,15 @@ def append_note(vault_path, section: str) -> None:
 
 # ── interactive triage loop ──────────────────────────────────────────────────────────────────
 
-def triage(candidates, *, decisions_path, vault_path, input_fn=input, out=print,
+def triage(queue, *, decisions_path, vault_path, input_fn=input, out=print,
            as_of: date | None = None, color: bool | None = None,
            mirror_path=None, exclusions_path=None, session=None) -> dict[str, int]:
-    """Present each candidate, highest score first; approve -> vault note (if given) + sidecar,
+    """Present each candidate in queue order; approve -> vault note (if given) + sidecar,
     all decisions -> sidecar. Quit stops immediately without consuming further input.
+
+    ``queue`` is an ``oracle.queue.Queue`` rather than a bare list because every decision has
+    to record what else was on screen when it was made. A plain sequence of candidates cannot
+    answer that, and §4 is the account of what a file that cannot answer it is worth.
 
     ``as_of`` is only used to age each candidate for display, so it stays optional — a caller
     that doesn't supply one gets the date without the day count rather than an exception.
@@ -489,8 +503,9 @@ def triage(candidates, *, decisions_path, vault_path, input_fn=input, out=print,
     counts = {APPROVED: 0, LATER: 0, REJECTED: 0, ARCHIVED: 0}
     decided_at = datetime.now(UTC).isoformat(timespec="seconds")
     color = supports_color() if color is None else color
-    total = len(candidates)
-    for i, c in enumerate(candidates, start=1):
+    total = len(queue.rows)
+    for i, row in enumerate(queue.rows, start=1):
+        c = row.candidate
         out(format_candidate(c, rank=i, total=total, as_of=as_of, color=color))
         ans = input_fn("[a]pprove / [l]ater / [r]eject / [x]archive / [q]uit: ").strip().lower()
         if ans in ("q", "quit"):
@@ -516,7 +531,8 @@ def triage(candidates, *, decisions_path, vault_path, input_fn=input, out=print,
 
         append_decision(
             decisions_path,
-            decision_record(c, decision, decided_at=decided_at, reason=reason, note=note),
+            decision_record(c, decision, decided_at=decided_at, reason=reason, note=note,
+                            queue=queue.position(i)),
             mirror=mirror_path, warn=out)
         counts[decision] += 1
 
@@ -634,6 +650,17 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT,
                         help=f"cap how many candidates to review (default: {DEFAULT_LIMIT}; "
                              f"0 for no cap)")
+    # The opt-out, not the default. A score-ordered cap is what made every sitting judge a
+    # narrower slice than the last, so `top` is kept only for the run where you want tonight's
+    # best trades and nothing else — and the sidecar records which one ran, because the two
+    # produce decisions that cannot be pooled with each other.
+    parser.add_argument("--sample", choices=(queue_mod.STRATIFIED, queue_mod.TOP),
+                        default=queue_mod.STRATIFIED,
+                        help=f"how to fill the queue when more candidates qualify than "
+                             f"--limit (default: %(default)s — the top {queue_mod.HEAD_SIZE} "
+                             f"by score plus one draw per stratum across the rest; 'top' is "
+                             f"the first --limit rows in queue order, which is weekly before "
+                             f"daily and NOT best-score-first)")
     parser.add_argument("--min-score", type=float, default=None, help="drop candidates below this score")
     parser.add_argument("--tier", action="append", dest="tiers", choices=TIER_CHOICES,
                         help="restrict to this tier; repeatable")
@@ -740,21 +767,38 @@ def main(argv: list[str] | None = None) -> int:
 
     tiers = tuple(args.tiers) if args.tiers else None
     qualified = filter_candidates(undecided, min_score=args.min_score, tiers=tiers)
-    queue = filter_candidates(qualified, limit=None if args.limit == 0 else args.limit)
+    queue = build_queue(qualified, limit=None if args.limit == 0 else args.limit,
+                        stratified=args.sample == queue_mod.STRATIFIED,
+                        rng=queue_mod.rng_for(as_of))
     held_back = len(qualified) - len(queue)
 
-    if not queue:
+    if not queue.rows:
         print("Nothing to review.")
         return 0
 
-    if held_back:
-        print(f"  showing the top {len(queue)} by score — {held_back} more qualify "
+    # Named explicitly rather than left as "showing the top N", which is what it used to say
+    # and is now only true under --sample top. Which scheme ran decides whether the sitting's
+    # decisions can be pooled with any other, so it is not a detail to leave off screen.
+    if held_back and queue.mode == queue_mod.STRATIFIED:
+        print(f"  showing {len(queue)} of {len(qualified)} — the top {queue_mod.HEAD_SIZE} by "
+              f"score, plus one drawn from each of {len(queue) - queue_mod.HEAD_SIZE} strata "
+              f"below them, so the sitting spans "
+              f"{queue.score_min:.3f}-{queue.score_max:.3f} (--sample top for the first "
+              f"{len(queue)} in queue order, --limit 0 for all)")
+    elif held_back:
+        # NOT "the top N by score", which is what this said for as long as the cap existed and
+        # was measurably false: ``collapse`` orders weekly before daily, so with 28 weekly rows
+        # against a cap of 25 the queue was 25 weekly and 0 daily, and the highest-scoring
+        # candidate in the whole population (TSLA, 0.90, position 29) was never shown at all.
+        print(f"  showing the first {len(queue)} in queue order, weekly before daily — "
+              f"{held_back} more qualify, and they are not all lower-scoring "
               f"(--limit 0 for all)")
 
     if args.list:
         color = supports_color()
-        for i, c in enumerate(queue, start=1):
-            print(format_candidate(c, rank=i, total=len(queue), as_of=as_of, color=color))
+        for i, row in enumerate(queue.rows, start=1):
+            print(format_candidate(row.candidate, rank=i, total=len(queue), as_of=as_of,
+                                   color=color))
         return 0
 
     # Resolved before the first prompt: a vault that turns out to be unreachable must fail

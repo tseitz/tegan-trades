@@ -15,6 +15,24 @@ is distinguishable from chance.** The composite ``score`` is 0.671 with a 95% in
 at 0.727 [0.54, 0.88], and that is roughly *half* the 0.922 the first sitting showed. Every
 per-timeframe cell now carries a '?'. Nothing is shipped off this probe. See §20.
 
+**Corrected 2026-07-28: a good part of that was the pooling, not the scorer.** ``within_sitting``
+below forms the U statistic inside each sitting and pools the counts, which is the standard
+remedy for the confound §4 identified — cross-sitting pairs compare two different screens, and
+§4 measured them at AUC 0.444. Dropping them costs 658 of 812 pairs and *improves* every
+estimate::
+
+                        same-sitting        pooled (invalid)
+    score            0.688 [0.54,0.82]     0.568 [0.41,0.71]?
+    freshness        0.779 [0.66,0.88]     0.636 [0.49,0.78]?
+    trend_alignment  0.429 [0.29,0.57]?    0.475 [0.35,0.60]?
+
+So ``score`` and ``freshness`` both clear chance once the labels are put on one scale, and the
+pooled tables were *understating* the scorer rather than flattering it. ``trend_alignment``
+still orders backwards on both. **This is still not a mandate to re-weight** — 154 pairs from
+eight sittings, and the sittings themselves were score-ordered slices. It is the reason the
+queue now draws a stratified sample (``oracle.queue``): the next sittings will not need
+conditioning, and then these numbers can be believed rather than merely corrected.
+
 **The per-sitting table is the reason, and it is a flaw in the measurement rather than in the
 scorer.** A sitting is not a random sample: the queue is score-ordered and capped, so the first
 sitting spans a wide score range and each later one works a narrower slice of the tail. A term
@@ -129,6 +147,12 @@ BOOTSTRAP_ROUNDS = 20_000
 # Fewest observations per side before an interval is worth printing at all. See ``cell``.
 MIN_GROUP = 3
 
+# Fewest same-sitting comparisons before a conditional interval is worth printing. Counted in
+# *pairs* rather than rows because that is what the statistic is built from, and because the
+# two diverge sharply: the 77-row file offers 812 pooled pairs and only 154 survive once
+# cross-sitting ones are dropped. See ``stratified_cell``.
+MIN_PAIRS = 12
+
 
 def auc_ci(positive: list[float], negative: list[float]) -> tuple[float, float]:
     """95% bootstrap CI for ``auc``, resampling both groups independently.
@@ -147,6 +171,63 @@ def auc_ci(positive: list[float], negative: list[float]) -> tuple[float, float]:
         for _ in range(BOOTSTRAP_ROUNDS)
     )
     return vals[int(0.025 * BOOTSTRAP_ROUNDS)], vals[int(0.975 * BOOTSTRAP_ROUNDS)]
+
+
+def stratified_auc(groups: list[tuple[list[float], list[float]]]) -> float:
+    """AUC over **same-sitting pairs only** — the pooled-within-stratum Mann-Whitney statistic.
+
+    ``auc`` above compares every approval to every negative, which silently includes pairs
+    drawn from different sittings. §4 measured that those pairs are not comparable: the 19:53
+    sitting approved at a median score of 0.484 while 18:38 *rejected* at a median of 0.518,
+    and ``AUC(later approvals > earlier negatives) = 0.444``. A cross-sitting pair therefore
+    measures how the two screens differed, not how the two candidates did.
+
+    Conditioning is the standard remedy for exactly this confound: form the U statistic inside
+    each sitting, where the anchor was fixed, and pool the counts rather than the ratios.
+    Pooling ratios would weight a 1-versus-1 sitting as heavily as a 10-versus-9 one.
+
+    It also partitions on ``score_version`` for free, which §4 requires and pooling breaks:
+    a sitting is one run of one build, so no sitting spans two scoring generations.
+
+    The price is power, and it is steep — most pairs in this file are cross-sitting, and the
+    caller prints how many survive. A wide interval here is the honest reading of what 77
+    hand-entered decisions actually support.
+    """
+    wins = total = 0.0
+    for positive, negative in groups:
+        if not positive or not negative:
+            continue
+        wins += sum(1.0 if p > n else 0.5 if p == n else 0.0 for p in positive for n in negative)
+        total += len(positive) * len(negative)
+    return wins / total if total else float("nan")
+
+
+def stratified_auc_ci(groups: list[tuple[list[float], list[float]]]) -> tuple[float, float]:
+    """95% bootstrap CI for ``stratified_auc``, resampling **within** each sitting.
+
+    Resampling across sittings would rebuild the pooling this statistic exists to avoid.
+    """
+    usable = [(p, n) for p, n in groups if p and n]
+    if not usable:
+        return (float("nan"), float("nan"))
+    rng = random.Random(BOOTSTRAP_SEED)
+    vals = sorted(
+        stratified_auc([([rng.choice(p) for _ in p], [rng.choice(n) for _ in n])
+                        for p, n in usable])
+        for _ in range(BOOTSTRAP_ROUNDS)
+    )
+    return vals[int(0.025 * BOOTSTRAP_ROUNDS)], vals[int(0.975 * BOOTSTRAP_ROUNDS)]
+
+
+def stratified_cell(groups: list[tuple[list[float], list[float]]]) -> str:
+    """``AUC [lo, hi]`` over same-sitting pairs, marked when the interval spans chance."""
+    pairs = sum(len(p) * len(n) for p, n in groups)
+    if pairs < MIN_PAIRS:
+        return f"pairs too few ({pairs})".rjust(CELL_WIDTH)
+    point = stratified_auc(groups)
+    lo, hi = stratified_auc_ci(groups)
+    marker = "?" if lo <= 0.5 <= hi else " "
+    return f"{point:.3f} [{lo:.2f},{hi:.2f}]{marker}".rjust(CELL_WIDTH)
 
 
 def cell(positive: list[float], negative: list[float]) -> str:
@@ -268,10 +349,64 @@ def by_sitting(path: Path) -> None:
     print()
 
 
+def within_sitting(path: Path) -> None:
+    """Every term's AUC over same-sitting pairs only — the valid version of the pooled table.
+
+    The pooled numbers at the top of this probe answer "does a term separate approvals from
+    negatives", and §4 established that they cannot: the two groups were labelled against
+    different screens. This table asks the answerable question instead — *within one screen*,
+    did the term order the candidates the way the human did.
+
+    Read the surviving-pair count first. It is the cost of the correction and it is the whole
+    story about how much this file can support.
+    """
+    rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    decided = [r for r in rows if r["decision"] in POSITIVE + NEGATIVE]
+    sittings = sorted({r["decided_at"] for r in decided})
+
+    # A sitting is one run of one build, so conditioning on it partitions score_version too.
+    # Asserted rather than assumed: if it ever stops holding, the `score` row below silently
+    # starts comparing two scales, which is the exact failure §4 forbids.
+    for when in sittings:
+        versions = {r.get("score_version") for r in decided if r["decided_at"] == when}
+        assert len(versions) == 1, f"sitting {when} spans score versions {versions}"
+
+    pooled_pairs = (sum(1 for r in decided if r["decision"] in POSITIVE)
+                    * sum(1 for r in decided if r["decision"] in NEGATIVE))
+
+    def groups_for(field, get):
+        out = []
+        for when in sittings:
+            sub = [r for r in decided if r["decided_at"] == when and field in r]
+            out.append(([get(r) for r in sub if r["decision"] in POSITIVE],
+                        [get(r) for r in sub if r["decision"] in NEGATIVE]))
+        return out
+
+    kept = sum(len(p) * len(n) for p, n in groups_for("score", lambda r: r["score"]))
+    print("=== per-term AUC over SAME-SITTING pairs only (the valid pooling) ===\n")
+    print(f"    {len(sittings)} sittings. Of {pooled_pairs} approval-vs-negative pairs, "
+          f"{kept} are within a sitting")
+    print(f"    and {pooled_pairs - kept} span two screens and are dropped — §4 measured those "
+          f"at AUC 0.444,")
+    print("    i.e. actively misleading rather than merely noisy.\n")
+    print("    '?' marks an interval spanning 0.5. Expect several: this is the honest n.\n")
+
+    print(f"  {'term':>16}  {'same-sitting AUC':>{CELL_WIDTH}}  {'pooled (invalid)':>{CELL_WIDTH}}")
+    reported = [("score", "score", lambda r: r["score"])] + list(TERMS)
+    for name, field, get in reported:
+        groups = groups_for(field, get)
+        sub = [r for r in decided if field in r]
+        pooled = cell([get(r) for r in sub if r["decision"] in POSITIVE],
+                      [get(r) for r in sub if r["decision"] in NEGATIVE])
+        print(f"  {name:>16}  {stratified_cell(groups)}  {pooled}")
+    print()
+
+
 def main() -> None:
     by_timeframe(DECISIONS)
     print()
     by_sitting(DECISIONS)
+    within_sitting(DECISIONS)
 
     rows = load(DECISIONS, version=SCORE_VERSION)
     pos = [r for r in rows if r["decision"] in POSITIVE]

@@ -19,21 +19,23 @@ be a problem; revisit if it bites) · `PARTLY DONE` (a residual is named in the 
 
 ## Where to start
 
-**One thing blocks the most work.** §4 found that triage decisions cannot be pooled across
-sittings — the queue is score-ordered and capped, so each sitting judges a narrower slice than
-the last and the approval threshold moves with it. Every entry that says "measure this against
-the sidecar first" is waiting on that, and none of them said so.
+**The thing that blocked the most work is fixed, and now wants one sitting.** §4's sampling
+defect — each sitting judging a narrower slice than the last, with the approval threshold
+moving with it — was fixed on 2026-07-28: the queue draws a stratified sample and every
+decision records what else was on screen. **What it now needs is decisions.** Every entry that
+says "measure this against the sidecar first" is waiting on a single `uv run setups` sitting.
 
 | | Entry | Why now | Cost |
 |---|---|---|---|
-| 1 | **§4** — make decisions comparable | Unblocks §11, §18, §21. Nothing else in the file has that fan-out. | stratified triage or one recorded field |
+| 1 | **§4** — run one stratified sitting | Unblocks §11, §18, §21. The machinery is built; nothing else in the file has that fan-out. | your attention, ~25 candidates |
 | 2 | **§6f** — `ETH/BTC` ratio, then `BTC.D` | 28 rows routed nowhere and both legs are already cached. A division, not a new source. | free, local |
 | 3 | **§19(d)** — `reward_risk` rewards distance | Measured against candidate counts, so §4 does not gate it. §4 shows the term pinned at 3.0 for 12 of 18 weekly rows. | free, local |
-| 4 | **§11** — unsaturate the agreement cap | Pinned at 1.0 for 12 of 13 daily rows, so it currently carries no information. The cap needs no measurement; the recency half waits on §4. | free, local |
+| 4 | **§11** — unsaturate the agreement cap | Pinned at 1.0 for 12 of 13 daily rows, so it currently carries no information. The cap needs no measurement; the recency half waits on §4's sitting. | free, local |
 | 5 | **§27** — audit 20 `timeframe_conflict` rejections | 1,000 outcomes discarded by a gate nobody has read a single example from. | free, local |
 
-**Blocked on §4, do not start:** §18 (`collapse` rep rule) · §21 (funding weighting) · §11's
-recency half. Each defers to a sidecar correlation that is not currently valid.
+**Waiting on §4's first stratified sitting, not on code:** §18 (`collapse` rep rule) · §21
+(funding weighting) · §11's recency half. Each defers to a sidecar correlation that is now
+valid to make and simply has no rows yet.
 
 **Not blocked, but each needs its own measurement first:** §7 (ATR stop padding — measure `k`
 against the 84-candidate baseline) · §15 (SMA confluence — does 50W actually mark turns).
@@ -140,7 +142,7 @@ That needs a different source, or Tegan's own definition, and it blocks slice 2 
 
 ---
 
-## 4. Revealed preference is the only ground truth, and it cannot currently be read · `OPEN` — highest leverage · absorbs §20
+## 4. Revealed preference is the only ground truth, and it cannot currently be read · `PARTLY DONE 2026-07-28` — absorbs §20
 
 There are **four scoring systems** and **zero closed loops**:
 
@@ -212,16 +214,66 @@ rather than about the labels — both the `RR_SATURATION` shape already fixed on
   distance inflates R:R, so the term is meaningful where zones are near and noise where they
   are far. "R:R is broken" is too broad; it is broken *on the far population*.
 
-### What to do next
+### Both fixes are built · `2026-07-28` — the residual is that no stratified sitting exists yet
 
-**Not "accumulate more decisions" — "make the decisions comparable."** Two candidates, neither
-built: triage a **randomised or score-stratified slice** rather than the top of the queue, so
-range stops tracking sitting order; or **record the sitting's score range** with each decision
-so the analysis can condition on it.
+The call was "not *accumulate more decisions* — *make the decisions comparable*", and both
+named candidates shipped together because neither is sufficient alone.
 
-**This blocks §11, §18 and §21**, each of which defers to a sidecar measurement that cannot
-currently be made. It does not block §7, §15, §19(d) or §27, which measure against candidate
-counts or price history instead.
+**The queue is sampled, not topped** (`oracle/queue.py`, new module — `setups_cli` was at the
+800-line limit). The top `HEAD_SIZE = 5` by score are always shown, so the queue keeps doing
+its other job; the remaining 20 slots are **one draw per equal-count stratum** across
+everything below. Measured on the live 67-candidate queue: a stratified sitting spans
+0.377–0.902 against `--sample top`'s 0.41–0.78, and two consecutive draws differ. Equal
+*count*, not equal width — a width-uniform draw over-samples sparse extremes, which are
+exactly the rows that would then be re-offered every sitting. `--sample top` restores the old
+behaviour; ordering within the sitting is untouched, so §19(e)'s weekly-first rule still holds.
+
+**Every decision records what else was on screen** — `queue_mode`, `queue_band`, `queue_rank`,
+`queue_size`, `queue_score_min`/`_max`, `queue_population`. Additive, so **`score_version`
+stays at 5** and the v5 cohort is not re-partitioned (§21's precedent). The 77 existing rows
+correctly have none of these and **must not be backfilled**, per the rule below.
+
+`queue_mode` is the load-bearing field: it says whether a sitting may be pooled at all.
+`queue_band` narrows that further — the head is still a score-ordered slice that marches down
+between sittings, so only the `tail` rows are a genuine sample and a mining pass can say so.
+
+### The blocker was also *understating* the scorer, which nobody expected
+
+`scripts/probe_freshness_weight.py` now computes a **within-sitting AUC** — form the U
+statistic inside each sitting, pool the counts, never compare across screens. That is the
+standard remedy for this confound and it runs on the existing 77 rows. It costs **658 of 812
+pairs** and improves every estimate:
+
+| term | same-sitting (valid) | pooled (invalid) |
+|---|---|---|
+| `score` | **0.688 [0.54, 0.82]** | 0.568 [0.41, 0.71] — chance |
+| `freshness` | **0.779 [0.66, 0.88]** | 0.636 [0.49, 0.78] — chance |
+| `approach` | 0.625 [0.43, 0.81] — chance | 0.604 [0.43, 0.77] — chance |
+| `agreement` | 0.627 [0.49, 0.75] — chance | 0.522 [0.39, 0.66] — chance |
+| `reward_risk` | 0.629 [0.46, 0.79] — chance | 0.553 [0.41, 0.70] — chance |
+| `trend_alignment` | 0.429 [0.29, 0.57] — chance | 0.475 [0.35, 0.60] — chance |
+
+So `score` and `freshness` **both clear chance** once the labels are put on one scale. The
+programme's headline finding — "almost nothing in the scorer is distinguishable from chance" —
+was substantially an artefact of pooling incomparable screens, not a verdict on the scorer.
+Conditioning on sitting partitions `score_version` for free, since a sitting is one run of one
+build; the probe asserts that rather than assuming it.
+
+**Still not a mandate to re-weight.** 154 pairs from eight sittings, every one of which was
+itself a score-ordered slice. The correction makes the old data readable; it does not make it
+sufficient.
+
+### Residual: no stratified sitting has happened yet
+
+Everything above is machinery plus a retrospective correction. **The next `uv run setups`
+sitting is the first one whose decisions need no conditioning at all** — and until a few exist,
+`queue_band == "tail"` selects an empty set. That is the one thing left, and it is Tegan's
+attention rather than code.
+
+**Consequently §11, §18 and §21 are no longer blocked on a fix — they are blocked on a
+sitting.** Each still defers to a sidecar correlation; that correlation is now *possible*,
+needs no conditioning, and simply wants data. §7, §15, §19(d) and §27 were never blocked, and
+measure against candidate counts or price history instead.
 
 ### Do not re-derive these
 
@@ -236,10 +288,14 @@ counts or price history instead.
 - **Do not read the weekly-versus-daily split as established.** The point estimates differ in
   the direction described (weekly `approach` 0.738 / `freshness` 0.583; daily 0.333 / 0.861)
   but do not survive their own intervals at 11v17 and 18v11. Unproven, not disproven.
-- **Do not run "one mixed session" to break the confound.** There is no timeframe filter —
-  `setups` always returns both — and the population flipped entirely between sessions: after
-  v5 decided all 7 weekly rows, `--limit 0` returned 23 candidates, every one daily. The
-  confound is structural, because the ranker decides which population gets judged.
+- **"One mixed session" could not break the timeframe confound, and now the queue does it for
+  you.** There is no timeframe filter — `setups` always returns both — and the population
+  flipped entirely between sessions: after v5 decided all 7 weekly rows, `--limit 0` returned
+  23 candidates, every one daily. The confound was structural, because the ranker decided
+  which population got judged. §19(e) records the exact mechanism found on 2026-07-28: with 28
+  weekly rows sorted ahead of 39 daily ones, `--limit 25` was **25 weekly and zero daily**.
+  The stratified draw spans both by construction, so this is now fixed rather than merely
+  understood — but it is fixed only for sittings held *after* that date.
 - **Do not mine the 12 `archived` rows as clean negatives.** Confirmed with Tegan 2026-07-27:
   `x` was used for both "I don't trade this asset" and "stale, bury it". The meaning was never
   recorded and cannot be recovered. `x` now asks which kind it is, so this does not recur.
@@ -648,8 +704,9 @@ rather than hidden.
 **Do the cap first, and it needs no measurement.** §4 found `agreement_signal` pinned at 1.0
 for 12 of 13 daily rows because it saturates at 3 while recorded counts run to 12 — so at n≥3
 the term carries no information at all, and recency-weighting a term that cannot vary would
-change nothing. Unsaturating it is the actionable half; the recency question is the part that
-waits on §4's blocked correlation.
+change nothing. Unsaturating it is the actionable half; the recency question needs a sidecar
+correlation, which §4's sampling fix (2026-07-28) made valid to run but which has no stratified
+rows yet. One triage sitting supplies them.
 
 ---
 
@@ -824,6 +881,29 @@ for the unreachable set vs **3.7%** for the rest. The live queue put CL (21.3% a
 defensible on its own terms ("the macro is much stronger"); what was never measured is that it
 promotes precisely the unreachable population.
 
+**It was worse than "promotes", and this is the part that had never been noticed · found
+2026-07-28 while building §4's sampler.** The default cap fell *entirely inside the weekly
+band*. Measured on the live queue: 67 candidates, **28 weekly then 39 daily**, so `--limit 25`
+showed **25 weekly and zero daily** — and TSLA at **0.90, the highest score in the whole
+population**, sat at position 29 and was never on screen at all. Meanwhile the CLI printed
+`showing the top 25 by score`, which was simply false: it was the first 25 in weekly-then-score
+order. Two consequences:
+
+- **This is the mechanism behind §4's "the population flipped entirely between sessions".**
+  The queue served weekly until weekly ran out, then served daily. §4 called the confound
+  structural because "the ranker decides which population gets judged" — correct, and this is
+  precisely how.
+- **Any conclusion drawn from a default-limit queue before 2026-07-28 saw a weekly-only
+  sample**, whatever it thought it was measuring. That includes §4's own weekly-vs-daily
+  split, which §4 already declines to treat as established for a different reason.
+
+Fixed only in the sense that it can no longer hide: §4's head band sorts on score, so the
+best-scoring candidate is always shown, and both queue messages now say what they actually did.
+The regression test is `test_the_head_reaches_the_best_score_even_when_queue_order_buries_it`
+in `packages/oracle/tests/test_queue.py`. **The ordering rule itself is untouched and still
+`OPEN` on its own terms** — this was a cap-and-ordering interaction, not an argument about
+whether weekly should outrank daily.
+
 Reproduce any of this with the probes in the 2026-07-27 session; all are free and local.
 
 ---
@@ -859,8 +939,8 @@ have made this self-evident rather than something to go find.
 authored target" reintroduces the recency bias `min` was chosen to avoid; "nearest to price"
 re-derives the smallest-claim logic against a better reference; median-of-authored discards the
 "listen to them" provenance that `target_source` exists to preserve. Needs measuring against
-§4's sidecar, not picking by argument — which §4 says is blocked until sittings are
-comparable.
+§4's sidecar, not picking by argument. That measurement became valid on 2026-07-28 when the
+queue started drawing a stratified sample; it now waits on one triage sitting, not on a fix.
 
 ---
 
@@ -914,12 +994,13 @@ the 30 approved assets and the queue is mostly crypto alts outside it. Every unm
 correctly gets `None` rather than a guessed zero, but a correlation over 13 rows is thin.
 Widening the map is the cheap lever; do it before mining, not after.
 
-**Residual — the measurement itself.** Blocked on §4 — a sidecar correlation is not
-currently valid, so this cannot be settled by accumulating one more session. Still the point: does
-`carry_reward_risk` separate approve from reject better than `reward_risk`? Needs one session
-of decisions carrying both. Only then decide whether the existing 0.20 `reward_risk` weight
-should consume the adjusted number (that is a term-input correction, not a re-weight, but it
-would bump `score_version` to 6).
+**Residual — the measurement itself.** Was blocked on §4; **unblocked 2026-07-28**, when the
+queue started drawing a stratified sample so a sidecar correlation is valid again. The point
+stands: does `carry_reward_risk` separate approve from reject better than `reward_risk`? Needs
+one session of decisions carrying both — and now one session genuinely suffices, which it did
+not before. Only then decide whether the existing 0.20 `reward_risk` weight should consume the
+adjusted number (that is a term-input correction, not a re-weight, but it would bump
+`score_version` to 6).
 
 **Why it matters more than it looks.** Carry hits both legs of R:R in opposite directions —
 subtracted from reward, added to risk — so a rate that sounds small moves the ratio a lot. A

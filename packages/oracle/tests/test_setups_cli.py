@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 from datetime import date
 from pathlib import Path
 
@@ -19,7 +20,8 @@ from core.setups import (
 )
 from core.structure import BULLISH, SWING_HIGH, SWING_LOW, Break, OrderBlock, Swing
 
-from oracle import exclusions, setups_cli
+from oracle import exclusions, queue, setups_cli
+from oracle.queue import build_queue
 
 
 def _swing(price, kind, *, index=0, day=1):
@@ -58,6 +60,12 @@ def _candidate(**overrides) -> Candidate:
     return Candidate(**base)
 
 
+def _queue(candidates):
+    """The candidates as an unsampled sitting. ``triage`` takes a ``Queue`` rather than a list
+    because every decision records what else was on screen — see ``oracle.queue``."""
+    return build_queue(candidates, limit=None)
+
+
 # ── filter_candidates ────────────────────────────────────────────────────────
 
 def test_filter_by_min_score_drops_below_threshold():
@@ -71,9 +79,13 @@ def test_filter_by_tier_keeps_only_requested_tiers():
     assert setups_cli.filter_candidates([major, large], tiers=(TIER_MAJOR,)) == [major]
 
 
-def test_filter_by_limit_caps_the_result():
-    cands = [_candidate(score=s) for s in (0.9, 0.8, 0.7)]
-    assert setups_cli.filter_candidates(cands, limit=2) == cands[:2]
+def test_filtering_never_caps_however_many_qualify():
+    """Two places that both truncate is how "the top N by score" became the only population
+    anyone ever judged (§4). ``filter_candidates`` only drops what the run asked not to see;
+    which of the survivors fit on screen is ``build_queue``'s call, and it records that it
+    made one. See test_queue.py."""
+    cands = [_candidate(score=0.9) for _ in range(50)]
+    assert len(setups_cli.filter_candidates(cands, min_score=0.5)) == 50
 
 
 def test_the_queue_is_capped_by_default_so_a_soft_gate_cannot_produce_a_wall():
@@ -130,6 +142,62 @@ def test_decision_record_carries_freshness_so_it_can_be_correlated_later():
     record = setups_cli.decision_record(_candidate(freshness=0.31), setups_cli.APPROVED,
                                         decided_at="2026-07-26T00:00:00+00:00")
     assert record["freshness"] == 0.31
+
+
+def test_decision_record_carries_what_else_was_on_screen():
+    """A verdict is relative to the queue that produced it — measured, the 19:53 sitting
+    approved at a median score of 0.484 while 18:38 *rejected* at a median of 0.518. The
+    range has to travel with the row or the two look like one labelled dataset (§4)."""
+    q = build_queue([_candidate(score=s) for s in (0.9, 0.5, 0.1, 0.3, 0.7)],
+                    limit=3, head=1, rng=random.Random(0))
+    record = setups_cli.decision_record(q.rows[0].candidate, setups_cli.APPROVED,
+                                        decided_at="2026-07-28T00:00:00+00:00",
+                                        queue=q.position(1))
+    assert record["queue_mode"] == queue.STRATIFIED
+    assert record["queue_band"] in (queue.BAND_HEAD, queue.BAND_TAIL)
+    assert record["queue_rank"] == 1
+    assert record["queue_size"] == 3
+    assert record["queue_population"] == 5
+    assert record["queue_score_min"] == q.score_min
+    assert record["queue_score_max"] == q.score_max
+
+
+def test_a_record_written_without_a_queue_omits_the_queue_fields_rather_than_guessing():
+    """The 77 rows written before this existed genuinely have no queue context, and §4's
+    do-not-backfill rule is that a re-run yields today's queue rather than the one that was
+    on screen. A null would read as "recorded, and empty"; absent reads as what it is."""
+    record = setups_cli.decision_record(_candidate(), setups_cli.APPROVED,
+                                        decided_at="2026-07-28T00:00:00+00:00")
+    assert not [k for k in record if k.startswith("queue_")]
+
+
+def test_recording_the_queue_does_not_move_the_score_version():
+    """These are additive fields and ``core.setups._score`` is untouched. Bumping the version
+    would re-partition the sidecar and strand the v5 cohort this is meant to grow — the same
+    reasoning that kept §21's carry fields at 5."""
+    q = build_queue([_candidate()], limit=None)
+    record = setups_cli.decision_record(q.rows[0].candidate, setups_cli.APPROVED,
+                                        decided_at="2026-07-28T00:00:00+00:00",
+                                        queue=q.position(1))
+    assert record["score_version"] == SCORE_VERSION
+
+
+def test_triage_records_the_queue_context_on_every_decision(tmp_path):
+    """The wiring, not just the record builder — the sidecar is what §4 mines, so a position
+    that never reaches ``append_decision`` is the same as not having built one."""
+    cands = [_candidate(asset=f"A{i}", score=s) for i, s in enumerate((0.9, 0.4, 0.6))]
+    q = build_queue(cands, limit=None)
+    path = tmp_path / "decisions.jsonl"
+    answers = iter(["a", "r", "t", "note", ""])
+    setups_cli.triage(q, decisions_path=path, vault_path=None,
+                      input_fn=lambda _: next(answers), out=lambda *_: None)
+    rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    assert len(rows) == 3
+    assert [r["queue_rank"] for r in rows] == [1, 2, 3]
+    assert {r["queue_mode"] for r in rows} == {queue.FULL}
+    assert {r["queue_size"] for r in rows} == {3}
+    assert {r["queue_score_min"] for r in rows} == {0.4}
+    assert {r["queue_score_max"] for r in rows} == {0.9}
 
 
 def test_decision_record_roundtrips_through_the_jsonl_sidecar(tmp_path):
@@ -403,7 +471,7 @@ def test_triage_skips_the_vault_write_when_vault_path_is_none(tmp_path):
     decisions_path = tmp_path / "decisions.jsonl"
     answers = iter(["a"])
     counts = setups_cli.triage(
-        [c], decisions_path=decisions_path, vault_path=None,
+        _queue([c]), decisions_path=decisions_path, vault_path=None,
         input_fn=lambda _: next(answers), out=lambda *_: None,
     )
     assert counts[setups_cli.APPROVED] == 1
@@ -418,7 +486,7 @@ def _run(answers, candidate, tmp_path):
     it = iter(answers)
     path = tmp_path / "decisions.jsonl"
     counts = setups_cli.triage(
-        [candidate], decisions_path=path, vault_path=None,
+        _queue([candidate]), decisions_path=path, vault_path=None,
         input_fn=lambda _: next(it), out=lambda *_: None,
     )
     return counts, setups_cli.load_decisions(path).get(candidate.key)
@@ -487,7 +555,7 @@ def test_the_summary_names_every_verdict_triage_can_return(tmp_path):
     changed, and was marked no-cover — so nothing caught it until it raised KeyError at the end
     of a real session. Deriving the line from the counts makes drift impossible."""
     counts = setups_cli.triage(
-        [], decisions_path=tmp_path / "d.jsonl", vault_path=None,
+        _queue([]), decisions_path=tmp_path / "d.jsonl", vault_path=None,
         input_fn=lambda _: "", out=lambda *_: None,
     )
     line = setups_cli.format_counts(counts)
@@ -504,7 +572,7 @@ def _run_x(answers, candidate, tmp_path, *, exclusions_path=None):
     path = tmp_path / "decisions.jsonl"
     lines = []
     counts = setups_cli.triage(
-        [candidate], decisions_path=path, vault_path=None,
+        _queue([candidate]), decisions_path=path, vault_path=None,
         exclusions_path=exclusions_path,
         input_fn=lambda _: next(it), out=lines.append,
     )
@@ -609,7 +677,7 @@ def test_triage_on_an_empty_candidate_list_exits_without_prompting(tmp_path):
         raise AssertionError("must not prompt when there is nothing to review")
 
     counts = setups_cli.triage(
-        [], decisions_path=tmp_path / "decisions.jsonl", vault_path=None,
+        _queue([]), decisions_path=tmp_path / "decisions.jsonl", vault_path=None,
         input_fn=_boom, out=lambda *_: None,
     )
     assert counts == {setups_cli.APPROVED: 0, setups_cli.LATER: 0,
@@ -628,7 +696,7 @@ def test_triage_quit_stops_immediately_without_consuming_further_input(tmp_path)
             raise AssertionError("quit must stop before consuming further input")
 
     counts = setups_cli.triage(
-        [c1, c2], decisions_path=tmp_path / "decisions.jsonl", vault_path=None,
+        _queue([c1, c2]), decisions_path=tmp_path / "decisions.jsonl", vault_path=None,
         input_fn=_input, out=lambda *_: None,
     )
     assert counts == {setups_cli.APPROVED: 0, setups_cli.LATER: 0,
@@ -677,7 +745,7 @@ def test_approval_writes_a_dated_section_to_the_vault_note(tmp_path):
     note = tmp_path / "Setups.md"
     answers = iter(["a"])
     setups_cli.triage(
-        [_candidate(asset="ZEC")], decisions_path=tmp_path / "d.jsonl", vault_path=note,
+        _queue([_candidate(asset="ZEC")]), decisions_path=tmp_path / "d.jsonl", vault_path=note,
         input_fn=lambda _: next(answers), out=lambda *_: None,
     )
     body = note.read_text(encoding="utf-8")
