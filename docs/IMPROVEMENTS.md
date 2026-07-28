@@ -41,23 +41,24 @@ queue from `Nothing to review` to **22 rows**. §4 is unblocked.
 
 | | Entry | Why now | Cost |
 |---|---|---|---|
-| 1 | **§4** — one stratified sitting | **Now possible: 22 rows waiting.** Unblocks §11's recency half, §18, §19(d)'s open half, §21, and §27's option 2. The machinery is built and the queue finally has a stratified draw to serve. | your attention |
-| 2 | **§27 residual** — targets vs the range rule | 68 candidates now live on a ranging weekly and only 20 sit within 2% of the range bound the stated rule names (median gap 9.5%). Read §18 first. | free, local |
-| 3 | **§7** — ATR-relative stop padding | Needs `k` measured against the 84-candidate baseline, but nothing gates that measurement. | free, local |
-| 4 | **§6f residual** — 25 routed-but-unfetched assets | 27 rows that route fine and were never fetched. `fetch-prices` is tier 🟡 (free). Caveat: several are `needs_validation` guesses (`ZT`, `AUD`, `BCOM`, `BAE`) that may simply not resolve. | free, network |
+| 1 | **§4** — more sittings | Four have been held and 24 v6 rows exist, but the cohort is homogeneous: `daily_trend` has zero variance, so `trend_alignment` and §27's option 2 still cannot be measured. What is needed is a *mixed* population, which arrives as the nightly turns the queue over. | your attention |
+| 2 | **§21 coverage** — widen `cfg/venue_map.yaml` | The queue is barely actionable: of 15 live rows exactly one had a venue entry, and at least 8 of the 12 unmapped are demonstrably listed somewhere. Each row needs the instrument confirmed, not the string matched — see the `SPX6900` trap. | free, local |
+| 3 | **§27 residual** — targets vs the range rule | 68 candidates now live on a ranging weekly and only 20 sit within 2% of the range bound the stated rule names (median gap 9.5%). Read §18 first. | free, local |
+| 4 | **§6f residual** — 25 routed-but-unfetched assets | 26 rows that route fine and were never fetched. `fetch-prices` is tier 🟡 (free). Caveat: several are `needs_validation` guesses (`ZT`, `AUD`, `BCOM`, `BAE`) that may simply not resolve. | free, network |
 
-**Done 2026-07-28:** §4's sampler and decision context; §11's cap and §19(d)'s distance
-inflation, both as `SCORE_VERSION` 6; §6f's grouped unpriced tally and the `ETH/BTC` derived
-series; **§27's audit and its option 1**. The two terms that structurally could not vary now do,
-so a sitting is finally worth holding — and §27 supplied the rows to hold it with.
+**Done 2026-07-28:** §4's sampler, decision context and reason vocabulary 2; §11's cap and
+§19(d)'s distance inflation, both as `SCORE_VERSION` 6; §6f's grouped unpriced tally and the
+`ETH/BTC` derived series; §27's audit and its option 1; §28's alias merges and §29's inverted-FX
+guard; **ATR stop padding as `SCORE_VERSION` 7** — which also supplied the measurement
+§19's last open claim was waiting on.
 
-**Waiting on §4's first stratified sitting, not on code:** §18 (`collapse` rep rule) · §21
-(funding weighting) · §11's recency half · §27's option 2 (daily leg as a score). Each defers
-to a sidecar correlation that is valid to make and, since §27 shipped, finally has a queue to
-draw rows from.
+**Waiting on a *mixed* sitting, not on code:** §18 (`collapse` rep rule) · §21 (funding
+weighting) · §11's recency half · §27's option 2 (daily leg as a score). Each defers to a
+sidecar correlation that is valid to make; what the four sittings held so far cannot supply is
+variation, because every row they drew was the population §27's option 1 released.
 
-**Not blocked, but each needs its own measurement first:** §7 (ATR stop padding — measure `k`
-against the 84-candidate baseline) · §15 (SMA confluence — does 50W actually mark turns).
+**Not blocked, but needs its own measurement first:** §15 (SMA confluence — does 50W actually
+mark turns).
 
 **The rest, by theme:** corpus supply §3 · §6 · §6b–§6h · §9 · §14 — durability §4b · §24 —
 venue and execution §22 · §23 · §25 — scoring inputs §1 · §2 · §8 · §10 · §12 — environment §13.
@@ -326,8 +327,9 @@ that arrives once these are decided and the nightly mixes the population again.
 
 **Consequently §11, §18, §21 and §27's option 2 are no longer blocked on a fix or on supply —
 they are blocked on a sitting, and one can now be held.** Each still defers to a sidecar
-correlation; that correlation is now *possible*, needs no conditioning, and simply wants data. §7, §15, §19(d) and §27 were never blocked, and
-measure against candidate counts or price history instead.
+correlation; that correlation is now *possible*, needs no conditioning, and simply wants data.
+§15, §19(d) and §27 were never blocked, and measure against candidate counts or price history
+instead — as did the ATR stop padding that shipped as `SCORE_VERSION` 7.
 
 ### First post-§27 measurement · `2026-07-28`, 24 v6 rows over 4 sittings
 
@@ -778,57 +780,6 @@ Revisit if the tally starts getting read for signal.
 
 ---
 
-## 7. Stop sanity should be ATR-relative, not a minimum width · `WATCHING` — updated 2026-07-26
-
-A minimum stop width was considered and declined, correctly — score saturation already caps the
-ranking damage (RR saturates at 3.0, so 15.75 and 4.67 contribute identically).
-
-The real concern is different: **GOOGL's 5.51 stop is roughly 1 ATR**, which ordinary noise
-takes out. RR without survival probability is a half-metric. The right form is `stop >= k * ATR`,
-not an absolute width. `Context` already carries ATR, so it's cheap.
-
-**Partly relieved 2026-07-26 by weekly zones** (`core.setups.WEEKLY`). The same GOOGL long now
-also surfaces as a weekly candidate with a 32.03-wide stop and RR 2.94, alongside the daily one
-at 5.51 and 14.19. Narrow zones no longer *crowd out* wide ones — but they still top the list on
-score, because `proximity` and `depth` reward being close to price and a tight zone is the one
-price is sitting in. So the ATR check is still the right fix; it just isn't urgent.
-
-**Separate and unfixed: there is no stop buffer at all.** `OrderBlock.stop` returns the far edge
-exactly, so `Candidate.stop == Candidate.entry_bottom` in every row the queue prints, and a wick
-one tick into the zone is a stop-out. (The docstring claiming "just past the far edge" was
-corrected 2026-07-26; the behaviour was always the edge itself.)
-
-**Correction 2026-07-27:** this entry also claimed "a fill at the far edge is a zero-risk trade
-whose RR divides by ~0". It cannot happen — `cross_reference` always enters at `near_edge`
-(`setups.py:684`), so risk is the zone's full height and the zero case is already refused as
-`degenerate_zone`. The ATR argument below is unaffected; only that one consequence was wrong.
-
-**Correction — this is NOT independent of the ATR question, and NOT a one-line change.** An
-earlier version of this entry said both; both were wrong.
-
-- A buffer proportional to the zone's own height is the wrong shape: it hands the *tightest*
-  zones the smallest cushion. GOOGL's 5.51-wide daily block would get 0.28 while the 32-wide
-  weekly block gets 1.6 — backwards, since the tight zone is the one noise takes out. That is
-  the same reasoning that declined a minimum stop width above, so the buffer wants the same ATR
-  yardstick. One fix, not two.
-- It therefore cannot live on `OrderBlock`, which has no access to ATR. It belongs in
-  `cross_reference`, where `Context.atr` is in scope and `Setup.stop` is already a distinct
-  field from `block.stop`. Roughly: pad the stop, derive `risk` from the padded value, keep
-  `block.stop` raw. ~10 lines. Unknown ATR must skip padding rather than fail it, per the rule
-  `_reasonable` and `imbalance.is_displacement` already follow.
-
-**Measure `k` before shipping it.** Padding widens risk, so it lowers *every* RR and silently
-drops candidates through `MIN_REWARD_RISK`. Baseline to measure against: 84 candidates (30
-weekly / 54 daily) at 2026-07-26.
-
-**Known test consequence:** `core/tests/test_setups.py` drives a `degenerate_zone` refusal with
-a zero-height block, and `_ctx` defaults to `atr=5.0` — padding would make that zone non-
-degenerate and the reason unreachable. `test_every_zone_level_refusal_the_engine_emits_is_
-classified_as_one` asserts exact set equality, so it will fail loudly. That fixture needs an
-`atr=None` variant.
-
----
-
 ## 8. Evidence-leg retrieval doesn't discriminate · `NARROWED 2026-07-26` — it's the query shape, not the index
 
 **The original claim was too broad, and the statistic behind it was the wrong one.**
@@ -1147,6 +1098,30 @@ now a measurement rather than an argument — the pattern §21 set for carry.
 of a broken denominator, not a good trade"). The new shape still says 23.24 beats 3.0; it
 merely stops pretending they are equal. Treating an above-ceiling ratio as a penalty rather
 than a maximum is a separate change and would need its own measurement.
+
+### That claim is now measured, and it is right · `2026-07-28`
+
+`scripts/probe_stop_padding.py` over the 93-candidate population. R:R and the stop's width in
+ATRs move together, monotonically:
+
+| R:R band | n | median stop in ATR |
+|---|---|---|
+| 0 – 3 | 28 | 1.29 |
+| 3 – 10 | 44 | 1.23 |
+| 10 – 30 | 18 | **0.76** |
+| 30+ | 3 | **0.26** |
+
+So the implausible ratios are substantially a *tight denominator*, not a rich target — which is
+what the `WEEKLY` docstring asserted without evidence. The sharpest case is `SILVER long daily`
+at **R:R 2930.22**, whose stop is 0.025 wide against an ATR of 1.545: **0.02 ATR**, a fiftieth
+of an ordinary day's range. §27 flagged that row as unexplained and told the reader to come
+here; this is the explanation.
+
+**Stop padding does not fix this, and must not be sold as though it does.** `STOP_PAD_ATR = 1.0`
+stops the engine *manufacturing* new inflated ratios — the sub-1-ATR population went 41 of 93 to
+zero — but SILVER survives every multiple swept, because one ATR added to a 0.025-wide stop
+still leaves a denominator that bears no relation to the zone. Whatever fixes the extremes is a
+change to how an above-ceiling ratio is *treated*, and it still needs its own measurement.
 
 **(e) Weekly-first ordering concentrates them at the top · `OPEN`.** `collapse` sorts weekly
 before daily unconditionally. Weekly zones are systematically the far ones — mean gap **28.2%**

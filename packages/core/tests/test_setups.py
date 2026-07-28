@@ -13,6 +13,7 @@ from core.setups import (
     MIN_REWARD_RISK,
     PROXIMITY_SPAN,
     RR_HALF,
+    STOP_PAD_ATR,
     STRUCTURAL,
     WEEKLY,
     ZONE_LEVEL_REASONS,
@@ -120,14 +121,19 @@ def test_a_permitted_long_becomes_a_setup():
     assert setup.entry_top == 110.0 and setup.entry_bottom == 100.0
 
 
-def test_the_stop_is_the_far_edge_and_invalidation_is_the_origin_swing():
-    """Two different levels answering two different questions: the stop is where this trade is
-    wrong, invalidation is where the zone itself dies. Conflating them was measured and
-    rejected — pricing risk down to the origin swing put 17 of 18 live candidates under 1.0 RR,
-    and it also implied a stopped-out trade had destroyed the zone, which it hasn't."""
+def test_the_stop_and_invalidation_answer_two_different_questions():
+    """The stop is where this *trade* is wrong; invalidation is where the *zone* itself dies.
+    Conflating them was measured and rejected — pricing risk down to the origin swing put 17 of
+    18 live candidates under 1.0 RR, and it also implied a stopped-out trade had destroyed the
+    zone, which it hasn't.
+
+    Three levels, not two, since v7: the raw far edge stays on ``block``, the trade's stop sits
+    ``STOP_PAD_ATR`` ATRs beyond it, and invalidation is further out still.
+    """
     setup = cross_reference(_row(), _ctx(), published_close=100.0)
-    assert setup.stop == 100.0          # just past the zone's far edge
-    assert setup.invalidation == 90.0   # the origin swing low
+    assert setup.block.stop == 100.0    # the zone's far edge, structural
+    assert setup.stop == 95.0           # one ATR beyond it, where the trade is wrong
+    assert setup.invalidation == 90.0   # the origin swing low, where the zone dies
 
 
 def test_entry_is_the_near_edge_of_the_zone():
@@ -147,8 +153,8 @@ def test_entry_is_the_near_edge_of_the_zone():
 
 def test_reward_risk_is_measured_from_entry_to_stop():
     setup = cross_reference(_row(), _ctx(), published_close=100.0)
-    # entry 110, stop 100, structural target 140 -> risk 10, reward 30
-    assert setup.reward_risk == 3.0
+    # entry 110, stop 95 (far edge 100 padded by one ATR), target 140 -> risk 15, reward 30
+    assert setup.reward_risk == 2.0
 
 
 def test_the_scored_reward_risk_is_measured_from_price_not_entry():
@@ -157,9 +163,9 @@ def test_the_scored_reward_risk_is_measured_from_price_not_entry():
     supposed to rank the trade. Measuring the remaining move from where the market actually
     is removes that. Both numbers are kept; only the scored one changes."""
     setup = cross_reference(_row(), _ctx(), published_close=100.0)
-    # entry 110, price 105, target 140, risk 10 -> 35/10, against reward_risk's 30/10
-    assert setup.reward_risk_from_price == 3.5
-    assert setup.reward_risk == 3.0
+    # entry 110, price 105, target 140, risk 15 -> 35/15, against reward_risk's 30/15
+    assert setup.reward_risk_from_price == pytest.approx(35 / 15)
+    assert setup.reward_risk == 2.0
 
 
 def test_a_zone_price_has_run_far_from_keeps_its_headline_rr_and_loses_its_scored_one():
@@ -167,8 +173,8 @@ def test_a_zone_price_has_run_far_from_keeps_its_headline_rr_and_loses_its_score
     earned by being unreachable. The displayed number is still the trade's real reward:risk —
     you would make that if filled — but it no longer buys rank."""
     far = cross_reference(_row(), _ctx(price=138.0), published_close=100.0)
-    assert far.reward_risk == 3.0              # unchanged: |140 - 110| / 10
-    assert far.reward_risk_from_price == pytest.approx(0.2)   # |140 - 138| / 10
+    assert far.reward_risk == 2.0                              # unchanged: |140 - 110| / 15
+    assert far.reward_risk_from_price == pytest.approx(2 / 15)  # |140 - 138| / 15
 
 
 def test_the_reward_risk_gate_still_judges_the_trade_not_the_journey():
@@ -498,13 +504,115 @@ def test_a_candidate_below_the_reward_risk_floor_is_refused():
     assert _reason(outcome) == "reward_risk_too_low"
 
 
+# ── the stop is padded by the instrument's own noise ────────────────────────
+#
+# ``OrderBlock.stop`` is the zone's far edge exactly, so risk is the zone's height and nothing
+# else — a fact about one candle on the day it formed, carrying no information about how much
+# the instrument moves today. Measured on the live queue 2026-07-28: 41 of 93 candidates had a
+# stop under 1 ATR, 39 of them daily zones (67% of the daily population against 6% of weekly).
+
+
+def _short_ctx(**overrides):
+    """The mirror of ``_ctx``: weekly and daily both down, price 180 in the premium half, and
+    one live bearish zone at 180-190 whose near edge is therefore its *bottom*."""
+    base = dict(
+        weekly_trend=DOWNTREND, daily_trend=DOWNTREND, price=180.0,
+        zones=(Zone(block=_block(BEARISH, top=190.0, bottom=180.0, invalidation=200.0),
+                    structural_target=150.0),),
+    )
+    base.update(overrides)
+    return _ctx(**base)
+
+
+def test_the_stop_is_padded_away_from_entry_by_a_multiple_of_atr():
+    """entry 110, raw stop 100, ATR 5 — one ATR of padding puts the stop at 95 and risk at 15.
+
+    The point of the ATR yardstick rather than a fraction of the zone's own height: a
+    percentage hands the *tightest* zone the smallest cushion, which is backwards.
+    """
+    setup = cross_reference(_row(), _ctx(), published_close=100.0, stop_pad_atr=1.0)
+    assert setup.stop == 95.0
+    assert setup.reward_risk == 2.0     # reward 30 over risk 15, was 3.0 unpadded
+
+
+def test_padding_moves_a_short_stop_the_other_way():
+    """A bearish zone is entered at its bottom and stopped at its top, so the cushion goes
+    *up*. Signing this off ``family`` rather than the raw direction label matters — the corpus
+    vocabulary is wider than long/short."""
+    setup = cross_reference(_row(direction="short"), _short_ctx(),
+                            published_close=185.0, stop_pad_atr=1.0)
+    assert setup.stop == 195.0          # raw far edge 190 plus one ATR
+    assert setup.reward_risk == 2.0     # reward 30 over risk 15
+
+
+def test_the_shipped_default_pads_by_one_atr():
+    """``k`` was swept against the live 93-candidate population before being chosen: 1.0 is the
+    only value that empties the sub-1-ATR band outright, and it costs 5 candidates. Pinned here
+    so a change to the constant has to be deliberate."""
+    assert STOP_PAD_ATR == 1.0
+    setup = cross_reference(_row(), _ctx(), published_close=100.0)
+    assert setup.stop == 95.0
+
+
+def test_padding_can_be_switched_off_per_call():
+    """The zero case has to keep working — every probe that reconciles against a pre-v7 number
+    reaches for it, and ``scripts/probe_stop_padding.py`` sweeps through it."""
+    setup = cross_reference(_row(), _ctx(), published_close=100.0, stop_pad_atr=0.0)
+    assert setup.stop == 100.0          # the raw far edge
+    assert setup.reward_risk == 3.0
+
+
+def test_an_unknown_atr_skips_padding_rather_than_failing_it():
+    """Inability to judge must not read as a verdict — the same rule ``_reasonable`` and
+    ``imbalance.is_displacement`` already follow for the distance ceiling."""
+    setup = cross_reference(_row(), _ctx(atr=None), published_close=100.0, stop_pad_atr=1.0)
+    assert setup.stop == 100.0
+    assert setup.reward_risk == 3.0
+
+
+def test_a_degenerate_zone_is_refused_on_its_raw_height_not_its_padded_one():
+    """Ordering pin, and the reason the predicted test breakage does not happen.
+
+    Padding a zero-height zone would give it a positive risk and make this refusal
+    unreachable. A zone whose edges coincide is structural nonsense whatever the volatility,
+    so degeneracy is a question about the *zone* and is settled before the trade's cushion is
+    applied.
+    """
+    flat = (Zone(block=_block(top=110.0, bottom=110.0), structural_target=140.0),)
+    outcome = cross_reference(_row(), _ctx(zones=flat), published_close=100.0,
+                              stop_pad_atr=1.0)
+    assert _reason(outcome) == "degenerate_zone"
+
+
+def test_price_past_the_raw_far_edge_is_refused_even_when_padding_would_cover_it():
+    """``price_past_stop`` asks whether price traded clean out of the *zone*, which is a
+    structural fact. Re-pointing it at the padded stop would quietly release candidates whose
+    price is already out the far side — a behaviour change well beyond adding a cushion.
+
+    Price 96 is past the raw far edge of 100 and still inside a stop padded to 95.
+    """
+    outcome = cross_reference(_row(), _ctx(price=96.0), published_close=100.0,
+                              stop_pad_atr=1.0)
+    assert _reason(outcome) == "price_past_stop"
+
+
+def test_the_zone_keeps_its_raw_edges_when_the_stop_is_padded():
+    """The cushion belongs to the trade, not to the structure. ``block`` and the printed entry
+    band must keep describing the zone as it actually is, or the queue would show a zone that
+    no chart agrees with."""
+    setup = cross_reference(_row(), _ctx(), published_close=100.0, stop_pad_atr=1.0)
+    assert (setup.entry_top, setup.entry_bottom) == (110.0, 100.0)
+    assert setup.block.stop == 100.0    # the structural fact, unpadded
+    assert setup.stop == 95.0           # the trade's stop, padded
+
+
 def test_the_reward_risk_floor_is_configurable():
     thin = (Zone(block=_block(), structural_target=115.0),)
     setup = cross_reference(
         _row(), _ctx(zones=thin), published_close=100.0, min_reward_risk=0.1
     )
     assert isinstance(setup, Setup)
-    assert setup.reward_risk == 0.5
+    assert setup.reward_risk == pytest.approx(5 / 15)   # reward 5 over a padded risk of 15
 
 
 def test_no_target_from_either_source_is_refused():
@@ -888,7 +996,8 @@ def test_pricing_risk_on_the_weekly_zone_gives_a_sane_reward_risk():
     daily = cross_reference(_row(key_levels=[140.0]), _tf_ctx(), published_close=100.0,
                             zone_timeframe=DAILY)
     assert weekly.reward_risk < daily.reward_risk
-    assert weekly.stop == 75.0 and daily.stop == 100.0
+    # Each stop is its zone's far edge padded by one ATR: 75 - 5 and 100 - 5.
+    assert weekly.stop == 70.0 and daily.stop == 95.0
 
 
 def test_a_timeframe_with_no_live_zone_is_refused_without_borrowing_the_other():

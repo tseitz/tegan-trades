@@ -329,22 +329,22 @@ class OrderBlock:
         put 17 of 18 live candidates under 1.0 reward-to-risk. The zone surviving a stop-out is
         the correct behaviour — structure hasn't broken just because one entry failed.
 
-        **There is no buffer, and the omission is real rather than intended.** This returns the
-        edge itself, so ``Setup.stop`` equals ``Setup.entry_bottom`` on every long and a wick
-        one tick through the zone is a stop-out. (An earlier version of this note also claimed
-        a fill at the far edge divides reward-to-risk by ~0. It cannot: ``cross_reference``
-        always enters at ``near_edge``, so risk is the zone's full height and the zero case is
-        refused as ``degenerate_zone``.)
+        **There is deliberately no buffer here**, and that is a placement decision rather than
+        an omission. This returns the edge itself; the trade's cushion is added in
+        ``core.setups.cross_reference`` by ``_padded_stop``, and ``Setup.stop`` carries the
+        padded value while this one stays the raw structural fact. (An earlier version of this
+        note also claimed a fill at the far edge divides reward-to-risk by ~0. It cannot:
+        ``cross_reference`` always enters at ``near_edge``, so risk is the zone's full height
+        and the zero case is refused as ``degenerate_zone``.)
 
-        A buffer does not belong here. Padding by a fraction of the zone's own height would give
+        A buffer cannot live here. Padding by a fraction of the zone's own height would give
         the *tightest* zones the smallest cushion, which is backwards — a 5.51-wide daily block
         needs relatively more protection from noise than a 32-wide weekly one, not less. The
         yardstick has to be ATR, and ATR is not knowable from a block; it lives on
-        ``core.setups.Context``. So the fix belongs in ``cross_reference``, where both are in
-        scope and ``Setup.stop`` is already a separate field from this one. Tracked as §7 in
-        ``docs/IMPROVEMENTS.md``, gated on measuring the multiplier rather than guessing it —
-        padding widens risk, so it lowers every reward-to-risk and silently drops candidates
-        through ``MIN_REWARD_RISK``.
+        ``core.setups.Context``. Hence ``cross_reference``, where both are in scope.
+
+        ``STOP_PAD_ATR`` is 1.0, swept against the live population rather than guessed, so the
+        two levels differ by one ATR wherever one is computable. See that constant.
         """
         return self.bottom if self.kind == BULLISH else self.top
 

@@ -125,6 +125,42 @@ MIN_REWARD_RISK = 1.0
 # recently structure broke. TUNE.
 MAX_TARGET_ATR = 20.0
 
+# How many ATRs past the zone's far edge the *trade's* stop sits.
+#
+# ``OrderBlock.stop`` is the far edge exactly, so risk is the zone's height — a fact about one
+# candle on the day it formed, carrying no information about how much the instrument moves
+# today. When the two coincide, ordinary noise takes the trade out rather than being wrong
+# does. Measured on the live queue 2026-07-28: **41 of 93 candidates had a stop under 1 ATR**,
+# 39 of them daily zones — 67% of the daily population against 6% of the weekly one.
+#
+# ATR rather than a fraction of the zone's own height, because a percentage hands the tightest
+# zone the smallest cushion: GOOGL's 5.51-wide daily block would get 0.28 while its 32-wide
+# weekly block got 1.60, and the tight one is the one noise eats.
+#
+# **1.0, measured rather than guessed** (``scripts/probe_stop_padding.py --sweep``, 93
+# candidates, 2026-07-28). Padding widens risk, so it lowers every reward-to-risk ratio and
+# drops candidates through ``MIN_REWARD_RISK`` — the sweep prices that:
+#
+#     k      cands  lost   under 1 ATR   median stop   median R:R
+#     0.00      93     —    41 (44.1%)          1.07         5.46
+#     0.50      93     0    12 (12.9%)          1.57         3.51
+#     1.00      88     5     0 ( 0.0%)          2.11         3.15
+#     2.00      75    18     0 ( 0.0%)          3.15         2.52
+#
+# 1.0 is the only value carrying a statable rule — *a stop must clear the zone by at least one
+# ordinary bar's range* — and the only one that empties the sub-1-ATR population outright. The
+# five it costs are honestly lost, not junk removed: all had raw ratios of 1.21–2.41 and simply
+# stop paying once noise is priced (ASTER, COPX, GEMI, MU, PLTR).
+#
+# **The cost is low for a structural reason worth not re-deriving: the defect cushions its own
+# fix.** The tightest stops are exactly the ones whose ratio was most inflated *by* that tight
+# denominator, so they carry the most headroom above the floor. Padding up to 0.5 is free.
+#
+# It does **not** fix §19's broken-denominator cases and must not be sold as doing so. SILVER's
+# 0.02-ATR stop and R:R 2930 survives every value swept; padding only stops manufacturing new
+# ones. TUNE.
+STOP_PAD_ATR = 1.0
+
 # Reward-to-risk at which the score's RR term is worth exactly half. **A half-way point, not
 # a clamp** — see ``reward_risk_signal``. It was ``RR_SATURATION`` and it clipped here, which
 # made 3.0 and TSLA's 23.24 contribute identically and pinned the term at 1.0 for 12 of 18
@@ -259,7 +295,17 @@ DEFAULT_WEIGHTS = SetupWeights()
 # meant to rank the trade. ``reward_risk`` itself is untouched — same value, same gate, same
 # headline — so this is a term-input correction, not a re-weight. Both numbers are recorded, so
 # which of them predicts a decision better is now a measurement rather than an argument.
-SCORE_VERSION = 6
+#
+# v7 pads the stop by ``STOP_PAD_ATR`` ATRs. Unlike v5 and v6 this changes no term and no
+# weight — it changes an *input*, ``risk``, which every ratio downstream divides by. Ranking
+# moves anyway, and 5 of 93 candidates stop existing, so the cohort must partition here.
+#
+# The motivating measurement: 41 of 93 candidates had a stop narrower than one ordinary bar's
+# range, 39 of them daily zones — 67% of the daily population against 6% of the weekly one. A
+# zone's height is a fact about one candle on the day it formed and says nothing about how much
+# the instrument moves today; where the two coincided, noise took the trade out rather than
+# being wrong did.
+SCORE_VERSION = 7
 
 # Weekly trend agrees with the thesis, versus has no opinion at all. There is no third value:
 # a weekly that genuinely contradicts is still refused outright, so it never reaches scoring.
@@ -418,7 +464,11 @@ class Setup:
     entry: float          # the near edge — the shallowest fill, so RR is conservative
     entry_top: float
     entry_bottom: float
-    stop: float           # the far edge: where this trade is wrong
+    # Where this trade is wrong: the far edge, plus ``STOP_PAD_ATR`` ATRs of room for ordinary
+    # noise. Distinct from ``block.stop``, which stays the raw structural edge — the cushion
+    # belongs to the trade, not to the zone. Equal to it while the pad is 0.0 or the ATR is
+    # unknown.
+    stop: float
     invalidation: float   # the origin swing: where the zone itself dies
     target: float
     target_source: str    # STATED | NEAREST | STRUCTURAL
@@ -765,6 +815,7 @@ def cross_reference(
     half_life: HalfLife = DEFAULT_HALF_LIFE,
     min_reward_risk: float = MIN_REWARD_RISK,
     max_target_atr: float = MAX_TARGET_ATR,
+    stop_pad_atr: float = STOP_PAD_ATR,
 ) -> Outcome:
     """Gate one thesis against one asset's structure.
 
@@ -855,8 +906,11 @@ def cross_reference(
         return refuse("no_invalidation")
 
     entry = block.near_edge
-    risk = abs(entry - block.stop)
-    if risk == 0:
+    # Degeneracy is a question about the *zone*, so it is settled on the raw height, before the
+    # trade's cushion is applied. Padding first would give a zero-height zone a positive risk
+    # and make this refusal unreachable — the zone's edges coinciding is structural nonsense
+    # whatever the volatility.
+    if entry == block.stop:
         return refuse("degenerate_zone")
 
     # ── price has already traded out the far side ──
@@ -869,12 +923,25 @@ def cross_reference(
     # been taken is a *fact* about the trade, not a measurement on a continuum. It is checked
     # after ``degenerate_zone`` because a zero-height zone puts every price on its far side,
     # which would relabel that refusal without changing what it refuses.
+    # Measured on the *raw* far edge, deliberately. Whether price traded clean out of the zone
+    # is a structural fact; re-pointing this at the padded stop would quietly release
+    # candidates whose price is already out the far side, which is a behaviour change well
+    # beyond adding a cushion.
     if block.traded_through(context.price):
         return refuse("price_past_stop")
 
+    sign = 1 if family == BULLISH else -1
+    # ── the trade's stop: the far edge, plus room for ordinary noise ──
+    #
+    # ``block.stop`` stays raw — the cushion belongs to the trade, not to the structure, and
+    # ``Setup.stop`` has always been a distinct field from ``block.stop``. Everything
+    # downstream prices off the padded ``risk``: the reward-to-risk gate, the target's
+    # believability check, and carry's risk leg.
+    stop = _padded_stop(block, atr=context.atr, multiple=stop_pad_atr, sign=sign)
+    risk = abs(entry - stop)
+
     # ── target: theirs if reasonable, else structure ──
     stated = read_target(row, published_close)
-    sign = 1 if family == BULLISH else -1
     target, target_source = None, ""
     if not stated.abstained and _reasonable(
         stated.target, entry=entry, risk=risk, sign=sign,
@@ -946,7 +1013,7 @@ def cross_reference(
         thesis_id=ident, asset=asset, person=person, direction=direction,
         timeframe=timeframe, published_at=published.isoformat(), block=block,
         entry=entry, entry_top=block.top, entry_bottom=block.bottom,
-        stop=block.stop, invalidation=block.invalidation,
+        stop=stop, invalidation=block.invalidation,
         target=target, target_source=target_source,
         reward_risk=reward_risk, reward_risk_from_price=reward_risk_from_price,
         approach=approach, price=context.price,
@@ -996,6 +1063,24 @@ def _newest_zone(zones, family: str, timeframe: str) -> Zone | None:
     if not matching:
         return None
     return max(matching, key=lambda zone: (zone.block.confirmed_at, zone.block.index))
+
+
+def _padded_stop(block: OrderBlock, *, atr: float | None, multiple: float, sign: int) -> float:
+    """The far edge pushed ``multiple`` ATRs further from entry — where the trade is wrong once
+    ordinary noise is allowed for.
+
+    ``sign`` is +1 for a bullish zone (stop below entry, so the cushion goes down) and -1 for a
+    bearish one. Taken from ``_DIRECTION_FAMILY`` rather than the raw direction label, because
+    the corpus's direction vocabulary is wider than long/short.
+
+    **An unknown ATR returns the raw edge rather than refusing.** Inability to judge must not
+    read as a verdict — the rule ``_reasonable`` follows for its distance ceiling and
+    ``imbalance.is_displacement`` for its threshold. A zone that cannot be padded is still a
+    tradeable zone; it simply keeps the stop the engine has always given it.
+    """
+    if not multiple or not atr:
+        return block.stop
+    return block.stop - sign * multiple * atr
 
 
 def _reasonable(target, *, entry: float, risk: float, sign: int, price_now: float,
