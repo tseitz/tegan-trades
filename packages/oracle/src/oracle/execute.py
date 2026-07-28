@@ -20,7 +20,7 @@ from execution.config import load as load_config
 from execution.guards import Refusal
 from execution.session import Session, describe
 
-from oracle import venue_map
+from oracle import liveness, venue_map
 
 # Typed rather than a keystroke. ``--network mainnet`` sits one arrow-key away from
 # ``--network testnet`` in shell history, so the barrier has to be something a stray press
@@ -28,6 +28,13 @@ from oracle import venue_map
 MAINNET_CONFIRMATION = "yes, real money"
 
 DECLINED = "declined"
+
+# Listed, correctly named, and not trading. Its own refusal code rather than ``unlisted``,
+# because they call for opposite responses: an unlisted asset needs a venue that carries it,
+# a dormant one is carried by a venue where nobody shows up. Defined here and not in
+# ``execution.guards`` because there is no pure check behind it — the evidence is the funding
+# log, which ``execution`` neither reads nor should learn about.
+DORMANT = "dormant"
 
 
 def hyperliquid_dexs(venue: str = "hyperliquid", *, path=venue_map.CFG_PATH) -> tuple[str, ...]:
@@ -84,14 +91,32 @@ def open_session(*, network: str | None = None, config_path=None, input_fn=input
     return session
 
 
-def offer(session, candidate, *, input_fn=input, out=print) -> None:
+def offer(session, candidate, *, input_fn=input, out=print, is_dormant=liveness.dormant) -> None:
     """Offer to execute one approved candidate. Never raises past the caller.
 
     A failure to place must not take down a triage session — the approval is already durable
     in the decisions sidecar, and losing the remaining queue to a venue timeout would cost
     more than the order was worth.
     """
-    listing = venue_map.listing(candidate.asset, session.config.venue)
+    venue = session.config.venue
+
+    # Before the listing is even resolved, because this refusal needs nothing from the venue:
+    # the map plus the funding log settle it offline. That matters twice — it survives the
+    # venue outage during which a dead market is least likely to be noticed, and it is the
+    # one liquidity-shaped check that stays honest on testnet, where the mock book makes
+    # ``check_liquidity`` unenforceable. See ``oracle.liveness`` for why the log can answer.
+    if is_dormant(candidate.asset, venue):
+        refusal = Refusal(
+            DORMANT,
+            f"{candidate.asset} is listed on {venue} but has reported no funding in "
+            f"{liveness.DEFAULT_WINDOW_DAYS}d while the rest of its venue did — "
+            f"a stop there has nothing to fill against",
+        )
+        out(f"  ! not executable — {refusal.detail}")
+        session.decline(candidate, refusal)
+        return
+
+    listing = venue_map.listing(candidate.asset, venue)
     outcome = session.prepare(candidate, listing)
 
     if isinstance(outcome, Refusal):

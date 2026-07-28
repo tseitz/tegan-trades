@@ -134,6 +134,42 @@ def test_an_unlisted_asset_is_refused_without_asking(tmp_path):
     assert store.load(session.orders_path)[0]["outcome"] == store.REFUSED
 
 
+def test_a_dormant_market_is_refused_without_asking(tmp_path):
+    """``xyz:DXY``: mapped, quoted by nobody, and the funding log has said so for months.
+
+    Refused on the map plus the log alone, before a single network call — so it holds on a
+    venue outage and on testnet, where the book is mock and proves nothing either way.
+    """
+    session = _session(tmp_path)
+    rec = Recorder(["y"])   # would say yes if asked
+    execute.offer(session, StubCandidate(), input_fn=rec.input, out=rec.out,
+                  is_dormant=lambda *_: True)
+
+    assert session.broker.placed == []
+    assert "not executable" in rec.text
+    row = store.load(session.orders_path)[0]
+    assert row["outcome"] == store.REFUSED
+    assert row["reason"] == execute.DORMANT
+
+
+def test_dormancy_is_asked_about_the_session_venue(tmp_path):
+    """A market dead on one venue and busy on another is two different answers."""
+    session = _session(tmp_path)
+    asked: list[tuple[str, str]] = []
+    execute.offer(session, StubCandidate(), input_fn=Recorder(["n"]).input, out=lambda *_: None,
+                  is_dormant=lambda asset, venue: asked.append((asset, venue)) or False)
+    assert asked == [("ETH", session.config.venue)]
+
+
+def test_a_live_market_still_reaches_the_prompt(tmp_path):
+    """The gate must be inert on healthy markets — every one of them, by default."""
+    session = _session(tmp_path)
+    rec = Recorder(["y"])
+    execute.offer(session, StubCandidate(), input_fn=rec.input, out=rec.out,
+                  is_dormant=lambda *_: False)
+    assert len(session.broker.placed) == 1
+
+
 # ── failure modes ───────────────────────────────────────────────────────────────────────────
 
 def test_a_venue_rejection_is_reported_loudly(tmp_path):

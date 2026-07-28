@@ -4,10 +4,42 @@ The backlog. Things found while building that shouldn't derail the thing being b
 
 **Rules for this file:** an entry earns its place by carrying *evidence* — a measurement, a
 count, a real example — not a hunch. If it's just "we could do X better", leave it out. Record
-what we know now so a future session doesn't have to re-derive it. Delete entries when done.
+what we know now so a future session doesn't have to re-derive it.
+
+**Delete entries when done.** An entry is a *to-do*, not a changelog — the fix itself, and the
+reasoning behind it, belong in the code and in git history. Before deleting, do two things: move
+any live residual into the entry that still owns it, and make every cross-reference to it
+self-contained, because entries here cite each other by number and a deleted number is a dead
+link. Numbers are never reused.
 
 Status: `DECIDED` (agreed, not executed) · `OPEN` (real gap, no decision) · `WATCHING` (may not
-be a problem; revisit if it bites).
+be a problem; revisit if it bites) · `PARTLY DONE` (a residual is named in the entry).
+
+---
+
+## Where to start
+
+**One thing blocks the most work.** §4 found that triage decisions cannot be pooled across
+sittings — the queue is score-ordered and capped, so each sitting judges a narrower slice than
+the last and the approval threshold moves with it. Every entry that says "measure this against
+the sidecar first" is waiting on that, and none of them said so.
+
+| | Entry | Why now | Cost |
+|---|---|---|---|
+| 1 | **§4** — make decisions comparable | Unblocks §11, §18, §21. Nothing else in the file has that fan-out. | stratified triage or one recorded field |
+| 2 | **§6f** — `ETH/BTC` ratio, then `BTC.D` | 28 rows routed nowhere and both legs are already cached. A division, not a new source. | free, local |
+| 3 | **§19(d)** — `reward_risk` rewards distance | Measured against candidate counts, so §4 does not gate it. §4 shows the term pinned at 3.0 for 12 of 18 weekly rows. | free, local |
+| 4 | **§11** — unsaturate the agreement cap | Pinned at 1.0 for 12 of 13 daily rows, so it currently carries no information. The cap needs no measurement; the recency half waits on §4. | free, local |
+| 5 | **§27** — audit 20 `timeframe_conflict` rejections | 1,000 outcomes discarded by a gate nobody has read a single example from. | free, local |
+
+**Blocked on §4, do not start:** §18 (`collapse` rep rule) · §21 (funding weighting) · §11's
+recency half. Each defers to a sidecar correlation that is not currently valid.
+
+**Not blocked, but each needs its own measurement first:** §7 (ATR stop padding — measure `k`
+against the 84-candidate baseline) · §15 (SMA confluence — does 50W actually mark turns).
+
+**The rest, by theme:** corpus supply §3 · §6 · §6b–§6h · §9 · §14 — durability §4b · §24 —
+venue and execution §22 · §23 · §25 — scoring inputs §1 · §2 · §8 · §10 · §12 — environment §13.
 
 ---
 
@@ -22,34 +54,15 @@ were produced by a model that had to supply a level, so the fabricated ones are 
 let the corpus turn over naturally, or re-distill — which is a full-corpus LLM pass, so read §9
 first. Do NOT re-distill just for this; the levels were never the product.
 
----
+**The call, so it is not re-litigated (2026-07-25):** what the roster is *for* is **sentiment**
+— direction and conviction — plus a **trust score** of how right each person has been. Levels
+can come from elsewhere; if someone states one, take it, never force it. The evidence was that
+**388 of 1,621** live readings (24%) had levels only *behind* entry — invalidations and stops
+stuffed into `key_levels` to satisfy the schema — and 13 of 98 re-distill failures were
+`min_length=1` rejecting a whole video over one call with no level.
 
-## 1b. Original rationale, kept for context
-
-**The call (2026-07-25):** we went too hard, too fast at extracting exact price levels from
-videos. What the roster is actually *for* is **sentiment** — direction and conviction — plus a
-**trust score** of how right each person has generally been. Real levels can come from
-elsewhere. If someone happens to state a level, take it; never force it.
-
-**What to change**
-- Drop `TradeThesis.key_levels` `min_length=1` (`core/thesis.py:38`). It forces the model to
-  emit levels whether or not the speaker gave any.
-- `core/levels.py` stays, demoted from load-bearing to opportunistic. Its abstention path is
-  already the designed fallback, so nothing breaks.
-- Phase 4 leans on structural targets, which is already the fallback.
-
-**Evidence**
-- **388 of 1,621** live readings (24%) had levels *only behind* entry — those are invalidations
-  and stops stuffed into `key_levels` to satisfy the schema, not targets.
-- 13 of the 98 re-distill failures were exactly this constraint (`min_length=1`) rejecting a
-  whole video's extraction because one call had no explicit level.
-
-**Consequences worth noting**
-- This *validates* `core/grade.py`'s direction-and-horizon-only design — it was already grading
-  the right thing.
-- It buries **3.3b (level-aware grading) permanently.** Don't resurrect it.
-- It raises the priority of the trust score, which is the roster-scoring work in
-  `oracle/score_cli.py` — currently honest but underpowered (see §4).
+Two consequences that outlive the fix: it **validates `core/grade.py`'s direction-and-horizon-
+only design**, and it **buries 3.3b (level-aware grading) permanently — do not resurrect it.**
 
 ---
 
@@ -127,232 +140,114 @@ That needs a different source, or Tegan's own definition, and it blocks slice 2 
 
 ---
 
-## 4. Nothing is validated against revealed preference · `OPEN` — highest leverage
+## 4. Revealed preference is the only ground truth, and it cannot currently be read · `OPEN` — highest leverage · absorbs §20
 
-There are now **four scoring systems** and **zero closed loops**:
+There are **four scoring systems** and **zero closed loops**:
 
 | Scorer | Where | Validated against |
 |---|---|---|
 | Intrinsic thesis rank | `core/rank.py` | nothing |
 | Backtest / skill edge | `core/grade.py`, `core/score.py` | market only, no preference signal |
-| Brain retrieval | `brain/retrieve.py` | nothing (and it barely discriminates — §8) |
+| Brain retrieval | `brain/retrieve.py` | nothing (and the asset path barely discriminates — §8) |
 | Setup candidates | `core/setups.py` | nothing |
 
-Mining `data/triage/decisions.jsonl` (approve vs skip) against the rankers was agreed during
-Phase 3 and has never happened, because triage has been run **once**, promoting 7.
+Mining `data/setups/decisions.jsonl` — approve versus reject, against the ranker's own terms —
+is the only ground truth available. The instrumentation for it is now complete. **The
+measurement it supports is not valid, and that is what this entry is about.**
 
-**This is why "7 candidates from 3,427 theses" is unanswerable** — admirably selective or badly
-miscalibrated, and nothing in the system can distinguish them.
+### What the sidecar holds
 
-**Unblocked by:** using `setups` and `distill-triage` for real, a few sessions. Costs no tokens,
-needs no new code, and produces the only ground truth available.
+**77 rows** — 14 v2 · 8 v3 · 7 v4 · 48 v5 — as **29 approved · 16 rejected · 20 later · 12
+archived**. `score`, `freshness`, `agreement` and `zone_timeframe` on all 77; `approach`,
+`price` and `reward_risk` on 63; `reason` on 20 and `reason_note` on 19. Every row carries
+`score_version`, so a correlation **must partition on it** rather than pooling — the scale
+changed at v2, again at v3 (`proximity`+`depth` → one `approach` ramp), v4 and v5.
 
-### First real session · 2026-07-25 — 7 candidates decided, and neither half is usable yet
+Replay it with `scripts/probe_freshness_weight.py` — free, local, and it reproduces the
+shipped scorer exactly (`max |recomputed − stored| = 0.00e+00`), so its numbers are the real
+ranker rather than a model of it.
 
-`data/setups/decisions.jsonl` holds 10 rows over **7 distinct candidates** (ZEC and NEAR were
-each revised). Two defects to fix before the mining pass is worth writing.
+### The blocker: a sitting is not a random sample of the queue
 
-**a. Half the rows carry no ranker value — historical only, no code fix needed.** The sidecar
-gained `score` / `proximity` / `inside_zone` / `agreement` / `newest_at` / `people` partway
-through the session (first row with them: 18:15Z, minutes after `2141c35` landed). The five
-earlier rows — including three of the five approvals (GOOGL, SPX, ETH) — have none. §4 correlates
-*decision against score*; those rows cannot participate. `decision_record` already writes all six
-fields unconditionally, so this cannot recur — don't "fix" it. Backfilling the old rows is **not
-clean**: the corpus moved mid-session (ZEC's `newest_at` 07-15 → 07-24, agreement 2 → 3, score
-0.665 → 0.790 between 18:02Z and 23:47Z), so a re-run yields today's score, not the decision-time
-score. If backfilled, mark it `recomputed_at` — never as captured live.
+The queue is score-ordered and capped, so the first sitting spans a wide score range and each
+later one works a narrower slice of the tail. A term cannot order what barely varies:
 
-**b. Zero `rejected` rows — the only verdict designed to calibrate.** Final tally is 5 approved,
-1 `later`, 1 `archived`. Per `setups_cli.py:67-91`, `later` is reversible and `archived` is
-*explicitly not a judgment*, so neither is a negative label. `rejected` is the one that carries a
-reason (`trade_quality` → setups scorer, `view_wrong` → roster trust), and there are none. A
-ranker cannot be validated against five positives and no negatives.
-
-Note the two rows spelled `skipped` are **legacy vocabulary**, predating the four-way split; they
-are honoured as permanent (`_PERMANENT`) so old passes don't resurface. Don't read them as a
-current verdict.
-
-**Next:** nothing to build — accumulate sessions until `rejected` has real rows, then correlate.
-Do not start the correlation before then. Note this makes §4 gated on **decision volume**, which
-is in turn gated on candidate supply (§5) and thesis freshness (§6) — those are the buildable
-work that accelerates it. **Superseded 2026-07-27 — (b) is cleared, see below.**
-
-**c. The score scale changed on 2026-07-26** (freshness + trend_alignment added, all four
-existing weights cut — see §6). Every record now carries `score_version`; the 10 pre-existing
-rows have no such field and are implicitly **version 1**. Their `score` values are *not*
-comparable to anything recorded after that date, so the correlation must partition on
-`score_version` rather than pooling. This is the second time the sidecar has changed shape
-mid-life — the field exists so there is no third time that has to be reconstructed by hand.
-
-**d. v1 was archived, not migrated · 2026-07-26.** `data/setups/decisions.jsonl` →
-`data/setups/decisions.v1.jsonl`. The sidecar is append-only by design, so the whole file
-moved rather than its rows being rewritten. All 7 v1 candidates therefore resurface and get
-re-judged on the v2 scale — which is the point: 5 approvals and **zero rejections** were
-never usable calibration, and re-judging them with the reject verdict available is worth more
-than preserving them. **One knowingly-accepted cost:** the `AI long` archive was
-score-independent ("I don't trade this") and comes back once; press `x` again. Building a
-carry-forward path for a single row was not worth it.
-
-### Second session · 2026-07-27 — the blocker is cleared, and the scorer does not predict the decision
-
-`data/setups/decisions.jsonl` (v2) holds **14 rows over 14 distinct candidates**: 7 `rejected`,
-3 `approved`, 4 `later`. All 14 carry `score_version: 2` and every ranker field, so defect (a)
-does not recur. **(b) is cleared** — rejections exist, all 7 carry a reason, and all 7 carry a
-free-text `reason_note` (added 2026-07-27, `f04fff3`).
-
-**The correlation §4 has been waiting for is now runnable, and the first look is negative.**
-
-| verdict | n | score min / median / max | freshness |
+| sitting | n (appr v neg) | score range | `score` AUC |
 |---|---|---|---|
-| approved | 3 | 0.596 / 0.734 / 0.756 | 0.70, 0.98, 0.98 |
-| rejected | 7 | 0.595 / 0.741 / 0.777 | 0.00–0.88, six of seven ≤ 0.54 |
-| later | 4 | 0.564 / 0.616 / 0.648 | 0.42–0.84 |
+| 18:38 | 10 v 9 | 0.397–0.812 | 0.856 [0.66, 1.00] |
+| 19:53 | 3 v 3 | 0.540–0.580 | 0.222 [0.00, 0.67] |
+| 20:00 | 6 v 4 | 0.403–0.527 | 0.458 [0.04, 0.88] |
 
-**a. `score` does not separate approve from reject.** The two distributions overlap almost
-exactly and the rejected *median is higher*. The highest-scoring candidate of the session —
-MON at 0.777 — was rejected, and the lowest approval (HOOD 0.596) sits 0.001 above the lowest
-rejection (RIVN 0.595). With n=3 approvals this cannot support a strong claim, but the shape is
-"no signal", not "weak signal", and that is the thing §4 existed to find out.
+The only sitting whose interval clears chance is the only one with a wide range — that is
+restricted range doing the work, not the scorer improving and then failing.
 
-**b. `freshness` does separate — and it is the smallest weight in `_score` (0.15).** All three
-approvals are ≥ 0.70; six of seven rejections are ≤ 0.54. The one exception, OIL at 0.88, was
-rejected for the *asset* rather than the setup (note: "Same as CL"). Nothing else — proximity,
-depth, agreement — tracks the decision this cleanly. Ties directly to §6.
+**And the approval threshold moves between sittings.** The later sitting approved at a median
+score of **0.484** while the earlier one *rejected* at a median of **0.518**;
+`AUC(later approvals > earlier negatives) = 0.444`. "Approved" is not an absolute quality
+label — it is relative to what else was on screen. **So decisions cannot be pooled across
+sittings and treated as one labelled dataset, which is exactly what this programme assumed.**
 
-**c. The notes say why, and the three-way enum could not have.** Of 7 rejections:
+### The current best estimate, with intervals
 
-- **3 are staleness** — MON "Stale, the levels are a bit all over the place… may refer to the
-  time it was called (april)", PUMP "Very stale", RIVN "Very stale at this point". Consistent
-  with (b), and the reason they are legible at all is the note: two of the three were filed
-  under different enum values.
-- **3 are asset-level disinterest, not setup quality** — CL "not sure I'm shorting oil at these
-  prices with the Iran conflict going on", OIL "Same as CL", PNUT "Zero interest in PNUT".
-  These are **not scorer signal** and pooling them with trade-quality rejects would poison the
-  correlation. Two were filed `other`, one `view_wrong`; the enum has no bucket for "I don't
-  trade this asset", which is why the free-text field was worth adding.
-- **1 is genuine setup quality** — PLUME "That exit is pretty high and I'm not sure I see the
-  structure you're referring to here" (target/structure doubt).
+AUC = P(a random approval outranks a random negative). 0.5 is a coin flip; below 0.5 is
+ordering backwards. Chosen over the mean gap because the queue is consumed as an *ordering*,
+and because a mean gap can look healthy while the distributions interleave.
 
-**What this argues for**, per the gate/score rule: "Zero interest in PNUT" is a rule a human
-would write, so it wants a **gate** — an asset exclusion list — not a score term. Staleness is
-a continuum, so it stays a score, but underweighted. Do not build both at once, and re-measure
-after each.
+| term (v5 pooled, 19 v 16) | first sitting only | after both sittings |
+|---|---|---|
+| `score` | 0.856 | **0.671 [0.48, 0.84]** — includes chance |
+| `freshness` | 0.922 | **0.727 [0.54, 0.88]** — the only term that clears it |
+| `agreement` | 0.722 | 0.627 [0.46, 0.79] |
+| `reward_risk` | 0.672 | 0.618 [0.45, 0.78] |
+| `approach` | 0.678 | 0.559 [0.36, 0.75] |
+| `trend_alignment` | 0.367 | 0.408 [0.25, 0.58] |
 
-**The gate shipped 2026-07-27** (`cfg/exclusions.yaml`, `oracle/exclusions.py`). It was more
-urgent than it looked: `drop_decided` keys on the *zone*, so rejecting a candidate buries one
-order block and the next to form on the same instrument asks again — OIL and CL were back on 4
-of the 59 undecided v3 rows the same day they were rejected, one at score 0.711. Seeded with
-PNUT alone, deliberately: "not sure I'm shorting oil at these prices with the Iran conflict
-going on" is a *conditional* pass and belongs in the sidecar as a rejection, not here as a
-standing rule. The two are indistinguishable mechanically, which is why the list is
-hand-curated rather than mined from `reason_note`.
+**Two saturation findings survive the intervals**, because they are facts about the terms
+rather than about the labels — both the `RR_SATURATION` shape already fixed once for
+`proximity`/`depth` in `SCORE_VERSION` 3:
 
-**The freshness re-weight is still unbuilt, and should stay that way until v3 is measured.**
-It is now the *second* pending scoring change behind §16, and shipping it before the next
-session would leave two changes and one measurement.
+- **`agreement_signal` caps at 3 while recorded counts run to 12**, pinning it at 1.0 for 12 of
+  13 daily rows. At n≥3 it carries no information at all. This is the urgent half of §11.
+- **`reward_risk` is pinned at 3.0 for 12 of 18 weekly rows** — direct evidence for §19(d):
+  distance inflates R:R, so the term is meaningful where zones are near and noise where they
+  are far. "R:R is broken" is too broad; it is broken *on the far population*.
 
-**Measured 2026-07-27 across v3/v4/v5 — and it should stay unbuilt for a better reason now.
-See §20.** The separation reported here and in the session below is a *daily*-population
-effect; the weekly population is ordered by `approach` instead, and four of five terms sit at
-or below chance on it. The re-weight is not "pending", it is refused in its global form.
+### What to do next
 
-**d. `reward_risk` and `price` were never recorded · `FIXED 2026-07-27`.** `decision_record`
-wrote neither. R:R is a weighted term in `_score` *and* the headline number in the queue, so its
-weight was the one thing decisions could not be mined against at all; `price` fixes a decision
-to a market state, without which "was this judged at the zone or halfway to target" is
-unanswerable once prices move. Both are now written. **The 14 existing rows lack both and must
-not be backfilled** — a re-run yields today's values, not the decision-time ones, which is the
-same trap as (a). This is the third shape change to the sidecar; `score_version` still covers
-scale comparability, and these two are additive, so no version bump.
+**Not "accumulate more decisions" — "make the decisions comparable."** Two candidates, neither
+built: triage a **randomised or score-stratified slice** rather than the top of the queue, so
+range stops tracking sitting order; or **record the sitting's score range** with each decision
+so the analysis can condition on it.
 
-**Next:** accumulate a second real session before acting on (a) or (b) — n=3 approvals is not
-enough to re-weight against. When acting, change one term and re-measure; the sidecar now
-records enough to tell whether it helped. **Partly overtaken 2026-07-27 — mining (a) found a
-defect rather than a weighting problem. See §16, and re-read (a) with this correction:**
+**This blocks §11, §18 and §21**, each of which defers to a sidecar measurement that cannot
+currently be made. It does not block §7, §15, §19(d) or §27, which measure against candidate
+counts or price history instead.
 
-**Correction to (a): the wash was cancellation, not absence of signal, and one term was
-measuring the wrong thing.** Broken into components, three of the four recorded terms separate
-approvals from rejections in the right direction — `freshness` 0.884 vs 0.406, `agreement`
-3.67 vs 2.14, `trend_alignment` 0.667 vs 0.286. `proximity`, the *heaviest* weight at 0.25,
-ran backwards: 0.523 approved vs **1.000** rejected, with all 7 rejections pinned at exactly
-1.00 and no candidate below 1.00 ever rejected. `corr(proximity, freshness) = −0.599`, so this
-is (b) seen from the other side rather than a second finding. Net of the two, `score` came out
-0.696 vs 0.695.
+### Do not re-derive these
 
-**A caveat that matters for how much weight to put on the above:** `depth` (0.15) was never
-recorded, so the correlation could only ever see part of the ramp. Reconstructing the residual
-`0.15·depth + 0.20·rr_term` from the stored scores gives **0.243 approved vs 0.246 rejected** —
-no signal in the hidden half either, and not separable into which of the two terms carried it.
-That gap is closed going forward: v3 records `approach`, which is the whole ramp.
+- **Do not backfill missing fields on old rows.** A re-run yields today's values, not
+  decision-time ones — ZEC's score moved 0.665 → 0.790 inside a single session. If ever
+  backfilled, mark it `recomputed_at` and never as captured live.
+- **Do not raise the `freshness` weight globally.** It is the cleanest separator on the daily
+  population and near-chance on the weekly one, and §19(e)'s unconditional weekly-first sort
+  puts weekly at the *top* of the queue, so the damage lands where it is most visible. The
+  pooled sweep climbs monotonically and never turns over — **a sweep with no interior maximum
+  is the tell that one weight vector is being fitted to two populations**, not a result.
+- **Do not read the weekly-versus-daily split as established.** The point estimates differ in
+  the direction described (weekly `approach` 0.738 / `freshness` 0.583; daily 0.333 / 0.861)
+  but do not survive their own intervals at 11v17 and 18v11. Unproven, not disproven.
+- **Do not run "one mixed session" to break the confound.** There is no timeframe filter —
+  `setups` always returns both — and the population flipped entirely between sessions: after
+  v5 decided all 7 weekly rows, `--limit 0` returned 23 candidates, every one daily. The
+  confound is structural, because the ranker decides which population gets judged.
+- **Do not mine the 12 `archived` rows as clean negatives.** Confirmed with Tegan 2026-07-27:
+  `x` was used for both "I don't trade this asset" and "stale, bury it". The meaning was never
+  recorded and cannot be recovered. `x` now asks which kind it is, so this does not recur.
+- **Do not derive `cfg/exclusions.yaml` entries from decision prose automatically.** That
+  file's header explains why: a temporary reservation promoted into a permanent rule silently
+  deletes a market from the queue for good.
 
-### Third session · 2026-07-27 — 25 rows on v5, and `archived` has quietly become the reject key
-
-The sidecar is now **54 rows: 14 v2 · 8 v3 · 7 v4 · 25 v5**. The v5 pass is larger than every
-earlier session combined and is the first *mixed* one (18 daily / 7 weekly); v2, v3 and v4 were
-weekly-only runs, which turns out to matter more than the row count — see §20, which is the
-real result of mining this session and which **refuses the freshness re-weight** this entry had
-queued up.
-
-Verdicts: **10 approved · 8 archived · 6 later · 1 rejected.**
-
-**`rejected` is scarce again, and this time the negatives went somewhere that records nothing.**
-`_ask_reason` fires only on reject (`setups_cli.py:448-451`), so `archived` writes no `reason`
-and no `reason_note`. Eight permanent suppressions this session carry no stated why — and
-§4(c) is explicit that the notes, not the enum, are what made the last session's rejections
-legible.
-
-**Confirmed with Tegan 2026-07-27: `x` was used for a mix of both meanings** — some "I don't
-trade this asset", some "stale/bad, bury it". So those 8 rows are **not minable and cannot be
-made minable retroactively**, for the same reason §4(a) refuses backfilling: the meaning was
-never recorded and a re-run cannot recover it. They are counted as negatives in §20 with that
-contamination stated at every point of use.
-
-Three consequences, in increasing order of how much they cost:
-
-- **The vocabulary no longer matches usage.** `ARCHIVED` is documented as "explicitly NOT a
-  judgment", and §4's mining rule therefore excludes it — which would discard 8 of the 9
-  negatives. Excluding them leaves n=1.
-- **Archive doesn't do what "suppress permanently" implies.** `drop_decided` keys on
-  `candidate.key`, the *zone* — so archiving PENDLE buries one order block and the next PENDLE
-  zone asks again. That is precisely the defect `cfg/exclusions.yaml` was built for a day
-  earlier (§4, the gate), and archive does not feed it.
-- **It recurs every session until the prompt changes.** This was the cheapest fix in the entry
-  and the only one that compounds.
-
-**Do not derive `cfg/exclusions.yaml` entries from these 8 automatically** — that file's own
-header explains why, and the mix confirmed here is exactly the case it warns about: a temporary
-reservation promoted into a permanent rule silently deletes a market from the queue for good.
-
-### Archive now asks which kind it is · `FIXED 2026-07-27`
-
-`x` prompts `[a]sset (never show this asset) / [s]etup (just this zone)`, records the answer as
-`reason` (`ARCHIVE_ASSET` / `ARCHIVE_SETUP`) alongside the note, and — for an asset-level
-archive — appends the asset to `cfg/exclusions.yaml` with the note as its required reason. That
-is the half that makes it *stick*: `drop_decided` keys on the zone, so before this an
-asset-level archive buried one order block and the next one asked again.
-
-**This is not the automatic derivation `exclusions.py` refuses**, and the distinction is worth
-keeping straight: that rule is about reading permanence out of free prose, and here the prompt
-*asks* and you answer. The reason you type is the entry's reason; nothing is inferred.
-
-Four deliberate choices, each of which could have gone the other way:
-
-- **Unrecognised input falls to `setup`, not `asset`** — the opposite default from `_ask_reason`,
-  which falls to `other`. There every branch is inert; here one branch removes a market from the
-  queue permanently, so the ambiguous case must land on the harmless side.
-- **The exclusion write is subordinate to the sidecar and never raises.** Missing file, missing
-  reason, unwritable path and already-excluded all record the decision and print what happened.
-  A blank reason writes *nothing*, because `load` refuses reason-less entries and a bad write
-  would turn a mistyped prompt into a queue that cannot start.
-- **All four outcomes print**, including the ones that did nothing. A gate everyone believes is
-  running and isn't is the §6h failure class exactly.
-- **The append is textual and verified in memory before it lands**, so the ~35-line header —
-  where the rejection-versus-exclusion distinction is actually written down — survives, and a
-  file that gates the whole queue is never left half-edited.
-
-Verified end-to-end against the real `cfg/exclusions.yaml` shape: asset-level wrote and quoted
-the entry, setup-level left the file untouched, a blank reason recorded the decision and skipped
-the write, and re-archiving an already-excluded asset kept the committed reason.
+---
 
 ## 4b. The decision sidecars are irreplaceable and unbacked · `PARTIAL 2026-07-27` — setups mirrored, triage still not
 
@@ -409,65 +304,6 @@ records `approve`/`skip` only, with no reason and no note, so it is thinner grou
 
 ---
 
-## 5. `trend_state` read only two swings · `FIXED 2026-07-25`
-
-`core.structure.trend_state` compared the **last two swing highs and last two swing lows**.
-Fixed by anchoring the comparison `TREND_DEPTH = 2` swings back and requiring each side to
-clear `TREND_NOISE_FLOOR = 0.01`.
-
-### It was mis-filed as a supply problem — it was a correctness bug
-
-The entry above framed this as "BTC yields no candidates." That is the *lesser* half. The gate
-also pointed **backwards**: **ETH weekly read `uptrend`** on 2026-07-25 off `+3.4%` on highs and
-`+0.3%` on lows, while highs were down 50% (4,956 → 2,466) and lows 57% (3,510 → 1,510). Since
-weekly sets direction (`setups.py:458`), that verdict **permitted a long on a chart in freefall
-— and ETH long was one of the five setups approved that day.** Across 217 cached assets, 16 had
-a verdict that inverted under a corrected rule, 11 in the permissive direction. Separately, 13
-of 110 decisive verdicts rested on a swing-to-swing move under 1%.
-
-### The fix this entry originally proposed was the worst of the four tested
-
-"Score how many recent swings agree" is **magnitude-blind** — one large drop and one small
-bounce cancel. Measured: 28.6% decisive vs 50.7% for the code it would have replaced, and it
-still got BTC wrong. Deleted rather than left as a suggestion. *Do not re-derive it.*
-
-| Design | decisive | BTC | ETH | SOL |
-|---|---|---|---|---|
-| last-two (was) | 50.7% | ✗ | ✗ | ✓ |
-| agreement vote (proposed here) | 28.6% | ✗ | ~ | ✓ |
-| **anchored `k=2`, 1% floor (shipped)** | **44.7%** | ✓ | ✓ | ✓ |
-| least-squares slope over 5 | 57.1% | ✓ | ✓ | ✓ |
-
-**Slope was rejected despite being the most decisive.** Its window keeps structure price has
-already left: on HOOD — topped at 154, bottomed at 63, now building higher highs and higher
-lows — slope still reported `downtrend` because `150.47` and `139.75` were in its 5-swing
-window. Some of its extra decisiveness is confidently wrong. Anchored also stays in the
-manifesto's higher-high/higher-low vocabulary, so a verdict is checkable against a chart.
-
-**Depth is the fix; the floor is the junior partner.** No noise floor at depth 1 gets ETH right
-at any threshold — it only downgrades `uptrend` to `ranging`. Only reaching past the bounce
-makes it `downtrend`.
-
-### Effect
-
-90 of 217 assets changed verdict, 5 formerly inverted. BTC `ranging → downtrend`, ETH
-`uptrend → downtrend`, NVDA and TLT `→ ranging` (both genuinely undecided — NVDA's highs are
-falling while its lows still rise). Decisive verdicts fell 110 → 97: **the rule is deliberately
-less decisive, because accuracy was the goal and some old confidence was false.**
-
-### Watch
-
-- **`timeframe_conflict` rose 41 → 129** in the live run. Both legs use this function, so daily
-  and weekly now disagree more often. Expected, but unmeasured — if it keeps climbing it may
-  mean depth 2 is too coarse for the daily leg specifically, which has far more swings.
-- **The ETH approval of 2026-07-25 is invalidated by this change** and is still sitting in
-  `data/setups/decisions.jsonl` as `approved`. See §4 — it also means one of that session's
-  five positives is not trustworthy ground truth.
-- `TREND_NOISE_FLOOR` is marked TUNE. 1% was chosen to clear the observed sub-1% cluster, not
-  fitted to anything.
-
----
-
 ## 6. No freshness loop · `OPEN` — narrowed 2026-07-26
 
 The machinery is batch-historical; the use case is real-time. Nothing runs on a schedule —
@@ -510,40 +346,6 @@ way too many trades". Softening is right for measurements and wrong for rules.
 **Watch:** `--limit` now defaults to 25 with the held-back count printed. That cap is the only
 thing bounding the queue, so it is doing the job the cliff used to do — badly is better than
 invisibly, but it is a TUNE.
-
----
-
-## 6g. One missing `invalidation` discarded a whole document · `FIXED 2026-07-26`
-
-**Fixed.** `extract.py` validates theses **one at a time** (`TypeAdapter(ExtractedThesis)`)
-instead of validating the whole payload, so a bad row is dropped and counted while its
-document survives. `distill-roster` reports the count — `TOTAL: … N theses dropped`, and a
-`~ <doc>: dropped thesis[i] invalidation: …` line per drop.
-
-**The retry rule changed with it, deliberately.** All-rows-invalid still retries: that points at
-the prompt or the schema rather than one awkward call. One bad row among good ones does not —
-the document is usable, and re-asking would cost a second call to lose the same row again.
-
-**Honest caveat: the fix is unit-tested but has not yet fired on live data.** It hit twice in
-two days (below), but the second occurrence was rescued by an accidental duplicate
-`distill-roster` invocation, whose retry happened to produce a valid extraction — so that row
-was transiently malformed, not unsalvageable. The next genuine occurrence is the real proof.
-
-### The two occurrences that motivated it
-
-- **Capital Flows `udGgR-6lyCQ`**, 2026-07-26 trial-cohort pass: `theses.3.trade.invalidation`
-  was `None`; the whole video's extraction was rejected. 124 distilled, 1 failed.
-- **krillin `x/LSDinmycoffee-2026-07-24`**, first nightly cycle: `theses.0.trade.invalidation`
-  was `None`.
-
-Same defect §1 recorded for `key_levels` `min_length=1` — "13 of the 98 re-distill failures
-were exactly this constraint rejecting a whole video's extraction because one call had no
-explicit level" — surviving in a different field after that one was fixed.
-
-`invalidation` being required on a `trade` is *correct* and deliberate (architecture.md: "a
-thesis without an invalidation is incomplete"). The defect was that validation was
-**batch-atomic**. Expected to bite hardest on X, where a chart post carrying drawn levels but
-no stated stop is the ordinary case rather than the exception.
 
 ---
 
@@ -843,6 +645,12 @@ better defined and this may partly solve itself.
 Dates are now shown per supporter in the queue and the vault note, so this is at least visible
 rather than hidden.
 
+**Do the cap first, and it needs no measurement.** §4 found `agreement_signal` pinned at 1.0
+for 12 of 13 daily rows because it saturates at 3 while recorded counts run to 12 — so at n≥3
+the term carries no information at all, and recency-weighting a term that cannot vary would
+change nothing. Unsaturating it is the actionable half; the recency question is the part that
+waits on §4's blocked correlation.
+
 ---
 
 ## 12. Slice 2 needs the oracle at sub-daily granularity · `OPEN`
@@ -859,126 +667,81 @@ Note the granularity needed is **900s (15m)**, not just 1H/4H. Coinbase supports
 
 ## 13. The Claude Code sandbox strips the Webshare proxy · `RESOLVED` (workaround) — keep this written down
 
-**Symptom:** `ingest-roster` returned `0 ingested, 662 skipped, 60 stale, 10 failed`, with every
-missing video failing as `ChunkedEncodingError: IncompleteRead(N read, M more expected)` or
-`RetryError: too many 429 error responses`. Corpus frozen at 2026-07-23.
+**Kept because the fix is not update-safe and the failure is silent.** The sandbox bypasses
+`session.proxies`, so every transcript fetch egresses from the *local* IP — the one YouTube
+IP-blocks — and the error that surfaces is never the real one. It froze the corpus for two days
+and cost hours to find. If transcripts start failing again, run the probe below **first**.
 
-**Root cause: the Claude Code sandbox silently bypasses `session.proxies`**, so every transcript
-fetch egressed from the *local* IP — the one YouTube blocked during the checkonchain backfill on
-2026-07-24. The Webshare account was never at fault and rotation works fine.
+### The probe — proxied must differ from direct
 
-The one-line proof — same code, same credentials, only the sandbox differs:
+```bash
+uv run python -c "
+from ingestion.env import load_env; load_env()
+from ingestion.youtube import _proxy_config
+import requests
+px=_proxy_config().to_requests_dict()
+def ip(p):
+    s=requests.Session()
+    if p: s.proxies.update(px)
+    return s.get('https://api.ipify.org', timeout=(10,20)).text.strip()
+print('direct', ip(False)); print('proxied', ip(True))"
+```
 
-| | Sandboxed | Unsandboxed |
-|---|---|---|
-| Direct (no proxy) | 97.88.98.212 | 97.88.98.212 |
-| Proxied, call 1 | 97.88.98.212 | **189.50.230.176** |
-| Proxied, call 2 | 97.88.98.212 | **24.152.70.248** |
+Equal → the proxy is not applied. Two different residential IPs → applied *and* rotating.
 
-Sandboxed, proxied == direct: the proxy is not applied at all. Unsandboxed, two consecutive calls
-return two different residential IPs: the proxy is applied *and* rotating.
+### The fix — two parts, either alone is inert
 
-**Workaround (verified):** run any transcript-fetching command with the sandbox disabled. After
-doing so, `ingest-roster` returned **4 ingested, 662 skipped, 60 stale, 6 failed** and all 6
-residual failures are the permanently-dead set below.
+1. `sandbox.excludedCommands: ["uv *"]` in `.claude/settings.json`. Entries are **command
+   globs, not binary names**, and commands are invoked as `uv run …`, so a bare `"uv"` never
+   matches.
+2. A patch to the **global direnv `PreToolUse` hook**, which otherwise prefixes every command
+   with `eval "$(direnv export bash …)" &&` — making `eval` the first token the sandbox matches
+   on, so exclusion is inert for *every* command. It now emits `{}` when the command matches
+   `^\s*uv\s`. Harmless here: this repo has no `.envrc`.
 
-**Permanent fix — `sandbox.excludedCommands: ["uv *"]` in `.claude/settings.json`, plus a patch to
-the global direnv hook. Both are required; either alone does nothing.**
+Verified 2026-07-25 in a fresh session with the sandbox ON: `direct 97.88.98.212` vs
+`proxied 190.233.209.115`. **Consequence accepted deliberately: every `uv run …` in this repo
+now runs unsandboxed.**
 
-`allowedDomains` was tried and **removed as dead config — it cannot work here.** The sandbox
-exports `HTTPS_PROXY=http://srt:...@localhost:63350`, a local filtering proxy. When the code sets
-`session.proxies` to Webshare, requests emits `CONNECT www.youtube.com:443` to `p.webshare.io:80`;
-that is intercepted, and the sandbox proxy **terminates and re-originates** the connection from
-the local IP. Webshare is structurally cut out of the path, so allowlisting `p.webshare.io` only
-grants permission to *fetch* it, never to *tunnel through* it.
-
-Excluding the command from the sandbox is therefore the only mechanism that restores the proxy.
-It is scoped to `uv` rather than `ingest-roster` because commands are invoked as
-`uv run ingest-roster` — the first token is `uv`, so a binary-name entry would never match.
-**Consequence, accepted deliberately: every `uv run ...` in this repo now runs unsandboxed.**
-
-#### Attempt 1 (`excludedCommands: ["uv"]`) failed — and why · 2026-07-25
-
-After a restart the probe still returned `direct == proxied`. Two independent defects:
-
-1. **A global `PreToolUse` Bash hook rewrote every command**, prefixing
-   `eval "$(direnv export bash 2>/dev/null)" && `. The first token the sandbox matched on was
-   therefore always `eval`, never `uv`. Proof: `ps -o args= -p $$` returned
-   `(eval):1: operation not permitted: ps` — zsh's error prefix for code run under `eval`.
-2. **Entries are command globs, not binary names.** The docs' own example is `"docker *"`. A bare
-   `"uv"` would not match `uv run ingest-roster` even without the hook.
-
-Control that isolated defect 1: `mkdir /Users/tseitz/.claude/sandbox-probe-dir` — a bare, exact
-first-token match against the **global** `excludedCommands` entry `"mkdir"` — was still denied. So
-exclusion was inert for every command, not just `uv`. **Always run a control against an entry you
-did not add**; it separates "my config is wrong" from "the mechanism is broken".
-
-**Attempt 2 — `VERIFIED WORKING 2026-07-25`.** The direnv hook in `~/.claude/settings.json` now
-emits `{}` (no rewrite) when the command matches `^\s*uv\s`, and the project entry is `"uv *"`.
-Harmless here — this repo has no `.envrc`, so `uv` never needed direnv.
-
-Probe result in a fresh session, sandbox ON, no `dangerouslyDisableSandbox`:
-`direct 97.88.98.212` vs `proxied 190.233.209.115`. The proxy survives. `uv run ingest-roster`
-no longer needs the sandbox escape hatch.
+**When diagnosing this class, always run a control against an exclusion entry you did not add**
+— `mkdir` against the global `"mkdir"` entry was still denied, which is what separated "my
+config is wrong" from "the mechanism is broken".
 
 ### Second sandbox gap: the vault is a symlink · `FIXED, VERIFIED 2026-07-25`
 
-Writing to `~/vault/Trading/Trade Logs/Setups.md` failed with `Operation not permitted` even
-though `~/vault/Trading` was in `allowWrite`. `~/vault` is a **symlink** to
-`/Users/tseitz/Obsidian/Main Vault`, and macOS seatbelt matches the **resolved** path — so the
-symlink entry granted nothing. `.claude/settings.local.json` now lists both the symlink paths and
-the resolved `~/Obsidian/Main Vault/...` ones. Any future vault path must be added in resolved
-form. Confirmed working: `touch` succeeded through **both** the resolved and the symlink path.
+Writing to `~/vault/Trading/…` failed with `Operation not permitted` despite `~/vault/Trading`
+being in `allowWrite`. `~/vault` is a **symlink** to `/Users/tseitz/Obsidian/Main Vault`, and
+macOS seatbelt matches the **resolved** path. `.claude/settings.local.json` now lists both.
+**Any future vault path must be added in resolved form.**
 
-The probe (proxied must differ from direct):
+### Disproven — do not re-test
 
-    uv run python -c "
-    from ingestion.env import load_env; load_env()
-    from ingestion.youtube import _proxy_config
-    import requests
-    px=_proxy_config().to_requests_dict()
-    def ip(p):
-        s=requests.Session()
-        if p: s.proxies.update(px)
-        return s.get('https://api.ipify.org', timeout=(10,20)).text.strip()
-    print('direct', ip(False)); print('proxied', ip(True))"
+- **`allowedDomains`.** Structurally cannot work: the sandbox's local proxy *terminates and
+  re-originates* the CONNECT, so allowlisting `p.webshare.io` grants permission to fetch it,
+  never to tunnel through it.
+- **`&variant=gemini` on new uploads** — present on one failing video, absent on others failing
+  identically.
+- **Video-specific / newest-only** — videos already in the corpus failed identically. Always
+  test a known-good control before believing "the new items are special".
+- **Library out of date** — `youtube-transcript-api` 1.2.4 is current.
+- **Webshare plan / bandwidth** — rotation demonstrably works outside the sandbox.
+- **Proxy can't handle chunked bodies** — 837KB chunked+gzip succeeded 4/4 with keep-alive.
 
-### Why it cost hours to find — three layers of masking
+**Do NOT "fix" this by setting `prevent_keeping_connections_alive = False`.** It unmasks the
+real error but the library sets it deliberately — without it the IP is not rotated, so it
+trades a masked failure for broken rotation once egress is correct.
 
-The true error is `IpBlocked`. Nothing ever printed it:
-
-| Layer | Behavior | Symptom produced |
-|---|---|---|
-| `WebshareProxyConfig.prevent_keeping_connections_alive` -> `True` (`proxies.py:181`) sets `Connection: close` (`_api.py:41`) | YouTube's block page arrives as a truncated chunked body | `ChunkedEncodingError: IncompleteRead` |
-| urllib3 `retries_when_blocked` adapter | retries 429 on the **same** connection = same blocked IP | `RetryError: too many 429s` |
-| `youtube._TRANSIENT` catches `RequestException` | treats both as flaky, retries 4x with backoff | ~20 wasted attempts, misleading final error |
-
-Byte counts differed on every attempt (1188, 2591, 3880, 6745...), which is what sold the
-"proxy truncates mid-stream" theory.
-
-**Disproven leads — do not re-test:**
-- *`&variant=gemini` on new uploads.* Present on `JY_wY8XXjYU`, absent on others failing identically.
-- *Video-specific / newest-only.* Videos **already in the corpus** (`UIv9IQ4uXEA`, `Tv6DJTNobJ4`)
-  failed identically. This is what collapsed the video-specific theory — always test a known-good
-  control before believing "the new items are special".
-- *Library out of date.* `youtube-transcript-api` 1.2.4 **is** current PyPI latest.
-- *Webshare plan/bandwidth.* Rotation demonstrably works outside the sandbox.
-- *Proxy can't handle large/chunked bodies.* 837KB chunked+gzip succeeded 4/4 with keep-alive.
-
-**Do NOT "fix" this by overriding `prevent_keeping_connections_alive -> False`.** It unmasks the
-real error, but the library sets it deliberately (`proxies.py:39`: without it "your IP won't be
-rotated"), so it trades a masked failure for broken rotation once egress is correct.
-
-**Worth building anyway:** a preflight that probes the exit IP across 2-3 fresh sessions and
-aborts loudly when they're identical (proxy not applied) or block-flagged. The `TranscriptBlocked`
-abort path already exists and is the right destination — it just never fires, because the block
-never arrives as `RequestBlocked`. That turns this entire investigation into a 5-second error.
+**Worth building:** a preflight that probes the exit IP across 2–3 fresh sessions and aborts
+loudly when they are identical. The `TranscriptBlocked` abort path already exists and is the
+right destination — it never fires because the block never arrives as `RequestBlocked`. That
+turns this whole investigation into a 5-second error.
 
 ### Genuinely dead, independent of all the above
 
 Captions disabled: `MvD7fQQ0szE` `Nlw-PZhoViQ` `S_obDkmaf8I` `duXvzmQVZ1Q` `ufwa9Ld47Jo`.
-Deleted: `_IRMBuen60Y`. Correctly skipped, permanent — these are the 6 residual failures.
+Deleted: `_IRMBuen60Y`, `VXL1FPbgW7E`. Correctly skipped, permanent.
 
+---
 
 ## 14. X/Twitter ingestion is decided but entirely unbuilt · `DECIDED` (zero code)
 
@@ -998,67 +761,6 @@ so he's uncovered too.
 the per-item LLM economics are inverted — batching many posts into one `distill` call is the
 obvious shape, and the current one-call-per-document `distill_all` loop does not fit it.
 Interacts with §9 (the extractive pre-filter) — X needs no pre-filter at all.
-
----
-
-## 17. The nightly's `failed` count was never zero, so it could not report anything · `FIXED 2026-07-27`
-
-The 06:30 run reported `10 failed` and **every one was expected**: 6 with captions disabled, 2
-deleted, 2 livestreams that had not aired. A counter that always reads ten cannot report the
-eleventh. That is exactly the silent-failure shape §6 asks the nightly to design against, and it
-had been sitting in the summary line the whole time.
-
-The cost was never the network — none of these reach the retry backoff, because the exceptions
-marking them permanent are not `RequestException` and so bypass `_TRANSIENT` on the first
-attempt. The cost was the signal.
-
-**Split into three, `ingestion/deadletters.py` + `ChannelResult`:** `dead` ("never going to
-work, stop asking", recorded in `data/transcripts/_dead.json`), `pending` ("not yet, ask again
-tomorrow"), `failed` ("nobody expected this"). Live result, verified twice:
-
-    TOTAL: 0 ingested, 818 skipped, 107 stale, 5 dead, 4 pending, 0 failed
-
-Second pass byte-identical — dead videos are counted, not silently dropped, and not re-fetched.
-
-### The live run found a defect the unit tests did not · worth not re-deriving
-
-The first version buried anything raising `TranscriptsDisabled`. TTrades' **`Je7cd9HJUBE`
-("Morning Q&A", published 2026-07-27) raised exactly that in the 06:30 nightly and ingested
-cleanly at 11:00 the same day** — YouTube generates automatic captions hours after an upload.
-That rule would have permanently discarded a same-day video from an active roster member.
-
-Hence `CAPTION_GRACE_DAYS = 2`: a missing transcript on a video younger than the grace is
-`pending`, not dead. An unknown publication date counts as young, because burying on a fact we
-don't have is the same mistake.
-
-**Metadata-side failures are never buried at all, and the asymmetry is deliberate.** yt-dlp
-reports them as prose on a `DownloadError` *before* hydration succeeds, so there is no
-`published_at` to age-gate against — the thing that makes a transcript verdict safe cannot be
-applied. Both "This video is not available" and "This live event will begin" route to `pending`
-and retry forever. Cost: two wasted hydrates a night. Alternative: discarding a video for good
-because yt-dlp reworded something. `failed` still lands on zero, which was the point.
-
-`_IRMBuen60Y` and `VXL1FPbgW7E` are genuinely deleted (§13) and will therefore be retried
-nightly forever. Accepted knowingly — the registry is for things we can prove are permanent
-*and* age-check.
-
-### The nightly is spread across three hours of sleep, and only partly fixable
-
-Same run, from `pmset -g log`: launchd fired the missed 06:15 job at **06:30:03 during a
-DarkWake** — not on lid-open — then the machine stayed shut on battery, surfacing for ~2-second
-darkwake slices every ~15 minutes. The lid opened at **09:38:04**; the job finished at **09:50**.
-So `ingest-roster (8881s)` is 2h28m of wall clock over a few minutes of work, and the run
-effectively completed *because* the laptop was opened.
-
-The plist now wraps the script in `caffeinate -s -i -m`. **This only helps where macOS allows
-it**, and the limits are policy rather than configuration:
-
-- `-s` (prevent system sleep) is **only honoured on AC power** — caffeinate(8) says so outright.
-- `-i` (prevent idle sleep) works on battery, but **a closed lid is not idle sleep**.
-
-So: plugged in → completes in minutes at 06:15. Lid open on battery → likewise. **Lid closed on
-battery → still crawls, and no setting changes that.** Leaving it plugged in overnight is the
-actual fix. The flags cost nothing when they can't be honoured.
 
 ---
 
@@ -1157,246 +859,8 @@ have made this self-evident rather than something to go find.
 authored target" reintroduces the recency bias `min` was chosen to avoid; "nearest to price"
 re-derives the smallest-claim logic against a better reference; median-of-authored discards the
 "listen to them" provenance that `target_source` exists to preserve. Needs measuring against
-§4's sidecar, not picking by argument.
-
----
-
-## 16. A zone price had traded clean through scored *maximum* depth · `FIXED 2026-07-27`
-
-Found by running §4's correlation, which is why §4's "accumulate another session first" was the
-wrong call: the mining pass was worth doing for what it revealed about the *scorer*, not for the
-n it could support.
-
-**The defect.** `OrderBlock.depth_at` delegated to `position_in_range`, which **clamps**. For a
-bullish block, price below `bottom` clamped to position 0.0, so depth came back `1.0 - 0.0` =
-**1.0** — the maximum — for a zone price had abandoned. Nothing gated it either: `wrong_side_of_
-range` is about the dealing range, a different object, and zones only die at `invalidation`,
-which sits *past* the stop.
-
-The clamp is correct for its other caller. Premium/discount genuinely does want "a price beyond
-the range is at the extreme". Read as depth it inverts, so the fix is a containment check in
-`depth_at` and **not** a change to `position_in_range`.
-
-**Measured on the live queue, 2026-07-27 (`scripts/probe_zone_side.py`, re-runnable, free):**
-
-| | before | after |
-|---|---|---|
-| candidates | 82 | **69** |
-| price approaching | 47 (57.3%) | 47 (68.1%) |
-| price inside the zone | 22 (26.8%) | 22 (31.9%) |
-| **price past its own stop** | **13 (15.9%)** | **0** |
-
-`depth == 1.0` held in exactly 13 of 82, and those 13 were precisely the wrong-side set —
-nothing legitimately rests at the far edge, which makes that value a clean diagnostic. They
-**outscored everything else** (mean 0.621 vs 0.562) and took ranks 2, 9, 11, 13, 22, 23, 29, 33,
-41, 53, 54, 67, 75. `GBPUSD long` was **#2 of 82** with an entry *above* spot. The extremes were
-not marginal wicks: APP +27.6%, TSLA +14.0%, AMZN +13.4%, MSFT +10.4%, ASML +9.9% past entry.
-
-**Two changes, one pass, both in `SCORE_VERSION` 3:**
-
-- **`price_past_stop`**, a new zone-level refusal. `block.stop` is the far edge, so price beyond
-  it means an entry at `near_edge` is already stopped. A **gate**, per the gates-vs-scores rule:
-  whether the stop has been taken is a fact about the trade, not a measurement. It fires 100
-  outcomes → 13 candidates, and sits *after* `degenerate_zone` because a zero-height zone puts
-  every price on its far side.
-- **`proximity` + `depth` → one `approach` term** at their combined 0.40. They were never
-  independent — disjoint domains, so neither varied while the other did, and together they
-  already formed one monotone ramp. `ARRIVAL = 0.625` reproduces the old 0.25/0.15 split
-  exactly, so the collapse changed the signal's *shape* and not its calibration, keeping the
-  measured effect attributable to the gate.
-
-**Why the collapse was worth doing rather than deferring as cosmetic** — an earlier draft of
-this said it was a pure refactor with zero behaviour change. That was wrong, and the reason is
-the point: the two-term form could express `proximity 0.00, depth 1.00` — "no progress toward
-the zone" and "all the way through it" at once. TSLA, MSFT, AMZN and APP all carried exactly
-that pair. A single ramp cannot be written down that way.
-
-**Side effect worth noting:** `approach` now takes 52 distinct values across 69 candidates,
-where `proximity` was pinned at 1.00 for every one of the 22 inside their zone. The recorded
-field discriminates where it previously could not — see the §4 caveat.
-
-**Not fixed here, deliberately:** the queue is still ordered by a scorer that has never been
-validated, and `freshness` is still 0.15 despite being the cleanest separator in the sidecar.
-One change, then re-measure. §4's next session is now the measurement.
-
-**That measurement happened 2026-07-27 and refused the change — see §20.** `freshness` is the
-cleanest separator on the *daily* population only; on the weekly one it is near-chance (AUC
-0.583) and `approach` is the separator instead. Raising it globally would help one population
-and hurt the other. Do not ship it off the sweep in `scripts/probe_freshness_weight.py`; the
-sweep has no interior maximum, which is the artefact rather than the answer.
-
----
-
-## 20. One weight vector is ranking two populations that disagree about which term matters · `OPEN` — new 2026-07-27
-
-**This blocks the freshness re-weight that §4, §6 and §16 all queued up as the next change.
-Do not ship that re-weight globally.** Found by going to measure *how far* to raise it.
-
-Reproduce with `scripts/probe_freshness_weight.py` — free, local, re-runnable, reads the
-sidecar only. It replays the shipped scorer exactly (`max |recomputed − stored| = 0.00e+00`),
-so the numbers below are the real ranker and not a model of it.
-
-**The statistic is AUC** (P(a random approval outranks a random negative); 0.5 is a coin flip,
-**below 0.5 is ordering backwards**). Chosen over the mean gap because the queue is consumed as
-an *ordering* and because a mean gap can look healthy while the distributions interleave —
-which is exactly how §4's first correlation read as "no signal" when it was two terms
-cancelling. This entry is that same lesson one level up.
-
-### The finding
-
-| population | n (appr v neg) | approach | freshness | agreement | reward_risk | trend_align |
-|---|---|---|---|---|---|---|
-| **weekly** | 11 v 17 | **0.738** | 0.583 | 0.455 | 0.456 | 0.463 |
-| **daily** | 9 v 4 | **0.333** | **0.861** | 0.444 | **0.833** | 0.597 |
-
-`approach` orders the weekly queue and runs **backwards** on the daily one. `freshness` orders
-the daily queue and is near-chance on the weekly one. They swap, and the scorer has one
-`SetupWeights` for both.
-
-**The mechanism is visible in the spread, and it is the §16 lesson again — a term that doesn't
-vary cannot discriminate:**
-
-| | n | min | median | max | sd |
-|---|---|---|---|---|---|
-| weekly `approach` | 18 | 0.000 | 0.240 | 0.893 | 0.301 |
-| daily `approach` | 13 | **0.464** | 0.628 | 0.915 | **0.146** |
-| weekly `freshness` | 28 | 0.005 | 0.434 | 0.976 | 0.300 |
-| daily `freshness` | 13 | 0.082 | 0.755 | 0.968 | 0.250 |
-
-Daily zones are all *near* price — half the spread and a floor at 0.464 — so `approach` has
-almost nothing to say there. Weekly `freshness` has plenty of spread but doesn't track the
-decision, because the weekly rejections are §19's unreachable ones, which are *fresh* and
-heavily agreed: SPX rejected at freshness 0.955 with 12 people, OIL at 0.968 with 8. Those two
-notes are explicit that distance, not staleness, was the reason — "the entry is absurdly low
-relative to the price", "Price now is greater than target".
-
-**So the pooled sweep is a cancellation artefact.** Pooling both timeframes, AUC climbs
-monotonically with the freshness weight and never turns over — 0.856 at the current 0.15,
-0.911 by 0.50, flat thereafter. The data's unconstrained answer is "weight freshness at 1.0",
-i.e. rank the queue by recency and delete structure from the ordering. A sweep with no interior
-maximum is the tell that one weight vector is being fitted to two populations.
-
-### Two more saturated terms, found the same way
-
-Both are the `RR_SATURATION` shape §16 already fixed once for `proximity`/`depth`:
-
-- **`agreement_signal` caps at 3 and the recorded counts run to 12.** It is pinned at 1.0 for
-  **12 of 13 daily rows** and 9 of 28 weekly, which is why it sits at 0.455/0.444 — below
-  chance on both — despite raw counts that look separated (v5 approved mean 6.1 vs 2.9).
-  §11 asks whether agreement should be recency-weighted; this says the cap is the more urgent
-  half, because at n≥3 the term currently carries no information at all.
-- **`reward_risk` splits exactly the way §19(d) predicts**: 0.833 on daily, 0.456 on weekly,
-  pinned at 3.0 for 12 of 18 weekly rows. That is direct evidence for §19(d)'s claim that
-  distance inflates R:R — the term is meaningful where zones are near and noise where they are
-  far. It also means "R:R is broken" is too broad; it is broken *on the far population*.
-
-### Caveats, all of which cut against acting fast
-
-- **n is small everywhere.** The daily arm is 9 approvals vs 4 negatives — 36 pairs.
-- **Timeframe is confounded with session.** v2, v3 and v4 were weekly-only runs and v5 was
-  mixed, so "weekly" is largely the earlier sessions. v5 splits the same way internally
-  (daily freshness 0.861 / approach 0.333; weekly freshness 1.000 / approach 0.800) but its
-  weekly arm has **one** approval, so that within-session control is thin. **The cheapest way
-  to break the confound is one mixed session, not more code.**
-- **`archived` is mixed evidence** — confirmed 2026-07-27 as part asset-disinterest, part
-  staleness — and it is 8 of the 9 v5 negatives. `archived` alone scores AUC 0.887 against
-  approvals while the single `rejected` row scores 0.600. One archived row, CRV, is the
-  dominant inversion under current weights: it outranks 6 of the 10 approvals on its own, and
-  dropping it lifts the composite v5 AUC from 0.856 to 0.912.
-
-### What to do
-
-Not obvious, which is why this is `OPEN`. Ruled out: a global freshness raise — it would help
-the daily rows and hurt the weekly ones, and §19(e) puts weekly at the *top* of the queue via
-the unconditional weekly-first sort, so the damage lands where it is most visible.
-
-The live options, none measured:
-
-1. **Per-timeframe weights.** Honest about what was measured, and `SetupWeights` is already a
-   dataclass so `WEEKLY`/`DAILY` variants are cheap. Costs the ability to compare two scores
-   across timeframes — which §19(e) shows the queue is already doing badly by rule.
-2. **Fix the saturations instead of the weights.** Three of five terms are pinned for much of
-   the queue. A term restored to varying may separate on both populations, which would make
-   the split unnecessary. Strictly less invasive and addresses a defect rather than fitting to
-   n=13.
-3. **Score the two queues separately** rather than collapsing them, which subsumes §19(e).
-
-### The sample doubled the same day, and almost all of the above dissolved · 2026-07-27
-
-Two more sittings added 23 daily decisions (48 v5 rows: 19 approved, 16 negative, 13 later).
-**Every headline number above fell, and the probe now prints 95% bootstrap intervals because
-the point estimates were being over-read — including by me, in the tables above.**
-
-| term (v5 pooled, 19v16) | first sitting only | after both sittings |
-|---|---|---|
-| `score` | 0.856 | **0.671 [0.48, 0.84]** — includes chance |
-| `freshness` | 0.922 | **0.727 [0.54, 0.88]** — the only term that clears it |
-| `agreement` | 0.722 | 0.627 [0.46, 0.79] |
-| `reward_risk` | 0.672 | 0.618 [0.45, 0.78] |
-| `approach` | 0.678 | 0.559 [0.36, 0.75] |
-| `trend_alignment` | 0.367 | 0.408 [0.25, 0.58] |
-
-The first sitting's 0.856 had a CI of [0.66, 1.00] — consistent with almost anything above
-chance. It was one sitting read as a result. **The per-timeframe table's cells now all carry a
-'?': the weekly-versus-daily split above does not survive its own intervals.** Treat §20's
-central claim as *unproven*, not disproven — the point estimates still differ in the direction
-described, but 11v17 and 18v11 cannot establish it.
-
-**The real finding is that the measurement design is broken, not just underpowered.** A sitting
-is not a random sample of the queue. The queue is score-ordered and capped, so the first sitting
-spans a wide score range and each later one works a narrower slice of the tail — and a term
-cannot order what barely varies:
-
-| sitting | n | score range | `score` AUC |
-|---|---|---|---|
-| 18:38 | 10v9 | 0.397–0.812 | 0.856 [0.66, 1.00] |
-| 19:53 | 3v3 | 0.540–0.580 | 0.222 [0.00, 0.67] |
-| 20:00 | 6v4 | 0.403–0.527 | 0.458 [0.04, 0.88] |
-
-The only sitting whose interval clears chance is the only one with a wide range. That is
-restricted range doing the work, not the scorer improving and then failing.
-
-**And the approval threshold moves between sittings.** The later sitting approved candidates at
-a median score of 0.484 while the earlier one had *rejected* at a median of 0.518 —
-`AUC(later approvals > earlier negatives) = 0.444`. "Approved" is not an absolute quality label;
-it is relative to what else was on screen that sitting. **So decisions cannot simply be pooled
-across sittings and treated as one labelled dataset, which is what §4's whole revealed-preference
-programme has assumed.** Partly confounded — most of the earlier sitting's negatives are
-`archived`, which is mixed evidence — so this is a strong hypothesis rather than a settled
-finding, and the clean test is a sitting with a wide score range and real rejections in it.
-
-**What this changes:** the freshness re-weight stays refused, now for a better-supported reason.
-And §4's next step is no longer "accumulate more decisions" — it is "make the decisions
-comparable". Candidates: triage a *randomised* or score-stratified slice rather than the top of
-the queue, so range stops tracking sitting order; or record decisions with the sitting's score
-range so the analysis can condition on it. Neither is built.
-
-### Correcting the obvious next step — it is not "run a mixed session"
-
-A first draft of this entry said to run one mixed session to break the confound. **Both halves
-of that are wrong, and the reason is itself part of the finding.**
-
-**There is no timeframe filter to avoid.** `setups` has no such flag; the queue is always both.
-What made v2-v4 weekly-only is §19(e)'s unconditional weekly-first sort meeting the default
-`--limit 25`: when the weekly pool is at least 25, the visible queue *is* the weekly pool and
-nothing else is reachable. So the confound is structural, not a session choice — the ranker
-decides which population gets judged, and it has been feeding itself weekly rows.
-
-**And the next session will not be mixed either — it will be all daily.** Measured on the live
-queue, 2026-07-27: `uv run setups --list --limit 0` returns **23 candidates, every one daily,
-zero weekly**, because v5 decided all 7 weekly rows and `drop_decided` removes them. The
-population flipped entirely between one session and the next.
-
-That is still worth running, but for a narrower reason than "breaks the confound": right now
-`daily` is almost exactly `v5` and `weekly` is almost exactly `v2-v4`, so a second, independent
-daily session at least stops the daily arm being one sitting. **The weekly arm cannot be
-improved this way at all** — it needs weekly candidates to exist, which is a supply question,
-not a triage one.
-
-**So the honest reading is that the two populations are measured at different times by
-construction**, and that is a stronger argument for options 1 and 3 than any of the AUC numbers
-above: whatever the weights should be, the queue currently cannot present both populations in
-one sitting, so it cannot be calibrated against both in one sitting either.
+§4's sidecar, not picking by argument — which §4 says is blocked until sittings are
+comparable.
 
 ---
 
@@ -1450,7 +914,8 @@ the 30 approved assets and the queue is mostly crypto alts outside it. Every unm
 correctly gets `None` rather than a guessed zero, but a correlation over 13 rows is thin.
 Widening the map is the cheap lever; do it before mining, not after.
 
-**Residual — the measurement itself.** Still unrun, and still the point: does
+**Residual — the measurement itself.** Blocked on §4 — a sidecar correlation is not
+currently valid, so this cannot be settled by accumulating one more session. Still the point: does
 `carry_reward_risk` separate approve from reject better than `reward_risk`? Needs one session
 of decisions carrying both. Only then decide whether the existing 0.20 `reward_risk` weight
 should consume the adjusted number (that is a term-input correction, not a re-weight, but it
@@ -1481,7 +946,7 @@ restatement cadence (11–28d, §2). Do not rebuild per-label horizons to get th
 plausible gate is "carry exceeds the target" — `CarryAdjustedRR.carry_dominates` — which is a
 fact about the setup being dead rather than a judgement about how good it is.
 
-**Measure before weighting.** The scorer already has six terms and §20 refuses a global
+**Measure before weighting.** The scorer already has six terms and §4 refuses a global
 re-weight; adding a seventh blind would compound that. Baseline to measure against: the v5
 population in `data/setups/decisions.jsonl`.
 
@@ -1619,30 +1084,44 @@ do I trade it" and points at whatever instrument the venue lists (`SPY`, `xyz:SP
 per side, so its depth above is a floor and its slippage a ceiling. Aster was queried at
 `limit=500`. Re-measure both at equal depth before committing capital to the split.
 
-## 26. `venue_map.yaml` routes DXY to a market with no book at all · `OPEN` — new 2026-07-27
+**Liveness metadata is already solved, and not the way this entry assumed.** Routing needs to
+know a venue's market is real; `oracle/liveness.py` answers that from the funding log rather
+than from config — a market is dormant when its venue cohort reported and it did not. Decided
+2026-07-27 while removing `DXY -> xyz:DXY` ($0 volume, $0 OI, nothing quoted, and zero funding
+rows against 502 for every sibling): a curated `dormant:` flag in `venue_map.yaml` rots toward
+"looks alive", which is the same error the liquidity gate exists to fix. **Do not add liveness
+fields to that file.** Depth and slippage — what routing actually ranks on — are a different
+measurement and still need a real store; funding rows answer *does this market exist*, not
+*which venue is cheaper*.
 
-Measured on mainnet 2026-07-27 while building the execution liquidity gate:
+---
 
-```
-xyz:DXY     24h volume $0        open interest $0      nothing quoted on either side
-xyz:URNM    24h volume $137,284  open interest $964,920   spread 0.255%
-xyz:RIVN    24h volume $1,268,401 open interest $691,111
-```
+## 27. `timeframe_conflict` is now the second-largest gate and has never been examined · `WATCHING` — re-measured 2026-07-28
 
-`cfg/venue_map.yaml` maps `DXY -> xyz:DXY`, which is not a thin market — it is an empty one.
-An entry there rests forever; a stop there cannot fill at any price.
+Both legs of `trend_state` use the same anchored rule (`TREND_DEPTH = 2`, `TREND_NOISE_FLOOR
+= 0.01`, `core/structure.py:35`), so daily and weekly disagree far more often than before that
+rule shipped. The rise was recorded at the time as "expected, but unmeasured" and never
+followed up.
 
-**This is contained, not fixed.** `execution.guards.check_liquidity` now refuses all three
-(`no_book`, `illiquid`, `illiquid`), so no order can reach them. But the map still claims a
-route that does not exist, which means:
+| measured | `timeframe_conflict` | `weekly_disagrees` |
+|---|---|---|
+| 2026-07-25, pre-fix | 41 | — |
+| 2026-07-25, post-fix | 129 | — |
+| 2026-07-26 (§6 tally) | 798 | 1,617 |
+| **2026-07-28 (`setups --list --limit 0`)** | **1,000** | **1,843** |
 
-- `carry.outlooks_for` will happily price funding on a market nobody trades.
-- Any future consumer of `venue_map` inherits the same wrong answer and has to re-discover it.
+**Read the like-for-like comparison, not the headline.** Against the 2026-07-26 tally — the
+only other one taken under the current scoring regime — it grew 1.25x while `weekly_disagrees`
+grew 1.14x and the corpus grew too. So this is *not* a runaway; the 41 → 1,000 span crosses two
+scoring regimes and is not a trend. What stands is that it is now the second-largest rejection
+reason, discarding 1,000 outcomes, and nobody has looked at a single one.
 
-The open question is what the mapping *should* say. Removing the line loses the information
-that Hyperliquid nominally lists it; keeping it means the file asserts something false. A
-third option is a `dormant: true` marker so the route is recorded but unusable — worth
-considering alongside §25, which also needs per-venue liquidity metadata.
+**The open question is the original one:** is `TREND_DEPTH = 2` too coarse for the *daily* leg
+specifically, which has far more swings than the weekly? Anchoring two swings back spans a much
+longer stretch of daily history than of weekly, so the two legs may be measuring different
+things and calling it disagreement. Cheap to check — sample 20 conflicts and read the two
+verdicts against a chart. Free and local.
 
-For the same reason, the other 15 HIP-3 routes are fine and should not be touched: they clear
-the floors comfortably, and `xyz:SP500` quotes a **tighter spread than core-book BTC**.
+**Note for whoever picks this up:** a conflict is not necessarily waste. `weekly_disagrees` at
+1,843 is the gate working as designed. This entry claims only that 1,000 is a large number
+nobody has audited, which is exactly the shape the `price_past_stop` defect turned out to be.

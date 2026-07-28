@@ -44,6 +44,14 @@ this is really "the first wake after 06:15". That is fine: `ingest-x` resumes fr
 captured day rather than assuming yesterday, so a gap is collected on the next run (up to 7
 days automatically; beyond that it warns rather than skipping silently).
 
+**And on battery with the lid shut it crawls rather than runs.** Measured 2026-07-27: launchd
+fired the missed job at 06:30 during a DarkWake, then the machine surfaced for ~2-second slices
+every ~15 minutes until the lid opened at 09:38 — `ingest-roster` took 2h28m of wall clock for
+a few minutes of work. The plist wraps the script in `caffeinate -s -i -m`, but the limits are
+macOS policy, not configuration: `-s` is honoured **only on AC power**, and a closed lid is not
+"idle sleep" so `-i` does not cover it. Plugged in → minutes, at 06:15. Lid open on battery →
+likewise. **Lid closed on battery → slow, and no setting changes that.** Leave it plugged in.
+
 **What it costs.** Roughly **$0.25/night of real money** (xAI, the `ingest-x` step — the only
 command in the repo billed in actual dollars) plus the day's distillation against the Max
 subscription. Both totals land in the log and in one line per night in
