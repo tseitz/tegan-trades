@@ -1043,9 +1043,45 @@ order. Two consequences:
 Fixed only in the sense that it can no longer hide: §4's head band sorts on score, so the
 best-scoring candidate is always shown, and both queue messages now say what they actually did.
 The regression test is `test_the_head_reaches_the_best_score_even_when_queue_order_buries_it`
-in `packages/oracle/tests/test_queue.py`. **The ordering rule itself is untouched and still
-`OPEN` on its own terms** — this was a cap-and-ordering interaction, not an argument about
-whether weekly should outrank daily.
+in `packages/oracle/tests/test_queue.py`.
+
+### The ordering rule is now narrowed to where it was actually argued for · `FIXED 2026-07-28`
+
+The unconditional weekly-first sort had a second cost nobody had named: **it separated the two
+rows describing one thesis.** Every weekly sorted ahead of every daily, so a thesis producing
+both was split across the queue. Observed in a live sitting — SPX6900's weekly zone was row 1,
+an unrelated WLD row was 2, and SPX6900's daily zone was row 3, judged against a memory of the
+first rather than against the first. Verbatim: *"It's not a great experience to see a weekly
+that looks good, say approve, then be presented with a daily that doesn't have as good of an
+entry."*
+
+`collapse` now sorts **thesis groups by their best zone, weekly first within a group**. So
+§19(e)'s precedence survives exactly where it was argued — "the macro is much stronger" still
+decides which expression of *one* thesis leads — and stops reordering unrelated theses against
+each other, which it was never argued for.
+
+**A group is ranked by its best zone rather than by its weekly one, and that is measured, not
+assumed.** Across the 27 assets carrying both on 2026-07-28, the **daily** zone scored higher
+**15 times to the weekly's 12** (mean 0.535 v 0.498, mean approach 0.564 v 0.532). Near parity,
+no stable winner, and which one wins swings hard per asset — MORPHO weekly 0.616 v daily 0.368;
+ZEC weekly 0.449 v daily **0.727**. Ranking a whole thesis by its weekly alone would bury a
+strong daily behind a weak weekly, which is the harm this entry opened with.
+
+**Consequence to expect: the queue is no longer monotonically descending by score.** ZEC's
+weekly at 0.449 now sits above IBM's 0.702, because ZEC's *group* peaks at 0.727. That is the
+pairing working. The head band is unaffected — it selects on score independently of list order,
+so the best row is still always on screen.
+
+**The rows also say they are a pair** (`setups_render.thesis_pairing`): `2 zones for this
+thesis · 1 of 2`. Counted over the sitting's own rows, not the population — if sampling drew
+only one of a pair, claiming "1 of 2" would point at a row that is not there to compare
+against, so a lone sibling gets no marker.
+
+**Showing only the better zone was considered and rejected.** It would show the daily 15 times
+in 27 — not the weekly, as intuition suggested — and it would foreclose the question
+`decision_record` keeps `zone_timeframe` to answer: *do weekly setups actually beat daily ones?*
+The scores say near-parity, so only revealed preference can settle it, and collapsing the pair
+destroys the only evidence that could.
 
 Reproduce any of this with the probes in the 2026-07-27 session; all are free and local.
 

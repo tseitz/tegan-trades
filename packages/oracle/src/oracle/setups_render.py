@@ -217,7 +217,8 @@ def format_views(candidate: Candidate) -> str:
 
 def format_candidate(candidate: Candidate, *, rank: int | None = None,
                      total: int | None = None, as_of: date | None = None,
-                     color: bool = False) -> str:
+                     color: bool = False,
+                     zones_in_thesis: int = 1, zone_index: int = 1) -> str:
     """Render one candidate as a price ladder plus four summary lines.
 
     Stop and invalidation stay two distinct labelled values (they answer "where is this trade
@@ -267,11 +268,13 @@ def format_candidate(candidate: Candidate, *, rank: int | None = None,
                         else _RAIL_LIGHT)
             body.append(f"    {' ' * price_w}  {gap_rail}")
 
-    return "\n".join(["", _headline(c, rank=rank, total=total, color=color), "",
+    return "\n".join(["", _headline(c, rank=rank, total=total, color=color,
+                                    zones_in_thesis=zones_in_thesis, zone_index=zone_index), "",
                       *body, "", *_summary(c, as_of=as_of, color=color)])
 
 
-def _headline(c: Candidate, *, rank: int | None, total: int | None, color: bool) -> str:
+def _headline(c: Candidate, *, rank: int | None, total: int | None, color: bool,
+              zones_in_thesis: int = 1, zone_index: int = 1) -> str:
     """Asset, direction and the two numbers the whole judgement hangs on.
 
     The zone timeframe stays in the heading because the same asset can appear twice — once per
@@ -284,7 +287,13 @@ def _headline(c: Candidate, *, rank: int | None, total: int | None, color: bool)
     dir_style = "bold_green" if direction == "LONG" else "bold_red"
     head = (f"{counter}{paint(c.asset, 'bold', color=color)} "
             f"{paint(direction, dir_style, color=color)}")
-    meta = paint(f"{c.zone_timeframe} zone · {c.tier}", "dim", color=color)
+    # One thesis can yield a weekly zone and a daily one, and they are offered as two separate
+    # decisions because they are two different trades. Adjacency alone reads as the duplicate
+    # §27's sitting mistook them for, so the pair states itself: judge the second knowing the
+    # first exists, rather than against a memory of it three rows back.
+    pair = ("" if zones_in_thesis < 2 else
+            f" · {zones_in_thesis} zones for this thesis · {zone_index} of {zones_in_thesis}")
+    meta = paint(f"{c.zone_timeframe} zone · {c.tier}{pair}", "dim", color=color)
     stats = (f"{paint('score', 'dim', color=color)} {paint(f'{c.score:.2f}', 'bold', color=color)}"
              f"  {paint('R:R', 'dim', color=color)} "
              f"{paint(f'{c.reward_risk:.2f}', 'bold', color=color)}")
@@ -348,3 +357,27 @@ def _summary(c: Candidate, *, as_of: date | None, color: bool) -> list[str]:
         f"  {label('trend')}weekly {c.weekly_trend} · daily {c.daily_trend}{unaligned}",
         f"  {label('who')}{format_views(c)} · agreement {c.agreement}",
     ]
+
+
+def thesis_pairing(candidates) -> list[tuple[int, int]]:
+    """Per row, how many zones of its thesis are **on this screen** and which one it is.
+
+    Counted over the sitting's own rows rather than the whole population, deliberately. If
+    sampling drew only one of a pair, "1 of 2" would point at a row that is not there and
+    cannot be compared against — so a lone sibling gets no marker and reads as the single
+    decision it actually is. ``collapse`` guarantees the pair is adjacent when both are drawn.
+
+    Pure, and keyed the same way ``collapse`` groups: one thesis is one (asset, direction).
+    """
+    counts: dict[tuple[str, str], int] = {}
+    for c in candidates:
+        key = (c.asset, c.direction)
+        counts[key] = counts.get(key, 0) + 1
+
+    seen: dict[tuple[str, str], int] = {}
+    out = []
+    for c in candidates:
+        key = (c.asset, c.direction)
+        seen[key] = seen.get(key, 0) + 1
+        out.append((counts[key], seen[key]))
+    return out

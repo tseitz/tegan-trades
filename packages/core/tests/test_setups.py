@@ -1013,3 +1013,62 @@ def test_a_rejection_still_identifies_the_thesis():
     assert rejected.thesis_id == "t1"
     assert rejected.asset == "BTC"
     assert rejected.person == "TraderMayne"
+
+
+def test_collapse_keeps_a_thesis_two_zones_adjacent():
+    """Both expressions of one thesis must land side by side, whatever else is in the queue.
+
+    §27's sitting hit the failure this fixes: SPX6900's weekly zone was row 1, an unrelated WLD
+    row was 2, and SPX6900's daily zone was row 3 — so the second was judged against a memory of
+    the first rather than against the first. The unconditional weekly-then-score sort put every
+    weekly ahead of every daily, which separates precisely the rows that belong together.
+    """
+    ctx = _tf_ctx()
+    other = _ctx(price=104.0)     # a different asset, scoring between the pair
+    candidates = collapse([
+        cross_reference(_row(id="a-d", asset="AAA"), ctx, published_close=100.0,
+                        zone_timeframe=DAILY),
+        cross_reference(_row(id="b-d", asset="BBB"), other, published_close=100.0,
+                        zone_timeframe=DAILY),
+        cross_reference(_row(id="a-w", asset="AAA"), ctx, published_close=100.0,
+                        zone_timeframe=WEEKLY),
+    ])
+    order = [(c.asset, c.zone_timeframe) for c in candidates]
+    a_positions = [i for i, (asset, _) in enumerate(order) if asset == "AAA"]
+    assert a_positions == [min(a_positions), min(a_positions) + 1], (
+        f"AAA's two zones are not adjacent: {order}"
+    )
+
+
+def test_within_a_thesis_the_weekly_zone_is_still_offered_first():
+    """§19(e)'s precedence, narrowed to where it is unambiguous. "The macro is much stronger"
+    decides which expression of *one* thesis leads; it no longer reorders unrelated theses."""
+    ctx = _tf_ctx()
+    candidates = collapse([
+        cross_reference(_row(id="d"), ctx, published_close=100.0, zone_timeframe=DAILY),
+        cross_reference(_row(id="w"), ctx, published_close=100.0, zone_timeframe=WEEKLY),
+    ])
+    assert [c.zone_timeframe for c in candidates] == [WEEKLY, DAILY]
+
+
+def test_a_thesis_is_ranked_by_its_best_zone_not_by_its_weekly_one():
+    """Measured over 27 paired assets on 2026-07-28, the daily zone scored higher 15 times to
+    the weekly's 12 — near parity, no stable winner. Ranking a whole thesis by its weekly alone
+    would therefore bury a strong daily behind a weak weekly, which is the §19(e) harm that put
+    TSLA at 0.906 in position 29 and off the screen entirely."""
+    strong_daily = _tf_ctx()                      # its daily zone holds price: high approach
+    weak_other = _ctx(price=130.0)                # far from its zone: low approach
+    candidates = collapse([
+        cross_reference(_row(id="w2", asset="WEAK"), weak_other, published_close=100.0,
+                        zone_timeframe=DAILY),
+        cross_reference(_row(id="s-w", asset="STRONG"), strong_daily, published_close=100.0,
+                        zone_timeframe=WEEKLY),
+        cross_reference(_row(id="s-d", asset="STRONG"), strong_daily, published_close=100.0,
+                        zone_timeframe=DAILY),
+    ])
+    best = max(candidates, key=lambda c: c.score)
+    assert best.asset == "STRONG"
+    assert candidates[0].asset == "STRONG", (
+        "the thesis containing the best-scoring zone must lead, even though that zone is the "
+        f"daily one: {[(c.asset, c.zone_timeframe, round(c.score, 3)) for c in candidates]}"
+    )

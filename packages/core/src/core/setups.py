@@ -637,10 +637,35 @@ def collapse(outcomes, *, weights: SetupWeights = DEFAULT_WEIGHTS) -> tuple[Cand
             carry_reward_risk=rep.carry_reward_risk,
             carry_reward_risk_p90=rep.carry_reward_risk_p90,
         ))
+    # ── ordering: thesis groups by their best zone, weekly first *within* a group ──
+    #
+    # This was an unconditional weekly-then-score sort, which put every weekly ahead of every
+    # daily and therefore separated the two rows that describe one thesis. §27's sitting hit
+    # exactly that: SPX6900's weekly was row 1, an unrelated WLD row was 2, and SPX6900's daily
+    # was row 3 — so the second was judged against a memory of the first. Judging two
+    # expressions of one thesis against each other is the whole point of offering both.
+    #
+    # A group is ranked by its **best** zone rather than by its weekly one, because the weekly
+    # is not reliably the better trade: measured over the 27 assets carrying both on 2026-07-28,
+    # the daily scored higher 15 times to the weekly's 12 (mean 0.535 v 0.498). Ranking by the
+    # weekly alone would bury a strong daily behind a weak weekly, which is the §19(e) harm that
+    # left TSLA at 0.906 sitting in position 29, off the screen entirely.
+    #
+    # §19(e)'s precedence survives where it is unambiguous — "the macro is much stronger" still
+    # decides which expression of *one* thesis is offered first. It no longer reorders unrelated
+    # theses against each other, which it was never argued for and which cost the queue its
+    # best-scoring row.
+    best_in_group: dict[tuple[str, str], float] = {}
+    for c in candidates:
+        group = (c.asset, c.direction)
+        best_in_group[group] = max(best_in_group.get(group, c.score), c.score)
+
     return tuple(sorted(candidates, key=lambda c: (
+        -best_in_group[(c.asset, c.direction)],   # groups, best zone first
+        c.asset, c.direction,                     # keep a group contiguous
         ZONE_TIMEFRAMES.index(c.zone_timeframe) if c.zone_timeframe in ZONE_TIMEFRAMES
-        else len(ZONE_TIMEFRAMES),
-        -c.score, c.asset, c.direction,
+        else len(ZONE_TIMEFRAMES),                # weekly before daily, within the group
+        -c.score,
     )))
 
 

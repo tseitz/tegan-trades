@@ -74,7 +74,12 @@ from oracle.route import (
 )
 # Re-exported: the queue's layout lives in its own module, but ``format_candidate`` remains
 # part of this CLI's surface for callers and tests that reach for it here.
-from oracle.setups_render import format_candidate, format_views, supports_color  # noqa: F401
+from oracle.setups_render import (  # noqa: F401
+    format_candidate,
+    format_views,
+    supports_color,
+    thesis_pairing,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 CONFIG_DIR = REPO_ROOT / "cfg"
@@ -599,9 +604,12 @@ def triage(queue, *, decisions_path, vault_path, input_fn=input, out=print,
     decided_at = datetime.now(UTC).isoformat(timespec="seconds")
     color = supports_color() if color is None else color
     total = len(queue.rows)
+    pairing = thesis_pairing(queue.candidates)
     for i, row in enumerate(queue.rows, start=1):
         c = row.candidate
-        out(format_candidate(c, rank=i, total=total, as_of=as_of, color=color))
+        zones, index = pairing[i - 1]
+        out(format_candidate(c, rank=i, total=total, as_of=as_of, color=color,
+                             zones_in_thesis=zones, zone_index=index))
         ans = input_fn("[a]pprove / [l]ater / [r]eject / [x]archive / [q]uit: ").strip().lower()
         if ans in ("q", "quit"):
             break
@@ -892,9 +900,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.list:
         color = supports_color()
+        pairing = thesis_pairing(queue.candidates)
         for i, row in enumerate(queue.rows, start=1):
+            zones, index = pairing[i - 1]
             print(format_candidate(row.candidate, rank=i, total=len(queue), as_of=as_of,
-                                   color=color))
+                                   color=color, zones_in_thesis=zones, zone_index=index))
         return 0
 
     # Resolved before the first prompt: a vault that turns out to be unreachable must fail

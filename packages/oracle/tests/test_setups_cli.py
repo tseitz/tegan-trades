@@ -879,3 +879,44 @@ def test_scratch_run_would_not_sync_the_vault_mirror(tmp_path, monkeypatch):
 
     assert mirror is None, "a scratch run must never touch the vault mirror"
     assert calls == []
+
+
+def test_a_paired_thesis_says_so_in_the_headline():
+    """§27's sitting: SPX6900's weekly was row 1 and its daily row 3, with an unrelated asset
+    between them and nothing on either row saying they were one thesis. `collapse` now keeps
+    them adjacent; this is the other half — the row has to *say* a sibling exists, or adjacency
+    just looks like the duplicate it was mistaken for."""
+    from oracle.setups_render import format_candidate
+    text = format_candidate(_candidate(zone_timeframe=WEEKLY), rank=1, total=14,
+                            zones_in_thesis=2, zone_index=1)
+    assert "2 zones" in text
+    assert "1 of 2" in text
+
+
+def test_an_unpaired_thesis_says_nothing_extra():
+    """The marker must not appear on the overwhelming majority of rows that have one zone."""
+    from oracle.setups_render import format_candidate
+    text = format_candidate(_candidate(), rank=1, total=14)
+    assert "zones for this thesis" not in text
+    assert " of 1" not in text
+
+
+def test_thesis_pairing_counts_only_what_is_on_screen():
+    """A sitting that drew one of a pair must not advertise the other: the marker exists so the
+    two can be judged against each other, and pointing at a row that was not sampled is worse
+    than staying quiet."""
+    from oracle.setups_render import thesis_pairing
+    both = [_candidate(asset="AAA", zone_timeframe=WEEKLY),
+            _candidate(asset="AAA", zone_timeframe=DAILY),
+            _candidate(asset="BBB")]
+    assert thesis_pairing(both) == [(2, 1), (2, 2), (1, 1)]
+    assert thesis_pairing([_candidate(asset="AAA", zone_timeframe=WEEKLY)]) == [(1, 1)]
+
+
+def test_thesis_pairing_separates_the_two_directions_of_one_asset():
+    """A long and a short on the same asset are opposite trades, not two expressions of one
+    thesis, and `collapse` groups them apart for the same reason."""
+    from oracle.setups_render import thesis_pairing
+    rows = [_candidate(asset="AAA", direction="long"),
+            _candidate(asset="AAA", direction="short")]
+    assert thesis_pairing(rows) == [(1, 1), (1, 1)]
