@@ -329,6 +329,53 @@ they are blocked on a sitting, and one can now be held.** Each still defers to a
 correlation; that correlation is now *possible*, needs no conditioning, and simply wants data. §7, §15, §19(d) and §27 were never blocked, and
 measure against candidate counts or price history instead.
 
+### First post-§27 measurement · `2026-07-28`, 24 v6 rows over 4 sittings
+
+The sittings happened. All four ran `queue_mode=full` — the whole qualified population fit on
+screen, so nothing was sampled and there is no sampling confound to condition on at all. Better
+than the stratified draw this entry was built to provide.
+
+**Same-sitting AUC, now 175 valid pairs over 12 sittings** (was 154 over 8):
+
+| term | previously recorded | now |
+|---|---|---|
+| `score` | 0.688 [0.54, 0.82] | 0.691 [0.56, 0.81] |
+| `freshness` | 0.779 [0.66, 0.88] | 0.789 [0.68, 0.88] |
+| **`agreement`** | 0.627 [0.49, 0.75] — chance | **0.680 [0.55, 0.78] — clears** |
+| `approach` | 0.625 [0.43, 0.81] | 0.592 [0.41, 0.75] — chance |
+| `reward_risk` | 0.629 [0.46, 0.79] | 0.643 [0.47, 0.80] — chance |
+| `trend_alignment` | 0.429 [0.29, 0.57] | 0.446 [0.33, 0.57] — chance |
+
+**§11's fix is validated against data that did not exist when it was made.** The entry predicted
+the reshaped `agreement_signal` would move the within-sitting AUC to **0.672**; measured on the
+new cohort it is **0.680**, and it now clears chance where the clamped version spanned it. That
+is the first term in this programme to be changed on a structural argument and then confirmed
+out of sample.
+
+**The v6 cohort on its own cannot order approve from reject.** 9 approved v 6 rejected,
+`score` AUC = **0.500** — an exact coin flip. The largest single inversion source is the
+`SPX6900` daily rejection at 0.635, which beat six approvals and whose note reads *"we already
+have an spx6900 entry which seems like a better option"* — a **duplicate**, not a judgement on
+the setup. Excluding it moves the AUC only to 0.556. That row was produced by the ordering
+defect §19(e) fixed the same day (weekly and daily of one thesis three rows apart), so it should
+not recur, but it is in the record and a mining pass must not read it as trade quality.
+
+**Still no mandate to re-weight.** The freshness sweep climbs monotonically to 0.70 with no
+interior maximum — the same degenerate answer this entry already records as the tell that one
+weight vector is fitting two populations.
+
+**Two things bound what this cohort can say, both structural rather than bad luck:**
+
+- **`daily_trend` has zero variance.** All 15 rows carrying it are `downtrend`, and all 15
+  weeklies are `ranging`, because the queue was 100% the population §27's option 1 released.
+  So **§27's option 2 remains unmeasurable** — the negatives it needs still do not exist.
+  `trend_alignment` is constant at 0.0 across the same rows, which is why its AUC below 0.5
+  carries no information here either.
+- **4 of the 6 rejections used `other`.** That bucket calibrates nothing: `trade_quality` feeds
+  the setups scorer and `view_wrong` feeds roster trust, and `other` is only readable if the
+  free-text note happens to say something — which is exactly how the `SPX6900` confound above
+  was recoverable at all. Prefer the specific reasons where they fit.
+
 ### Do not re-derive these
 
 - **Do not backfill missing fields on old rows.** A re-run yields today's values, not
