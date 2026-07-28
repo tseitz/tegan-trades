@@ -106,7 +106,7 @@ flowchart TB
 
 ## Command cost table
 
-This is a **uv workspace**: one `.venv` and one `uv.lock` at the repo root cover all six
+This is a **uv workspace**: one `.venv` and one `uv.lock` at the repo root cover all seven
 packages. Every command below is run as `uv run <command>` **from the repo root** — never
 `cd` into `packages/*/`, which would build a second, divergent environment.
 
@@ -124,6 +124,25 @@ packages. Every command below is run as `uv run <command>` **from the repo root*
 | `ingest-x` | 💸 **REAL MONEY** | The only command billed in actual dollars — see below. Measured ~$0.22–0.25/run with charts on the 11-handle digest. |
 | `verify-roster` | 🟢 | Probes declared YouTube channels against the watchlist. No key, no proxy. Exits non-zero on disagreement. |
 | `scripts/nightly.sh` | 💸 + 🔴 | The whole cycle. ~$0.25 xAI + the day's distillation. Totals both and writes one line to `~/vault/Trading/Trade Logs/Nightly.md`. |
+| `execute` | 🟡 | Pre-flight only — reports network, equity and market availability. Structurally incapable of placing an order. |
+| `setups --execute` | 🟢 / 🔀 **CAPITAL** | Free to run. On testnet it moves mock funds; on mainnet it moves **your money** — a different axis from the LLM/API costs above. See below. |
+
+### 🔀 `setups --execute` risks capital, not dollars-per-call
+
+Every other cost in this table is a metered API bill. This one is not: the command itself is
+free, and what it puts at stake is the account balance.
+
+- **Off unless typed.** There is no config switch that enables it — `--execute` is a per-run
+  flag, so it cannot be left on from a previous session. The nightly job runs `setups --list`,
+  which returns before the triage loop exists and therefore cannot reach execution at all.
+- **Testnet by default.** `cfg/execution.yaml` ships `network: testnet`. Mainnet needs both
+  `--network mainnet` *and* a typed confirmation phrase.
+- **One order per approval, after confirmation.** An approved candidate is priced and sized,
+  shown in full, and sent only on an explicit `y`. Anything else declines.
+- **Sizing is risk-based**: `risk_pct` of live account equity per trade, measured to the
+  engine's own stop, capped at `max_notional_frac` leverage.
+- Orders and refusals both append to `data/execution/orders.jsonl`, which is the only record
+  linking a fill back to the candidate that caused it.
 
 ### Stopping the nightly job
 

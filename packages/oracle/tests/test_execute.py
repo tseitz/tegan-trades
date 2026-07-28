@@ -1,0 +1,236 @@
+"""The triage-to-order-book glue: the confirmation gate, and every way out of it."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import pytest
+from execution import store
+from execution.config import Config
+from execution.liquidity import Liquidity
+from execution.plan import Market, OrderPlan
+from execution.session import Session
+from execution.wire import Placement
+
+from oracle import execute
+
+
+# ── fakes ───────────────────────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class StubCandidate:
+    asset: str = "ETH"
+    direction: str = "long"
+    entry: float = 3_200.0
+    stop: float = 3_050.0
+    target: float = 3_900.0
+    key: str = "abc123"
+
+
+class FakeBroker:
+    def __init__(self, placement=None, *, raises=None):
+        self._placement = placement or Placement(ok=True, order_ids=(1, 2, 3))
+        self._raises = raises
+        self.placed: list[OrderPlan] = []
+
+    def markets(self):
+        return {"ETH": Market(coin="ETH", sz_decimals=4)}
+
+    def equity(self, dex: str = "") -> float:
+        return 10_000.0
+
+    def liquidity(self, coin):
+        return Liquidity(coin=coin, day_volume=50_000_000.0, open_interest=100_000_000.0,
+                         bid_depth=500_000.0, ask_depth=500_000.0, spread=0.0001)
+
+    def place(self, plan):
+        if self._raises:
+            raise self._raises
+        self.placed.append(plan)
+        return self._placement
+
+
+class Recorder:
+    """Collects printed output and feeds scripted answers."""
+
+    def __init__(self, answers):
+        self.answers = list(answers)
+        self.lines: list[str] = []
+
+    def out(self, text=""):
+        self.lines.append(str(text))
+
+    def input(self, _prompt=""):
+        return self.answers.pop(0) if self.answers else ""
+
+    @property
+    def text(self) -> str:
+        return "\n".join(self.lines)
+
+
+def _session(tmp_path, broker=None):
+    broker = broker or FakeBroker()
+    return Session(
+        broker=broker,
+        config=Config(network="testnet"),
+        markets=broker.markets(),
+        orders_path=tmp_path / "orders.jsonl",
+    )
+
+
+# ── the confirmation gate ───────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("answer", ["y", "Y", "yes", "YES"])
+def test_yes_places_the_order(tmp_path, answer):
+    session = _session(tmp_path)
+    rec = Recorder([answer])
+    execute.offer(session, StubCandidate(), input_fn=rec.input, out=rec.out)
+
+    assert len(session.broker.placed) == 1
+    assert "placed on testnet" in rec.text
+    assert store.load(session.orders_path)[0]["outcome"] == store.PLACED
+
+
+@pytest.mark.parametrize("answer", ["", "n", "no", "q", "anything else"])
+def test_anything_but_yes_declines(tmp_path, answer):
+    """The default must be *not* trading. A stray return key cannot open a position."""
+    session = _session(tmp_path)
+    rec = Recorder([answer])
+    execute.offer(session, StubCandidate(), input_fn=rec.input, out=rec.out)
+
+    assert session.broker.placed == []
+    assert "declined" in rec.text
+
+
+def test_declining_is_recorded_not_merely_printed(tmp_path):
+    """So the order log answers 'what did I approve and then think better of', which is the
+    half of the question the venue cannot reconstruct."""
+    session = _session(tmp_path)
+    rec = Recorder(["n"])
+    execute.offer(session, StubCandidate(), input_fn=rec.input, out=rec.out)
+
+    row = store.load(session.orders_path)[0]
+    assert row["outcome"] == store.REFUSED
+    assert row["reason"] == execute.DECLINED
+
+
+def test_the_preview_precedes_the_prompt(tmp_path):
+    """A person must see size, risk and both exits before answering."""
+    session = _session(tmp_path)
+    rec = Recorder(["n"])
+    execute.offer(session, StubCandidate(), input_fn=rec.input, out=rec.out)
+    assert "BUY" in rec.text and "3200" in rec.text and "stop loss" in rec.text
+
+
+# ── refusals never reach the prompt ─────────────────────────────────────────────────────────
+
+def test_an_unlisted_asset_is_refused_without_asking(tmp_path):
+    """No point asking whether to send an order that cannot be built."""
+    session = _session(tmp_path)
+    rec = Recorder(["y"])   # would say yes if asked
+    execute.offer(session, StubCandidate(asset="NOTATHING"), input_fn=rec.input, out=rec.out)
+
+    assert session.broker.placed == []
+    assert "not executable" in rec.text
+    assert store.load(session.orders_path)[0]["outcome"] == store.REFUSED
+
+
+# ── failure modes ───────────────────────────────────────────────────────────────────────────
+
+def test_a_venue_rejection_is_reported_loudly(tmp_path):
+    session = _session(tmp_path, FakeBroker(Placement(ok=False, error="insufficient margin")))
+    rec = Recorder(["y"])
+    execute.offer(session, StubCandidate(), input_fn=rec.input, out=rec.out)
+    assert "REJECTED" in rec.text and "insufficient margin" in rec.text
+
+
+def test_a_partially_resting_bracket_names_the_legs_that_survived(tmp_path):
+    """The worst outcome available — an entry resting with no stop behind it. It must be
+    impossible to miss, because only a human can decide what to do about it."""
+    session = _session(tmp_path, FakeBroker(
+        Placement(ok=False, order_ids=(111, 222), error="stop rejected")))
+    rec = Recorder(["y"])
+    execute.offer(session, StubCandidate(), input_fn=rec.input, out=rec.out)
+
+    assert "DID rest" in rec.text
+    assert "111" in rec.text and "222" in rec.text
+
+
+def test_an_exception_does_not_end_the_session(tmp_path):
+    """A venue timeout must not cost the rest of the queue — the approval is already durable
+    and the remaining candidates are still worth reviewing."""
+    session = _session(tmp_path, FakeBroker(raises=TimeoutError("venue did not respond")))
+    rec = Recorder(["y"])
+    execute.offer(session, StubCandidate(), input_fn=rec.input, out=rec.out)
+
+    assert "placement failed" in rec.text
+    assert "TimeoutError" in rec.text
+    assert store.load(session.orders_path)[0]["reason"] == "error"
+
+
+# ── the mainnet barrier ─────────────────────────────────────────────────────────────────────
+
+def test_mainnet_needs_the_exact_phrase():
+    rec = Recorder(["yes"])
+    assert execute.confirm_mainnet(rec.input, rec.out) is False
+    assert "not confirmed" in rec.text
+
+
+def test_mainnet_accepts_the_phrase():
+    rec = Recorder([execute.MAINNET_CONFIRMATION])
+    assert execute.confirm_mainnet(rec.input, rec.out) is True
+
+
+# ── HIP-3 discovery ─────────────────────────────────────────────────────────────────────────
+
+def test_hyperliquid_dexs_finds_the_builders_in_the_venue_map():
+    """Without these the SDK loads only the core book and every non-crypto asset fails to
+    resolve to an asset index."""
+    dexs = execute.hyperliquid_dexs()
+    assert "xyz" in dexs
+    assert "" not in dexs
+
+
+# ── the rehearsal venue stays honest ────────────────────────────────────────────────────────
+
+class ThinBroker(FakeBroker):
+    """A market mainnet would refuse: no book at all, the xyz:DXY case."""
+
+    def liquidity(self, coin):
+        return Liquidity(coin=coin)   # spread None -> no two-sided book
+
+
+def test_testnet_warns_when_the_gate_would_have_fired(tmp_path):
+    """Not enforcing on testnet must not mean staying quiet about it — otherwise a dead
+    market looks healthy in rehearsal, which is the opposite of the point."""
+    session = _session(tmp_path, ThinBroker())
+    rec = Recorder(["n"])
+    execute.offer(session, StubCandidate(), input_fn=rec.input, out=rec.out)
+
+    assert "would fail the liquidity gate" in rec.text
+    assert "no two-sided book" in rec.text
+
+
+def test_the_warning_does_not_claim_to_know_what_mainnet_would_do(tmp_path):
+    """The verdict is computed from the connected network's book. On testnet that book is
+    mock, so asserting a mainnet outcome would be a confident falsehood — xyz:SP500 has no
+    testnet book and $457M/day of real one."""
+    session = _session(tmp_path, ThinBroker())
+    rec = Recorder(["n"])
+    execute.offer(session, StubCandidate(), input_fn=rec.input, out=rec.out)
+
+    assert "mainnet would refuse" not in rec.text.lower()
+    assert "not a verdict on the real market" in rec.text
+
+
+def test_testnet_still_allows_the_order_despite_the_warning(tmp_path):
+    session = _session(tmp_path, ThinBroker())
+    rec = Recorder(["y"])
+    execute.offer(session, StubCandidate(), input_fn=rec.input, out=rec.out)
+    assert len(session.broker.placed) == 1
+
+
+def test_no_warning_when_liquidity_is_healthy(tmp_path):
+    session = _session(tmp_path)
+    rec = Recorder(["n"])
+    execute.offer(session, StubCandidate(), input_fn=rec.input, out=rec.out)
+    assert "would fail the liquidity gate" not in rec.text

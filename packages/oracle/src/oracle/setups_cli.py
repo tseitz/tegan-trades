@@ -49,8 +49,9 @@ from core.setups import (
     cross_reference,
 )
 from core.rank import parse_date
+from execution.broker import NETWORKS
 
-from oracle import cache, carry, corpus, exclusions, listings
+from oracle import cache, carry, corpus, exclusions, execute, listings
 # Re-exported: the sidecar's storage and its vault mirror live in their own module, but both
 # remain part of this CLI's surface for callers and tests that reach for them here.
 from oracle.decisions import append_decision, load_decisions, sync_mirror  # noqa: F401
@@ -466,7 +467,7 @@ def append_note(vault_path, section: str) -> None:
 
 def triage(candidates, *, decisions_path, vault_path, input_fn=input, out=print,
            as_of: date | None = None, color: bool | None = None,
-           mirror_path=None, exclusions_path=None) -> dict[str, int]:
+           mirror_path=None, exclusions_path=None, session=None) -> dict[str, int]:
     """Present each candidate, highest score first; approve -> vault note (if given) + sidecar,
     all decisions -> sidecar. Quit stops immediately without consuming further input.
 
@@ -478,6 +479,12 @@ def triage(candidates, *, decisions_path, vault_path, input_fn=input, out=print,
     its absence downgrades rather than fails: the archive is still recorded, it just doesn't
     stick across zones. Every write here is subordinate to the sidecar for the same reason the
     vault mirror is — losing a config line is recoverable, losing the judgement is not.
+
+    ``session`` is an ``execution.session.Session`` when ``--execute`` was passed, and None
+    otherwise — which is the default and the entire behaviour of this loop before it existed.
+    It is offered **after** the approval has been written, never before: an order is a
+    consequence of a decision, so the decision must already be durable when it is proposed.
+    Declining the order leaves the approval standing.
     """
     counts = {APPROVED: 0, LATER: 0, REJECTED: 0, ARCHIVED: 0}
     decided_at = datetime.now(UTC).isoformat(timespec="seconds")
@@ -512,6 +519,12 @@ def triage(candidates, *, decisions_path, vault_path, input_fn=input, out=print,
             decision_record(c, decision, decided_at=decided_at, reason=reason, note=note),
             mirror=mirror_path, warn=out)
         counts[decision] += 1
+
+        # Strictly after the decision is on disk. An order is a consequence of an approval,
+        # so the approval must survive independently of whether the order does — and a venue
+        # timeout must never be able to lose the judgement that preceded it.
+        if session is not None and decision == APPROVED:
+            execute.offer(session, c, input_fn=input_fn, out=out)
     return counts
 
 
@@ -628,6 +641,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
                         help=f"running approvals note to append to (default: {DEFAULT_VAULT_NOTE})")
     parser.add_argument("--no-vault-note", action="store_true",
                         help="record approvals to the decisions sidecar only, skipping the vault")
+    # Every other path this CLI touches is overridable; the primary sidecar was the one
+    # exception, which made a rehearsal run impossible — a decided queue is permanently
+    # empty, so there was no way to exercise the approve path without spending a real
+    # judgement. Pointing this elsewhere forces the vault mirror OFF (see main).
+    parser.add_argument("--decisions", type=Path, default=DEFAULT_DECISIONS,
+                        help="decisions sidecar to read and append to "
+                             "(default: %(default)s). Anything else is a scratch run: the "
+                             "vault mirror is disabled and every candidate looks undecided.")
     parser.add_argument("--decisions-mirror", type=Path, default=DEFAULT_MIRROR,
                         help=f"second copy of the decisions sidecar (default: {DEFAULT_MIRROR})")
     parser.add_argument("--no-mirror", action="store_true",
@@ -640,6 +661,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
                         help="ignore the funding log; carry is not computed or displayed")
     parser.add_argument("--list", action="store_true",
                         help="print the queue and exit, no prompting")
+    # Execution is opt-in per run and has no config-file switch that could turn it on.
+    # A flag you must type every time is the difference between "I meant to trade tonight"
+    # and "I forgot this was still enabled from last week".
+    parser.add_argument("--execute", action="store_true",
+                        help="after approving, offer to place the trade on the configured "
+                             "venue (default: off — approvals are recorded only)")
+    parser.add_argument("--network", choices=sorted(NETWORKS), default=None,
+                        help="override cfg/execution.yaml's network; mainnet additionally "
+                             "requires a typed confirmation")
     return parser.parse_args(argv)
 
 
@@ -647,12 +677,21 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     as_of = args.as_of or datetime.now(UTC).date()
 
+    # A scratch sidecar is a rehearsal, and the vault mirror belongs to the real one. Syncing
+    # them would compare a deliberately-empty file against the true history and report a
+    # divergence — or, worse on a fresh scratch file, restore 77 real decisions into it.
+    decisions_path = args.decisions
+    scratch = decisions_path != DEFAULT_DECISIONS
+    if scratch:
+        print(f"  SCRATCH RUN — decisions go to {decisions_path}, not the real sidecar")
+        print("  the vault mirror is off; nothing here reaches your durable decision log")
+
     # Reconciled up front, before the queue is built: a restore has to land before
     # ``load_decisions`` reads the sidecar, or a session run against a lost ``data/`` would
     # re-ask every question the mirror already holds the answers to.
-    mirror_path = None if args.no_mirror else args.decisions_mirror
+    mirror_path = None if (args.no_mirror or scratch) else args.decisions_mirror
     if mirror_path is not None:
-        sync = sync_mirror(DEFAULT_DECISIONS, mirror_path)
+        sync = sync_mirror(decisions_path, mirror_path)
         if sync.message:
             print(f"  {sync.message}")
         if sync.diverged:
@@ -687,7 +726,7 @@ def main(argv: list[str] | None = None) -> int:
         assets = sorted({c.asset for c in dropped})
         print(f"  {len(dropped)} on excluded assets — hidden ({', '.join(assets)})")
 
-    decided = load_decisions(DEFAULT_DECISIONS)
+    decided = load_decisions(decisions_path)
     undecided = drop_decided(candidates, decided)
     already_decided = len(candidates) - len(undecided)
     if already_decided:
@@ -734,9 +773,24 @@ def main(argv: list[str] | None = None) -> int:
     if mirror_path is not None:
         print(f"  decisions mirrored to {mirror_path}")
 
+    # Opened before the first candidate is shown, for the same reason the vault note is
+    # resolved there: a missing key or an unreachable venue must fail while the cost is zero,
+    # not after a session's worth of judgement has been entered.
+    session = None
+    if args.execute:
+        try:
+            session = execute.open_session(network=args.network)
+        except Exception as exc:  # noqa: BLE001 - surfaced as a message, not a traceback
+            print(f"error: could not start execution — {exc}", file=sys.stderr)
+            return 1
+        if session is None:
+            return 1
+    elif args.network is not None:
+        print("  note: --network has no effect without --execute", file=sys.stderr)
+
     counts = triage(  # pragma: no cover - interactive
-        queue, decisions_path=DEFAULT_DECISIONS, vault_path=vault_note, as_of=as_of,
-        mirror_path=mirror_path, exclusions_path=args.exclusions)
+        queue, decisions_path=decisions_path, vault_path=vault_note, as_of=as_of,
+        mirror_path=mirror_path, exclusions_path=args.exclusions, session=session)
     print("\n" + format_counts(counts))
     return 0
 

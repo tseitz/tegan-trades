@@ -1,0 +1,32 @@
+[project]
+name = "execution"
+version = "0.1.0"
+description = "Order execution: the only package that holds keys and sends signed writes."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "core",
+    "pyyaml>=6",
+    # EIP-712 + msgpack action signing. Not hand-rolled deliberately: an incorrectly signed
+    # action is rejected by the venue with no indication of *why*, which is indistinguishable
+    # from a malformed order. Pulls eth-account, msgpack, websocket-client, requests.
+    "hyperliquid-python-sdk>=0.24,<0.25",
+]
+
+[project.scripts]
+execute = "execution.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+core = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+markers = ["integration: hits the network; run explicitly"]

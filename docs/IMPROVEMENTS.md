@@ -1618,3 +1618,31 @@ do I trade it" and points at whatever instrument the venue lists (`SPY`, `xyz:SP
 **One measurement caveat that flatters Aster:** Hyperliquid's `l2Book` returns only ~20 levels
 per side, so its depth above is a floor and its slippage a ceiling. Aster was queried at
 `limit=500`. Re-measure both at equal depth before committing capital to the split.
+
+## 26. `venue_map.yaml` routes DXY to a market with no book at all · `OPEN` — new 2026-07-27
+
+Measured on mainnet 2026-07-27 while building the execution liquidity gate:
+
+```
+xyz:DXY     24h volume $0        open interest $0      nothing quoted on either side
+xyz:URNM    24h volume $137,284  open interest $964,920   spread 0.255%
+xyz:RIVN    24h volume $1,268,401 open interest $691,111
+```
+
+`cfg/venue_map.yaml` maps `DXY -> xyz:DXY`, which is not a thin market — it is an empty one.
+An entry there rests forever; a stop there cannot fill at any price.
+
+**This is contained, not fixed.** `execution.guards.check_liquidity` now refuses all three
+(`no_book`, `illiquid`, `illiquid`), so no order can reach them. But the map still claims a
+route that does not exist, which means:
+
+- `carry.outlooks_for` will happily price funding on a market nobody trades.
+- Any future consumer of `venue_map` inherits the same wrong answer and has to re-discover it.
+
+The open question is what the mapping *should* say. Removing the line loses the information
+that Hyperliquid nominally lists it; keeping it means the file asserts something false. A
+third option is a `dormant: true` marker so the route is recorded but unusable — worth
+considering alongside §25, which also needs per-venue liquidity metadata.
+
+For the same reason, the other 15 HIP-3 routes are fine and should not be touched: they clear
+the floors comfortably, and `xyz:SP500` quotes a **tighter spread than core-book BTC**.

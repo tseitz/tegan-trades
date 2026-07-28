@@ -6,18 +6,19 @@ Personal signal/trading platform: ingest trusted people → distill theses → c
 
 - **Work directly on `main`. Do NOT create git worktrees.** This is a brand-new solo project — worktrees add friction with no benefit. If a skill (e.g. superpowers `using-git-worktrees`, `executing-plans`, `subagent-driven-development`) wants to create a worktree, **skip that step** and just commit to `main`. This intentionally overrides the global worktree convention in `~/.claude/rules/`.
 
-- **This is a uv workspace. Run everything from the repo root with `uv run <command>`. Do NOT `cd` into `packages/*/`.** The root `pyproject.toml` declares `[tool.uv.workspace]` over `packages/*`, so one `.venv` and one `uv.lock` at the root cover all six packages and every console script. `cd packages/oracle && uv run setups` is wrong — it will try to build a second, divergent environment. There is no per-package `uv.lock` and no per-package `.venv`; do not create either. Adding a dependency means editing that member's `pyproject.toml` and running `uv sync` **from the root**.
+- **This is a uv workspace. Run everything from the repo root with `uv run <command>`. Do NOT `cd` into `packages/*/`.** The root `pyproject.toml` declares `[tool.uv.workspace]` over `packages/*`, so one `.venv` and one `uv.lock` at the root cover all seven packages and every console script. `cd packages/oracle && uv run setups` is wrong — it will try to build a second, divergent environment. There is no per-package `uv.lock` and no per-package `.venv`; do not create either. Adding a dependency means editing that member's `pyproject.toml` and running `uv sync` **from the root**.
 
 - **`docs/IMPROVEMENTS.md` is the issue tracker.** When you find a real gap, defect, or better approach *while building something else*, **write it there and keep going** — do not derail the current task to fix it, and do not silently drop it. Read it before starting new work; several entries are decisions already made but not yet executed. An entry must carry evidence (a measurement, a count, a real example), not a hunch. Delete entries when they're done.
 
 ## Repo layout
 
-Six workspace members under `packages/`, in pipeline order:
+Seven workspace members under `packages/`, in pipeline order:
 
 - `ingestion/` — transcript pullers + raw-transcript store. CLIs: `ingest-roster`, `ingest-channel`, `ingest-x`. **`ingest-x` is the only command in the repo that spends real money** (xAI, metered) — every other cost in the repo bills against the Max subscription. Read `docs/ARCHITECTURE.md` before running it.
 - `distill/` — 🔴 LLM: transcripts → structured theses. CLIs: `distill-roster`, `distill-transcript`, `distill-canon`, `distill-triage`, `distill-migrate-ids`, `fetch-tickers`.
 - `brain/` — 🔴 LLM: narrative stance extraction, retrieval, synthesis. CLIs: `brain`, `brain-extract`, `brain-index`.
-- `oracle/` — price fetching, routing, grading, cross-reference. CLIs: `fetch-prices`, `score-roster`, `setups`.
+- `oracle/` — price fetching, routing, grading, cross-reference. CLIs: `fetch-prices`, `fetch-funding`, `score-roster`, `setups`.
+- `execution/` — 🔀 **the only package that holds a private key and sends a signed write.** Everything else in the repo reads. Turns an approved `Candidate` into a resting bracket order (limit entry + TP + SL) on Hyperliquid. CLI: `execute` (pre-flight only; cannot place). Reached from `setups --execute`, which is **off unless typed** — testnet by default, mainnet needs a typed confirmation. Risk settings in `cfg/execution.yaml`; the key lives in `.env` and nowhere else.
 - `core/` — pure logic and shared schema. Zero I/O, no network, no LLM. Imported by everything, imports nothing local.
 - `llm/` — the **only** LLM boundary (`claude -p`, subscription auth). Exactly three call sites in the repo depend on it.
 
@@ -34,8 +35,8 @@ Other:
 Always from the repo root:
 
 ```bash
-uv sync                                # one venv, one lock, all six packages
-uv run setups                          # any of the 13 console scripts
+uv sync                                # one venv, one lock, all seven packages
+uv run setups                          # any of the 19 console scripts
 uv run brain "where is my roster on ETH" --no-llm
 uv run pytest -q -m "not integration"  # whole workspace; excludes live-network tests
 uv run pytest packages/brain -q        # scope by path, not by --package

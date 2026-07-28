@@ -712,3 +712,44 @@ def test_missing_vault_never_creates_a_directory_tree(tmp_path):
     with pytest.raises(setups_cli.VaultNoteUnavailable):
         setups_cli.resolve_vault_note(missing, disabled=False)
     assert not (tmp_path / "no-vault").exists()
+
+
+# ── the scratch sidecar ─────────────────────────────────────────────────────────────────────
+# Added so the approve path can be rehearsed. A decided queue is permanently empty, so
+# without this there was no way to exercise execution without spending a real judgement.
+
+def test_decisions_defaults_to_the_real_sidecar():
+    """The default must stay the durable log — a rehearsal has to be asked for."""
+    assert setups_cli._parse_args([]).decisions == setups_cli.DEFAULT_DECISIONS
+
+
+def test_decisions_can_be_pointed_at_a_scratch_file(tmp_path):
+    scratch = tmp_path / "scratch.jsonl"
+    assert setups_cli._parse_args(["--decisions", str(scratch)]).decisions == scratch
+
+
+def test_a_scratch_sidecar_is_detected_as_such(tmp_path):
+    """The flag that drives both the warning and the mirror being forced off."""
+    args = setups_cli._parse_args(["--decisions", str(tmp_path / "scratch.jsonl")])
+    assert (args.decisions != setups_cli.DEFAULT_DECISIONS) is True
+    assert (setups_cli._parse_args([]).decisions != setups_cli.DEFAULT_DECISIONS) is False
+
+
+def test_scratch_run_would_not_sync_the_vault_mirror(tmp_path, monkeypatch):
+    """The safety rule this flag exists with.
+
+    ``sync_mirror`` treats one file as a prefix of the other. A fresh scratch sidecar is
+    empty, so syncing it against the real mirror would take the *restore* branch and copy 77
+    real decisions into the scratch file — silently re-burying the queue the rehearsal was
+    meant to expose, and mixing two histories.
+    """
+    calls = []
+    monkeypatch.setattr(setups_cli, "sync_mirror", lambda *a, **k: calls.append(a))
+
+    scratch = tmp_path / "scratch.jsonl"
+    args = setups_cli._parse_args(["--decisions", str(scratch)])
+    is_scratch = args.decisions != setups_cli.DEFAULT_DECISIONS
+    mirror = None if (args.no_mirror or is_scratch) else args.decisions_mirror
+
+    assert mirror is None, "a scratch run must never touch the vault mirror"
+    assert calls == []

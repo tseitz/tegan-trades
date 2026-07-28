@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "core",
+    "execution",
     "pyyaml>=6",
     "requests>=2",
 ]
@@ -22,6 +23,7 @@ build-backend = "uv_build"
 
 [tool.uv.sources]
 core = { workspace = true }
+execution = { workspace = true }
 
 [dependency-groups]
 dev = [

@@ -1,0 +1,50 @@
+# How much to risk, and where. Read by `packages/execution/config.py`.
+#
+# THIS FILE IS COMMITTED. It must never hold a private key — the signing key lives in `.env`
+# (gitignored) as HYPERLIQUID_ACCOUNT_ADDRESS / HYPERLIQUID_SECRET_KEY. The loader has no
+# field that would accept one, so a key placed here is a hard error rather than a secret in
+# the history forever.
+#
+# Nothing here turns execution ON. That is `setups --execute`, a flag you type per run, so a
+# setting cannot silently leave trading enabled from one session to the next.
+
+# testnet | mainnet. Overridable per-run with `--network`; mainnet additionally requires a
+# typed confirmation phrase before a session opens.
+network: testnet
+
+# Fraction of account equity risked per trade, measured to the stop the engine computed.
+# 0.01 = 1%. Equity is read live from the venue, so this stays honest as the balance moves.
+risk_pct: 0.01
+
+# Ceiling on position notional as a multiple of equity — a guard against risk-based sizing
+# and a very tight zone combining into enormous leverage.
+#
+# 3.0 is measured, not taste: across the 77 decisions recorded to 2026-07-27 the tightest
+# stop sits 0.51% from its entry, which at a 1% risk budget implies 2.0x. So this ceiling is
+# inert on every candidate the engine has ever produced and engages only on a zone narrower
+# than anything yet seen. Re-measure before lowering it, or it starts quietly resizing
+# ordinary trades.
+max_notional_frac: 3.0
+
+# Which venue's listings to route through, per cfg/venue_map.yaml.
+venue: hyperliquid
+
+# Liquidity floors, in USD. Applied to EVERY market, not just HIP-3 ones — core-book markets
+# can be thin too, healthy ones pass trivially, and a gate with an exemption list is a gate
+# someone eventually routes around.
+#
+# WHY THIS EXISTS: HIP-3 lets anyone with a HYPE stake deploy a perp market and operate its
+# oracle, so "the venue lists it" stopped being evidence that it trades. cfg/venue_map.yaml
+# maps DXY to xyz:DXY, which on mainnet has $0 volume, $0 open interest and NOTHING QUOTED ON
+# EITHER SIDE. An entry there would rest forever; a stop there could not fill at any price.
+#
+# The exposure is the stop, not the entry. An entry is a resting limit that simply doesn't
+# fill in a dead market — a stop is a market order that must fill at the worst moment, and
+# positions are held ~21 days (core.setups.CARRY_HOLD_DAYS). So these measure durability
+# (will this market still be quoted in three weeks) rather than instantaneous depth.
+#
+# Measured on mainnet 2026-07-27. These clear xyz:DXY (nothing), xyz:URNM ($133k/day) and
+# xyz:RIVN ($582k open interest) while keeping every market with genuine activity —
+# xyz:SP500 quotes a TIGHTER spread than core-book BTC.
+min_day_volume: 1000000
+min_open_interest: 1000000

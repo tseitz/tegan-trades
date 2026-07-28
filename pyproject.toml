@@ -11,13 +11,14 @@ version = "0.1.0"
 description = "Personal signal/trading platform — workspace root."
 requires-python = ">=3.12"
 
-# Every member, so a plain `uv sync` installs the whole pipeline and all 13 console scripts
+# Every member, so a plain `uv sync` installs the whole pipeline and all 19 console scripts
 # land in `.venv/bin`. Without these, `uv sync` would install the root alone and `uv run
 # setups` from the root would fail.
 dependencies = [
     "brain",
     "core",
     "distill",
+    "execution",
     "ingestion",
     "llm",
     "oracle",
@@ -39,6 +40,7 @@ members = ["packages/*"]
 brain = { workspace = true }
 core = { workspace = true }
 distill = { workspace = true }
+execution = { workspace = true }
 ingestion = { workspace = true }
 llm = { workspace = true }
 oracle = { workspace = true }
