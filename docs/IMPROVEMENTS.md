@@ -1314,6 +1314,60 @@ do I trade it" and points at whatever instrument the venue lists (`SPY`, `xyz:SP
 per side, so its depth above is a floor and its slippage a ceiling. Aster was queried at
 `limit=500`. Re-measure both at equal depth before committing capital to the split.
 
+### Metals: `xyz` beats both alternatives, and Lighter's depth is a mirage · measured 2026-07-28
+
+**Read the testnet warning before anything else here.** Approving `SILVER LONG` in a live sitting
+printed `! would fail the liquidity gate on testnet data — xyz:SILVER traded $0 in 24h`. That
+number is the **testnet mock book**, which is exactly what `execute.py` says it is ("on the
+rehearsal venue the liquidity gate is measured but not enforced, because the mock book makes
+``check_liquidity`` unenforceable"). It was briefly written up here as evidence that the mainnet
+book was dead. **It is not.** Measured on mainnet, `xyz:SILVER` is the *best* venue of the three.
+Never quote a testnet liquidity number as a fact about a market.
+
+`scripts/probe_book_depth.py` walks all three books — free, public endpoints, no key, no order.
+Buy-side slippage vs mid, one snapshot 2026-07-28:
+
+| asset | venue | symbol | spread | depth ±10bp | $2k | $10k | $50k |
+|---|---|---|---|---|---|---|---|
+| SILVER | hyperliquid | `xyz:SILVER` | **0.2bp** | $1.72M | **0.1bp** | **0.4bp** | **0.9bp** |
+| SILVER | aster | `XAGUSDT` | 1.7bp | $1.21M | 0.9bp | 0.9bp | 1.9bp |
+| SILVER | lighter | `XAG` | 2.8bp | **$2.03M** | 3.0bp | 4.3bp | 4.7bp |
+| GOLD | hyperliquid | `xyz:GOLD` | 0.2bp | **$2.92M** | 0.1bp | 0.1bp | 0.1bp |
+| GOLD | aster | `XAUUSDT` | **0.1bp** | $2.05M | 0.1bp | 0.1bp | 0.1bp |
+| GOLD | lighter | `XAU` | 1.6bp | $2.55M | 0.8bp | 0.8bp | 1.4bp |
+| BTC | hyperliquid | `BTC` | 0.2bp | **$12.1M** | 0.1bp | 0.1bp | 0.1bp |
+| BTC | aster | `BTCUSDT` | **0.0bp** | $10.7M | 0.0bp | 0.0bp | 0.0bp |
+| BTC | lighter | `BTC` | 0.7bp | $3.45M | 0.4bp | 0.4bp | 0.5bp |
+
+**"Lighter is the better venue for hard assets" is not supported.** It was worth checking and the
+measurement says otherwise: Lighter carries the *most* resting size within 10bp on silver
+($2.03M against Hyperliquid's $1.72M) and still costs **3–5x more to cross** at every size,
+because its spread is 2.8bp against 0.2bp. **Depth within a band and cost to execute are
+different quantities**, and this is the case that separates them — the size is there, it is just
+not near the touch. Any future venue comparison must rank on slippage, not on depth.
+
+**So §25's single-venue default survives, for a reason it did not state.** Hyperliquid wins or
+ties on all three assets here, metals included. The original argument was unified margin and one
+integration; the measured argument is that it is simply the tightest book.
+
+**The margin caveat is real and unchanged.** Hyperliquid's *core* book carries 177 markets and no
+metals — silver and gold exist only on the `xyz` HIP-3 builder, and `broker.py` records that each
+builder has its own pool ("under manual mode each dex has its own pool. Detected, never assumed").
+So trading `xyz:SILVER` fragments collateral away from core regardless. That is a cost the venue
+choice does not remove; it just is not a reason to prefer Lighter or Aster, which fragment it too.
+
+**The ranking is stable; the magnitudes are not.** A second SILVER snapshot minutes later put
+Lighter's spread at 1.6bp rather than 2.8bp and its slippage at 0.8/1.0/2.2bp rather than
+3.0/4.3/4.7bp. Hyperliquid was still tightest on both, so *which venue wins* survived the
+re-measure while *by how much* did not. Do not quote the multiplier; quote the ordering, and
+re-run before sizing anything on it.
+
+**The caps differ, so depth is not like-for-like.** Aster answers at 500 levels, Lighter caps at
+100 orders (500 is rejected as `invalid param`), Hyperliquid returns ~20. Slippage at these sizes
+is set by the top of book so the caps do not explain the ordering, but the depth column is not a
+fair comparison. Both snapshots were taken with US cash markets closed — §25's warning that "exit
+risk is not entry risk" applies with full force.
+
 **Liveness metadata is already solved, and not the way this entry assumed.** Routing needs to
 know a venue's market is real; `oracle/liveness.py` answers that from the funding log rather
 than from config — a market is dormant when its venue cohort reported and it did not. Decided
