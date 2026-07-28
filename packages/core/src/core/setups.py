@@ -788,9 +788,28 @@ def cross_reference(
     if weekly_family is not None and weekly_family != family:
         return refuse("weekly_disagrees")
     trend_alignment = ALIGNED if weekly_family == family else UNALIGNED
-    daily_family = _family_of(context.daily_trend)
-    if daily_family is not None and daily_family != family:
-        return refuse("timeframe_conflict")
+
+    # ── the daily leg may only *contradict* a weekly that actually has an opinion ──
+    #
+    # A conflict needs two views. When the weekly is ranging there is only one, so this
+    # refusal was reporting the daily leg alone under a name that claims otherwise — the same
+    # error the gate above made until §6 split ranging out of ``weekly_disagrees``.
+    #
+    # Audited 2026-07-28 (§27): of 1,017 refusals, **256 had a ranging weekly**, and releasing
+    # those recovers 23 candidates. The remaining 761 are genuine two-timeframe disagreements
+    # and are still refused here.
+    #
+    # Deliberately a release, not a re-score. The daily leg reads a median of **21 days**
+    # against the weekly leg's 125, so it is a timing signal wearing a trend signal's name,
+    # and whether it belongs in ``_score`` is a live question (§27's option 2) that cannot be
+    # answered yet: while this gate refused every contradicting row, the decisions sidecar
+    # accumulated *zero* negative examples of one. ``daily_trend`` is now recorded on every
+    # decision so that measurement becomes possible. No term and no weight changed, so no
+    # candidate's score moves and ``SCORE_VERSION`` stays at 6 — §21's precedent.
+    if weekly_family is not None:
+        daily_family = _family_of(context.daily_trend)
+        if daily_family is not None and daily_family != family:
+            return refuse("timeframe_conflict")
 
     # ── premium/discount ──
     if context.dealing_range is None:

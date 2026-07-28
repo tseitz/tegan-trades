@@ -441,6 +441,16 @@ def decision_record(candidate: Candidate, decision: str, *, decided_at: str,
         "approach": candidate.approach,
         "freshness": candidate.freshness,
         "trend_alignment": candidate.trend_alignment,
+        # The two raw trend states behind ``trend_alignment``, which is only ever 1.0 or 0.0 and
+        # so cannot say *which* states produced it. Recorded for §27: the daily leg was a gate
+        # until 2026-07-28, so every row judged before then had a daily trend that agreed or was
+        # ranging and the sidecar holds **zero** negatives for it. Whether daily alignment
+        # belongs in ``_score`` at all (§27's option 2) is unanswerable without them — the same
+        # record-both-then-measure pattern §21 used for carry and §19(d) for the two R:R
+        # numbers. Additive, so per §4(d) no ``score_version`` bump, and the existing rows must
+        # NOT be backfilled: a re-run yields today's trend state, not the decision-time one.
+        "weekly_trend": candidate.weekly_trend,
+        "daily_trend": candidate.daily_trend,
         # Carry, recorded so §21's question — does carry-adjusted R:R predict the decision
         # better than nominal R:R does — becomes minable from the next session onward. Both
         # are None for an asset with no funding observations, which is itself a fact worth

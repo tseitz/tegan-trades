@@ -249,6 +249,35 @@ def test_daily_ranging_is_not_a_conflict():
     assert isinstance(setup, Setup)
 
 
+def test_a_ranging_weekly_leaves_no_macro_view_for_the_daily_to_contradict():
+    """The mirror of ``test_a_ranging_weekly_is_unaligned_not_disagreeing``, one gate down.
+
+    ``timeframe_conflict`` means "the two timeframes disagree", which requires two opinions.
+    A ranging weekly has none, so there is nothing for the daily to conflict *with* and the
+    refusal was measuring the daily leg alone. Measured 2026-07-28 (§27): 256 of 1,017
+    refusals were this case, and releasing them recovers 23 candidates.
+
+    The trade is still permitted rather than merely tolerated because a range has its own
+    thesis — price is assumed to travel to the previous high or low until invalidated — so a
+    weekly without a trend is not a weekly without a reason to act.
+    """
+    setup = cross_reference(
+        _row(), _ctx(weekly_trend=RANGING, daily_trend=DOWNTREND), published_close=100.0
+    )
+    assert isinstance(setup, Setup)
+    # Still unaligned: releasing the gate must not silently promote it to macro agreement.
+    assert setup.trend_alignment == 0.0
+
+
+def test_a_daily_conflict_under_an_agreeing_weekly_is_still_refused():
+    """The half of the gate that survives §27. Two opinions that genuinely disagree is the
+    case the reason was named for, and it is untouched."""
+    outcome = cross_reference(
+        _row(), _ctx(weekly_trend=UPTREND, daily_trend=DOWNTREND), published_close=100.0
+    )
+    assert _reason(outcome) == "timeframe_conflict"
+
+
 # ── the premium/discount gate ───────────────────────────────────────────────
 
 def test_a_long_in_premium_is_refused():

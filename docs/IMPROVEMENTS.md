@@ -32,26 +32,29 @@ attention — it is **candidate supply**.
 
 **§6f was tried as the fix for that and did not deliver it.** `ETH/BTC` now prices, and its 29
 rows reach the gates instead of being invisible, but every one is refused: the weekly trend is
-down and the roster is majority-long. Correct behaviour, zero new candidates. **There is no
-big supply lever left** — the honest answer is the nightly job and the 20 `later` rows
-resurfacing, both on the market's clock. Plan around that rather than looking for another one.
+down and the roster is majority-long. Correct behaviour, zero new candidates.
+
+**§27 was the supply lever, and it shipped on 2026-07-28** — this paragraph used to say no lever
+was left. The `timeframe_conflict` gate was counting a one-sided daily reading as a
+disagreement; releasing the 256 ranging-weekly refusals took candidates **74 → 97** and the
+queue from `Nothing to review` to **22 rows**. §4 is unblocked.
 
 | | Entry | Why now | Cost |
 |---|---|---|---|
-| 1 | **§27** — audit 20 `timeframe_conflict` rejections | 1,012 outcomes discarded by a gate nobody has read a single example from — **and §6f just produced 12 with a hand-verified trend state**, so the worked example is sitting there. | free, local |
-| 2 | **§7** — ATR-relative stop padding | Needs `k` measured against the 84-candidate baseline, but nothing gates that measurement. | free, local |
-| 3 | **§6f residual** — 25 routed-but-unfetched assets | 27 rows that route fine and were never fetched. `fetch-prices` is tier 🟡 (free). Caveat: several are `needs_validation` guesses (`ZT`, `AUD`, `BCOM`, `BAE`) that may simply not resolve. | free, network |
-| 4 | **§4** — one stratified sitting | Unblocks §11's recency half, §18, §19(d)'s open half, §21. Machinery built and the scorer finally worth measuring — but **the queue is empty**, so this waits on the nightly. | your attention, once there is a queue |
+| 1 | **§4** — one stratified sitting | **Now possible: 22 rows waiting.** Unblocks §11's recency half, §18, §19(d)'s open half, §21, and §27's option 2. The machinery is built and the queue finally has a stratified draw to serve. | your attention |
+| 2 | **§27 residual** — targets vs the range rule | 68 candidates now live on a ranging weekly and only 20 sit within 2% of the range bound the stated rule names (median gap 9.5%). Read §18 first. | free, local |
+| 3 | **§7** — ATR-relative stop padding | Needs `k` measured against the 84-candidate baseline, but nothing gates that measurement. | free, local |
+| 4 | **§6f residual** — 25 routed-but-unfetched assets | 27 rows that route fine and were never fetched. `fetch-prices` is tier 🟡 (free). Caveat: several are `needs_validation` guesses (`ZT`, `AUD`, `BCOM`, `BAE`) that may simply not resolve. | free, network |
 
 **Done 2026-07-28:** §4's sampler and decision context; §11's cap and §19(d)'s distance
 inflation, both as `SCORE_VERSION` 6; §6f's grouped unpriced tally and the `ETH/BTC` derived
-series. The two terms that structurally could not vary now do, so a sitting is finally worth
-holding — which is exactly when it turned out there was nothing left to judge. See §4's
-residual.
+series; **§27's audit and its option 1**. The two terms that structurally could not vary now do,
+so a sitting is finally worth holding — and §27 supplied the rows to hold it with.
 
 **Waiting on §4's first stratified sitting, not on code:** §18 (`collapse` rep rule) · §21
-(funding weighting) · §11's recency half. Each defers to a sidecar correlation that is now
-valid to make and simply has no rows yet.
+(funding weighting) · §11's recency half · §27's option 2 (daily leg as a score). Each defers
+to a sidecar correlation that is valid to make and, since §27 shipped, finally has a queue to
+draw rows from.
 
 **Not blocked, but each needs its own measurement first:** §7 (ATR stop padding — measure `k`
 against the 84-candidate baseline) · §15 (SMA confluence — does 50W actually mark turns).
@@ -289,15 +292,16 @@ Everything above is machinery plus a retrospective correction. **The next `uv ru
 sitting is the first one whose decisions need no conditioning at all** — and until a few exist,
 `queue_band == "tail"` selects an empty set.
 
-**But the sitting cannot currently be held, and this is the thing to know before planning
-around it.** `uv run setups` prints `Nothing to review`: of 69 candidates, **67 are already
-decided** (29 approved · 20 later · 16 rejected · 12 archived across 77 zones) and the other 2
-are on excluded assets. Decisions are keyed on `Candidate.key`, which is content-addressed on
+**The sitting could not be held until 2026-07-28, and now it can.** `uv run setups` printed
+`Nothing to review` — of 69 candidates, **67 were already decided** (29 approved · 20 later ·
+16 rejected · 12 archived across 77 zones) and the other 2 were on excluded assets. **§27's
+option 1 fixed this the same day**: candidates went 74 → 97 and the queue now offers **22
+rows**. What follows describes why the drought happened; it is no longer the blocker. Decisions are keyed on `Candidate.key`, which is content-addressed on
 the zone, so the `SCORE_VERSION` 6 bump correctly does *not* resurface them — a zone is not
 re-judged because the scorer changed, and it should not be.
 
-**So §4 is now gated on queue supply, not on attention or code.** Three things refill it, in
-increasing order of how much control you have:
+**§4 was gated on queue supply; §27 supplied it.** The paths considered at the time, kept
+because the reasoning about the passive two still holds:
 
 - **`later` rows resurfacing.** 20 of them, and `resurfaces` returns them once price enters the
   zone or another person backs it. Free, but it happens on the market's schedule.
@@ -306,12 +310,14 @@ increasing order of how much control you have:
 - **~~§6f~~ — tried 2026-07-28, and it did not work.** `ETH/BTC` was built and prices
   correctly; all 29 of its rows are refused because the weekly trend is down and the roster is
   majority-long. `BTC.D`, the other 44 rows, turned out to need a paywalled history endpoint.
-  So the first two paths are the only ones, and neither is on your clock. Plan for the queue
-  refilling slowly rather than for a lever that fills it.
+- **§27 — audited 2026-07-28, and this one is real.** The `timeframe_conflict` gate withholds
+  **48 candidates** (74 → 122), and 0 of the 48 are zones price has passed — 67% approaching,
+  33% inside. Unlike the two paths above it is on *your* clock: it is a decision about the
+  gate, not a wait for the market. **This is the path to a non-empty queue.** See §27.
 
-**Consequently §11, §18 and §21 are no longer blocked on a fix — they are blocked on a
-sitting.** Each still defers to a sidecar correlation; that correlation is now *possible*,
-needs no conditioning, and simply wants data. §7, §15, §19(d) and §27 were never blocked, and
+**Consequently §11, §18, §21 and §27's option 2 are no longer blocked on a fix or on supply —
+they are blocked on a sitting, and one can now be held.** Each still defers to a sidecar
+correlation; that correlation is now *possible*, needs no conditioning, and simply wants data. §7, §15, §19(d) and §27 were never blocked, and
 measure against candidate counts or price history instead.
 
 ### Do not re-derive these
@@ -1311,42 +1317,226 @@ measurement and still need a real store; funding rows answer *does this market e
 
 ---
 
-## 27. `timeframe_conflict` is now the second-largest gate and has never been examined · `WATCHING` — re-measured 2026-07-28
+## 27. `timeframe_conflict` counted a one-sided daily reading as a two-timeframe disagreement · `PARTLY DONE 2026-07-28` — option 1 shipped, option 2 open
 
-Both legs of `trend_state` use the same anchored rule (`TREND_DEPTH = 2`, `TREND_NOISE_FLOOR
-= 0.01`, `core/structure.py:35`), so daily and weekly disagree far more often than before that
-rule shipped. The rise was recorded at the time as "expected, but unmeasured" and never
-followed up.
+### Option 1 shipped · `2026-07-28`
 
-| measured | `timeframe_conflict` | `weekly_disagrees` |
+**The daily leg may now only contradict a weekly that has an opinion.** `cross_reference` runs
+the daily check only when `weekly_family is not None`; a ranging weekly means there is no macro
+view to conflict *with*, so the refusal was reporting the daily leg alone under a name claiming
+otherwise. Measured effect, matching the audit's prediction exactly:
+
+| | before | after |
 |---|---|---|
-| 2026-07-25, pre-fix | 41 | — |
-| 2026-07-25, post-fix | 129 | — |
-| 2026-07-26 (§6 tally) | 798 | 1,617 |
-| **2026-07-28 (`setups --list --limit 0`)** | **1,000** | **1,843** |
-| 2026-07-28, after §6f priced `ETH/BTC` | 1,012 | 1,860 |
+| candidates | 74 | **97** (+23) |
+| `timeframe_conflict` | 1,017 | **761** — precisely the genuine-conflict population |
 
-**Read the like-for-like comparison, not the headline.** Against the 2026-07-26 tally — the
-only other one taken under the current scoring regime — it grew 1.25x while `weekly_disagrees`
-grew 1.14x and the corpus grew too. So this is *not* a runaway; the 41 → 1,000 span crosses two
-scoring regimes and is not a trend. The last row is not growth at all: pricing `ETH/BTC` simply
-let 29 previously-invisible rows reach the gates. What stands is that it is the second-largest
-rejection reason, discarding ~1,000 outcomes, and nobody has looked at a single one.
+**`SCORE_VERSION` stays at 6.** No term and no weight changed and no existing candidate's score
+moves, so v6 is not re-partitioned — §21's precedent. `weekly_trend` and `daily_trend` are now
+written on every decision (additive, no bump, per §4(d)), which is what makes option 2 minable:
+while the gate refused every contradicting row the sidecar accumulated **zero** negatives for
+the daily leg, so the gate was destroying the evidence needed to evaluate its own replacement.
 
-**Start with those 12 `ETH/BTC` rows, because the trend state is already hand-verified.** The
-series is a downtrend on the weekly (0.050 → 0.030 across two years, and both candidate bar
-constructions agree) and an uptrend on the daily, which is what refuses all 12 shorts. That
-makes it the cheapest possible worked example of the question below: is a weekly-vs-daily
-disagreement over a two-year decline and a recent bounce a real conflict, or is
-`TREND_DEPTH = 2` measuring two different things on the two legs? One asset, a verified
-verdict, no chart-reading required to establish the ground truth.
+**§4's queue is no longer empty** — 22 rows to review, so the first stratified sitting can
+happen. That was the point of picking this entry.
 
-**The open question is the original one:** is `TREND_DEPTH = 2` too coarse for the *daily* leg
-specifically, which has far more swings than the weekly? Anchoring two swings back spans a much
-longer stretch of daily history than of weekly, so the two legs may be measuring different
-things and calling it disagreement. Cheap to check — sample 20 conflicts and read the two
-verdicts against a chart. Free and local.
+**The rule this encodes, in Tegan's words (2026-07-28):** *"we can take trades in a weekly range
+without knowing a hard trend. We just assume it's going to the previous high or low until
+invalidated."* A range has its own thesis; a weekly without a trend is not a weekly without a
+reason to act.
 
-**Note for whoever picks this up:** a conflict is not necessarily waste. `weekly_disagrees` at
-1,843 is the gate working as designed. This entry claims only that 1,000 is a large number
-nobody has audited, which is exactly the shape the `price_past_stop` defect turned out to be.
+### Residual: the released candidates do not target what that rule names · `OPEN`
+
+Checked immediately after shipping, because the rule above makes a claim about the *target* and
+the engine picks targets by a different mechanism. Of the **68** candidates now live on a
+ranging weekly, only **20 are within 2%** of the dealing-range bound their direction points at;
+**median gap 9.5%**. Worst cases are `structural` targets: `XMR` long targets 799.9 against a
+range high of 426.3 (**87.6% beyond** it), `SUI` long targets 0.7824 against a range high of
+1.415 (**44.7% short** of it). The exact matches — `SPX6900`, `WLD`, `MAG7` at 0.0% — are all
+`structural` targets that happen to coincide with the bound.
+
+So option 1 is right about *whether* to take these trades and silent about *where they go*.
+This is §18's territory (`collapse` picks the group's representative, and `target_source` is
+`stated` / `nearest` / `structural`), not a new gate — but it is the first population where the
+stated rule and the computed target can be checked against each other, and they disagree.
+**Do not "fix" this by clamping targets to the range bound before reading §18** — that would
+overwrite a person's stated level with a derived one, which is what `target_source` exists to
+prevent.
+
+### The audit that produced this · `2026-07-28`
+
+The audit §27 asked for is done. `scripts/probe_timeframe_conflict.py` — free, local, reads the
+price cache and reproduces the shipped engine exactly (74 candidates and
+`timeframe_conflict=1017` both match `setups --list --limit 0`). **Every number below is from
+one run at 2026-07-28.**
+
+The original open question was "is `TREND_DEPTH = 2` too coarse for the daily leg". The answer
+is **no, and the question was pointed the wrong way** — but the audit found something larger on
+the way past it.
+
+### The gate costs 48 candidates, and they look like ordinary candidates
+
+Neutralising *only* the daily leg — `daily_trend` reaches exactly one decision
+(`setups.py:791`) and is otherwise carried for display, so forcing it to `ranging` disables
+that one check and nothing else:
+
+| | candidates |
+|---|---|
+| gate on (shipped) | **74** |
+| gate off | **122** (+48, +65%) |
+
+**The 48 are indistinguishable from the 74 on the term that measures tradeability:**
+
+| | n | `approach` mean | median | at or inside the zone |
+|---|---|---|---|---|
+| kept by the gate | 74 | 0.541 | 0.542 | 27 (36%) |
+| refused by the gate | 48 | 0.508 | 0.478 | 16 (33%) |
+
+That is the honest form of the argument for releasing them: they are not a junk tail. The gate
+is not filtering out distant or unreachable zones — `approach` already ranks those (§19) — it is
+removing an ordinary slice of the population on a criterion unrelated to how good the setup is.
+
+**A stronger claim was made here on 2026-07-28 and withdrawn the same day. Do not restate it.**
+The first pass reported that 0 of the 48 were zones price had already traded through, and read
+that as "the gate refuses candidates at the moment they become tradeable". **The control shows
+the baseline is also 0 of 74** — `price_past_stop` refuses traded-through zones upstream and
+`approach_to` returns 0.0 for them, so *every* candidate in the engine is approaching-or-inside
+by construction. The measurement was real and said nothing whatever about this gate.
+
+### A quarter of the refusals have nothing to conflict with
+
+`_family_of(RANGING)` is `None` and the weekly check skips `None`, so a thesis reaches the daily
+leg by two different routes:
+
+| why it reached the daily leg | n | |
+|---|---|---|
+| weekly **agreed** with the thesis | 761 | 74.8% — a genuine two-timeframe conflict |
+| weekly was **ranging** | 256 | 25.2% — no macro opinion to conflict with |
+
+**The name is false for 256 of them**: there is no timeframe *conflict* when only one timeframe
+has an opinion. This is the identical shape §6 fixed for `weekly_disagrees`, where 630 rows were
+dying "for the absence of an opinion rather than the presence of a contrary one" — and that fix
+took candidates 8 → 49. Of the 48 candidates the gate withholds, **23 are this population** and
+25 are the real-conflict one, so the two routes cost about the same.
+
+### The verdict pairs are all one shape
+
+| weekly | daily | thesis | n |
+|---|---|---|---|
+| downtrend | uptrend | short | 398 |
+| uptrend | downtrend | long | 235 |
+| ranging | downtrend | long | 179 |
+| downtrend | uptrend_failed_breakout | short | 112 |
+| ranging | uptrend | short | 68 |
+
+**745 of the 761 real conflicts are "the daily is retracing against the weekly"** — which is the
+textbook entry condition, not a contradiction. The 112 `uptrend_failed_breakout` shorts are the
+sharpest case: a failed daily breakout *inside a weekly downtrend* is bearish continuation, yet
+`_family_of` maps the failed-break states to the bullish family (correctly, for its own stated
+purpose — "the pullback is the long entry") and that makes them conflict with a short. The
+docstring's own reasoning argues against the use the gate puts it to.
+
+### The two legs do not read the same amount of history — and the entry had this backwards
+
+Both legs use `TREND_DEPTH = 2` and `SWING_WIDTH = 2`, but a daily swing and a weekly swing are
+not the same distance in time. Measured over all 315 priced assets:
+
+| leg | n | p25 | median | p75 |
+|---|---|---|---|---|
+| weekly | 179 | 98 | **125** | 149 days |
+| daily | 288 | 15 | **21** | 27 days |
+
+**The weekly leg reads 6x more history than the daily leg.** §27 previously guessed the opposite
+("anchoring two swings back spans a much longer stretch of daily history than of weekly") — that
+sentence was wrong and is why the depth hypothesis looked plausible. A 3-week reading is being
+used to veto a 4-month one.
+
+### `TREND_DEPTH` is not the knob · sweep has no interior optimum
+
+| daily depth | median span | vs weekly | conflicts | candidates |
+|---|---|---|---|---|
+| **2** (shipped) | 21 d | 17% | 1,017 | **74** |
+| 3 | 32 d | 25% | 1,030 | 61 |
+| 4 | 42 d | 34% | 1,126 | 62 |
+| 6 | 66 d | 53% | 965 | 58 |
+| 8 | 86 d | 69% | 346 | 78 |
+| 12 | 124 d | 99% | 312 | 87 |
+
+Deepening the anchor **makes it worse before it makes it better** — depths 3–6 cost candidates
+outright (74 → 58) while conflicts stay flat or rise. Conflicts only collapse at depth 8–12, and
+by then the daily leg reads 69–99% of the weekly's span: it has stopped being a second opinion
+and become a copy of the first. **Agreement bought by redundancy is not a fix.** Same tell §4
+recorded for the freshness sweep — a sweep with no interior maximum means the shape is wrong,
+not that the constant needs tuning.
+
+**So `TREND_DEPTH = 2` is doing its job.** The daily leg is *correctly* reading a short-term
+move. The defect is that a short-term reading is wired as a **veto** instead of as **timing**.
+
+### The worked example, hand-verifiable
+
+`ETH/BTC` — weekly verdict independently confirmed by §6f (0.050 → 0.030 across two years):
+
+| leg | span | swing highs | swing lows | verdict |
+|---|---|---|---|---|
+| weekly | 238 days | −6.6% | −23.9% | `downtrend` |
+| daily | **28 days** | +3.7% | +10.1% | `uptrend` |
+
+**12 short theses refused because of a four-week bounce inside a two-year decline.** For a short,
+that bounce is the rally into the bearish zone — the entry. The released `ETH/BTC` short scores
+0.719 and is the second-best candidate the gate is withholding.
+
+### Option 2 — convert the daily leg to a scoring term · `OPEN`, blocked on evidence not effort
+
+The remaining **25** candidates sit behind a *genuine* two-timeframe disagreement, which option 1
+deliberately did not touch. Per §6's gates-vs-scores rule a continuum belongs in the score, so
+the shape is a seventh `SetupWeights` term shown in the queue, and `SCORE_VERSION` → 7.
+
+**Three things make it a decision rather than a change:**
+
+- **There is no spare weight.** The six weights sum to exactly 1.0 (`approach` 0.40,
+  `reward_risk` 0.20, `agreement` 0.20, `freshness` 0.15, `trend_alignment` 0.05). A seventh
+  term takes weight from the other six, which is the global re-weight §4 refuses without
+  evidence and §21 warned adding a seventh term blind would compound.
+- **The obvious mapping may have the wrong sign.** `agrees 1.0 / ranging 0.5 / contradicts 0.0`
+  encodes "daily disagreement is bad", but 745 of the 761 real conflicts are the daily
+  *retracing* against the weekly, which is the entry condition. The hypothesis worth testing
+  instead is that the informative state is the **failed break** — `downtrend_failed_breakdown`
+  under a long, `uptrend_failed_breakout` under a short: the counter-move tried to continue and
+  couldn't. Note `_family_of` already treats failed breaks as permissive for exactly that
+  reason, and that mapping is what generates the 112 `downtrend / uptrend_failed_breakout /
+  short` refusals — its docstring argues against the use the gate puts it to.
+- **It is a timing term, not a trend term, and should not be named one.** The daily leg reads a
+  median of 21 days. The real entry trigger is sub-daily (§12) and §3's fourth unknown — the
+  "15m failed breakdown, reclaim" — is a corpus gap, so a daily-bar trigger is a proxy for
+  something the spec does not yet define.
+
+**`trend_alignment` will need restating either way.** It is two-valued (`ALIGNED` 1.0 /
+`UNALIGNED` 0.0) *because* a contradicting weekly is gated — its docstring says "there is no
+third value". A daily analogue has three, so `ranging` would mean 0.0 on one leg and ~0.5 on
+the other. Fix or document; do not leave it implicit.
+
+**One thing is cheap right now:** v6 has **zero** decision rows (the queue emptied the moment v6
+shipped), so a bump to 7 currently strands no cohort. That argues for doing term surgery before
+sittings accumulate — but it does not solve the weight problem, which is the binding constraint.
+
+**Next step is data, not code:** hold sittings now that the queue has rows, then mine
+`daily_trend` against approve/reject. That is the record-both-then-measure pattern §21 set for
+carry and §19(d) for the two R:R numbers.
+
+### Do not re-derive these
+
+- **The daily leg spans *less* history than the weekly, not more** — 21 days against 125. The
+  pre-audit text asserted the reverse; that error is what made "TREND_DEPTH is too coarse" look
+  like the answer.
+- **Do not tune `TREND_DEPTH` on the daily leg.** Swept 2→12: no interior optimum, worse at
+  3–6, and "fixed" at 8–12 only by making the daily leg redundant with the weekly.
+- **"0 of the 48 blocked candidates had price past its zone" is true and is not evidence.**
+  So is 0 of the 74 kept ones — `price_past_stop` removes them upstream. Any future "look how
+  well-placed the blocked ones are" measurement needs the kept population as its control, or
+  it will re-discover a property of the engine and report it as a property of this gate.
+- **Do not read the 1,017 as waste the way `weekly_disagrees` at 1,869 is not waste.** What is
+  established is narrower: the blocked population resembles the kept one on `approach`, and a
+  quarter of the refusals are not conflicts at all.
+- **`SILVER long daily` comes back with R:R 2930.22.** Unrelated to this gate — it is §19's
+  still-open "a very high R:R is itself the symptom of a broken denominator". Do not let it
+  discredit the other 47; note it and read §19.

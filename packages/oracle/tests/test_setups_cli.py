@@ -146,6 +146,18 @@ def test_decision_record_carries_freshness_so_it_can_be_correlated_later():
     assert record["freshness"] == 0.31
 
 
+def test_decision_record_carries_the_daily_trend_so_option_2_becomes_minable():
+    """§27: the daily leg was a gate, so every judged row had a daily trend that agreed or was
+    ranging — the sidecar holds **zero** negatives for it. Recording the state is what lets a
+    later pass ask whether daily alignment predicts an approval at all, instead of arguing it.
+    Additive, so per §4(d) no ``score_version`` bump and no backfill of existing rows."""
+    record = setups_cli.decision_record(_candidate(daily_trend="downtrend"),
+                                        setups_cli.APPROVED,
+                                        decided_at="2026-07-28T00:00:00+00:00")
+    assert record["daily_trend"] == "downtrend"
+    assert record["weekly_trend"] == "uptrend"
+
+
 def test_decision_record_carries_what_else_was_on_screen():
     """A verdict is relative to the queue that produced it — measured, the 19:53 sitting
     approved at a median score of 0.484 while 18:38 *rejected* at a median of 0.518. The
