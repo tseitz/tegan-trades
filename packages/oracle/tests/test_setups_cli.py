@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import random
+from collections import Counter
 from datetime import date
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from core.structure import BULLISH, SWING_HIGH, SWING_LOW, Break, OrderBlock, Sw
 
 from oracle import exclusions, queue, setups_cli
 from oracle.queue import build_queue
+from oracle.setups_cli import format_unpriced
 
 
 def _swing(price, kind, *, index=0, day=1):
@@ -701,6 +703,50 @@ def test_triage_quit_stops_immediately_without_consuming_further_input(tmp_path)
     )
     assert counts == {setups_cli.APPROVED: 0, setups_cli.LATER: 0,
                       setups_cli.REJECTED: 0, setups_cli.ARCHIVED: 0}
+
+
+# ── the unpriced tally reports groups, not one number ────────────────────────
+
+def _stats(**overrides) -> setups_cli.BuildStats:
+    base = dict(assets_total=0, assets_priced=0, unpriceable=Counter(),
+                assets_uncached=0, assets_no_context=0, rejections=Counter(),
+                candidate_count=0)
+    base.update(overrides)
+    return setups_cli.BuildStats(**base)
+
+
+def test_the_unpriced_line_separates_the_gap_from_the_things_that_are_not_assets():
+    """One number read as "183 missed opportunities" and was mostly nothing of the kind: the
+    `__basket__` sentinel alone was 53 rows of the headline while being, by construction, the
+    extractor's placeholder for a thesis that isn't about one thing. The groups have different
+    answers — `not an instrument` never needs fixing, `computable` is the actual backlog."""
+    line = format_unpriced(_stats(unpriceable=Counter(
+        {"basket": 21, "conflict": 75, "unmapped": 41, "rate": 7,
+         "dominance_metric": 6, "derived_ratio": 2, "event": 3, "private_company": 2,
+         "macro": 1})))
+    assert "computable 15" in line
+    assert "no route 116" in line
+    assert "not an instrument 27" in line
+
+
+def test_a_routed_asset_that_was_never_fetched_is_not_a_routing_failure():
+    """Opposite problems with opposite fixes: one wants a curation entry, the other wants
+    `fetch-prices`. They were the same counter, so neither was actionable."""
+    line = format_unpriced(_stats(unpriceable=Counter({"conflict": 3}), assets_uncached=25))
+    assert "no route 3" in line
+    assert "routed but never fetched 25" in line
+
+
+def test_a_reason_no_group_claims_is_printed_rather_than_dropped():
+    """`event` and `derived_ratio` were spelled only in oracle_map.yaml and never in route.py,
+    which is exactly how they stayed invisible. A new one must not vanish the same way."""
+    line = format_unpriced(_stats(unpriceable=Counter({"newly_invented_reason": 4})))
+    assert "ungrouped newly_invented_reason 4" in line
+
+
+def test_the_headline_still_counts_everything_that_never_reached_a_context():
+    stats = _stats(unpriceable=Counter({"basket": 21, "conflict": 75}), assets_uncached=25)
+    assert stats.assets_unpriced == 121
 
 
 # ── build_candidates: engine assembly stats, without touching real data ──────

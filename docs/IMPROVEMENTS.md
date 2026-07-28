@@ -28,19 +28,26 @@ vary. Every entry that says "measure this against the sidecar first" now waits o
 
 **And that sitting has nothing to judge.** 67 of 69 candidates are already decided, so the
 command prints `Nothing to review`. The bottleneck is no longer measurement design, or code, or
-attention — it is **candidate supply**, which is why §6f leads the table below.
+attention — it is **candidate supply**.
+
+**§6f was tried as the fix for that and did not deliver it.** `ETH/BTC` now prices, and its 29
+rows reach the gates instead of being invisible, but every one is refused: the weekly trend is
+down and the roster is majority-long. Correct behaviour, zero new candidates. **There is no
+big supply lever left** — the honest answer is the nightly job and the 20 `later` rows
+resurfacing, both on the market's clock. Plan around that rather than looking for another one.
 
 | | Entry | Why now | Cost |
 |---|---|---|---|
-| 1 | **§6f** — `ETH/BTC` ratio, then `BTC.D` | 28 and 44 rows routed nowhere, both legs already cached. A division, not a new source — **and it is the only lever in reach that refills the queue**, which §4 now needs. | free, local |
-| 2 | **§27** — audit 20 `timeframe_conflict` rejections | 1,000 outcomes discarded by a gate nobody has read a single example from. | free, local |
-| 3 | **§7** — ATR-relative stop padding | Needs `k` measured against the 84-candidate baseline, but nothing gates that measurement. | free, local |
-| 4 | **§4** — one stratified sitting | Unblocks §11's recency half, §18, §19(d)'s open half, §21. Machinery built and the scorer is finally worth measuring — but **the queue is currently empty**, so this waits on row 1 or on the nightly. | your attention, once there is a queue |
+| 1 | **§27** — audit 20 `timeframe_conflict` rejections | 1,012 outcomes discarded by a gate nobody has read a single example from — **and §6f just produced 12 with a hand-verified trend state**, so the worked example is sitting there. | free, local |
+| 2 | **§7** — ATR-relative stop padding | Needs `k` measured against the 84-candidate baseline, but nothing gates that measurement. | free, local |
+| 3 | **§6f residual** — 25 routed-but-unfetched assets | 27 rows that route fine and were never fetched. `fetch-prices` is tier 🟡 (free). Caveat: several are `needs_validation` guesses (`ZT`, `AUD`, `BCOM`, `BAE`) that may simply not resolve. | free, network |
+| 4 | **§4** — one stratified sitting | Unblocks §11's recency half, §18, §19(d)'s open half, §21. Machinery built and the scorer finally worth measuring — but **the queue is empty**, so this waits on the nightly. | your attention, once there is a queue |
 
 **Done 2026-07-28:** §4's sampler and decision context; §11's cap and §19(d)'s distance
-inflation, both as `SCORE_VERSION` 6. The two terms that structurally could not vary now do, so
-a sitting is finally worth holding — which is exactly when it turned out there was nothing left
-to judge. See §4's residual.
+inflation, both as `SCORE_VERSION` 6; §6f's grouped unpriced tally and the `ETH/BTC` derived
+series. The two terms that structurally could not vary now do, so a sitting is finally worth
+holding — which is exactly when it turned out there was nothing left to judge. See §4's
+residual.
 
 **Waiting on §4's first stratified sitting, not on code:** §18 (`collapse` rep rule) · §21
 (funding weighting) · §11's recency half. Each defers to a sidecar correlation that is now
@@ -296,9 +303,11 @@ increasing order of how much control you have:
   zone or another person backs it. Free, but it happens on the market's schedule.
 - **Corpus growth via the nightly job.** Also passive, and slow at the margin — adding four
   voices took the corpus 3,851 → 4,471 rows and the queue only 49 → 53.
-- **§6f, which is the lever actually in reach.** 429 rows sit on assets the oracle cannot
-  price; `ETH/BTC` (28 rows) and `BTC.D` (44) are computable from series already cached. That
-  is the cheapest way to put judgeable candidates in front of a stratified draw.
+- **~~§6f~~ — tried 2026-07-28, and it did not work.** `ETH/BTC` was built and prices
+  correctly; all 29 of its rows are refused because the weekly trend is down and the roster is
+  majority-long. `BTC.D`, the other 44 rows, turned out to need a paywalled history endpoint.
+  So the first two paths are the only ones, and neither is on your clock. Plan for the queue
+  refilling slowly rather than for a lever that fills it.
 
 **Consequently §11, §18 and §21 are no longer blocked on a fix — they are blocked on a
 sitting.** Each still defers to a sidecar correlation; that correlation is now *possible*,
@@ -435,28 +444,72 @@ invisibly, but it is a TUNE.
 
 ---
 
-## 6f. 429 rows are about things the oracle cannot price, and most of them are computable · `OPEN` — new 2026-07-26
+## 6f. The unpriced count was one number covering four different problems · `PARTLY DONE 2026-07-28`
 
 Adding four voices took the corpus from 3,851 to 4,471 rows but candidates only from 49 to 53,
-because unpriced assets went **128 → 201**. 152 distinct assets, **429 rows**, route nowhere.
-They sort into four groups, and only one is genuinely hopeless:
+because unpriced assets went **128 → 201**. The original entry read that as a backlog of missed
+opportunities. Re-measured properly on 2026-07-28 — 4,579 rows over 496 assets — it is four
+unrelated problems that were being added together:
 
-| group | examples | rows | verdict |
-|---|---|---|---|
-| **Ratios** | `ETH/BTC` | 28 | **computable from two series already cached** |
-| **Aggregates / dominance** | `BTC.D` 44, `ALTS` 30, `TOTAL3` 15, `TOTAL`/`TOTAL2` 7, `ALTBTC`, `MEMECOINS` | ~110 | derivable from CoinGecko global data we already fetch |
-| **Macro series** | `CPI` 11, `FEDFUNDS` 7, `FED_FUNDS_RATE` 5, `FED` 5 | ~28 | free via FRED; context not setups |
-| **Private / unpriceable** | `SPACEX` 25, `ANTHROPIC` 3 | ~28 | correctly rejected, leave alone |
-| **Sentinels** | `__basket__` 53, `__macro__` 4 | 57 | not assets — the extractor's placeholder for a thesis that isn't about one thing |
+| group | assets | rows | examples | verdict |
+|---|---|---|---|---|
+| **not an instrument** | 27 | 172 | `__basket__` 53, `ALTS` 30, `CRYPTO` 19, `SPACEX` 25, `__macro__` 4 | correctly refused; **nothing to fix, ever** |
+| **no route** | 116 | 130 | `conflict` 75 assets, `unmapped` 41 | the genuine gap, and a one-row-per-label long tail |
+| **computable** | 15 | 136 | `BTC.D` 44, `CPI` 11, `ETH/BTC` 29 | real instruments, simply not built |
+| **routed, never fetched** | 25 | 27 | `ZT`, `AUD`, `BAE`, `BCOM`, `BRK.B` | a `fetch-prices` gap, not a routing one |
 
-**`ETH/BTC` is the cheap win**: 28 rows, and both legs are already in `data/prices/`. A ratio
-series is a division, not a new source. `BTC.D` at 44 rows is the single biggest real asset on
-the list and is a well-understood computation.
+**The headline is now grouped** (`setups_cli.format_unpriced`, `route.NOT_AN_ASSET` and
+friends). `__basket__` alone was a fifth of the old number while being, by construction, the
+extractor's placeholder for a thesis that is not about one thing — the entry's original ask.
+Two reasons, `event` and `derived_ratio`, existed **only** as strings in `cfg/oracle_map.yaml`
+and were never named in code, which is precisely how they stayed invisible; they are constants
+now, and a reason no group claims prints as `ungrouped` rather than vanishing.
 
-**`__basket__` at 53 rows deserves separate attention** — it is a sentinel, not an asset, and
-it is currently counted in the "no price source" tally as though it were a routing failure.
-That inflates the number and hides the real gap. Sentinels should be classified before routing
-is attempted, the way `unknown_direction` now is.
+### `ETH/BTC` ships · `2026-07-28`
+
+`route.DerivedRef` + `oracle/derived.py`. 29 rows, both legs already cached, and it is a
+division — 727 bars from 2024-07-31, ratio 0.0299, which is ETH ~$3.6k over BTC ~$120k.
+
+**The bar construction was the hard part, not the arithmetic.** `open` and `close` are exact
+because both legs are quoted at the bar boundary; **the ratio's high and low are not computable
+from daily OHLC**, because ETH's high and BTC's high are different instants. So the bars are
+body-only. The tempting `n.high / d.low` is a true bound and a badly loose one for correlated
+legs — measured, it yields **8 zones against the body-only series' 27**, so it materially
+fabricates structure. Collapsing to closes is the opposite failure: zero-height blocks, every
+candidate refused as `degenerate_zone`. The cost of body-only is stated rather than hidden —
+wick information is gone, so intraday sweeps are invisible on this series.
+
+**It produced zero candidates, and that is the correct answer today.** ETH/BTC's weekly trend is
+a downtrend — 0.050 → 0.030 over two years — while the roster is 17 long / 12 short on it. So
+all 17 longs are refused `weekly_disagrees` and all 12 shorts `timeframe_conflict`. The verdict
+is robust: both bar constructions agree the weekly is down. **The gain is that 29 rows now
+reach the gates and get counted instead of being invisible**, and they become eligible the
+moment that trend turns. Do not read "0 candidates" as the work not landing.
+
+### `BTC.D` is not what this entry claimed, and is not cheap · `OPEN`
+
+The original text — "derivable from CoinGecko global data we already fetch" — is wrong twice,
+checked 2026-07-28:
+
+- **We do not fetch it.** `coingecko` appears in exactly one file, `distill/fetch_tickers.py`,
+  and only for the ticker registry. There is no global-data fetch anywhere in the repo.
+- **The history is paywalled.** Dominance needs BTC market cap over *total* market cap, as a
+  series, because `setups` reads swings and order blocks off daily bars. `/global` is free but
+  **snapshot only**. `/global/market_cap_chart` — the history endpoint — returns
+  `error_code: 10005, "This request is limited to PRO API subscribers"`.
+  `/coins/bitcoin/market_chart` is free, so the *numerator* is available and the denominator is
+  not.
+
+Remaining options, none of them a division: pay for CoinGecko Pro (every cost in this repo
+except `ingest-x` bills against the Max subscription, so this is a real change of kind);
+approximate the total by summing the top-N coins' `market_chart`, which is N rate-limited calls
+and drifts as coins enter and leave the top N; or **snapshot `/global` nightly and accumulate
+history forward**, which is free and has direct precedent in the funding logger (§22, §24 —
+Lighter is snapshot-only and its column is thin until nights accumulate). The last one costs
+nothing but yields no usable weekly structure for many months.
+
+**`CPI`/`FEDFUNDS` (`rate`, 7 assets / 33 rows) is still open and is genuinely free via FRED** —
+but it is context, not setups; a rate has no order block worth trading.
 
 **Note this is a *supply* lever, not a data-quality one:** the macro/FX/aggregate vocabulary is
 disproportionately what the two new macro voices (Capital Flows, Real Vision) talk about, so
@@ -1271,12 +1324,22 @@ followed up.
 | 2026-07-25, post-fix | 129 | — |
 | 2026-07-26 (§6 tally) | 798 | 1,617 |
 | **2026-07-28 (`setups --list --limit 0`)** | **1,000** | **1,843** |
+| 2026-07-28, after §6f priced `ETH/BTC` | 1,012 | 1,860 |
 
 **Read the like-for-like comparison, not the headline.** Against the 2026-07-26 tally — the
 only other one taken under the current scoring regime — it grew 1.25x while `weekly_disagrees`
 grew 1.14x and the corpus grew too. So this is *not* a runaway; the 41 → 1,000 span crosses two
-scoring regimes and is not a trend. What stands is that it is now the second-largest rejection
-reason, discarding 1,000 outcomes, and nobody has looked at a single one.
+scoring regimes and is not a trend. The last row is not growth at all: pricing `ETH/BTC` simply
+let 29 previously-invisible rows reach the gates. What stands is that it is the second-largest
+rejection reason, discarding ~1,000 outcomes, and nobody has looked at a single one.
+
+**Start with those 12 `ETH/BTC` rows, because the trend state is already hand-verified.** The
+series is a downtrend on the weekly (0.050 → 0.030 across two years, and both candidate bar
+constructions agree) and an uptrend on the daily, which is what refuses all 12 shorts. That
+makes it the cheapest possible worked example of the question below: is a weekly-vs-daily
+disagreement over a two-year decline and a recent bounce a real conflict, or is
+`TREND_DEPTH = 2` measuring two different things on the two legs? One asset, a verified
+verdict, no chart-reading required to establish the ground truth.
 
 **The open question is the original one:** is `TREND_DEPTH = 2` too coarse for the *daily* leg
 specifically, which has far more swings than the weekly? Anchoring two swings back spans a much

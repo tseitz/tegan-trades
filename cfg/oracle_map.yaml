@@ -76,7 +76,12 @@ assets:
   OTHERS:   {unpriceable: dominance_metric}
 
   # ── ratios: derivable from both legs, but not a fetchable series (v1) ────
-  "ETH/BTC": {unpriceable: derived_ratio}
+  # Computed, not fetched: both legs are already cached, so the ratio is a division. Curated
+  # rather than inferred from the slash — see route.DerivedRef on why a label that looks like a
+  # pair is not evidence that it is one.
+  "ETH/BTC": {derived: {numerator: ETH, denominator: BTC}}
+  # Stays unpriceable: "alts vs BTC" is a ratio of a *basket* to an asset, and the basket is the
+  # unpriceable half. Not the same shape as ETH/BTC despite the name.
   ALTBTC:   {unpriceable: derived_ratio}
 
   # ── baskets / themes: not a tradeable instrument ─────────────────────────

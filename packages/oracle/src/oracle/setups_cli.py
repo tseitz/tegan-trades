@@ -51,7 +51,7 @@ from core.setups import (
 from core.rank import parse_date
 from execution.broker import NETWORKS
 
-from oracle import cache, carry, corpus, exclusions, execute, listings
+from oracle import cache, carry, corpus, derived, exclusions, execute, listings
 # Re-exported: the sidecar's storage and its vault mirror live in their own module, but both
 # remain part of this CLI's surface for callers and tests that reach for them here.
 from oracle.decisions import append_decision, load_decisions, sync_mirror  # noqa: F401
@@ -62,7 +62,16 @@ from oracle.exclusions import DEFAULT_EXCLUSIONS
 from oracle import queue as queue_mod
 from oracle.queue import QueuePosition, build_queue, filter_candidates  # noqa: F401
 from oracle.resample import to_weekly
-from oracle.route import OracleRef, RoutingTable, load_routing_table, route
+from oracle import route as route_mod
+from oracle.route import (
+    DerivedRef,
+    OracleRef,
+    Priceable,
+    RoutingTable,
+    Unpriceable,
+    load_routing_table,
+    route,
+)
 # Re-exported: the queue's layout lives in its own module, but ``format_candidate`` remains
 # part of this CLI's surface for callers and tests that reach for it here.
 from oracle.setups_render import format_candidate, format_views, supports_color  # noqa: F401
@@ -150,33 +159,63 @@ class BuildStats:
     """What happened while turning the corpus into candidates — the audit trail.
 
     Every count here answers "did the gates produce nothing, or was there nothing to gate":
-    ``assets_unpriced`` covers assets with no route to a price source at all,
-    ``assets_no_context`` covers assets that route fine but have no cached bars at-or-before
-    ``as_of``, and ``rejections`` covers theses that made it to ``cross_reference`` and were
-    refused there. Three different failure points, three different counters — collapsing
-    them into one would make the eventual "zero candidates" unanswerable.
+    ``unpriceable`` covers assets routing refused, ``assets_uncached`` covers assets that route
+    fine but have nothing in the price cache, ``assets_no_context`` covers assets with bars but
+    none at-or-before ``as_of``, and ``rejections`` covers theses that reached
+    ``cross_reference`` and were refused there. Four different failure points, four different
+    counters — collapsing them into one would make the eventual "zero candidates" unanswerable.
+
+    ``unpriceable`` is a Counter rather than an int for the same reason ``rejections`` is. It
+    was an int, and that int was the single most misleading number the queue printed: "183 with
+    no price source" reads as 183 missed opportunities when 27 of those assets are not
+    instruments at all and 25 more route perfectly well and simply have not been fetched. See
+    ``route.NOT_AN_ASSET`` and the grouping beside it.
     """
     assets_total: int
     assets_priced: int
-    assets_unpriced: int
+    unpriceable: Counter          # route refused, by reason
+    assets_uncached: int          # routed fine, nothing in the price cache
     assets_no_context: int
     rejections: Counter
     candidate_count: int
 
+    @property
+    def assets_unpriced(self) -> int:
+        """Everything that never reached a ``Context``, however it failed. The headline."""
+        return sum(self.unpriceable.values()) + self.assets_uncached
 
-def _load_daily(asset: str, table: RoutingTable, *, series_cache: dict):
-    """Resolve an asset to a cached daily ``PriceSeries``, or None when it can't be priced.
 
-    Mirrors ``score_cli._load_series`` — same routing table, same cache, same refusal to
-    invent a second path from asset to price.
+def _load_daily(resolved: Priceable, *, table: RoutingTable, series_cache: dict):
+    """Load a routed reference's daily ``PriceSeries``, or None when it cannot be assembled.
+
+    Mirrors ``score_cli._load_series`` — same cache, same refusal to invent a second path from
+    asset to price. Routing moved out to the caller so the *reason* a route failed survives:
+    returning a bare None conflated "this is not an instrument" with "nobody has fetched it",
+    which are opposite problems with opposite fixes.
+
+    A ``DerivedRef`` is assembled from its two legs, which are routed through the same table
+    and therefore obey the same curation. **Each leg must resolve to a fetched series** — a leg
+    that is itself derived returns None rather than recursing, because nothing in the corpus
+    needs a ratio of ratios and refusing is cheaper than reasoning about cycles.
     """
-    if asset in series_cache:
-        return series_cache[asset]
-    resolved = route(asset, table)
+    if resolved.asset in series_cache:
+        return series_cache[resolved.asset]
+
     series = None
-    if isinstance(resolved, OracleRef):
+    if isinstance(resolved, DerivedRef):
+        legs = []
+        for leg in (resolved.numerator, resolved.denominator):
+            leg_route = route(leg, table)
+            legs.append(
+                _load_daily(leg_route, table=table, series_cache=series_cache)
+                if isinstance(leg_route, OracleRef) else None
+            )
+        if all(leg is not None for leg in legs):
+            series = derived.ratio(legs[0], legs[1], symbol=resolved.asset)
+    else:
         series = cache.load(resolved.source, resolved.symbol)
-    series_cache[asset] = series
+
+    series_cache[resolved.asset] = series
     return series
 
 
@@ -205,12 +244,19 @@ def build_candidates(
 
     series_cache: dict = {}
     contexts: dict[str, tuple] = {}
-    unpriced = 0
+    unpriceable: Counter = Counter()
+    uncached = 0
     no_context = 0
     for asset in assets:
-        daily = _load_daily(asset, table, series_cache=series_cache)
+        resolved = route(asset, table)
+        # Routing's own verdict, kept rather than flattened to None. ``Unpriceable`` already
+        # carries a reason and always did; the tally simply threw it away.
+        if isinstance(resolved, Unpriceable):
+            unpriceable[resolved.reason] += 1
+            continue
+        daily = _load_daily(resolved, table=table, series_cache=series_cache)
         if daily is None:
-            unpriced += 1
+            uncached += 1
             continue
         weekly = to_weekly(daily)
         ctx = build_context(daily.bars, weekly.bars, as_of=as_of)
@@ -264,13 +310,47 @@ def build_candidates(
     candidates = collapse(outcomes)
     stats = BuildStats(
         assets_total=len(assets), assets_priced=len(contexts),
-        assets_unpriced=unpriced, assets_no_context=no_context,
+        unpriceable=unpriceable, assets_uncached=uncached, assets_no_context=no_context,
         rejections=rejections, candidate_count=len(candidates),
     )
     return candidates, stats
 
 
 # ── pure: decision records, formatting ──────────────────────────────────────────────────────
+
+def format_unpriced(stats: BuildStats) -> str:
+    """The unpriced count, split into the groups that have different answers.
+
+    The single number this replaces read as "N missed opportunities" and was mostly nothing of
+    the kind. Grouping is the whole content: ``not an instrument`` needs no fix and never will,
+    ``computable`` is the actual backlog, and ``no route`` is a long tail of one-row labels the
+    LLM lifted from transcripts. Counts are per *asset*, matching the line above.
+
+    Sorted within each group by size, and the group is named before the reasons, because the
+    failure mode being fixed is a reader summing numbers that do not belong together.
+    """
+    groups = (
+        ("computable", route_mod.COMPUTABLE),
+        ("no route", route_mod.NO_ROUTE),
+        ("not an instrument", route_mod.NOT_AN_ASSET),
+    )
+    parts = []
+    for label, reasons in groups:
+        hit = {r: n for r, n in stats.unpriceable.items() if r in reasons}
+        if hit:
+            detail = ", ".join(f"{r} {n}" for r, n in sorted(hit.items(), key=lambda kv: -kv[1]))
+            parts.append(f"{label} {sum(hit.values())} ({detail})")
+    # Anything the groups above don't claim. Printed rather than dropped: a reason added to
+    # oracle_map.yaml and not to route.py would otherwise vanish from this line silently, which
+    # is exactly how ``event`` and ``derived_ratio`` stayed unnameable in the first place.
+    known = set().union(*(rs for _, rs in groups))
+    rest = {r: n for r, n in stats.unpriceable.items() if r not in known}
+    if rest:
+        parts.append("ungrouped " + ", ".join(f"{r} {n}" for r, n in sorted(rest.items())))
+    if stats.assets_uncached:
+        parts.append(f"routed but never fetched {stats.assets_uncached}")
+    return "unpriced: " + " · ".join(parts) if parts else "unpriced: none"
+
 
 def is_inside_zone(candidate: Candidate) -> bool:
     """Has price actually reached the zone? ``ARRIVAL`` is where the near edge sits on the
@@ -739,8 +819,9 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     print(f"{stats.assets_total} assets -> {stats.assets_priced} priced, "
-          f"{stats.assets_unpriced} with no price source, "
+          f"{stats.assets_unpriced} unpriced, "
           f"{stats.assets_no_context} priced but no bars at/before {as_of.isoformat()}")
+    print("  " + format_unpriced(stats))
     print(f"{stats.candidate_count} candidates")
     if stats.rejections:
         print("  rejected: " + ", ".join(f"{k}={v}" for k, v in stats.rejections.most_common()))

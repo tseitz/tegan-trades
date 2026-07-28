@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 
 from oracle.benchmarks import benchmark_refs
-from oracle.route import OracleRef, RoutingTable, Unpriceable, route
+from oracle.route import DERIVED, DerivedRef, OracleRef, RoutingTable, Unpriceable, route
 
 # Entry price is the close on the publish date. When that lands on a weekend or holiday
 # the series must already hold the preceding bar, so windows open a little early.
@@ -61,6 +61,21 @@ def plan_fetches(
         if current is None or when < current:
             earliest[row.asset] = when
 
+    # A derived asset's legs inherit its date requirement, and this has to happen before any
+    # job is windowed. Two reasons, and the second is the one that bites: a leg need not be a
+    # corpus asset at all — nobody has to have a thesis on BTC for ``ETH/BTC`` to need BTC's
+    # bars — and even when it is, its own earliest mention can be later than the ratio's, which
+    # would fetch a series too short to divide. Mutating the dict the loop reads is why this is
+    # a separate pass over a snapshot of the keys.
+    for asset in list(earliest):
+        resolved = route(asset, table)
+        if not isinstance(resolved, DerivedRef):
+            continue
+        for leg in (resolved.numerator, resolved.denominator):
+            current = earliest.get(leg)
+            if current is None or earliest[asset] < current:
+                earliest[leg] = earliest[asset]
+
     jobs: list[FetchJob] = []
     skipped: list[Unpriceable] = []
     corpus_start = min(earliest.values()) - timedelta(days=pad_days) if earliest else None
@@ -72,6 +87,16 @@ def plan_fetches(
         resolved = route(asset, table)
         if isinstance(resolved, Unpriceable):
             skipped.append(resolved)
+            continue
+        # Matched on the type that has ``source``/``symbol`` rather than by excluding the ones
+        # that don't. Adding ``DerivedRef`` to the ``Route`` union broke exactly this line —
+        # it read ``resolved.source`` on anything that wasn't ``Unpriceable`` and raised
+        # ``AttributeError``, killing the whole run rather than one asset. A positive match
+        # means the next variant added to that union degrades here instead of crashing.
+        if not isinstance(resolved, OracleRef):
+            skipped.append(Unpriceable(
+                asset=asset, reason=DERIVED,
+                detail="computed from its legs, which are planned separately"))
             continue
 
         start = earliest[asset] - timedelta(days=pad_days)

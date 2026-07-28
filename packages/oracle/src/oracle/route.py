@@ -31,13 +31,38 @@ import yaml
 from core.canon import BASKET, MACRO
 
 # Unpriceable reasons — enumerated so coverage reports can break down honestly.
+#
+# ``EVENT`` and ``DERIVED_RATIO`` were only ever spelled in ``cfg/oracle_map.yaml`` and passed
+# through as opaque strings, so nothing in code could name them. That is how they stayed
+# invisible: a reason the code cannot say is a reason no report can group on.
 BASKET_REASON = "basket"
 MACRO_REASON = "macro"
 DOMINANCE = "dominance_metric"
+DERIVED_RATIO = "derived_ratio"
+EVENT = "event"
 PRIVATE = "private_company"
 RATE = "rate"
 UNMAPPED = "unmapped"
 CONFLICT = "conflict"
+
+# Not an unpriceable reason — the opposite. ``plan_fetches`` reports a ``DerivedRef`` under this
+# because there is no request to make *for that asset*: it is computed, and its legs are planned
+# as jobs of their own. It reads as a skip in the fetch report because it is one.
+DERIVED = "derived"
+
+# **These reasons are not equivalent, and adding them up is what hid the real gap.** The queue
+# reported "183 with no price source" as one number covering all of them, which reads as 183
+# missed opportunities. Measured 2026-07-28 it was nothing of the sort:
+#
+#   NOT_AN_ASSET   27 assets / 172 rows — correctly refused, and there is nothing to fix
+#   COMPUTABLE     15 assets / 136 rows — real instruments, simply not built yet
+#   NO_ROUTE      116 assets / 130 rows — the genuine gap, and mostly one-row long-tail labels
+#
+# The 53-row ``__basket__`` sentinel alone was a fifth of the headline while being, by
+# construction, the extractor's placeholder for a thesis that is not about one thing.
+NOT_AN_ASSET = frozenset({BASKET_REASON, MACRO_REASON, EVENT, PRIVATE})
+COMPUTABLE = frozenset({DOMINANCE, DERIVED_RATIO, RATE})
+NO_ROUTE = frozenset({UNMAPPED, CONFLICT})
 
 CRYPTO_DOMAIN = "crypto"
 
@@ -70,13 +95,33 @@ class OracleRef:
 
 
 @dataclass(frozen=True)
+class DerivedRef:
+    """A ratio of two other assets, computed from their cached series rather than fetched.
+
+    Curated only — there is deliberately no rule that infers a ratio from a label containing a
+    slash. ``ETH/BTC`` means what it looks like; a transcript saying ``BTC/USD`` or ``S&P/gold``
+    does not, and guessing is how this module's opening paragraph says the corpus gets priced
+    against the wrong instrument. See ``oracle.derived`` for how the bars are built.
+    """
+    asset: str
+    numerator: str
+    denominator: str
+
+
+@dataclass(frozen=True)
 class Unpriceable:
     asset: str
     reason: str
     detail: str = ""
 
 
-Route = OracleRef | Unpriceable
+Route = OracleRef | DerivedRef | Unpriceable
+
+# The half of ``Route`` that resolves to a series. Named because ``DerivedRef``'s arrival split
+# this union three ways and a consumer matching on "not ``Unpriceable``" silently inherited the
+# new member — which is precisely how ``plan_fetches`` came to read ``.source`` off a ratio and
+# crash the whole fetch run. Match on what a value *is*, not on what it isn't.
+Priceable = OracleRef | DerivedRef
 
 _SENTINEL_REASONS = {BASKET: BASKET_REASON, MACRO: MACRO_REASON}
 
@@ -116,6 +161,13 @@ def route(asset: str, table: RoutingTable) -> Route:
         if "unpriceable" in curated:
             return Unpriceable(
                 asset=asset, reason=curated["unpriceable"], detail=curated.get("detail", "")
+            )
+        derived = curated.get("derived")
+        if derived is not None:
+            return DerivedRef(
+                asset=asset,
+                numerator=derived["numerator"],
+                denominator=derived["denominator"],
             )
         return OracleRef(
             asset=asset,

@@ -132,3 +132,44 @@ def test_benchmark_not_refetched_when_already_fully_cached():
     jobs, _ = plan_fetches(_rows(("BTC", "2024-07-31")), _table(), today=TODAY,
                            cached_spans=cached)
     assert jobs == []
+
+
+# ── derived assets are computed, not fetched — but their legs must exist ─────
+
+_DERIVED = {"ETH/BTC": {"derived": {"numerator": "ETH", "denominator": "BTC"}}}
+
+
+def test_a_derived_asset_is_reported_as_skipped_rather_than_crashing_the_run():
+    """Adding ``DerivedRef`` to the ``Route`` union broke this: the loop read
+    ``resolved.source`` on anything that wasn't ``Unpriceable`` and raised AttributeError,
+    killing the whole `fetch-prices` run — which the nightly job depends on."""
+    jobs, skipped = plan_fetches(
+        _rows(("ETH/BTC", "2026-01-01")), _table(curated=_DERIVED), today=TODAY, cached_spans={})
+    assert [s.asset for s in skipped if s.reason == "derived"] == ["ETH/BTC"]
+    assert "ETH/BTC" not in {j.ref.asset for j in jobs}
+
+
+def test_a_derived_assets_legs_are_planned_even_when_nobody_holds_a_thesis_on_them():
+    """A leg need not be a corpus asset at all — nothing requires a BTC thesis for ``ETH/BTC``
+    to need BTC's bars. Without this the ratio could never be built."""
+    jobs, _ = plan_fetches(
+        _rows(("ETH/BTC", "2026-01-01")), _table(curated=_DERIVED), today=TODAY, cached_spans={})
+    assert {"ETH", "BTC"} <= {j.ref.asset for j in _asset_jobs(jobs)}
+
+
+def test_a_leg_with_a_later_mention_is_widened_to_the_ratios_window():
+    """Otherwise the leg is fetched from its own first mention and the divided series is too
+    short at the front — a silently truncated ratio rather than a missing one."""
+    jobs, _ = plan_fetches(
+        _rows(("ETH/BTC", "2024-01-01"), ("BTC", "2026-06-01")),
+        _table(curated=_DERIVED), today=TODAY, cached_spans={})
+    btc = next(j for j in _asset_jobs(jobs) if j.ref.asset == "BTC")
+    assert btc.start < date(2024, 1, 2)
+
+
+def test_a_legs_own_earlier_mention_is_not_narrowed_by_the_ratio():
+    jobs, _ = plan_fetches(
+        _rows(("ETH/BTC", "2026-06-01"), ("BTC", "2024-01-01")),
+        _table(curated=_DERIVED), today=TODAY, cached_spans={})
+    btc = next(j for j in _asset_jobs(jobs) if j.ref.asset == "BTC")
+    assert btc.start < date(2024, 1, 2)

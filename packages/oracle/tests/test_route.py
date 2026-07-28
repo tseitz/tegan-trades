@@ -2,6 +2,7 @@ import pytest
 
 from oracle.route import (
     CONFLICT,
+    DerivedRef,
     OracleRef,
     RoutingTable,
     Unpriceable,
@@ -52,6 +53,34 @@ def test_curated_can_declare_an_asset_unpriceable():
     table = _table(curated={"BTC.D": {"unpriceable": "dominance_metric"}})
     result = route("BTC.D", table)
     assert isinstance(result, Unpriceable) and result.reason == "dominance_metric"
+
+
+def test_curated_can_declare_an_asset_derived_from_two_others():
+    """ETH/BTC is 29 corpus rows and both legs are already cached, so it is a division rather
+    than a new source (§6f). See ``oracle.derived`` for how the bars are built."""
+    table = _table(curated={"ETH/BTC": {"derived": {"numerator": "ETH", "denominator": "BTC"}}})
+    ref = route("ETH/BTC", table)
+    assert isinstance(ref, DerivedRef)
+    assert (ref.asset, ref.numerator, ref.denominator) == ("ETH/BTC", "ETH", "BTC")
+
+
+def test_a_slash_in_a_label_is_never_on_its_own_evidence_of_a_ratio():
+    """Curated only. 'BTC/USD' is one instrument, not a ratio of two, and inferring pairs from
+    punctuation is the same guessing this module exists to refuse — see the SPX collision."""
+    table = _table(domain_consensus={"BTC/USD": "crypto"})
+    result = route("BTC/USD", table)
+    assert not isinstance(result, DerivedRef)
+    assert isinstance(result, Unpriceable)
+
+
+def test_an_unpriceable_declaration_still_wins_over_a_derived_one():
+    """ALTBTC keeps ``unpriceable`` because its numerator is a basket, and the basket is the
+    unpriceable half. Order matters if an entry ever carries both keys."""
+    table = _table(curated={"ALTBTC": {
+        "unpriceable": "derived_ratio",
+        "derived": {"numerator": "ALTS", "denominator": "BTC"},
+    }})
+    assert isinstance(route("ALTBTC", table), Unpriceable)
 
 
 # ── the collision guard (the reason this module exists) ─────────────────────
