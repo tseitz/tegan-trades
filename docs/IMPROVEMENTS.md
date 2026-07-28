@@ -315,6 +315,15 @@ because the reasoning about the passive two still holds:
   33% inside. Unlike the two paths above it is on *your* clock: it is a decision about the
   gate, not a wait for the market. **This is the path to a non-empty queue.** See §27.
 
+**The first post-§27 queue is homogeneous, and that bounds what it can measure.** All 22 rows
+are `weekly ranging · daily downtrend` and all 22 are LONG — because the 70 already-decided
+candidates *were* the pre-§27 population, so every undecided row is a newly-released one. So
+`trend_alignment` is constant at 0.0 across the whole sitting and **cannot be measured by it**,
+and neither can direction. What does vary and is minable: `score` (0.35–0.64), `freshness`
+(0.07–0.95), `agreement` (1–8), `approach`, `reward_risk`. Read this sitting as a direct test of
+whether §27's option 1 released anything worth trading, not as the balanced sample §4 wanted —
+that arrives once these are decided and the nightly mixes the population again.
+
 **Consequently §11, §18, §21 and §27's option 2 are no longer blocked on a fix or on supply —
 they are blocked on a sitting, and one can now be held.** Each still defers to a sidecar
 correlation; that correlation is now *possible*, needs no conditioning, and simply wants data. §7, §15, §19(d) and §27 were never blocked, and
@@ -1540,3 +1549,145 @@ carry and §19(d) for the two R:R numbers.
 - **`SILVER long daily` comes back with R:R 2930.22.** Unrelated to this gate — it is §19's
   still-open "a very high R:R is itself the symptom of a broken denominator". Do not let it
   discredit the other 47; note it and read §19.
+
+---
+
+## 28. Eight instruments were routed under seventeen asset keys · `FIXED 2026-07-28`
+
+**Shipped the same day it was found.** Five groups were verified as one instrument and folded
+into `cfg/assets.yaml` aliases; two were verified as genuinely different and left split; one was
+a live wrong-direction bug and its route was removed.
+
+| canonical | absorbed | evidence |
+|---|---|---|
+| `GOLD` | `XAU`, `GC` | all 17 rows explicitly gold |
+| `SILVER` | `XAG` | all 6 rows explicitly silver; `XAG` is the ISO 4217 code for a troy ounce, not a derivative |
+| `OIL` | `CL` | all 9 rows crude — **none are Colgate**, which the routing header warns `CL` resolves to |
+| `RUT` | `RTY` | Russell 2000 |
+| `NKY` | `N225` | Nikkei |
+
+Folded in **canon, not routing**, and that placement is the whole point: `oracle_map.yaml` would
+have deduped *prices* while leaving the corpus split across two keys, so `collapse` would still
+group them apart and `agreement` would still count them separately. The now-redundant routing
+entries were removed, with a header note saying not to re-add them — if an alias ever misses, the
+label falls through to `unpriceable` and shows up in the unpriced tally rather than resolving to
+Colgate. Measured after: `SILVER` 46 → 52 rows and 10 → 11 people; `GOLD` 149 rows, 13 people;
+candidates 97 → 93 as the duplicate rows collapsed.
+
+**Left split deliberately: `EUR`/`EURUSD` and `GBP`/`GBPUSD`.** A currency is not a currency
+pair, and the corpus proves it — one `EUR` row is a **EUR/GBP cross** and a `GBP` row is
+**British Pound futures (6B)**. Folding those into the dollar pair would file a cross as a USD
+trade. They are safe today only because EUR and GBP are the pair's *base* currency, so direction
+agrees; that is a coincidence of convention, not a reason to merge.
+
+**Two regression tests now hold the line**, both reading the committed `cfg/` rather than a
+fixture, because this is a curation defect and no fixture can catch it:
+`test_no_two_asset_keys_route_to_one_instrument_unless_declared` (with an explicit
+`INTENTIONAL_SHARED_SYMBOLS` allowlist, so a new duplicate must be argued for in writing) and
+`test_a_bare_currency_never_routes_to_a_pair_that_inverts_it`.
+
+### The original entry, kept for the evidence
+
+## 28a. Eight instruments routed under seventeen asset keys · `was OPEN` — found 2026-07-28
+
+Found while previewing §4's first sitting: rows 2 and 6 of the queue were `SILVER LONG` and
+`XAG LONG`, identical in every number (R:R 19.19, scored 17.57). They are the same trade.
+`cfg/oracle_map.yaml` routes both to Yahoo `SI=F`, and nothing upstream knows they are one asset.
+
+| source | symbol | asset keys |
+|---|---|---|
+| yahoo | `GC=F` | `GOLD`, `XAU`, `GC` |
+| yahoo | `SI=F` | `SILVER`, `XAG` |
+| yahoo | `CL=F` | `OIL`, `CL` |
+| yahoo | `EURUSD=X` | `EURUSD`, `EUR` |
+| yahoo | `GBPUSD=X` | `GBPUSD`, `GBP` |
+| yahoo | `USDCAD=X` | `USDCAD`, `CAD` |
+| yahoo | `^N225` | `N225`, `NKY` |
+| yahoo | `^RUT` | `RUT`, `RTY` |
+
+**Confirmed same underlying, not merely similar.** `XAG` is the ISO 4217 code for one troy ounce
+of silver (as `XAU` is for gold) — a spelling of the metal, not a derivative of it. Spot and
+front-month futures differ by basis, but that distinction does not exist here: both keys already
+route to `SI=F`, so they resolve to the same file and the same bars.
+
+**The measured cost, split into the part that is real and the part that was overstated.** An
+earlier version of this entry claimed the `agreement` term was badly diluted — "a roster split
+between gold and XAU produces two candidates of one voice each rather than one of two". Measured
+2026-07-28 over 4,609 corpus rows, **that is mostly false**, because the same people tend to use
+both spellings:
+
+| group | rows per key | distinct people, largest single key | union after merge | voices gained |
+|---|---|---|---|---|
+| gold | `GOLD` 132 · `XAU` 14 · `GC` 3 | 13 | 13 | **0** |
+| oil | `OIL` 46 · `CL` 9 | 9 | 9 | **0** |
+| rut | `RUT` 3 · `RTY` 1 | 2 | 2 | **0** |
+| silver | `SILVER` 46 · `XAG` 6 | 10 | 11 | +1 |
+| n225 | `NKY` 4 · `N225` 1 | 2 | 3 | +1 |
+| eur | `EURUSD` 14 · `EUR` 12 | 4 | 5 | +1 |
+| cad | `USDCAD` 1 · `CAD` 1 | 1 | 2 | +1 |
+| gbp | `GBPUSD` 4 · `GBP` 3 | 3 | 5 | +2 |
+
+So merging moves `agreement` by 0–2 voices and by **exactly zero on the two largest groups**.
+Do not justify this work on the scoring term.
+
+**What is real, and was observed rather than predicted:** the queue offered `SILVER LONG` and
+`XAG LONG` as rows 2 and 6 of the same sitting, identical in every number (R:R 19.19, scored
+17.57), and again as rows 14 and 19 on the daily. That burns two of a sitting's limited slots on
+one trade, double-counts in §4's mining pass as two independent decisions, and lets the same zone
+be approved once and rejected once with nothing flagging the contradiction. `collapse` groups by
+asset key, so it cannot merge them.
+
+**Distinct from the collisions already known** (`SPX` → Coinbase memecoin, `GOLD` → Gold.com Inc
+on Yahoo — see `cfg/oracle_map.yaml`'s header). Those are *one key pointing at the wrong
+instrument*; this is *many keys pointing at one right instrument*. The existing header warns
+about the first and is silent on the second.
+
+**Where the fix belongs: `core/canon.py`, not the routing map.** `cfg/assets.yaml:36` already
+carries `SILVER: [Silver]` as the canon entry — the aliases simply do not list the tickers, so
+`resolve_asset` never folds `XAG` into `SILVER`. Fixing it in `oracle_map.yaml` would dedupe
+prices while leaving the corpus still split across two keys, which is the half-fix that leaves
+`agreement` broken. Check whether the same gap exists for crypto aliases before assuming it is
+FX/metals only.
+
+**Do not simply delete the duplicate keys.** Both spellings appear in the corpus because both
+are said out loud; the registry needs to *alias* them, so a thesis mentioning either still
+resolves.
+
+---
+
+## 29. A bare currency cannot be priced off a pair that inverts it · `OPEN` — new 2026-07-28
+
+Found while fixing §28. `cfg/oracle_map.yaml` routed `CAD` to `USDCAD=X`. CAD is the **quote**
+currency of that pair, so the two move opposite ways, and nothing in the engine flips direction:
+
+> TTrades, `direction=long`: *"Bullish CAD futures (**equivalently bearish USDCAD**) off a daily
+> V-shaped reversal, fair value gap fill and ideal…"*
+
+The extractor read it correctly. Routing then priced it against `USDCAD=X` and the engine scored
+it as **long USDCAD — the opposite trade**. One thesis, so the blast radius was tiny; the class is
+the dangerous one, because the output looks entirely normal.
+
+**Removed the route 2026-07-28** rather than guessing a fix. `CAD` is now unpriced, which is
+visible in the tally, and `test_a_bare_currency_never_routes_to_a_pair_that_inverts_it` fails the
+suite if any 3-letter key is routed to a pair it is not the base of. `EUR`→`EURUSD=X` and
+`GBP`→`GBPUSD=X` pass, because those currencies *are* the base.
+
+**The real prize is `JPY`: 13 theses, currently unrouted and therefore invisible** — Capital
+Flows, Checkmate, Traders Reality, Raoul Pal, Benjamin Cowen, TraderMayne. Yahoo's `JPY=X` *is*
+USDJPY, so routing it without inverting would create 13 wrong-direction theses in a single edit.
+That is precisely the trap "they're the same thing, merge them" walks into, and it is why §28's
+merges were verified row by row instead of applied by pattern.
+
+**Shape when built:** an explicit `invert: true` on the routing entry, consumed where direction
+is resolved — not a negated price series, which would break every level, zone and structural
+target. Note this makes `direction` a function of the route, which nothing else in the engine
+assumes today, so it needs its own tests rather than a flag bolted onto `route.py`.
+
+**Do not "fix" this by adding a synthetic inverted series.** Order blocks, the dealing range and
+`structural_target` are all computed from bars; inverting the bars would invert every level too
+and produce zones that look plausible and are wrong. The inversion belongs on the *thesis
+direction*, at the single point where a route is applied to a row.
+
+**Deprioritised by Tegan 2026-07-28:** "I don't trade much forex so ok to log that for now." So
+the 13 JPY theses stay invisible until FX matters — but they are a known, quantified supply gap
+rather than a mystery, and the guard test means nobody re-creates the bug by accident.

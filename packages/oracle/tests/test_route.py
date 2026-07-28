@@ -179,3 +179,69 @@ def test_curated_entry_survives_the_ticker_shape_guard():
 def test_routing_is_deterministic():
     table = _table(domain_consensus={"BTC": "crypto"})
     assert route("BTC", table) == route("BTC", table)
+
+
+# ── the committed config itself ─────────────────────────────────────────────
+#
+# These read cfg/ rather than a fixture on purpose. The defect they guard is a *curation*
+# error, not a code one — nothing in route.py is wrong when two keys name one instrument, so
+# only the real file can catch it.
+
+# Two asset keys may legitimately share a symbol only when they are genuinely different things
+# that happen to be priced off the same series. Each entry must say why, because the default
+# reading of a shared symbol is "these are duplicates and one of them should be an alias".
+INTENTIONAL_SHARED_SYMBOLS = {
+    # A currency is not a currency pair. The corpus carries EUR/GBP crosses and British Pound
+    # futures under the bare-currency keys, so folding them into the dollar pair would file a
+    # cross as a USD trade. Safe today only because EUR and GBP are the *base* currency, so the
+    # direction sense of the pair matches the currency — see USDCAD in §28 for the case where
+    # it does not.
+    ("yahoo", "EURUSD=X"): {"EUR", "EURUSD"},
+    ("yahoo", "GBPUSD=X"): {"GBP", "GBPUSD"},
+}
+
+
+def _curated_routes():
+    import yaml
+    from oracle.setups_cli import CONFIG_DIR
+    raw = yaml.safe_load((CONFIG_DIR / "oracle_map.yaml").read_text())
+    routes = raw.get("assets", raw)
+    return {a: s for a, s in routes.items() if isinstance(s, dict) and "symbol" in s}
+
+
+def test_no_two_asset_keys_route_to_one_instrument_unless_declared():
+    """§28: `SILVER` and `XAG` both routed to `SI=F`, so the queue offered one trade twice —
+    identical in every number — burning two slots of a sitting and double-counting it in §4's
+    mining. Eight symbols were reachable under seventeen keys. The fix is an alias in
+    `cfg/assets.yaml` so the two spellings resolve to one asset *before* routing is consulted;
+    this test is what stops the next one being added silently."""
+    from collections import defaultdict
+    shared = defaultdict(set)
+    for asset, spec in _curated_routes().items():
+        shared[(spec.get("source"), spec["symbol"])].add(asset)
+
+    offenders = {
+        sym: keys for sym, keys in shared.items()
+        if len(keys) > 1 and INTENTIONAL_SHARED_SYMBOLS.get(sym) != keys
+    }
+    assert not offenders, (
+        "asset keys sharing one instrument without a declared reason — alias them in "
+        f"cfg/assets.yaml or add them to INTENTIONAL_SHARED_SYMBOLS: {offenders}"
+    )
+
+
+def test_a_bare_currency_never_routes_to_a_pair_that_inverts_it():
+    """The USDCAD trap. `CAD` was routed to `USDCAD=X`, where CAD is the *quote* currency, so
+    a bullish-CAD thesis ("equivalently bearish USDCAD", TTrades) was priced and scored as a
+    bullish USDCAD one — the opposite trade. Direction is never flipped anywhere in the engine,
+    so a bare currency may only route to a pair it is the *base* of."""
+    for asset, spec in _curated_routes().items():
+        symbol = spec["symbol"]
+        if not symbol.endswith("=X") or len(asset) != 3:
+            continue
+        pair = symbol[:-2]
+        assert pair.startswith(asset), (
+            f"{asset} routes to {symbol}, where it is the quote currency — a long {asset} "
+            f"thesis would score as a long {pair}, which is the opposite trade. Drop the "
+            f"route or add an explicit inversion (§29)."
+        )

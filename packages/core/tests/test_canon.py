@@ -1,6 +1,8 @@
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from core.canon import (
     BASKET,
     Registry,
@@ -119,3 +121,34 @@ def test_load_registry_tolerates_missing_optional_files(tmp_path):
     assert reg.people["tradermayne"] == "TraderMayne"
     assert reg.assets == {}
     assert reg.tickers == {}
+
+
+# ── the committed registry ──────────────────────────────────────────────────
+
+@pytest.mark.parametrize("alias,canonical", [
+    ("XAG", "SILVER"),   # ISO 4217 code for a troy ounce of silver, not a derivative of it
+    ("XAU", "GOLD"),
+    ("GC", "GOLD"),      # COMEX gold future; TTrades speaks in futures tickers
+    ("CL", "OIL"),       # crude future — verified against all 9 rows, none are Colgate
+    ("RTY", "RUT"),
+    ("N225", "NKY"),
+])
+def test_ticker_spellings_fold_into_one_asset(alias, canonical):
+    """§28: these each routed to the same instrument under a second key, so the queue offered
+    one trade twice — `SILVER LONG` and `XAG LONG` were rows 2 and 6 of one sitting, identical
+    in every number. Folding them here rather than in `oracle_map.yaml` is deliberate: the map
+    would dedupe *prices* while leaving the corpus split across two keys, which leaves
+    `collapse` grouping and the `agreement` count still divided."""
+    from oracle.setups_cli import CONFIG_DIR
+    registry = load_registry(CONFIG_DIR)
+    assert resolve_asset(alias, registry)[0] == canonical
+
+
+def test_a_currency_is_not_folded_into_its_pair():
+    """The other half of §28, and the reason it is not a blanket 'merge anything sharing a
+    symbol' rule. `EUR` carries a EUR/GBP cross and `GBP` carries British Pound futures, so
+    they are genuinely different objects from the dollar pairs and must stay split."""
+    from oracle.setups_cli import CONFIG_DIR
+    registry = load_registry(CONFIG_DIR)
+    assert resolve_asset("EUR", registry)[0] != "EURUSD"
+    assert resolve_asset("GBP", registry)[0] != "GBPUSD"

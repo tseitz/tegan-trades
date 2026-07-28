@@ -29,12 +29,13 @@ BTC.D: ["Bitcoin Dominance", "BTC Dominance", "Bitcoin Dominance (BTC.D)", "altc
 SPX: ["S&P 500", "S&P 500 (ES)", "ES (S&P 500 futures)", "S&P 500 / Nasdaq", ES, "US500 / S&P 500 (ES)"]
 NDX: [NASDAQ, "NASDAQ (NQ)", NQ, "Nasdaq (NQ/QQQ)"]
 DXY: ["DXY (US Dollar Index)", "US Dollar (DXY)", "DXY (US Dollar)", "DXY (Dollar Index)"]
-RUT: ["Russell 2000", "Russell 2000 (small caps)", "Russell 2000 (RTY)"]
+RUT: ["Russell 2000", "Russell 2000 (small caps)", "Russell 2000 (RTY)", RTY]
+NKY: [Nikkei, N225, "Nikkei 225", JP225]
 
 # ── commodities ──
-GOLD: [Gold]
-SILVER: [Silver]
-OIL: [Oil, "Crude oil", "Crude Oil (WTI)", "Oil (crude)"]
+GOLD: [Gold, XAU, GC]
+SILVER: [Silver, XAG]
+OIL: [Oil, "Crude oil", "Crude Oil (WTI)", "Oil (crude)", CL]
 URANIUM: [Uranium, "Uranium ETF", "URA / Uranium"]
 
 # ── equities: name -> ticker + self-maps (not in CoinGecko, so no rank) ──

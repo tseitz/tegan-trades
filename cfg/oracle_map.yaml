@@ -14,6 +14,13 @@
 # ETF — they're just the wrong instrument. Only an explicit mapping is safe. Anything
 # ambiguous and uncurated resolves to `unpriceable`, never to a guess.
 #
+# CL, XAU, GC, XAG, RTY and N225 no longer appear below, and their absence is deliberate — do
+# NOT re-add them. They are now *aliases* in cfg/assets.yaml, so a thesis saying "XAU" resolves
+# to GOLD before routing is ever consulted. Routing them here too made them second asset keys,
+# and the queue duly offered SILVER and XAG as two separate trades with identical numbers
+# (§28). Should an alias ever miss, the label falls through to `unpriceable` — visible in the
+# unpriced tally — rather than to Colgate. That is the safe direction to fail.
+#
 # Entries are either {source, symbol} or {unpriceable: <reason>}.
 
 assets:
@@ -23,26 +30,20 @@ assets:
   DJI:      {source: yahoo, symbol: "^DJI"}       # Dow Jones Industrial Average
   DXY:      {source: yahoo, symbol: "DX-Y.NYB"}   # US Dollar Index
   DAX40:    {source: yahoo, symbol: "^GDAXI"}
-  N225:     {source: yahoo, symbol: "^N225"}
   NKY:      {source: yahoo, symbol: "^N225"}
   VIX:      {source: yahoo, symbol: "^VIX"}       # bare VIX resolves to a MUTUALFUND
   RUT:      {source: yahoo, symbol: "^RUT"}       # bare RUT resolves to a MUTUALFUND
-  RTY:      {source: yahoo, symbol: "^RUT"}       # Russell future -> the index
   CHINA:    {source: yahoo, symbol: "FXI"}        # iShares China Large-Cap ETF as proxy
 
   # ── metals & energy (futures, not the equities that share these names) ───
   GOLD:     {source: yahoo, symbol: "GC=F"}
-  XAU:      {source: yahoo, symbol: "GC=F"}
   SILVER:   {source: yahoo, symbol: "SI=F"}
-  XAG:      {source: yahoo, symbol: "SI=F"}
   COPPER:   {source: yahoo, symbol: "HG=F"}
   PALLADIUM: {source: yahoo, symbol: "PA=F"}
   PLATINUM: {source: yahoo, symbol: "PL=F"}
   OIL:      {source: yahoo, symbol: "CL=F"}
-  CL:       {source: yahoo, symbol: "CL=F"}
   NATGAS:   {source: yahoo, symbol: "NG=F"}
   YM:       {source: yahoo, symbol: "YM=F"}       # Mini Dow future
-  GC:       {source: yahoo, symbol: "GC=F"}       # bare GC is an opaque ECNQUOTE
   ULSD:     {source: yahoo, symbol: "HO=F"}       # heating oil
 
   # ── FX ───────────────────────────────────────────────────────────────────
@@ -53,7 +54,15 @@ assets:
   GBPJPY:   {source: yahoo, symbol: "GBPJPY=X"}
   USDCAD:   {source: yahoo, symbol: "USDCAD=X"}
   GBP:      {source: yahoo, symbol: "GBPUSD=X"}   # bare GBP resolves to a MUTUALFUND
-  CAD:      {source: yahoo, symbol: "USDCAD=X"}
+  #
+  # A bare currency may only route to a pair it is the BASE of. EUR and GBP are, so a bullish
+  # EUR thesis and a bullish EURUSD one point the same way. `CAD` is NOT and was removed
+  # 2026-07-28: it routed to USDCAD=X, where CAD is the quote currency, so TTrades' "bullish
+  # CAD futures (equivalently bearish USDCAD)" was priced and scored as a bullish USDCAD —
+  # the opposite trade. Nothing in the engine flips direction, so there is no safe way to
+  # express it here yet. `JPY` (13 theses) is unrouted for the same reason; routing it to
+  # JPY=X would create 13 inverted theses at once. See §29 for the invert flag that fixes
+  # both. `test_a_bare_currency_never_routes_to_a_pair_that_inverts_it` enforces this.
 
   # ── rates ────────────────────────────────────────────────────────────────
   US10Y:    {source: yahoo, symbol: "^TNX"}
