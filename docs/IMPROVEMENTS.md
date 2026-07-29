@@ -546,13 +546,16 @@ both routing to `URA`. A `cfg/assets.yaml` alias, not a routing change.
 shut came back `accepted` with both legs `held` — evidence in `alpaca_wire.ACCEPTED_STATUSES`.
 No scheduler required.
 
-**The gap is the residual, and it is real.** An entry priced off a 16:00 close can open through
-its own stop; the perp path never has to consider this. `guards.check_geometry` re-checks after
-rounding, but nothing compares the *opening* price to the plan. Wants a refusal when the open
-gaps past the stop — not a scheduler, and not a re-price.
+**The residual is the entry-side gap.** An entry priced off a 16:00 close can open through its
+own stop: the resting limit becomes marketable at the open, fills, and the stop is already
+breached. `guards.check_geometry` re-checks after rounding but nothing compares the *opening*
+price to the plan. Wants a refusal, not a scheduler and not a re-price.
 
-Also unhandled: `oracle.liveness` derives a market's health from the funding log, which
-equities have no equivalent of.
+**Building it means placing after the open, and that is not a separate choice.** An opening
+price cannot be inspected before it exists, so the check and "place after 09:45" are the same
+fix — one mechanises the other. Do not design it as a pre-open guard; it cannot be one.
+
+**It closes the entry hazard only.** The holding-side gap is §35 and no guard reaches it.
 
 ---
 
@@ -571,3 +574,39 @@ with the key the venue already needs.
 **Build it as its own check rather than widening `check_liquidity`**, whose three refusal codes
 are named for perp facts. Until then the exposure is bounded by `MAX_DEPTH_FRACTION` not
 applying: on `USAR` at $14 a 1%-risk order is small, but nothing enforces that.
+
+---
+
+## 35. On equities a stop is an intent, not a bound · `OPEN` — new 2026-07-29
+
+A stop is a market order once triggered, so on a gapped open it fills at the open and not at
+the stop. Realised loss then exceeds `risk_pct` by whatever the gap was, and **nothing in the
+repo says so** — `describe()` prints "risk $X (1.00% of equity)" as though it were a bound.
+
+Measured over 2,500 sessions across ten of the queue's own equities (2026-07-29): 3.5% of
+sessions gap past the median 4.53% stop; over a 21-day `CARRY_HOLD_DAYS` hold that is a **31%
+chance of at least one adverse gap wider than the stop**. It is not a tail. The rate is very
+uneven — `USAR` gaps past it on 34% of sessions, `XLE` on 2.4% — so a per-asset number is
+worth more than the pooled one.
+
+**Cheapest honest fix is wording, not machinery**: have the confirmation preview say the
+number is the intent on a continuous tape. Anything more is a real modelling decision — sizing
+off gap-adjusted risk, or a per-asset gap premium — and should not be reached for first.
+
+**Do not "fix" this with a stop-limit.** A limit on the stop leg is what makes a gap
+un-exitable rather than merely expensive; `alpaca_wire` omits it deliberately.
+
+---
+
+## 36. Two perp guards do not transfer to equities, and one is a latent trap · `OPEN` — new 2026-07-29
+
+**`max_notional_frac: 3.0` exceeds what a US broker will hold overnight.** Reg T allows 2x on
+an overnight position; 3.0 was measured against Hyperliquid perps. Inert today — the widest
+implied leverage across approved Alpaca-listed decisions is 0.58x — but the tightest stop the
+engine has *ever* produced (0.51%) implies 1.96x, which is inside a rounding error of the
+limit. Wants a per-venue ceiling, not a lower global one; the perp number is correct for perps.
+
+**`oracle.liveness` has no equity equivalent.** It derives a market's health from the funding
+log, and equities have no funding. So the Alpaca venue has no liveness signal at all, where the
+perp venues have one that already caught `xyz:DXY`. Volume from the market-data snapshot is the
+obvious substitute and overlaps §34 — build them together or not at all.
