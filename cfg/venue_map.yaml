@@ -1,22 +1,34 @@
-# Canonical asset -> the symbol each execution venue actually lists. Hand-curated, and
+# Canonical asset -> the symbol each execution venue actually lists. Curated, and
 # authoritative over every heuristic — for exactly the reasons cfg/oracle_map.yaml exists.
 #
 # WHY THIS FILE EXISTS. Matching a canonical symbol to a venue ticker by name is silently
 # catastrophic, and the same collision that motivated oracle_map reproduces on the trading
 # venues, where it would spend money instead of mis-grading a thesis:
 #
-#   SPX -> Hyperliquid's core book lists SPX6900, a memecoin, under "SPX" (mark 0.3309).
-#          Lighter lists the same memecoin under "SPX" (mark 0.3309).
-#          Aster lists it under "SPXUSDT" (mark 0.3329).
+#   SPX -> Hyperliquid's core book lists SPX6900, a memecoin, under "SPX" (mark 0.3296).
+#          Lighter lists the same memecoin under "SPX" (mark 0.3295).
+#          Aster lists it under "SPXUSDT" (mark 0.3298).
 #          The S&P 500 is "SP500" (HL/xyz), "US500" (HL/km, Lighter) or "SPYUSDT" (Aster).
 #          204 theses reference SPX. A name match here shorts a memecoin.
 #
+# EVERY ENTRY IS CONFIRMED BY PRICE, NEVER BY NAME. `scripts/probe_venue_coverage.py` asks
+# each venue what its same-named market marks at and compares it to the last cached close for
+# that canonical asset. Identity then settles itself — SPX closed 7428 against that 0.33 mark,
+# a ratio of 4e-5 rather than a judgement call. Re-run it before adding anything, and read its
+# DIFFERS notes before overruling it: a venue disagreeing with our close is sometimes our own
+# stale price, and sometimes a different instrument wearing the same ticker.
+#
 # THE SCALE TRAP. Where a venue only offers an ETF proxy, the instrument tracks the index at
-# a ratio that is NOT shared and NOT stable: SPY is ~1/10.03 of SPX, QQQ is ~1/41.08 of NDX.
-# A thesis that says "S&P to 7500" is quoting the index; the order goes on an instrument at
-# ~739. `scale` records the observed ratio (index / venue instrument) so the mismatch is at
-# least visible — but it drifts with dividends and expense ratio, so prefer converting a
-# thesis target to a PERCENTAGE move at signal time over multiplying by this number.
+# a ratio that is NOT shared and NOT stable: SPY is ~1/10.03 of SPX, QQQ is ~1/41.08 of NDX,
+# IWM ~1/10.05 of RUT. `scale` records the observed ratio (index / venue instrument) so the
+# mismatch is at least visible — but it drifts with dividends and expense ratio, so prefer
+# converting a thesis target to a PERCENTAGE move at signal time over multiplying by this
+# number. `execution/guards.py` refuses a scaled listing outright rather than trusting it.
+#
+# The same venue market appears twice in this file when two canonical assets point at it, and
+# only one of them is scaled: `SPX` maps to Aster's SPYUSDT at scale 10.03 because the thesis
+# is quoted on the index, while `SPY` maps to the identical market at 1:1 because that thesis
+# is quoted on the ETF. The scale belongs to the pairing, not to the market.
 #
 # `pricing` is deliberately absent from this file. Price routing stays in oracle_map.yaml
 # against the index itself (^GSPC). Execution and pricing are different questions and
@@ -24,18 +36,97 @@
 #
 # Venues: hyperliquid (core), hyperliquid:<dex> (HIP-3 builder), lighter, aster.
 # An asset a venue does not list is OMITTED, never guessed. Absence is a real answer.
+#
+# ONLY THE CORE BOOK AND THE `xyz` BUILDER ARE MAPPED ON HYPERLIQUID. The venue carries nine
+# HIP-3 builders and three others (hyna, mkts, para) list markets this corpus prices. They are
+# left out because `execution/broker.py` assumes USDC backs every perp it trades, which is
+# verified for core and xyz and unverified for the rest — and a market backed by something
+# else is sized against a balance that is not collateral. Confirm the collateral token before
+# mapping a new dex, not the mark.
+#
+# Aster lists many assets twice, quoted in USDT and in USD. The USDT market is mapped
+# throughout; both were confirmed, and picking per-asset would make the file's shape carry
+# information it does not have.
 
 assets:
-  # ── crypto: all three venues list these natively ────────────────────────────
-  BTC:    {hyperliquid: BTC,  lighter: BTC,  aster: BTCUSDT}
-  ETH:    {hyperliquid: ETH,  lighter: ETH,  aster: ETHUSDT}
-  SOL:    {hyperliquid: SOL,  lighter: SOL,  aster: SOLUSDT}
-  HYPE:   {hyperliquid: HYPE, lighter: HYPE, aster: HYPEUSDT}
-  ZEC:    {hyperliquid: ZEC,  lighter: ZEC,  aster: ZECUSDT}
-  CRV:    {hyperliquid: CRV,  lighter: CRV,  aster: CRVUSDT}
-  XPL:    {hyperliquid: XPL,  lighter: XPL,  aster: XPLUSDT}
-  MON:    {hyperliquid: MON,  lighter: MON,  aster: MONUSDT}
-  MNT:    {hyperliquid: MNT,  lighter: MNT}          # Aster does not list MNT
+  # ── crypto: the core book, plus whichever of the other two list it ──────────
+  AAVE:     {hyperliquid: AAVE, lighter: AAVE, aster: AAVEUSDT}
+  ADA:      {hyperliquid: ADA, lighter: ADA, aster: ADAUSDT}
+  AERO:     {hyperliquid: AERO, lighter: AERO, aster: AEROUSDT}
+  AIXBT:    {hyperliquid: AIXBT}
+  ALT:      {hyperliquid: ALT}
+  APT:      {hyperliquid: APT, lighter: APT, aster: APTUSDT}
+  AR:       {hyperliquid: AR, aster: ARUSDT}
+  ARB:      {hyperliquid: ARB, lighter: ARB, aster: ARBUSDT}
+  ASTER:    {hyperliquid: ASTER, lighter: ASTER, aster: ASTERUSDT}
+  AVAX:     {hyperliquid: AVAX, lighter: AVAX, aster: AVAXUSDT}
+  BCH:      {hyperliquid: BCH, lighter: BCH, aster: BCHUSDT}
+  BNB:      {hyperliquid: BNB, lighter: BNB, aster: BNBUSDT}
+  BTC:      {hyperliquid: BTC,  lighter: BTC,  aster: BTCUSDT}
+  COMP:     {hyperliquid: COMP}
+  CRV:      {hyperliquid: CRV,  lighter: CRV,  aster: CRVUSDT}
+  DASH:     {hyperliquid: DASH, lighter: DASH, aster: DASHUSDT}
+  DOGE:     {hyperliquid: DOGE, lighter: DOGE, aster: DOGEUSDT}
+  DOT:      {hyperliquid: DOT, lighter: DOT, aster: DOTUSDT}
+  DYDX:     {hyperliquid: DYDX, lighter: DYDX, aster: DYDXUSDT}
+  ENA:      {hyperliquid: ENA, lighter: ENA, aster: ENAUSDT}
+  ETH:      {hyperliquid: ETH,  lighter: ETH,  aster: ETHUSDT}
+  FARTCOIN: {hyperliquid: FARTCOIN, lighter: FARTCOIN, aster: FARTCOINUSDT}
+  GOAT:     {hyperliquid: GOAT}
+  GRASS:    {hyperliquid: GRASS, lighter: GRASS, aster: GRASSUSDT}
+  HYPE:     {hyperliquid: HYPE, lighter: HYPE, aster: HYPEUSDT}
+  ICP:      {hyperliquid: ICP, lighter: ICP, aster: ICPUSDT}
+  INIT:     {hyperliquid: INIT, aster: INITUSDT}
+  INJ:      {hyperliquid: INJ, aster: INJUSDT}
+  JTO:      {hyperliquid: JTO, lighter: JTO, aster: JTOUSDT}
+  KAITO:    {hyperliquid: KAITO, lighter: KAITO, aster: KAITOUSDT}
+  LDO:      {hyperliquid: LDO, lighter: LDO, aster: LDOUSDT}
+  LINK:     {hyperliquid: LINK, lighter: LINK, aster: LINKUSDT}
+  LTC:      {hyperliquid: LTC, lighter: LTC, aster: LTCUSDT}
+  MELANIA:  {hyperliquid: MELANIA, aster: MELANIAUSDT}
+  MEME:     {hyperliquid: MEME}
+  MNT:      {hyperliquid: MNT, lighter: MNT}          # Aster does not list MNT
+  MON:      {hyperliquid: MON, lighter: MON, aster: MONUSDT}
+  MOODENG:  {hyperliquid: MOODENG, aster: MOODENGUSDT}
+  MORPHO:   {hyperliquid: MORPHO, lighter: MORPHO, aster: MORPHOUSDT}
+  NEAR:     {hyperliquid: NEAR, lighter: NEAR, aster: NEARUSDT}
+  ONDO:     {hyperliquid: ONDO, lighter: ONDO, aster: ONDOUSDT}
+  OP:       {hyperliquid: OP, lighter: OP, aster: OPUSDT}
+  PENDLE:   {hyperliquid: PENDLE, lighter: PENDLE, aster: PENDLEUSDT}
+  PENGU:    {hyperliquid: PENGU, lighter: PENGU, aster: PENGUUSDT}
+  PLUME:    {aster: PLUMEUSDT}
+  PNUT:     {hyperliquid: PNUT, aster: PNUTUSDT}
+  POPCAT:   {hyperliquid: POPCAT, lighter: POPCAT}
+  PUMP:     {hyperliquid: PUMP, lighter: PUMP, aster: PUMPUSDT}
+  PYTH:     {hyperliquid: PYTH, lighter: PYTH, aster: PYTHUSDT}
+  RENDER:   {hyperliquid: RENDER, aster: RENDERUSDT}
+  SEI:      {hyperliquid: SEI, lighter: SEI, aster: SEIUSDT}
+  # Hyperliquid lists kSHIB — 1000 SHIB per contract, so its mark is 1000x this one and it is
+  # a scaled proxy, not this market. Left out rather than mapped with a scale: the k-markets
+  # are a venue convention worth handling deliberately, not by pasting a factor of 1000.
+  SHIB:     {aster: SHIBUSD}
+  SKY:      {hyperliquid: SKY, lighter: SKY, aster: SKYUSDT}
+  SNX:      {hyperliquid: SNX, aster: SNXUSDT}
+  SOL:      {hyperliquid: SOL,  lighter: SOL,  aster: SOLUSDT}
+  STABLE:   {hyperliquid: STABLE, lighter: STABLE, aster: STABLEUSDT}
+  SUI:      {hyperliquid: SUI, lighter: SUI, aster: SUIUSDT}
+  SYRUP:    {hyperliquid: SYRUP, lighter: SYRUP, aster: SYRUPUSDT}
+  TAO:      {hyperliquid: TAO, lighter: TAO, aster: TAOUSDT}
+  TIA:      {hyperliquid: TIA, lighter: TIA, aster: TIAUSDT}
+  TRUMP:    {hyperliquid: TRUMP, lighter: TRUMP, aster: TRUMPUSDT}
+  TRX:      {hyperliquid: TRX, lighter: TRX, aster: TRXUSDT}
+  UNI:      {hyperliquid: UNI, lighter: UNI, aster: UNIUSDT}
+  USELESS:  {lighter: USELESS, aster: USELESSUSDT}
+  VIRTUAL:  {hyperliquid: VIRTUAL, lighter: VIRTUAL, aster: VIRTUALUSDT}
+  VVV:      {hyperliquid: VVV, lighter: VVV, aster: VVVUSDT}
+  WIF:      {hyperliquid: WIF, lighter: WIF, aster: WIFUSDT}
+  WLD:      {hyperliquid: WLD, lighter: WLD, aster: WLDUSDT}
+  WLFI:     {hyperliquid: WLFI, lighter: WLFI, aster: WLFIUSDT}
+  XMR:      {hyperliquid: XMR, lighter: XMR, aster: XMRUSDT}
+  XPL:      {hyperliquid: XPL,  lighter: XPL,  aster: XPLUSDT}
+  XRP:      {hyperliquid: XRP, lighter: XRP, aster: XRPUSDT}
+  ZEC:      {hyperliquid: ZEC,  lighter: ZEC,  aster: ZECUSDT}
+  ZEN:      {hyperliquid: ZEN, aster: ZENUSDT}
 
   # ── indices: proxies, with the scale trap above in force ────────────────────
   SPX:
@@ -51,29 +142,122 @@ assets:
   RUT:
     lighter: IWM                  # ETF proxy; both books are effectively dead (<$2k/day)
     aster: IWMUSDT
-  DXY:
-    hyperliquid: "xyz:DXY"        # listed but zero open interest as of 2026-07-27
+    # Measured 10.06 (Lighter) and 10.04 (Aster) against ^RUT the same session. This entry
+    # carried no `scale` at all until the price probe caught it, which meant `is_proxy` was
+    # False and an order quoted on the index would have gone out against an instrument at
+    # a tenth of the price. The other two index entries had it; this one was simply missed.
+    scale: {lighter: 10.05, aster: 10.05}
+  # Hyperliquid's `xyz:DXY` is GONE — absent from the builder's universe entirely, having
+  # previously carried zero open interest. Recorded as unlisted rather than deleted, so the
+  # next person to look does not re-add it from the same stale note. `oracle/liveness.py`
+  # still cites it as its dormancy example, from when the market existed and was merely dead.
+  DXY: {}
+
+  # ── funds quoted on themselves: 1:1, and NOT the index they track ───────────
+  # A thesis on SPY is quoted on SPY, so no scale applies — see the header on why the same
+  # Aster market appears under both SPX and SPY with different treatment.
+  EWY:  {hyperliquid: "xyz:EWY", lighter: EWY, aster: EWYUSDT}
+  IWM:  {lighter: IWM, aster: IWMUSDT}
+  KORU: {aster: KORUUSDT}          # 3x leveraged Korea; a stop here is not a stop on EWY
+  QQQ:  {lighter: QQQ, aster: QQQUSDT}
+  SMH:  {hyperliquid: "xyz:SMH"}
+  SOXL: {lighter: SOXL, aster: SOXLUSDT}   # 3x leveraged semis
+  SPY:  {lighter: SPY, aster: SPYUSDT}
+  URA:  {lighter: URA}
+  XLE:  {hyperliquid: "xyz:XLE", aster: XLEUSDT}
 
   # ── commodities ─────────────────────────────────────────────────────────────
-  GOLD:    {hyperliquid: "xyz:GOLD",     lighter: XAU, aster: XAUUSDT}
-  SILVER:  {hyperliquid: "xyz:SILVER",   lighter: XAG, aster: XAGUSDT}
-  OIL:     {hyperliquid: "xyz:CL",       lighter: WTI, aster: CLUSDT}   # WTI, not Brent
-  URANIUM: {hyperliquid: "xyz:URNM",     lighter: URA, aster: URNMUSDT} # ETF proxies, all thin
+  GOLD:      {hyperliquid: "xyz:GOLD",     lighter: XAU, aster: XAUUSDT}
+  SILVER:    {hyperliquid: "xyz:SILVER",   lighter: XAG, aster: XAGUSDT}
+  OIL:       {hyperliquid: "xyz:CL",       lighter: WTI, aster: CLUSDT}   # WTI, not Brent
+  COPPER:    {hyperliquid: "xyz:COPPER"}
+  NATGAS:    {hyperliquid: "xyz:NATGAS",   lighter: NATGAS, aster: NATGASUSDT}
+  PALLADIUM: {hyperliquid: "xyz:PALLADIUM"}
+  PLATINUM:  {hyperliquid: "xyz:PLATINUM"}
+  # URANIUM prices off URA (cfg/oracle_map.yaml) and Lighter lists that fund. The `xyz` and
+  # Aster markets named URNM are a DIFFERENT uranium fund trading ~25% higher, and this entry
+  # used to carry all three as if they were one instrument — every thesis level would have
+  # been a quarter wrong on two of the three venues. Two funds, not a scale: their ratio moves
+  # with their holdings and there is no factor to record.
+  URANIUM:   {lighter: URA}
+
+  # ── FX ──────────────────────────────────────────────────────────────────────
+  # Bare currencies only where the venue market is quoted the same way round as our price.
+  # JPY is deliberately absent: `xyz:JPY` marks 163.7 (that is USDJPY, which moves opposite to
+  # a bullish-JPY thesis) while Aster's JPYUSD marks 0.0061 (the right way round). §29 has the
+  # rule; nothing consumes an `invert:` flag yet, so neither is mapped.
+  EUR:    {hyperliquid: "xyz:EUR", lighter: EURUSD, aster: EURUSD}
+  GBP:    {hyperliquid: "xyz:GBP", lighter: GBPUSD, aster: GBPUSD}
+  USDCAD: {lighter: USDCAD}
+  USDJPY: {lighter: USDJPY}
 
   # ── equities: HIP-3 only on Hyperliquid; none are on the core book ──────────
-  TSLA:  {hyperliquid: "xyz:TSLA",  lighter: TSLA,  aster: TSLAUSDT}
-  NVDA:  {hyperliquid: "xyz:NVDA",  lighter: NVDA,  aster: NVDAUSDT}
-  MSTR:  {hyperliquid: "xyz:MSTR",  lighter: MSTR,  aster: MSTRUSDT}
-  HOOD:  {hyperliquid: "xyz:HOOD",  lighter: HOOD,  aster: HOODUSDT}
-  GOOGL: {hyperliquid: "xyz:GOOGL", lighter: GOOGL, aster: GOOGLUSDT}
-  META:  {hyperliquid: "xyz:META",  lighter: META,  aster: METAUSDT}
-  MU:    {hyperliquid: "xyz:MU",    lighter: MU,    aster: MUUSDT}
+  AAPL:  {hyperliquid: "xyz:AAPL",  lighter: AAPL,  aster: AAPLUSDT}
+  ADBE:  {aster: ADBEUSDT}
+  AMZN:  {hyperliquid: "xyz:AMZN",  lighter: AMZN,  aster: AMZNUSDT}
+  ASML:  {hyperliquid: "xyz:ASML",  lighter: ASML,  aster: ASMLUSDT}
+  ASTS:  {aster: ASTSUSDT}
+  # The probe reports BE as IN RANGE, not MATCH: all three venues marked 187.4 against a 166.8
+  # close, because BE moved 12% in one session and their oracles were showing the session
+  # before. 187.4 is that session's close to within 0.4%, on three independent books.
+  BE:    {hyperliquid: "xyz:BE",    lighter: BE,    aster: BEUSDT}
+  # Aster's BBUSDT is a token marking 0.016; BlackBerry is the 8.03 on the other two. The
+  # clearest live example of why this file is confirmed by price — the tickers are identical.
+  BB:    {hyperliquid: "xyz:BB",    lighter: BB}
+  BMNR:  {lighter: BMNR,  aster: BMNRUSDT}
   COIN:  {hyperliquid: "xyz:COIN",  lighter: COIN,  aster: COINUSDT}
   CRCL:  {hyperliquid: "xyz:CRCL",  lighter: CRCL,  aster: CRCLUSDT}
+  CRDO:  {aster: CRDOUSDT}
+  CRM:   {aster: CRMUSDT}
+  CRWD:  {aster: CRWDUSDT}
+  CRWV:  {hyperliquid: "xyz:CRWV",  lighter: CRWV,  aster: CRWVUSDT}
+  DELL:  {hyperliquid: "xyz:DELL",  lighter: DELL,  aster: DELLUSDT}
+  DIS:   {aster: DISUSDT}
+  GLW:   {aster: GLWUSDT}
+  GME:   {hyperliquid: "xyz:GME",   lighter: GME,   aster: GMEUSDT}
+  GOOG:  {aster: GOOGUSDT}          # class C — GOOGL below is the class A market
+  GOOGL: {hyperliquid: "xyz:GOOGL", lighter: GOOGL, aster: GOOGLUSDT}
+  HOOD:  {hyperliquid: "xyz:HOOD",  lighter: HOOD,  aster: HOODUSDT}
+  HPE:   {aster: HPEUSDT}
+  IBM:   {hyperliquid: "xyz:IBM",   lighter: IBM,   aster: IBMUSDT}
+  INTC:  {hyperliquid: "xyz:INTC",  lighter: INTC,  aster: INTCUSDT}
+  IREN:  {aster: IRENUSDT}
+  LLY:   {hyperliquid: "xyz:LLY",   aster: LLYUSDT}
+  META:  {hyperliquid: "xyz:META",  lighter: META,  aster: METAUSDT}
+  MRVL:  {hyperliquid: "xyz:MRVL",  lighter: MRVL,  aster: MRVLUSDT}
+  MSFT:  {hyperliquid: "xyz:MSFT",  lighter: MSFT,  aster: MSFTUSDT}
+  MSTR:  {hyperliquid: "xyz:MSTR",  lighter: MSTR,  aster: MSTRUSDT}
+  MU:    {hyperliquid: "xyz:MU",    lighter: MU,    aster: MUUSDT}
+  NBIS:  {hyperliquid: "xyz:NBIS",  lighter: NBIS,  aster: NBISUSDT}
   NFLX:  {hyperliquid: "xyz:NFLX",  aster: NFLXUSDT}   # Lighter does not list NFLX
+  NOW:   {hyperliquid: "xyz:NOW",   lighter: NOW,   aster: NOWUSDT}
+  NVDA:  {hyperliquid: "xyz:NVDA",  lighter: NVDA,  aster: NVDAUSDT}
+  ORCL:  {hyperliquid: "xyz:ORCL",  lighter: ORCL,  aster: ORCLUSDT}
+  PLTR:  {hyperliquid: "xyz:PLTR",  lighter: PLTR,  aster: PLTRUSDT}
+  QCOM:  {hyperliquid: "xyz:QCOM",  lighter: QCOM,  aster: QCOMUSDT}
   RIVN:  {hyperliquid: "xyz:RIVN",  aster: RIVNUSDT}   # Lighter does not list RIVN
+  RKLB:  {hyperliquid: "xyz:RKLB",  lighter: RKLB,  aster: RKLBUSDT}
+  SKHY:  {hyperliquid: "xyz:SKHY",  lighter: SKHY,  aster: SKHYUSDT}
+  SNDK:  {hyperliquid: "xyz:SNDK",  lighter: SNDK,  aster: SNDKUSDT}
+  SPCX:  {hyperliquid: "xyz:SPCX",  lighter: SPCX,  aster: SPCXUSDT}
+  STRC:  {hyperliquid: "xyz:STRC",  lighter: STRC,  aster: STRCUSDT}
+  # STX is absent on purpose and the absence is the interesting part: the core book, Lighter
+  # and Aster all list a token called STX marking 0.14, while the `para` builder lists Seagate
+  # at 779 — the right instrument, on a dex whose collateral is unverified. Do not resolve this
+  # by taking the majority spelling.
+  TSLA:  {hyperliquid: "xyz:TSLA",  lighter: TSLA,  aster: TSLAUSDT}
+  TSM:   {hyperliquid: "xyz:TSM",   lighter: TSM,   aster: TSMUSDT}
+  TTWO:  {lighter: TTWO}
+  UBER:  {aster: UBERUSDT}
+  USAR:  {hyperliquid: "xyz:USAR",  aster: USARUSDT}
+  ZM:    {hyperliquid: "xyz:ZM",    aster: ZMUSDT}
 
   # ── approved but listed by NO venue researched. Left here deliberately, so the
   #    gap is recorded rather than rediscovered. These need a real broker. ──────
+  #    Each was checked against all seven live universes, not against a memory.
+  CHINA: {}
   GLXY:  {}
   ILMN:  {}
+  INTL:  {}
+  SBSW:  {}
+  VRT:   {}

@@ -58,8 +58,9 @@ def test_scale_is_not_mistaken_for_a_venue():
 
 
 def test_assets_no_venue_lists_are_recorded_rather_than_absent():
-    # Recorded so the gap is not rediscovered; both need a real broker.
-    assert venue_map.unlisted() == ["GLXY", "ILMN"]
+    # Recorded so the gap is not rediscovered; each needs a real broker. Checked against all
+    # seven live venue universes by scripts/probe_venue_coverage.py, not against a memory.
+    assert venue_map.unlisted() == ["CHINA", "DXY", "GLXY", "ILMN", "INTL", "SBSW", "VRT"]
     assert venue_map.venues_for("GLXY") == []
 
 
@@ -73,3 +74,55 @@ def test_oil_maps_to_wti_not_brent_on_every_venue():
     # Both are listed on Hyperliquid and Lighter; the corpus means WTI when it says oil.
     assert venue_map.listing("OIL", "hyperliquid").symbol == "xyz:CL"
     assert venue_map.listing("OIL", "lighter").symbol == "WTI"
+
+
+# ── invariants the price probe found broken in the curated file ───────────────────────────
+
+
+def test_every_etf_proxy_for_an_index_declares_a_scale():
+    # RUT carried IWM with no `scale`, so `is_proxy` was False and `guards.check_listing` would
+    # have let an order quoted on the index (2953) go out against an instrument at a tenth of
+    # it. Any index whose venue instrument is a fund must say so.
+    for asset in ("SPX", "NDX", "RUT"):
+        proxies = [
+            listing
+            for venue in venue_map.venues_for(asset)
+            if (listing := venue_map.listing(asset, venue)) is not None
+            and listing.symbol.split(":")[-1] not in {"SP500", "US500", "XYZ100", "US100"}
+        ]
+        assert proxies, f"{asset} has no venue listings to check"
+        assert all(p.is_proxy for p in proxies), f"{asset} has an undeclared proxy"
+
+
+def test_one_market_can_be_a_proxy_for_one_asset_and_one_to_one_for_another():
+    # Aster's SPYUSDT is the same book under both entries. Scale belongs to the pairing, not
+    # to the market: quoted on the index it is 1/10; quoted on the ETF it is itself.
+    assert venue_map.listing("SPX", "aster").symbol == venue_map.listing("SPY", "aster").symbol
+    assert venue_map.listing("SPX", "aster").is_proxy
+    assert not venue_map.listing("SPY", "aster").is_proxy
+
+
+def test_uranium_names_one_fund_across_its_venues():
+    # It used to carry URA on Lighter and URNM on the other two — different funds trading ~25%
+    # apart, not a scale, so every level on two of three venues was a quarter wrong.
+    symbols = {
+        venue_map.listing("URANIUM", venue).symbol.split(":")[-1]
+        for venue in venue_map.venues_for("URANIUM")
+    }
+    assert symbols == {"URA"}
+
+
+def test_a_ticker_shared_with_a_token_is_mapped_only_where_it_is_the_equity():
+    # Aster's BBUSDT marks 0.016 and is a token; BlackBerry is the 8.03 on the other two.
+    assert venue_map.listing("BB", "aster") is None
+    assert venue_map.listing("BB", "hyperliquid").symbol == "xyz:BB"
+
+
+def test_no_listing_names_a_hip3_builder_whose_collateral_is_unverified():
+    # execution/broker.py assumes USDC backs every perp it trades — true of the core book and
+    # `xyz`, unverified elsewhere. A market on another builder is sized against a balance that
+    # may not be collateral, so the map must not reach one however good the price match is.
+    for asset in venue_map.load():
+        listing = venue_map.listing(asset, "hyperliquid")
+        if listing is not None and ":" in listing.symbol:
+            assert listing.symbol.startswith("xyz:"), f"{asset} maps to an unverified builder"

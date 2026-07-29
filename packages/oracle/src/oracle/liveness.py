@@ -11,6 +11,10 @@ dead without being asked to. Measured 2026-07-27: each of the 17 ``xyz:`` market
 carries **502 observations**; ``xyz:DXY`` carries **zero**. That gap is the signal, it costs
 nothing to read, and it corrects itself the night a market wakes up or dies.
 
+``xyz:DXY`` has since gone one step further — the builder dropped the market, so the map now
+records DXY as unlisted and it never reaches this module. The example stands as the shape of
+the finding; a live one is any market the funding log shows silent beside a reporting cohort.
+
 **Dormancy is a comparison, never an absolute count.** "Zero rows" is also what a night the
 fetcher never ran looks like, and a gate built on the absolute number would refuse the whole
 queue while reporting it as market structure. So a market is dormant only when its *cohort*

@@ -25,16 +25,18 @@ def _rate(symbol, venue="hyperliquid:xyz", rate=1.354e-05, hours=1.0, ago_days=1
     )
 
 
-# The real shape of the finding: xyz:DXY is mapped, polled with its cohort, and has never
-# once reported. Its siblings on the same dex have 502 observations each.
+# The real shape of the finding: xyz:DXY was mapped, polled with its cohort, and had never
+# once reported, while its siblings on the same dex carried 502 observations each. The subject
+# here is COPPER because DXY has since gone further than dormant — the builder dropped the
+# market entirely, so it is now recorded as unlisted and takes the branch below instead.
 def test_a_listed_market_its_cohort_reports_and_it_does_not_is_dormant(tmp_path):
     _seed(tmp_path, [_rate("NVDA"), _rate("GOLD"), _rate("SP500")])
-    assert liveness.dormant("DXY", root=tmp_path, now=NOW) is True
+    assert liveness.dormant("COPPER", root=tmp_path, now=NOW) is True
 
 
 def test_a_market_that_reports_is_not_dormant(tmp_path):
-    _seed(tmp_path, [_rate("NVDA"), _rate("DXY")])
-    assert liveness.dormant("DXY", root=tmp_path, now=NOW) is False
+    _seed(tmp_path, [_rate("NVDA"), _rate("COPPER")])
+    assert liveness.dormant("COPPER", root=tmp_path, now=NOW) is False
 
 
 def test_an_asset_no_venue_lists_is_not_dormant(tmp_path):
@@ -42,6 +44,8 @@ def test_an_asset_no_venue_lists_is_not_dormant(tmp_path):
     # "this market is dead" about a symbol that was never claimed to exist.
     _seed(tmp_path, [_rate("NVDA")])
     assert liveness.dormant("GLXY", root=tmp_path, now=NOW) is False
+    # DXY reaches this branch too, since the builder delisted the market outright.
+    assert liveness.dormant("DXY", root=tmp_path, now=NOW) is False
 
 
 def test_an_asset_unlisted_on_this_venue_is_not_dormant(tmp_path):
@@ -52,14 +56,14 @@ def test_an_asset_unlisted_on_this_venue_is_not_dormant(tmp_path):
 
 def test_an_empty_log_cannot_conclude_dormancy(tmp_path):
     # Nothing observed anywhere is a statement about the fetcher, not about the market.
-    assert liveness.dormant("DXY", root=tmp_path, now=NOW) is False
+    assert liveness.dormant("COPPER", root=tmp_path, now=NOW) is False
 
 
 def test_a_silent_cohort_cannot_conclude_dormancy(tmp_path):
-    # The core book reported; the xyz dex did not. That is a dex-wide outage, and DXY's
+    # The core book reported; the xyz dex did not. That is a dex-wide outage, and COPPER's
     # silence carries no information on such a night.
     _seed(tmp_path, [_rate("BTC", venue="hyperliquid"), _rate("ETH", venue="hyperliquid")])
-    assert liveness.dormant("DXY", root=tmp_path, now=NOW) is False
+    assert liveness.dormant("COPPER", root=tmp_path, now=NOW) is False
 
 
 def test_the_core_book_is_not_a_cohort_for_a_hip3_market(tmp_path):
@@ -72,9 +76,9 @@ def test_the_core_book_is_not_a_cohort_for_a_hip3_market(tmp_path):
 def test_observations_outside_the_window_do_not_keep_a_market_alive(tmp_path):
     # A market that stopped reporting three months ago is dormant now, however healthy the
     # log looks in aggregate.
-    _seed(tmp_path, [_rate("DXY", ago_days=90), _rate("NVDA", ago_days=1)])
-    assert liveness.dormant("DXY", window_days=30, root=tmp_path, now=NOW) is True
-    assert liveness.dormant("DXY", window_days=365, root=tmp_path, now=NOW) is False
+    _seed(tmp_path, [_rate("COPPER", ago_days=90), _rate("NVDA", ago_days=1)])
+    assert liveness.dormant("COPPER", window_days=30, root=tmp_path, now=NOW) is True
+    assert liveness.dormant("COPPER", window_days=365, root=tmp_path, now=NOW) is False
 
 
 def test_dormancy_is_per_venue_not_per_asset(tmp_path):
