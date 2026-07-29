@@ -34,6 +34,12 @@ ORDER_CLASS = "bracket"
 # Parent-order statuses that mean the venue took the order. ``held`` appears on the exit legs
 # of a bracket whose entry has not filled yet — the equity analogue of ``waitingForFill``.
 #
+# Confirmed against a live paper bracket on 2026-07-28, whose reply was
+# ``status: "accepted"`` with both legs ``"held"``. That was placed at 22:45 ET, with the
+# market SHUT — so a GTC bracket sent outside hours is queued for the open rather than
+# rejected, which is the fact the nightly's 06:15 run depends on. Reading ``accepted`` as a
+# failure would report a perfectly good queued bracket as rejected.
+#
 # Anything not listed here is treated as a failure, including a status Alpaca adds later. The
 # same fail-closed rule ``parse_placement`` applies to perp statuses: a status that might not
 # be benign must not be read as a resting order.

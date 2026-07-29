@@ -537,20 +537,19 @@ both routing to `URA`. A `cfg/assets.yaml` alias, not a routing change.
 
 ---
 
-## 33. Nothing knows the equity market is shut · `OPEN` — new 2026-07-28
+## 33. An equity order can open through its own stop · `PARTLY DONE`
 
 `venue: alpaca` places into a market open 09:30–16:00 ET while the nightly runs at 06:15 and
-`core.setups` assumes a 24/7 tape. Two consequences, and only the second is a real risk.
+`core.setups` assumes a 24/7 tape.
 
-**Queuing is fine.** A `gtc` bracket sent pre-open is accepted and goes live at the open —
-`accepted` is already in `alpaca_wire.ACCEPTED_STATUSES`. **Unverified against a live account**,
-and it is the first thing to confirm on paper: if Alpaca instead *rejects* out-of-hours
-brackets, every nightly equity order fails and the whole venue is unusable unscheduled.
+**Queuing is confirmed and needs no work.** A `gtc` bracket placed at 22:45 ET with the market
+shut came back `accepted` with both legs `held` — evidence in `alpaca_wire.ACCEPTED_STATUSES`.
+No scheduler required.
 
-**The gap is the risk.** An entry priced off a 16:00 close can open through its own stop, which
-the perp path never has to consider. `guards.check_geometry` re-checks after rounding but
-nothing checks the *opening* price against the plan. Cheapest honest fix is a refusal when the
-open gaps past the stop, not a scheduler.
+**The gap is the residual, and it is real.** An entry priced off a 16:00 close can open through
+its own stop; the perp path never has to consider this. `guards.check_geometry` re-checks after
+rounding, but nothing compares the *opening* price to the plan. Wants a refusal when the open
+gaps past the stop — not a scheduler, and not a re-price.
 
 Also unhandled: `oracle.liveness` derives a market's health from the funding log, which
 equities have no equivalent of.

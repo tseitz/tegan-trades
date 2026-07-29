@@ -143,10 +143,13 @@ class AlpacaBroker:
     def markets(self) -> dict[str, Market]:
         """Every US equity this account can place an order on, fetched once per session.
 
-        One call returning ~11,000 assets, which is a few megabytes and several seconds. It is
-        paid once at session open rather than per candidate, and deliberately not cached to
-        disk: a stale universe would claim a halted symbol is tradable, and this is the check
-        standing between ``cfg/venue_map.yaml`` and a real order.
+        One call. Measured against paper on 2026-07-28: **13,297 tradable assets in 0.7s** —
+        cheap enough that the "fetch it once" here is tidiness rather than necessity. All 64
+        ``alpaca`` rows in ``cfg/venue_map.yaml`` were present, which is the independent
+        confirmation that map's header asks for and could not get from a price comparison.
+
+        Deliberately not cached to disk: a stale universe would claim a halted symbol is
+        tradable, and this is the check standing between the venue map and a real order.
         """
         if self._markets is None:
             assets = self._transport(
