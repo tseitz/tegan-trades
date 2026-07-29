@@ -120,6 +120,14 @@ def build(
     if geometry_refusal is not None:
         return geometry_refusal
 
+    # Equities only, and before any arithmetic: a short this account cannot take is refused
+    # for what it is — the wrong account type — rather than resized or left to the venue,
+    # whose rejection names a buying-power number and not the cause.
+    if market.grid == SHARE_GRID:
+        margin_refusal = guards.check_shortable(candidate.direction, equity)
+        if margin_refusal is not None:
+            return margin_refusal
+
     round_px, round_sz = grid_for(market)
 
     entry = round_px(candidate.entry, market.sz_decimals)

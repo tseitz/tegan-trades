@@ -7,7 +7,7 @@ import pytest
 
 from execution import guards
 from execution.liquidity import Liquidity
-from execution.plan import Market, OrderPlan, build
+from execution.plan import SHARE_GRID, Market, OrderPlan, build
 
 
 # ── stubs ───────────────────────────────────────────────────────────────────────────────────
@@ -190,3 +190,50 @@ def test_notional_cap_binds_on_a_pathologically_tight_stop():
     plan = _build(StubCandidate(entry=3_200, stop=3_199, target=3_900),
                   max_notional_frac=3.0, liquidity=deep)
     assert plan.leverage <= 3.0 + 1e-9
+
+
+# ── the equity margin floor ─────────────────────────────────────────────────────────────────
+
+MSFT_MARKET = Market(coin="MSFT", sz_decimals=0, grid=SHARE_GRID)
+SHARE_MARKETS = {"MSFT": MSFT_MARKET}
+MSFT_LISTING = StubListing(canonical="MSFT", venue="alpaca", symbol="MSFT")
+
+
+def test_an_equity_short_is_refused_below_the_margin_floor():
+    """The account-type cliff, caught in the plan rather than by the venue. Shorting needs a
+    margin account and a margin account needs $2,000 — under it the account is long-only, and
+    no amount of resizing changes that."""
+    short = StubCandidate(asset="MSFT", direction="short",
+                          entry=100.0, stop=110.0, target=80.0, key="k")
+    refused = build(short, markets=SHARE_MARKETS, listing=MSFT_LISTING, equity=1_000.0,
+                    risk_pct=0.01, enforce_liquidity=False)
+    assert isinstance(refused, guards.Refusal)
+    assert refused.code == guards.REFUSAL_NO_MARGIN
+
+
+def test_the_same_short_is_allowed_once_the_account_clears_the_floor():
+    short = StubCandidate(asset="MSFT", direction="short",
+                          entry=100.0, stop=110.0, target=80.0, key="k")
+    plan = build(short, markets=SHARE_MARKETS, listing=MSFT_LISTING, equity=5_000.0,
+                 risk_pct=0.01, enforce_liquidity=False)
+    assert isinstance(plan, OrderPlan)
+    assert plan.size == 5.0     # $50 budget / $10 stop
+
+
+def test_an_equity_long_is_unaffected_by_the_margin_floor():
+    """A cash account buys perfectly well; only the borrow needs margin."""
+    long = StubCandidate(asset="MSFT", direction="long",
+                         entry=100.0, stop=95.0, target=140.0, key="k")
+    plan = build(long, markets=SHARE_MARKETS, listing=MSFT_LISTING, equity=1_000.0,
+                 risk_pct=0.01, enforce_liquidity=False)
+    assert isinstance(plan, OrderPlan)
+    assert plan.size == 2.0     # $10 budget / $5 stop
+
+
+def test_a_perp_short_never_consults_the_margin_floor():
+    """A perp shorts by taking the sell side of the same contract — no borrow, no margin
+    account, so the question does not arise however small the balance."""
+    short = StubCandidate(direction="short", entry=3_200.0, stop=3_350.0, target=2_800.0)
+    plan = build(short, markets=MARKETS, listing=StubListing(), equity=500.0,
+                 risk_pct=0.01, enforce_liquidity=False)
+    assert isinstance(plan, OrderPlan)

@@ -92,3 +92,29 @@ def test_rounding_a_price_never_moves_it_more_than_half_a_tick():
     for raw in (0.123456, 0.9999, 1.0, 1.005, 47.777, 500.006, 52386.4):
         tick = 0.01 if raw >= 1.0 else 0.0001
         assert abs(round_share_price(raw) - raw) <= tick / 2 + 1e-12
+
+
+# ── the margin floor ────────────────────────────────────────────────────────────────────────
+
+def test_a_short_below_the_margin_floor_is_refused():
+    """Reg T: shorting needs a margin account, and a margin account needs $2,000 of equity.
+    Below it Alpaca caps the account at 1x buying power and rejects the order — so this is a
+    fact about the world the guards should state, not an error to discover from the venue.
+    """
+    from execution import guards
+    refusal = guards.check_shortable("short", equity=1_000.0)
+    assert refusal is not None
+    assert refusal.code == guards.REFUSAL_NO_MARGIN
+    assert "2,000" in refusal.detail
+
+
+def test_a_long_below_the_margin_floor_is_fine():
+    """A cash account buys perfectly well. Only the short leg needs margin."""
+    from execution import guards
+    assert guards.check_shortable("long", equity=1_000.0) is None
+
+
+def test_a_short_at_or_above_the_floor_passes():
+    from execution import guards
+    assert guards.check_shortable("short", equity=2_000.0) is None
+    assert guards.check_shortable("short", equity=50_000.0) is None

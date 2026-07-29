@@ -30,6 +30,18 @@ REFUSAL_NO_BOOK = "no_book"
 REFUSAL_ILLIQUID = "illiquid"
 REFUSAL_TOO_BIG = "too_big_for_book"
 REFUSAL_NO_LIQUIDITY_DATA = "no_liquidity_data"
+REFUSAL_NO_MARGIN = "no_margin"
+
+# Equity below which a US brokerage account cannot short at all.
+#
+# Reg T: selling short requires a margin account, and FINRA sets the minimum equity for one at
+# $2,000. Under it Alpaca caps the account at 1x buying power and rejects the order outright.
+#
+# This is a **cliff, not a slope**, and it is worth knowing before funding: measured against
+# the 13 approved decisions with an Alpaca listing, $1,000 places 5 of them and $2,000 places
+# 11. Crossing this line does two things at once — it unlocks the short side, and it doubles
+# the widest stop a whole share can carry inside a 1% budget.
+MARGIN_ACCOUNT_MIN_EQUITY_USD = 2_000.0
 
 # Floors below which a market is not somewhere to leave a stop for three weeks. Both in USD.
 # Chosen against measured mainnet data (2026-07-27): they clear ``xyz:DXY`` (no book, $0 of
@@ -157,6 +169,29 @@ def check_liquidity(
             f"${liquidity.thinnest_side:,.0f} near-touch depth",
         )
     return None
+
+
+def check_shortable(direction: str, equity: float,
+                    *, min_equity: float = MARGIN_ACCOUNT_MIN_EQUITY_USD) -> Refusal | None:
+    """Can this account take the short side at all?
+
+    Only equities need this — a perp shorts by taking the sell side of the same contract, so
+    the question does not arise there. On a US brokerage a short is a borrow, which needs a
+    margin account, which needs ``min_equity``.
+
+    Stated here rather than discovered from the venue because the two failures look different
+    to a person: an Alpaca rejection names a buying-power number, while what actually happened
+    is that the account is the wrong *type*, and no amount of retrying or resizing fixes it.
+    """
+    if direction != "short":
+        return None
+    if equity >= min_equity:
+        return None
+    return Refusal(
+        REFUSAL_NO_MARGIN,
+        f"shorting needs a margin account (Reg T minimum ${min_equity:,.0f} equity) and this "
+        f"account holds ${equity:,.2f} — it is restricted to 1x buying power, long only",
+    )
 
 
 def check_size(size: float, notional: float,
