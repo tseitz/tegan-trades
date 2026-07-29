@@ -593,3 +593,21 @@ now supplies the missing measurement — median volume and trade count per sessi
 the point of sizing, so the queue still cannot tell a thin market from a liquid one until a
 candidate is approved. Surfacing `Depth` in the queue render is the remaining half, and it is
 cheap: the fetch already exists and is cached per session.
+
+---
+
+## 38. The queue names the concept, not the instrument it would trade · `OPEN` — new 2026-07-29
+
+`CHINA` was excluded during triage as "I don't see this ticker anywhere". It routes to `FXI`
+on Alpaca and was tradeable — 0.00% participation, 24.2M shares a day, the healthiest name in
+that queue. The render shows the canonical asset and never the venue symbol, so a
+concept-mapped row (`CHINA`->`FXI`, `GOLD`->`xyz:GOLD`) reads as an unknown ticker.
+
+The cost is asymmetric and silent: an exclusion is durable, written to `cfg/exclusions.yaml`,
+and nothing ever re-offers the asset. So one missing line of render permanently removed a
+setup, and the reason recorded for it is not the real reason.
+
+**Show the resolved symbol on the queue row, per the session's venue.** `venue_map.listing`
+already answers it and `setups --list` runs offline, so this needs no fetch. The same line
+would have surfaced §32's mis-resolutions (`LINK` is Interlink Electronics) at the moment of
+judgement rather than in a later audit.
