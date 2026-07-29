@@ -17,11 +17,29 @@ from pathlib import Path
 from execution import config as config_module
 from execution import guards
 from execution import store
+from execution import venues
+from execution.alpaca_broker import AlpacaBroker
 from execution.broker import Broker, HyperliquidBroker, dex_of
 from execution.config import Config
 from execution.guards import Refusal
 from execution.plan import Market, OrderPlan, build
 from execution.wire import Placement
+
+
+def open_broker(config: Config, credentials, *, dexs: tuple[str, ...] = ()) -> Broker:
+    """The venue's live connection. Separate from ``Session.open`` so the mapping from a
+    config to a class is one readable statement rather than a branch inside a constructor.
+
+    ``dexs`` is a HIP-3 concept and is accepted-and-ignored elsewhere; Alpaca has one account
+    and one pool, so there is nothing for it to select.
+    """
+    if config.venue == venues.ALPACA:
+        return AlpacaBroker(credentials, network=config.network)
+    if config.venue == venues.HYPERLIQUID:
+        return HyperliquidBroker(credentials, network=config.network, dexs=dexs)
+    raise ValueError(
+        f"unknown venue {config.venue!r}; expected one of {sorted(venues.NETWORKS)}"
+    )
 
 
 @dataclass
@@ -55,8 +73,8 @@ class Session:
         ``setups_cli.resolve_vault_note``: a session that dies mid-triage throws away the
         judgement already entered, which is the scarce input.
         """
-        creds = credentials or config_module.credentials()
-        broker = HyperliquidBroker(creds, network=config.network, dexs=dexs)
+        creds = credentials or config_module.credentials_for(config.venue)
+        broker = open_broker(config, creds, dexs=dexs)
         return cls(
             broker=broker,
             config=config,

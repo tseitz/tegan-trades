@@ -49,9 +49,15 @@ WAITING_STATUSES = frozenset({"waitingForFill", "waitingForTrigger"})
 
 @dataclass(frozen=True)
 class Placement:
-    """What the venue said. ``ok`` is false if *any* leg of the bracket was rejected."""
+    """What the venue said. ``ok`` is false if *any* leg of the bracket was rejected.
+
+    Shared by every venue, so ``order_ids`` is deliberately loose: Hyperliquid mints integer
+    oids and Alpaca mints UUID strings. Both are opaque handles whose only use is finding an
+    order again to cancel it, and ``store`` writes them to JSON either way — narrowing this to
+    one venue's type would force the other to lie about its own identifiers.
+    """
     ok: bool
-    order_ids: tuple[int, ...] = ()
+    order_ids: tuple[int | str, ...] = ()
     statuses: tuple[str, ...] = ()
     error: str | None = None
     raw: dict = field(default_factory=dict)

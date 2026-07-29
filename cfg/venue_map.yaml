@@ -34,8 +34,30 @@
 # against the index itself (^GSPC). Execution and pricing are different questions and
 # collapsing them regrades every stored thesis against the wrong instrument.
 #
-# Venues: hyperliquid (core), hyperliquid:<dex> (HIP-3 builder), lighter, aster.
+# Venues: hyperliquid (core), hyperliquid:<dex> (HIP-3 builder), lighter, aster, alpaca.
 # An asset a venue does not list is OMITTED, never guessed. Absence is a real answer.
+#
+# ALPACA IS THE ONE VENUE WHERE THE PRICE CHECK DOES NOT WORK, and it is mapped by a different
+# rule because of it. Everywhere else the probe compares a venue's mark to our own close and
+# identity settles itself. Alpaca's symbol for an equity is the same ticker our own close is
+# fetched under, so the two numbers agree by construction and the comparison is circular — it
+# would confirm every row, including a wrong one.
+#
+# So the evidence here is the INSTRUMENT, not the mark: each entry was resolved to a named
+# company or fund on a named US exchange, and only EQUITY or ETF on NYSE/Nasdaq/NYSEArca/Cboe
+# was mapped. That check is not ceremony. Resolving this file's canonical symbols as bare
+# tickers turns up real, liquid, completely wrong instruments for a large share of the crypto
+# section — `LINK` is Interlink Electronics, `NEAR` is a bond ETF, `DASH` is DoorDash, `BCH` is
+# Banco de Chile, `TAO` is a China real-estate ETF. **Only the equities, funds and
+# previously-unlisted sections carry an `alpaca` key.** Never extend it by pattern.
+#
+# Two whole categories are omitted from Alpaca on purpose. **Indices and futures** (`SPX`,
+# `NDX`, `RUT`, `GOLD`, `OIL`, `NATGAS`, the metals, all FX) are not tradable there at all;
+# where a fund tracks one it already has its own 1:1 row (`SPY`, `QQQ`, `IWM`, `URA`), which is
+# the split this file's header already describes. **Commodity ETF proxies** were considered and
+# rejected: `USO` and `UNG` carry roll decay that compounds over `core.setups.CARRY_HOLD_DAYS`,
+# so a flat three weeks in crude still loses money in the proxy. That is a different trade, not
+# a scaled one, and `scale` cannot express it.
 #
 # ONLY THE CORE BOOK AND THE `xyz` BUILDER ARE MAPPED ON HYPERLIQUID. The venue carries nine
 # HIP-3 builders and three others (hyna, mkts, para) list markets this corpus prices. They are
@@ -156,15 +178,15 @@ assets:
   # ── funds quoted on themselves: 1:1, and NOT the index they track ───────────
   # A thesis on SPY is quoted on SPY, so no scale applies — see the header on why the same
   # Aster market appears under both SPX and SPY with different treatment.
-  EWY:  {hyperliquid: "xyz:EWY", lighter: EWY, aster: EWYUSDT}
-  IWM:  {lighter: IWM, aster: IWMUSDT}
-  KORU: {aster: KORUUSDT}          # 3x leveraged Korea; a stop here is not a stop on EWY
-  QQQ:  {lighter: QQQ, aster: QQQUSDT}
-  SMH:  {hyperliquid: "xyz:SMH"}
-  SOXL: {lighter: SOXL, aster: SOXLUSDT}   # 3x leveraged semis
-  SPY:  {lighter: SPY, aster: SPYUSDT}
-  URA:  {lighter: URA}
-  XLE:  {hyperliquid: "xyz:XLE", aster: XLEUSDT}
+  EWY:  {hyperliquid: "xyz:EWY", lighter: EWY, aster: EWYUSDT, alpaca: EWY}
+  IWM:  {lighter: IWM, aster: IWMUSDT, alpaca: IWM}
+  KORU: {aster: KORUUSDT, alpaca: KORU}          # 3x leveraged Korea; a stop here is not a stop on EWY
+  QQQ:  {lighter: QQQ, aster: QQQUSDT, alpaca: QQQ}
+  SMH:  {hyperliquid: "xyz:SMH", alpaca: SMH}
+  SOXL: {lighter: SOXL, aster: SOXLUSDT, alpaca: SOXL}   # 3x leveraged semis
+  SPY:  {lighter: SPY, aster: SPYUSDT, alpaca: SPY}
+  URA:  {lighter: URA, alpaca: URA}
+  XLE:  {hyperliquid: "xyz:XLE", aster: XLEUSDT, alpaca: XLE}
 
   # ── commodities ─────────────────────────────────────────────────────────────
   GOLD:      {hyperliquid: "xyz:GOLD",     lighter: XAU, aster: XAUUSDT}
@@ -192,72 +214,74 @@ assets:
   USDJPY: {lighter: USDJPY}
 
   # ── equities: HIP-3 only on Hyperliquid; none are on the core book ──────────
-  AAPL:  {hyperliquid: "xyz:AAPL",  lighter: AAPL,  aster: AAPLUSDT}
-  ADBE:  {aster: ADBEUSDT}
-  AMZN:  {hyperliquid: "xyz:AMZN",  lighter: AMZN,  aster: AMZNUSDT}
-  ASML:  {hyperliquid: "xyz:ASML",  lighter: ASML,  aster: ASMLUSDT}
-  ASTS:  {aster: ASTSUSDT}
+  AAPL:  {hyperliquid: "xyz:AAPL",  lighter: AAPL,  aster: AAPLUSDT, alpaca: AAPL}
+  ADBE:  {aster: ADBEUSDT, alpaca: ADBE}
+  AMZN:  {hyperliquid: "xyz:AMZN",  lighter: AMZN,  aster: AMZNUSDT, alpaca: AMZN}
+  ASML:  {hyperliquid: "xyz:ASML",  lighter: ASML,  aster: ASMLUSDT, alpaca: ASML}
+  ASTS:  {aster: ASTSUSDT, alpaca: ASTS}
   # The probe reports BE as IN RANGE, not MATCH: all three venues marked 187.4 against a 166.8
   # close, because BE moved 12% in one session and their oracles were showing the session
   # before. 187.4 is that session's close to within 0.4%, on three independent books.
-  BE:    {hyperliquid: "xyz:BE",    lighter: BE,    aster: BEUSDT}
+  BE:    {hyperliquid: "xyz:BE",    lighter: BE,    aster: BEUSDT, alpaca: BE}
   # Aster's BBUSDT is a token marking 0.016; BlackBerry is the 8.03 on the other two. The
   # clearest live example of why this file is confirmed by price — the tickers are identical.
-  BB:    {hyperliquid: "xyz:BB",    lighter: BB}
-  BMNR:  {lighter: BMNR,  aster: BMNRUSDT}
-  COIN:  {hyperliquid: "xyz:COIN",  lighter: COIN,  aster: COINUSDT}
-  CRCL:  {hyperliquid: "xyz:CRCL",  lighter: CRCL,  aster: CRCLUSDT}
-  CRDO:  {aster: CRDOUSDT}
-  CRM:   {aster: CRMUSDT}
-  CRWD:  {aster: CRWDUSDT}
-  CRWV:  {hyperliquid: "xyz:CRWV",  lighter: CRWV,  aster: CRWVUSDT}
-  DELL:  {hyperliquid: "xyz:DELL",  lighter: DELL,  aster: DELLUSDT}
-  DIS:   {aster: DISUSDT}
-  GLW:   {aster: GLWUSDT}
-  GME:   {hyperliquid: "xyz:GME",   lighter: GME,   aster: GMEUSDT}
-  GOOG:  {aster: GOOGUSDT}          # class C — GOOGL below is the class A market
-  GOOGL: {hyperliquid: "xyz:GOOGL", lighter: GOOGL, aster: GOOGLUSDT}
-  HOOD:  {hyperliquid: "xyz:HOOD",  lighter: HOOD,  aster: HOODUSDT}
-  HPE:   {aster: HPEUSDT}
-  IBM:   {hyperliquid: "xyz:IBM",   lighter: IBM,   aster: IBMUSDT}
-  INTC:  {hyperliquid: "xyz:INTC",  lighter: INTC,  aster: INTCUSDT}
-  IREN:  {aster: IRENUSDT}
-  LLY:   {hyperliquid: "xyz:LLY",   aster: LLYUSDT}
-  META:  {hyperliquid: "xyz:META",  lighter: META,  aster: METAUSDT}
-  MRVL:  {hyperliquid: "xyz:MRVL",  lighter: MRVL,  aster: MRVLUSDT}
-  MSFT:  {hyperliquid: "xyz:MSFT",  lighter: MSFT,  aster: MSFTUSDT}
-  MSTR:  {hyperliquid: "xyz:MSTR",  lighter: MSTR,  aster: MSTRUSDT}
-  MU:    {hyperliquid: "xyz:MU",    lighter: MU,    aster: MUUSDT}
-  NBIS:  {hyperliquid: "xyz:NBIS",  lighter: NBIS,  aster: NBISUSDT}
-  NFLX:  {hyperliquid: "xyz:NFLX",  aster: NFLXUSDT}   # Lighter does not list NFLX
-  NOW:   {hyperliquid: "xyz:NOW",   lighter: NOW,   aster: NOWUSDT}
-  NVDA:  {hyperliquid: "xyz:NVDA",  lighter: NVDA,  aster: NVDAUSDT}
-  ORCL:  {hyperliquid: "xyz:ORCL",  lighter: ORCL,  aster: ORCLUSDT}
-  PLTR:  {hyperliquid: "xyz:PLTR",  lighter: PLTR,  aster: PLTRUSDT}
-  QCOM:  {hyperliquid: "xyz:QCOM",  lighter: QCOM,  aster: QCOMUSDT}
-  RIVN:  {hyperliquid: "xyz:RIVN",  aster: RIVNUSDT}   # Lighter does not list RIVN
-  RKLB:  {hyperliquid: "xyz:RKLB",  lighter: RKLB,  aster: RKLBUSDT}
-  SKHY:  {hyperliquid: "xyz:SKHY",  lighter: SKHY,  aster: SKHYUSDT}
-  SNDK:  {hyperliquid: "xyz:SNDK",  lighter: SNDK,  aster: SNDKUSDT}
-  SPCX:  {hyperliquid: "xyz:SPCX",  lighter: SPCX,  aster: SPCXUSDT}
-  STRC:  {hyperliquid: "xyz:STRC",  lighter: STRC,  aster: STRCUSDT}
+  BB:    {hyperliquid: "xyz:BB",    lighter: BB, alpaca: BB}
+  BMNR:  {lighter: BMNR,  aster: BMNRUSDT, alpaca: BMNR}
+  COIN:  {hyperliquid: "xyz:COIN",  lighter: COIN,  aster: COINUSDT, alpaca: COIN}
+  CRCL:  {hyperliquid: "xyz:CRCL",  lighter: CRCL,  aster: CRCLUSDT, alpaca: CRCL}
+  CRDO:  {aster: CRDOUSDT, alpaca: CRDO}
+  CRM:   {aster: CRMUSDT, alpaca: CRM}
+  CRWD:  {aster: CRWDUSDT, alpaca: CRWD}
+  CRWV:  {hyperliquid: "xyz:CRWV",  lighter: CRWV,  aster: CRWVUSDT, alpaca: CRWV}
+  DELL:  {hyperliquid: "xyz:DELL",  lighter: DELL,  aster: DELLUSDT, alpaca: DELL}
+  DIS:   {aster: DISUSDT, alpaca: DIS}
+  GLW:   {aster: GLWUSDT, alpaca: GLW}
+  GME:   {hyperliquid: "xyz:GME",   lighter: GME,   aster: GMEUSDT, alpaca: GME}
+  GOOG:  {aster: GOOGUSDT, alpaca: GOOG}          # class C — GOOGL below is the class A market
+  GOOGL: {hyperliquid: "xyz:GOOGL", lighter: GOOGL, aster: GOOGLUSDT, alpaca: GOOGL}
+  HOOD:  {hyperliquid: "xyz:HOOD",  lighter: HOOD,  aster: HOODUSDT, alpaca: HOOD}
+  HPE:   {aster: HPEUSDT, alpaca: HPE}
+  IBM:   {hyperliquid: "xyz:IBM",   lighter: IBM,   aster: IBMUSDT, alpaca: IBM}
+  INTC:  {hyperliquid: "xyz:INTC",  lighter: INTC,  aster: INTCUSDT, alpaca: INTC}
+  IREN:  {aster: IRENUSDT, alpaca: IREN}
+  LLY:   {hyperliquid: "xyz:LLY",   aster: LLYUSDT, alpaca: LLY}
+  META:  {hyperliquid: "xyz:META",  lighter: META,  aster: METAUSDT, alpaca: META}
+  MRVL:  {hyperliquid: "xyz:MRVL",  lighter: MRVL,  aster: MRVLUSDT, alpaca: MRVL}
+  MSFT:  {hyperliquid: "xyz:MSFT",  lighter: MSFT,  aster: MSFTUSDT, alpaca: MSFT}
+  MSTR:  {hyperliquid: "xyz:MSTR",  lighter: MSTR,  aster: MSTRUSDT, alpaca: MSTR}
+  MU:    {hyperliquid: "xyz:MU",    lighter: MU,    aster: MUUSDT, alpaca: MU}
+  NBIS:  {hyperliquid: "xyz:NBIS",  lighter: NBIS,  aster: NBISUSDT, alpaca: NBIS}
+  NFLX:  {hyperliquid: "xyz:NFLX",  aster: NFLXUSDT, alpaca: NFLX}   # Lighter does not list NFLX
+  NOW:   {hyperliquid: "xyz:NOW",   lighter: NOW,   aster: NOWUSDT, alpaca: NOW}
+  NVDA:  {hyperliquid: "xyz:NVDA",  lighter: NVDA,  aster: NVDAUSDT, alpaca: NVDA}
+  ORCL:  {hyperliquid: "xyz:ORCL",  lighter: ORCL,  aster: ORCLUSDT, alpaca: ORCL}
+  PLTR:  {hyperliquid: "xyz:PLTR",  lighter: PLTR,  aster: PLTRUSDT, alpaca: PLTR}
+  QCOM:  {hyperliquid: "xyz:QCOM",  lighter: QCOM,  aster: QCOMUSDT, alpaca: QCOM}
+  RIVN:  {hyperliquid: "xyz:RIVN",  aster: RIVNUSDT, alpaca: RIVN}   # Lighter does not list RIVN
+  RKLB:  {hyperliquid: "xyz:RKLB",  lighter: RKLB,  aster: RKLBUSDT, alpaca: RKLB}
+  SKHY:  {hyperliquid: "xyz:SKHY",  lighter: SKHY,  aster: SKHYUSDT, alpaca: SKHY}
+  SNDK:  {hyperliquid: "xyz:SNDK",  lighter: SNDK,  aster: SNDKUSDT, alpaca: SNDK}
+  SPCX:  {hyperliquid: "xyz:SPCX",  lighter: SPCX,  aster: SPCXUSDT, alpaca: SPCX}
+  STRC:  {hyperliquid: "xyz:STRC",  lighter: STRC,  aster: STRCUSDT, alpaca: STRC}
   # STX is absent on purpose and the absence is the interesting part: the core book, Lighter
   # and Aster all list a token called STX marking 0.14, while the `para` builder lists Seagate
   # at 779 — the right instrument, on a dex whose collateral is unverified. Do not resolve this
   # by taking the majority spelling.
-  TSLA:  {hyperliquid: "xyz:TSLA",  lighter: TSLA,  aster: TSLAUSDT}
-  TSM:   {hyperliquid: "xyz:TSM",   lighter: TSM,   aster: TSMUSDT}
-  TTWO:  {lighter: TTWO}
-  UBER:  {aster: UBERUSDT}
-  USAR:  {hyperliquid: "xyz:USAR",  aster: USARUSDT}
-  ZM:    {hyperliquid: "xyz:ZM",    aster: ZMUSDT}
+  TSLA:  {hyperliquid: "xyz:TSLA",  lighter: TSLA,  aster: TSLAUSDT, alpaca: TSLA}
+  TSM:   {hyperliquid: "xyz:TSM",   lighter: TSM,   aster: TSMUSDT, alpaca: TSM}
+  TTWO:  {lighter: TTWO, alpaca: TTWO}
+  UBER:  {aster: UBERUSDT, alpaca: UBER}
+  USAR:  {hyperliquid: "xyz:USAR",  aster: USARUSDT, alpaca: USAR}
+  ZM:    {hyperliquid: "xyz:ZM",    aster: ZMUSDT, alpaca: ZM}
 
-  # ── approved but listed by NO venue researched. Left here deliberately, so the
-  #    gap is recorded rather than rediscovered. These need a real broker. ──────
-  #    Each was checked against all seven live universes, not against a memory.
-  CHINA: {}
-  GLXY:  {}
-  ILMN:  {}
-  INTL:  {}
-  SBSW:  {}
+  # ── listed by no DERIVATIVES venue — and this is what "needs a real broker" meant ──
+  #    Each was checked against all seven live universes, not against a memory. All five are
+  #    ordinary US listings, so Alpaca reaches every one of them: CHINA trades as FXI (the
+  #    fund our own close is already routed to, so 1:1 rather than a proxy), and the rest on
+  #    their own tickers. VRT stays empty — no venue here carries it.
+  CHINA: {alpaca: FXI}
+  GLXY:  {alpaca: GLXY}
+  ILMN:  {alpaca: ILMN}
+  INTL:  {alpaca: INTL}
+  SBSW:  {alpaca: SBSW}
   VRT:   {}

@@ -58,10 +58,15 @@ def test_scale_is_not_mistaken_for_a_venue():
 
 
 def test_assets_no_venue_lists_are_recorded_rather_than_absent():
-    # Recorded so the gap is not rediscovered; each needs a real broker. Checked against all
-    # seven live venue universes by scripts/probe_venue_coverage.py, not against a memory.
-    assert venue_map.unlisted() == ["CHINA", "DXY", "GLXY", "ILMN", "INTL", "SBSW", "VRT"]
-    assert venue_map.venues_for("GLXY") == []
+    # Recorded so the gap is not rediscovered. Checked against all seven live venue universes
+    # by scripts/probe_venue_coverage.py, not against a memory.
+    #
+    # This list shrank from seven to two when Alpaca was mapped, and that is the point: five
+    # of them were never exotic, just absent from every *derivatives* venue. "Needs a real
+    # broker" was the right diagnosis and Alpaca is the broker. What is left is a genuine gap
+    # — DXY is an index nothing here trades, VRT is carried by no venue at all.
+    assert venue_map.unlisted() == ["DXY", "VRT"]
+    assert venue_map.venues_for("VRT") == []
 
 
 def test_reverse_lookup_recovers_the_canonical_symbol():
@@ -126,3 +131,64 @@ def test_no_listing_names_a_hip3_builder_whose_collateral_is_unverified():
         listing = venue_map.listing(asset, "hyperliquid")
         if listing is not None and ":" in listing.symbol:
             assert listing.symbol.startswith("xyz:"), f"{asset} maps to an unverified builder"
+
+
+# ── alpaca: the venue mapped by instrument rather than by mark ──────────────────────────────
+#
+# Alpaca's symbol for an equity is the same ticker our own close is fetched under, so the
+# price comparison every other venue is confirmed by would be circular here. The evidence is
+# the instrument instead, and these tests hold the boundary that evidence drew.
+
+def test_no_crypto_asset_carries_an_alpaca_listing():
+    """The whole hazard in one test. Resolved as bare tickers, a large share of the crypto
+    section are real, liquid, entirely wrong US equities — LINK is Interlink Electronics,
+    NEAR a bond ETF, DASH is DoorDash, BCH is Banco de Chile, TAO a China real-estate ETF.
+    A name-matched alpaca column would have placed real orders on every one of them.
+    """
+    for asset in ("LINK", "NEAR", "DASH", "BCH", "TAO", "SUI", "LTC", "APT", "AR", "ARB",
+                  "BTC", "ETH", "COMP", "AERO", "ALT", "SEI", "XPL", "PUMP", "TRX"):
+        assert venue_map.listing(asset, "alpaca") is None, f"{asset} must not map to Alpaca"
+
+
+def test_an_index_has_no_alpaca_listing_but_its_fund_does():
+    """Alpaca trades neither indices nor futures. Where a fund tracks one it gets its own 1:1
+    row, which is the SPX/SPY split this file already models — so the index resolves to
+    nothing rather than to a scaled proxy."""
+    assert venue_map.listing("SPX", "alpaca") is None
+    assert venue_map.listing("NDX", "alpaca") is None
+    assert venue_map.listing("RUT", "alpaca") is None
+    assert venue_map.listing("SPY", "alpaca").symbol == "SPY"
+    assert venue_map.listing("QQQ", "alpaca").symbol == "QQQ"
+    assert venue_map.listing("IWM", "alpaca").symbol == "IWM"
+
+
+def test_commodities_and_fx_have_no_alpaca_listing():
+    """USO and UNG carry roll decay that compounds over CARRY_HOLD_DAYS, so a flat three weeks
+    in crude still loses money in the proxy. That is a different trade, not a scaled one, and
+    `scale` cannot express it — so the row is absent rather than approximate."""
+    for asset in ("GOLD", "SILVER", "OIL", "NATGAS", "COPPER", "PLATINUM", "PALLADIUM",
+                  "EUR", "GBP", "USDCAD", "USDJPY"):
+        assert venue_map.listing(asset, "alpaca") is None, f"{asset} must not map to Alpaca"
+
+
+def test_no_alpaca_listing_is_a_proxy():
+    """Every alpaca row is the instrument itself, so none carries a scale. `execution.guards`
+    refuses a scaled listing outright, so a proxy here would be a row that can never trade."""
+    for asset in venue_map.load():
+        listing = venue_map.listing(asset, "alpaca")
+        if listing is not None:
+            assert not listing.is_proxy, f"{asset} maps to a scaled Alpaca listing"
+
+
+def test_alpaca_reaches_the_assets_no_derivatives_venue_carried():
+    """This is what "these need a real broker" meant. CHINA trades as FXI — the fund our own
+    close is already routed to, so 1:1 rather than a proxy."""
+    assert venue_map.listing("CHINA", "alpaca").symbol == "FXI"
+    for asset in ("GLXY", "ILMN", "INTL", "SBSW"):
+        assert venue_map.listing(asset, "alpaca").symbol == asset
+
+
+def test_an_asset_no_venue_at_all_carries_stays_empty():
+    """VRT is the remaining genuine gap. Absence is a real answer and must not be filled in
+    by pattern just because the sections around it now have an alpaca column."""
+    assert venue_map.venues_for("VRT") == []

@@ -27,6 +27,19 @@ risk_pct: 0.01
 max_notional_frac: 3.0
 
 # Which venue's listings to route through, per cfg/venue_map.yaml.
+#
+# `hyperliquid` — perps, crypto and HIP-3 equities. Networks: testnet | mainnet.
+# `alpaca`      — US equities and ETFs, long or short. Networks: paper | live.
+#
+# THE NETWORK IS PART OF THE VENUE, not a free-standing setting. Naming a venue without a
+# network resolves to that venue's rehearsal (testnet / paper), never to the other venue's —
+# and both real-money networks require the same typed confirmation, which is why the check
+# reads the venue table rather than comparing against "mainnet" alone.
+#
+# The two accounts are entirely separate pools and `risk_pct` applies to each on its own. That
+# is deliberate for now: it keeps the equity and crypto books legible as separate books. It
+# also means running both venues risks `risk_pct` TWICE in aggregate, which is the thing to
+# revisit before treating them as one account.
 venue: hyperliquid
 
 # Liquidity floors, in USD. Applied to EVERY market, not just HIP-3 ones — core-book markets

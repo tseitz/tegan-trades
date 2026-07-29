@@ -1,6 +1,24 @@
 # execution
 
-Turns an approved `Candidate` into a resting bracket order on Hyperliquid.
+Turns an approved `Candidate` into a resting bracket order — a limit entry with a take-profit
+and a stop-loss that arm only once it fills.
+
+**Two venues, one Protocol.** `hyperliquid` places perps (crypto, and equities via the `xyz`
+HIP-3 builder); `alpaca` places US equities and ETFs, long or short, at a regulated
+broker-dealer. They differ in almost every mechanic — an EIP-712 signature against an API
+key pair, a three-order grouping against a nested OTOCO, a reverse-engineered tick grid
+against SEC Rule 612 — and in nothing about intent. Both refuse to leave an entry resting
+without a stop attached to it.
+
+Which one runs is `venue:` in `cfg/execution.yaml`, and **the network belongs to the venue**:
+`testnet | mainnet` for Hyperliquid, `paper | live` for Alpaca. Naming a venue without a
+network gets that venue's rehearsal, never the other's. Both real-money networks need the same
+typed confirmation, which is why the check reads `venues.REAL_MONEY` rather than comparing
+against `"mainnet"` — a comparison that knows one spelling waves the other through.
+
+**The two accounts are separate pools and `risk_pct` applies to each independently.** That
+keeps the equity and crypto books legible as separate books, and it means running both risks
+`risk_pct` twice in aggregate.
 
 **This is the only package in the repo that holds a private key and sends a signed write.**
 Everything else reads. That asymmetry is why it is a package rather than a module inside
@@ -14,15 +32,23 @@ Pure first, one thin impure edge:
 | Module | Pure? | Job |
 |---|---|---|
 | `sizing.py` | yes | equity × risk → contracts, off the engine's own stop |
-| `rounding.py` | yes | the venue's tick/lot rules, which silently reject orders |
+| `rounding.py` | yes | Hyperliquid's tick/lot rules, which silently reject orders |
+| `shares.py` | yes | the equity grid — whole shares, and Rule 612's two price tiers |
 | `guards.py` | yes | every reason an order must be refused |
-| `plan.py` | yes | `Candidate` → `OrderPlan` (entry + TP + SL) |
-| `wire.py` | yes | the exact payload sent, and the reply parsed back |
+| `plan.py` | yes | `Candidate` → `OrderPlan` (entry + TP + SL), on the venue's grid |
+| `venues.py` | yes | which venues exist, and which networks spend real money |
+| `wire.py` | yes | the Hyperliquid payload sent, and the reply parsed back |
+| `alpaca_wire.py` | yes | the same, for Alpaca's OTOCO |
 | `config.py` | mostly | `cfg/execution.yaml` + credentials from the environment |
 | `broker.py` | no | signed writes and the market list, via the official SDK |
+| `alpaca_broker.py` | no | the same, over Alpaca's REST API |
 | `store.py` | no | append-only audit log under `data/execution/` |
 | `session.py` | no | the assembled seam `oracle.setups_cli` talks to |
 | `cli.py` | no | `execute` — pre-flight reporting; cannot place an order |
+
+The grid is picked per market, not per process: `Market.grid` selects Hyperliquid's
+significant-figure rules or the equity penny grid. They genuinely differ — the perp rule allows
+three decimal places on a $29 stock, which Rule 612 does not permit and Alpaca rejects.
 
 The market list comes off the broker rather than a separate fetch, so a coin it reports is by
 construction a coin the SDK can resolve to an asset index.

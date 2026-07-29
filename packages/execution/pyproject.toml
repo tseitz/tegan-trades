@@ -11,6 +11,10 @@ dependencies = [
     # action is rejected by the venue with no indication of *why*, which is indistinguishable
     # from a malformed order. Pulls eth-account, msgpack, websocket-client, requests.
     "hyperliquid-python-sdk>=0.24,<0.25",
+    # Alpaca has no signing step — identity is an API key pair in a header — so it needs an
+    # HTTP client and nothing else. Declared explicitly rather than leaned on transitively
+    # through the Hyperliquid SDK, which `alpaca_broker` does not otherwise depend on.
+    "requests>=2.31",
 ]
 
 [project.scripts]

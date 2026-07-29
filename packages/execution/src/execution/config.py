@@ -14,14 +14,18 @@ from pathlib import Path
 
 import yaml
 
-from execution import guards
-from execution.broker import MAINNET, NETWORKS, TESTNET, Credentials
+from execution import guards, venues
+from execution.alpaca_broker import AlpacaCredentials
+from execution.broker import MAINNET, TESTNET, Credentials
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_PATH = REPO_ROOT / "cfg" / "execution.yaml"
 
 ADDRESS_VAR = "HYPERLIQUID_ACCOUNT_ADDRESS"
 SECRET_VAR = "HYPERLIQUID_SECRET_KEY"
+
+ALPACA_KEY_VAR = "ALPACA_API_KEY_ID"
+ALPACA_SECRET_VAR = "ALPACA_API_SECRET_KEY"
 
 
 class MissingCredentials(Exception):
@@ -56,12 +60,26 @@ class Config:
     def liquidity_enforced(self) -> bool:
         if self.enforce_liquidity is not None:
             return self.enforce_liquidity
+        # Off for equities, and not as a convenience. The gate measures 24h volume, open
+        # interest and near-touch depth, because HIP-3 lets anyone deploy a perp market so
+        # "the venue lists it" stopped being evidence that it trades. An equity has no open
+        # interest at all and Alpaca's order-entry API publishes no book, so
+        # ``AlpacaBroker.liquidity`` honestly reports "not measured" — and an unmeasured
+        # market is a refusal. Enforcing here would refuse every equity, every time.
+        if self.venue == venues.ALPACA:
+            return False
         return self.network == MAINNET
 
     def validate(self) -> None:
-        if self.network not in NETWORKS:
+        if self.venue not in venues.NETWORKS:
             raise ValueError(
-                f"network must be one of {sorted(NETWORKS)}, got {self.network!r}"
+                f"venue must be one of {sorted(venues.NETWORKS)}, got {self.venue!r}"
+            )
+        allowed = venues.NETWORKS[self.venue]
+        if self.network not in allowed:
+            raise ValueError(
+                f"network for venue {self.venue!r} must be one of {sorted(allowed)}, "
+                f"got {self.network!r}"
             )
         if not 0 < self.risk_pct <= 1:
             raise ValueError(f"risk_pct must be in (0, 1], got {self.risk_pct}")
@@ -95,6 +113,14 @@ def load(path=DEFAULT_PATH) -> Config:
             f"A misspelled setting is silently ignored otherwise, which on this file means "
             f"trading at a risk level nobody chose."
         )
+    # A venue named without a network resolves to that venue's *rehearsal*, never to the
+    # inherited default of a different venue. Without this, `venue: alpaca` alone would keep
+    # `network: testnet` and fail validation with a message about networks rather than about
+    # the setting that was actually missing.
+    venue = known.get("venue", Config.venue)
+    if "network" not in known and venue in venues.NETWORKS:
+        known["network"] = venues.default_network(venue)
+
     config = Config(**known)
     config.validate()
     return config
@@ -121,10 +147,46 @@ def credentials(env=None) -> Credentials:
     return Credentials(account_address=address, secret_key=secret)
 
 
-def requires_typed_confirmation(network: str) -> bool:
-    """Mainnet needs more than a flag.
+def alpaca_credentials(env=None) -> AlpacaCredentials:
+    """The Alpaca API key pair, from the environment only — same rule as the signing key.
 
-    ``--network mainnet`` is one keystroke away from ``--network testnet`` in shell history.
-    A typed word is the cheapest barrier that cannot be reached by an arrow key.
+    Weaker than a wallet key in one specific way worth knowing: these cannot move money out
+    of the account, because withdrawals are ACH to a bank on file and are not reachable from
+    the trading API. They can still place and cancel orders, so they stay out of ``cfg/``.
     """
-    return network == MAINNET
+    env = os.environ if env is None else env
+    key_id = (env.get(ALPACA_KEY_VAR) or "").strip()
+    secret = (env.get(ALPACA_SECRET_VAR) or "").strip()
+    missing = [name for name, value in ((ALPACA_KEY_VAR, key_id), (ALPACA_SECRET_VAR, secret))
+               if not value]
+    if missing:
+        raise MissingCredentials(
+            f"{' and '.join(missing)} not set. Add them to .env (gitignored) and load with "
+            f"`set -a; source .env; set +a`. Generate a PAPER key first at "
+            f"https://app.alpaca.markets/paper/dashboard/overview — paper and live keys are "
+            f"different pairs and a live key will not authenticate against the paper host."
+        )
+    return AlpacaCredentials(key_id=key_id, secret_key=secret)
+
+
+def credentials_for(venue: str, env=None):
+    """The right credential type for a venue. Raises on an unknown venue rather than guessing."""
+    if venue == venues.ALPACA:
+        return alpaca_credentials(env)
+    if venue == venues.HYPERLIQUID:
+        return credentials(env)
+    raise ValueError(f"unknown venue {venue!r}; expected one of {sorted(venues.NETWORKS)}")
+
+
+def requires_typed_confirmation(network: str) -> bool:
+    """Real money needs more than a flag, on every venue.
+
+    ``--network mainnet`` is one keystroke away from ``--network testnet`` in shell history,
+    and ``live`` is one word from ``paper``. A typed word is the cheapest barrier that cannot
+    be reached by an arrow key.
+
+    Written against the venue table rather than against ``MAINNET`` alone: the same check has
+    to cover a second venue whose real-money network is spelled differently, and a comparison
+    that only knows one spelling waves the other one through.
+    """
+    return venues.is_real_money(network)

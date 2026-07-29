@@ -19,7 +19,15 @@ from dataclasses import dataclass
 
 from execution import guards
 from execution.rounding import round_price, round_size
+from execution.shares import round_share_price, round_shares
 from execution.sizing import risk_of, size_for_risk
+
+# Which set of tick/lot rules a market obeys. Two venues, two genuinely different grids, and
+# applying the wrong one is silent rather than loud: the perp rule allows three decimal places
+# on a $29 stock, which is finer than SEC Rule 612 permits and is rejected by Alpaca with a
+# generic error. See ``rounding`` and ``shares`` for the rules themselves.
+PERP_GRID = "perp"
+SHARE_GRID = "share"
 
 
 @dataclass(frozen=True)
@@ -28,6 +36,23 @@ class Market:
     coin: str            # venue-native name, including any HIP-3 namespace ("xyz:GOLD")
     sz_decimals: int
     max_leverage: int | None = None
+    # Defaults to the perp grid so every existing construction keeps its meaning; the equity
+    # broker is the only caller that sets it.
+    grid: str = PERP_GRID
+
+
+def grid_for(market: Market):
+    """The (price, size) rounding pair this market's venue actually enforces.
+
+    Returned as functions rather than branched on inside ``build`` so that the choice is made
+    once, at the top, and cannot drift between the price that is quoted and the size that is
+    sized off it.
+    """
+    if market.grid == SHARE_GRID:
+        # Both take ``sz_decimals`` for a uniform signature and ignore it — the equity grid is
+        # fixed by regulation and by the bracket order class, not reported per market.
+        return (lambda price, _d: round_share_price(price)), (lambda size, _d: round_shares(size))
+    return round_price, round_size
 
 
 @dataclass(frozen=True)
@@ -95,9 +120,11 @@ def build(
     if geometry_refusal is not None:
         return geometry_refusal
 
-    entry = round_price(candidate.entry, market.sz_decimals)
-    stop = round_price(candidate.stop, market.sz_decimals)
-    target = round_price(candidate.target, market.sz_decimals)
+    round_px, round_sz = grid_for(market)
+
+    entry = round_px(candidate.entry, market.sz_decimals)
+    stop = round_px(candidate.stop, market.sz_decimals)
+    target = round_px(candidate.target, market.sz_decimals)
 
     # Rounding three prices onto a coarse grid can collapse two of them together — a very
     # tight zone on a market with few allowed decimals. Re-checking is not redundant: the
@@ -107,7 +134,7 @@ def build(
     if rounded_refusal is not None:
         return rounded_refusal
 
-    size = round_size(
+    size = round_sz(
         size_for_risk(
             equity=equity, risk_pct=risk_pct, entry=entry, stop=stop,
             max_notional_frac=max_notional_frac,

@@ -33,7 +33,7 @@ mixes the queue again — a wait, not a task.
 
 | | Entry | Why now | Cost |
 |---|---|---|---|
-| 1 | **§21 coverage** — widen `cfg/venue_map.yaml` | The queue is barely actionable: of 15 live rows, one had a venue entry, and ≥8 of the 12 unmapped are listed somewhere. Confirm each instrument; don't match strings. | free, local |
+| 1 | **§32** — routes that resolve to the wrong instrument | Three of 307 priced assets are confirmably not what they claim, and one of them (`JPY`) is in tonight's queue. The check that found them already exists (§31). | free, network |
 | 2 | **§27 residual** — targets vs the range rule | 68 candidates on a ranging weekly, only 20 target within 2% of the bound the rule names. Read §18 first. | free, local |
 | 3 | **§6f residual** — routed but never fetched | 26 rows that route fine and were never fetched. Some are `needs_validation` guesses that may not resolve. | free, network |
 | 4 | **§4** — more sittings | Needs a *mixed* population, which arrives on the market's schedule. | your attention |
@@ -42,7 +42,8 @@ mixes the queue again — a wait, not a task.
 §27's option 2.
 
 **By theme:** corpus supply §3 · §6 · §6b · §6d · §6f · §6h · §9 · §14 — durability §4b · §24 —
-venue and execution §22 · §25 — scoring §1 · §2 · §8 · §12 · §15 · §19 · §29.
+venue and execution §22 · §25 · §30 — routing §29 · §31 · §32 — scoring §1 · §2 · §8 · §12 ·
+§15 · §19.
 
 ---
 
@@ -352,24 +353,22 @@ measurement. Full table in `scripts/probe_stop_padding.py`.
 
 ## 21. Funding is a real cost and nothing in the scorer sees it · `PARTLY DONE`
 
-**Done: computed, displayed, recorded.** `Context.funding` carries a `FundingOutlook`, the queue
-prints `adj` beside `R:R`, and every decision records both numbers. `_score` is untouched.
+**Done: computed, displayed, recorded — and now reaching the queue.** `Context.funding` carries
+a `FundingOutlook`, the queue prints `adj` beside `R:R`, and every decision records both
+numbers. `_score` is untouched.
 
-**Residual — coverage, and it now blocks execution rather than just measurement.** Of 15 live
-queue rows exactly one had an entry in `cfg/venue_map.yaml`; everything else prints
-`not executable`, and that is mostly false — ≥8 of the 12 unmapped are listed on some venue per
-the funding log.
-
-**Widening it is not a mechanical paste.** Name-matching a venue ticker is silently
-catastrophic: the right entry for the `SPX6900` memecoin is the symbol that would be *wrong* for
-the S&P index. Crypto majors are low risk; HIP-3 equities need checking against the builder's
-listing. **Do not fill the four genuine absences by guessing** — `HL`, `SGML`, `SBSW`, `INTL`
-are listed by no venue, and absence is a real answer.
+**Coverage is done.** `cfg/venue_map.yaml` went 30 assets to 155 / 363 (asset, venue) pairs,
+each confirmed against the venue's mark rather than by name (§31). No confirmed pair is left
+unmapped; live rows pricing carry went 1 of 15 → 4 of 11. The one gap remaining is a single
+fact, not a research task: `STX`, `CRDO`, `GLW` and `IREN` sit only on Hyperliquid's `para`
+builder, unmapped because `execution/broker.py` assumes USDC collateral and only core and
+`xyz` are verified.
 
 **Residual — the measurement.** Which of three ratios best predicts an approval: nominal,
 carry-adjusted, or distance-corrected. All three are recorded from v6 on. Waits on a mixed
 sitting (§4). Only then decide whether the `reward_risk` weight should consume the
-carry-adjusted number.
+carry-adjusted number. **The newly mapped markets carry days of funding history, not months** —
+the queue marks a thin median `n=`, and the correlation is not worth running until they thicken.
 
 ---
 
@@ -468,3 +467,108 @@ is resolved. **Not** a negated price series — order blocks, the dealing range 
 plausible and are wrong. The inversion belongs on the *thesis direction*.
 
 **Deprioritised by Tegan 2026-07-28:** "I don't trade much forex so ok to log that for now."
+
+**JPY is no longer merely unrouted — it routes to the wrong instrument.** Yahoo's bare `JPY`
+resolves to something marking 36.68 while the yen is 163.7 per USD (or 0.0061 the other way),
+and a `JPY LONG` weekly candidate is in the live queue on that price. Worse than invisible.
+See §30, which owns the class; this entry still owns the inversion rule.
+
+---
+
+## 30. A crypto short has no venue this repo can legally reach · `OPEN` — new 2026-07-28
+
+Alpaca + Kraken covers **32 of 38 approved decisions**; the residue is almost entirely one
+shape — a **short on a crypto asset**. Kraken spot is long-only and US margin is closed to
+retail; Alpaca shorts equities and ETFs but lists no crypto. Four of six approved shorts route
+to Alpaca; the two `SOL` shorts have nowhere to go.
+
+**Do not solve this with a perp DEX.** Every venue checked writes US persons out of its terms
+(Hyperliquid §1.5, Ondo Perps) — structural CFTC exposure, not a geoblock to route around.
+
+**Options worth pricing, roughly in order:** an inverse ETF where the asset class has one; a put
+on a listed proxy (`COIN`, `MSTR`, `IBIT`) via Alpaca options; or refusing crypto shorts and
+**recording the refusal in the queue**, so the gap stays visible rather than silently dropped.
+The third is the cheapest and should ship first regardless of what follows it.
+
+**Measure before building:** six approved shorts is a thin base — confirm the rate holds over a
+wider sample first. Source: `data/setups/decisions.jsonl`.
+
+---
+
+## 31. A venue mapping can be verified from price, and should be · `PARTLY DONE`
+
+`cfg/venue_map.yaml` is hand-curated because a name match is "silently catastrophic". Alpaca
+sharpens that — ~11,000 tickers, where nearly any short string resolves to something real and
+liquid (`CL` is Colgate-Palmolive there, `HL` is Hecla Mining).
+
+**Built as a probe, and it earned its keep immediately.** `scripts/probe_venue_coverage.py`
+compares every venue mark against our own close, which both widened the map to 155 assets (§21)
+and caught three faults in the *curated* half: `RUT` carried IWM with no `scale`, so an order
+quoted on the index would have gone out at a tenth of the price; `URANIUM` named two different
+uranium funds across its venues; `xyz:DXY` no longer exists. Regression tests hold all three.
+
+**Residual — it is a probe, not a gate.** Nothing runs it before an order. Per the gate/score
+rule it is a **gate** (a missing fact, not a judgement): wire it into `execution/guards.py`
+ahead of any live placement, and into CI so a curated edit cannot ship unchecked. The threshold
+needs the care this entry already describes — compare against the scaled price where `scale` is
+set, and skip nothing silently.
+
+---
+
+## 32. A bare ticker that resolves is not the right instrument · `OPEN`
+
+§31 checks the *venue* side of a mapping. This is the same technique pointed at the *price*
+side: `route()` validates that a `needs_validation` guess resolves to **a** tradeable symbol,
+never that it is **the** one. Three of 307 priced assets are confirmably wrong, and they only
+became visible because a second source was asked the same question.
+
+Evidence, measured 2026-07-29 by comparing every venue's mark against our own close
+(`scripts/probe_venue_coverage.py`): `JPY` prices at 36.68 against the yen's 163.7 · `WTI`
+prices at 3.18 — that is W&T Offshore, the E&P company, while `OIL`'s curated `CL=F` route
+correctly gives 81.75 · `PURR` prices at exactly 100x Hyperliquid's. All three are
+`needs_validation`. `JPY` is in the live queue (§29).
+
+**Promote the check, do not patch three tickers.** A route flagged `needs_validation` should
+have to survive the cross-source comparison before it prices anything. The venue mark only
+exists for assets a venue lists, so this hardens the tradeable half of the corpus, not the tail.
+
+**Related, same cause, smaller:** `URANIUM` and `URA` are two canonical labels for one fund,
+both routing to `URA`. A `cfg/assets.yaml` alias, not a routing change.
+
+---
+
+## 33. Nothing knows the equity market is shut · `OPEN` — new 2026-07-28
+
+`venue: alpaca` places into a market open 09:30–16:00 ET while the nightly runs at 06:15 and
+`core.setups` assumes a 24/7 tape. Two consequences, and only the second is a real risk.
+
+**Queuing is fine.** A `gtc` bracket sent pre-open is accepted and goes live at the open —
+`accepted` is already in `alpaca_wire.ACCEPTED_STATUSES`. **Unverified against a live account**,
+and it is the first thing to confirm on paper: if Alpaca instead *rejects* out-of-hours
+brackets, every nightly equity order fails and the whole venue is unusable unscheduled.
+
+**The gap is the risk.** An entry priced off a 16:00 close can open through its own stop, which
+the perp path never has to consider. `guards.check_geometry` re-checks after rounding but
+nothing checks the *opening* price against the plan. Cheapest honest fix is a refusal when the
+open gaps past the stop, not a scheduler.
+
+Also unhandled: `oracle.liveness` derives a market's health from the funding log, which
+equities have no equivalent of.
+
+---
+
+## 34. The liquidity gate does not cover equities, and is off rather than absent · `OPEN` — new 2026-07-28
+
+`Config.liquidity_enforced` returns False for `venue: alpaca` because `AlpacaBroker.liquidity`
+honestly reports "not measured" and an unmeasured market is a refusal — so enforcing would
+refuse every equity. Correct, and documented at both sites, but it means **the one venue that
+can trade a $14 microcap has no depth check at all** while the perp venue has three.
+
+Two of the three measures genuinely do not transfer: an equity has no open interest, and the
+order-entry API publishes no book. The third does — Alpaca's market-data snapshot endpoint
+carries a daily bar and a quote, so 24h dollar volume and near-touch depth are both reachable
+with the key the venue already needs.
+
+**Build it as its own check rather than widening `check_liquidity`**, whose three refusal codes
+are named for perp facts. Until then the exposure is bounded by `MAX_DEPTH_FRACTION` not
+applying: on `USAR` at $14 a 1%-risk order is small, but nothing enforces that.

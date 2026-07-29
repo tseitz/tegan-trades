@@ -708,6 +708,7 @@ dependencies = [
     { name = "core" },
     { name = "hyperliquid-python-sdk" },
     { name = "pyyaml" },
+    { name = "requests" },
 ]
 
 [package.dev-dependencies]
@@ -720,6 +721,7 @@ requires-dist = [
     { name = "core", editable = "packages/core" },
     { name = "hyperliquid-python-sdk", specifier = ">=0.24,<0.25" },
     { name = "pyyaml", specifier = ">=6" },
+    { name = "requests", specifier = ">=2.31" },
 ]
 
 [package.metadata.requires-dev]
