@@ -549,12 +549,11 @@ venue knows those orders only by an oid this repo would have to index itself. Se
 `candidate_key` as the `cloid` on the entry leg makes the same question answerable there —
 that is how Alpaca can answer it at all.
 
-**Two settled facts worth not re-deriving** (both in `alpaca_wire`, verified on paper): a GTC
-bracket sent with the market shut is `accepted`, so the 06:15 nightly needs no scheduler; and
-a limit entry fills at a gapped-open price rather than at its limit, so a gap costs a spread
-rather than a stop. Neither needs work.
+**One settled fact worth not re-deriving** (`alpaca_wire`, verified on paper): a GTC bracket
+sent with the market shut is `accepted`, so the 06:15 nightly needs no scheduler.
 
-**Holding-side gaps are §35 and no guard reaches those.**
+**This entry used to claim a gap "costs a spread rather than a stop". That was wrong** — see
+§39, which VRT proved live. Holding-side gaps are §35 and no guard reaches those.
 
 ---
 
@@ -593,3 +592,49 @@ now supplies the missing measurement — median volume and trade count per sessi
 the point of sizing, so the queue still cannot tell a thin market from a liquid one until a
 candidate is approved. Surfacing `Depth` in the queue render is the remaining half, and it is
 cheap: the fetch already exists and is cached per session.
+
+---
+
+## 39. A gapped open does not cost a spread — it deletes the trade · `OPEN` — new 2026-07-29
+
+`VRT` closed 269.56 and opened 244.33, a -9.4% gap. The limit entry at 266.52 filled instantly
+at 243.33 — correct behaviour for a marketable limit, and what §33 used to file under "costs a
+spread". It does not. The gap moves the **entry** toward a stop that does not move with it: a
+stop planned 9.5% away sat 0.9% away, and the position round-tripped in **49 seconds**
+(2026-07-29, `client_order_id 5936e2345d35`).
+
+The trade that opens after a gap is not the trade that was approved. Its R:R is not the
+approved R:R, and its risk is not `risk_pct` — here the realised loss was a fraction of the
+budget only because the stop was adjacent, not because anything protected it.
+
+**Compare the opening print to the plan before the entry can fill, and refuse when the gap has
+eaten a set fraction of the planned stop distance.** A resting GTC bracket cannot do this — it
+is live at the open. So this is a pre-open reconcile step, not a guard inside `plan.build`:
+read the prior close at placement, and at the open re-check before allowing the fill. Needs a
+scheduler, which is why §33 was right that *placement* does not.
+
+The threshold is the open question. `VRT` consumed 91% of its stop distance; a rule near 50%
+would have refused it and is inert on an ordinary open. Measure before picking.
+
+---
+
+## 40. Nothing sums — sizing is per-trade and the account is not · `OPEN` — new 2026-07-29
+
+`sizing.size_for_risk` gives `notional/equity = risk_pct / stop%`, so position size is inversely
+proportional to stop width. Correct, and intended. What is missing is that **no total is
+computed anywhere**: eight 1%-risk orders wanted 123.6% of equity and 8% risk on 2026-07-29,
+and the venue enforced the budget by silently rejecting three at 04:00 ET.
+
+Three separate caps, three separate questions — do not conflate them:
+
+- **Portfolio budget.** Committed notional (positions **and** resting orders, both readable
+  from `AlpacaBroker`) against buying power. This is the one that stops silent rejections.
+- **Per-position concentration.** `max_notional_frac: 3.0` is a *leverage* ceiling and only
+  engages below a 0.33% stop — it is not this. A 6% cap yields 16 concurrent at 1x, 33 at 2x.
+- **Order expiry.** GTC brackets expire in 90 days, so unfilled approvals accumulate against
+  the budget indefinitely. A zone price has not reached in a week is a staler thesis too.
+
+**Slippage is the real risk, not the stop distance** — so liquidity sets the size and
+`risk_pct` is the ceiling it may not reach (`execution/participation.py` is the first instance).
+Do not tune against the current approval rate; it is inflated by deliberate over-approval
+while testing.

@@ -252,6 +252,10 @@ class BuildStats:
     assets_no_context: int
     rejections: Counter
     candidate_count: int
+    # Zones dropped because a better one on the same ticker was already in the list. Counted
+    # rather than silently filtered: a queue that quietly halves itself reads as "this is
+    # everything", which is the failure `unpriceable` above exists to prevent.
+    duplicate_zones: int = 0
 
     @property
     def assets_unpriced(self) -> int:
@@ -381,11 +385,15 @@ def build_candidates(
                 counted_once.add((outcome.thesis_id, outcome.reason))
                 rejections[outcome.reason] += 1
 
-    candidates = collapse(outcomes)
+    # One row per ticker, before sampling rather than after. Sampling after would let the
+    # draw pick the daily zone and discard the weekly the precedence rule says outranks it.
+    kept, duplicate_zones = queue_mod.one_per_asset(collapse(outcomes))
+    candidates = tuple(kept)          # collapse's return type; callers index and unpack it
     stats = BuildStats(
         assets_total=len(assets), assets_priced=len(contexts),
         unpriceable=unpriceable, assets_uncached=uncached, assets_no_context=no_context,
         rejections=rejections, candidate_count=len(candidates),
+        duplicate_zones=duplicate_zones,
     )
     return candidates, stats
 
@@ -937,6 +945,12 @@ def main(argv: list[str] | None = None) -> int:
           f"{stats.assets_no_context} priced but no bars at/before {as_of.isoformat()}")
     print("  " + format_unpriced(stats))
     print(f"{stats.candidate_count} candidates")
+    # Named, not just netted out of the total. Dropping a zone is a real decision about what
+    # you are allowed to consider, and a queue that shrinks without saying so reads as the
+    # whole population — the same failure the `unpriceable` breakdown exists to prevent.
+    if stats.duplicate_zones:
+        print(f"  {stats.duplicate_zones} second zone(s) held back — one row per ticker, "
+              f"weekly outranks daily")
     if stats.rejections:
         print("  rejected: " + ", ".join(f"{k}={v}" for k, v in stats.rejections.most_common()))
 

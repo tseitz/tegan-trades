@@ -153,6 +153,36 @@ def filter_candidates(
     return out
 
 
+def one_per_asset(candidates) -> tuple[list[Candidate], int]:
+    """Keep the best zone per ticker. Returns the kept rows and how many were dropped.
+
+    **"Best" is not re-decided here.** ``collapse`` already orders weekly-then-score, because
+    "the macro is much stronger" is a rule rather than a weight — the same rule that lets a
+    weekly trend veto a direction outright in ``cross_reference``. So the best row per asset is
+    simply the first one, and this filters without re-sorting. Picking by score here would
+    quietly reinstate score-alone ordering and hand the slot to the daily zone, which usually
+    scores higher only because ``proximity`` and ``depth`` reward being close to price.
+
+    **Both zones used to be offered**, labelled "1 of 2" so the second was judged knowing the
+    first existed — §27's sitting had mistaken adjacent zones for duplicates and the label was
+    the fix. That reasoning was about *confusion*. This one is about *capital*: two approvals
+    on one ticker are two commitments, and commitments turned out to be the binding constraint
+    long before risk was — one 1%-risk position plus three resting orders consumed 75% of a
+    $100k account on 2026-07-29.
+
+    Keyed on the asset alone, not on (asset, direction). A long and a short on one ticker is
+    the worst version of the thing being prevented, not an exemption from it.
+    """
+    seen: set[str] = set()
+    kept = []
+    for c in candidates:
+        if c.asset in seen:
+            continue
+        seen.add(c.asset)
+        kept.append(c)
+    return kept, len(candidates) - len(kept)
+
+
 def build_queue(
     candidates,
     *,

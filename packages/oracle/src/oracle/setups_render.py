@@ -406,6 +406,11 @@ def thesis_pairing(candidates) -> list[tuple[int, int]]:
     decision it actually is. ``collapse`` guarantees the pair is adjacent when both are drawn.
 
     Pure, and keyed the same way ``collapse`` groups: one thesis is one (asset, direction).
+
+    **Currently always returns (1, 1)**, because ``queue.one_per_asset`` now keeps a single row
+    per ticker, so no sitting can contain a pair. Kept rather than deleted so the dedupe stays
+    one function to reverse: drop that call and the "1 of 2" label works again. If one-per-ticker
+    outlives this note, delete both.
     """
     counts: dict[tuple[str, str], int] = {}
     for c in candidates:

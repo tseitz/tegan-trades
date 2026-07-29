@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import random
+from dataclasses import replace
 from datetime import date
 
 import pytest
 
-from core.setups import DAILY, STRUCTURAL, TIER_MAJOR, Candidate, View
+from core.setups import DAILY, STRUCTURAL, TIER_MAJOR, WEEKLY, Candidate, View
 from core.structure import BULLISH, SWING_HIGH, SWING_LOW, Break, OrderBlock, Swing
 
 from oracle import queue
@@ -254,3 +255,58 @@ def test_rank_is_one_based_and_matches_the_row_order():
     q = queue.build_queue(pop, limit=3, head=1, rng=random.Random(0))
     assert [q.position(i).rank for i in range(1, 4)] == [1, 2, 3]
     assert [q.position(i).band for i in range(1, 4)] == [row.band for row in q.rows]
+
+
+# ── one row per ticker ──────────────────────────────────────────────────────────────────────
+
+def _cand(asset, timeframe, score, direction="long"):
+    return replace(_candidate(score, asset=asset),
+                   zone_timeframe=timeframe, direction=direction)
+
+
+def test_two_zones_on_one_ticker_become_one_row():
+    """Both used to be offered, deliberately — labelled "1 of 2" so the second was judged
+    knowing the first existed. That reasoning was about confusion. The reason it changed is
+    capital: approving both puts two commitments on one ticker, and the account discovered
+    the hard way that commitments are the binding constraint, not risk."""
+    kept, dropped = queue.one_per_asset([
+        _cand("CRM", WEEKLY, 0.44), _cand("CRM", DAILY, 0.28), _cand("BE", DAILY, 0.42),
+    ])
+    assert [c.asset for c in kept] == ["CRM", "BE"]
+    assert dropped == 1
+
+
+def test_the_weekly_wins_even_when_it_scores_lower():
+    """`collapse` orders weekly-then-score because "the macro is much stronger" — the same
+    rule that lets a weekly trend veto a direction outright. Deduping must not quietly
+    reintroduce score-alone ordering and pick the daily."""
+    kept, _ = queue.one_per_asset([_cand("CRM", WEEKLY, 0.44), _cand("CRM", DAILY, 0.90)])
+    assert kept[0].zone_timeframe == WEEKLY
+    assert kept[0].score == 0.44
+
+
+def test_order_is_otherwise_untouched():
+    """It filters, it does not re-sort. `build_queue` re-derives scores rather than reading
+    list position, and that contract only holds if collapse order survives."""
+    rows = [_cand("A", DAILY, 0.9), _cand("B", DAILY, 0.8), _cand("A", DAILY, 0.7),
+            _cand("C", DAILY, 0.6)]
+    kept, dropped = queue.one_per_asset(rows)
+    assert [c.asset for c in kept] == ["A", "B", "C"]
+    assert dropped == 1
+
+
+def test_opposite_directions_on_one_ticker_still_collapse_to_one():
+    """Two commitments on one ticker is the thing being prevented, and a long plus a short
+    is the worst version of it — they would fight each other for the same capital."""
+    kept, dropped = queue.one_per_asset([
+        _cand("CRM", DAILY, 0.5, "long"), _cand("CRM", DAILY, 0.4, "short"),
+    ])
+    assert len(kept) == 1
+    assert dropped == 1
+
+
+def test_nothing_to_drop_leaves_the_list_alone():
+    rows = [_cand("A", DAILY, 0.9), _cand("B", DAILY, 0.8)]
+    kept, dropped = queue.one_per_asset(rows)
+    assert kept == rows
+    assert dropped == 0
