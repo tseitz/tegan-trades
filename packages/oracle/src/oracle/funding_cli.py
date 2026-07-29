@@ -62,6 +62,18 @@ def _snapshot(verbose: bool = True) -> list[FundingRate]:
 
 
 def _backfill(days: int) -> list[FundingRate]:
+    """Pull realised settlements for every mapped asset.
+
+    **``days`` is a request, not a window — neither venue honours it, and they miss it in
+    opposite directions.** Hyperliquid returns at most 500 rows per symbol, which at hourly
+    settlement is ~20.8 days, so ``--backfill 30`` silently yields 21 (fixing it needs
+    pagination on ``startTime``). Aster ignores the window entirely: ``limit=1000`` reaches as
+    far back as rows exist, which is why the first backfill wrote partitions from 2025-08.
+
+    Harmless to re-run — the log is append-only and the reader dedupes, and Aster's extra depth
+    is a bonus. It matters the moment anyone reads "30 days" as a guarantee: a distribution
+    computed over 21 days of one venue and 11 months of another is not a comparison.
+    """
     start_ms = int((datetime.now(UTC) - timedelta(days=days)).timestamp() * 1000)
     rates: list[FundingRate] = []
 
@@ -139,7 +151,8 @@ def main() -> int:
         "--backfill",
         type=int,
         metavar="DAYS",
-        help="pull realised settlements for approved assets (Hyperliquid + Aster only)",
+        help="pull realised settlements for approved assets (Hyperliquid + Aster only). "
+             "A request, not a guarantee — both venues cap it; see _backfill",
     )
     parser.add_argument("--report", action="store_true", help="summarise the log and exit")
     parser.add_argument(

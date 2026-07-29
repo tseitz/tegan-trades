@@ -19,25 +19,15 @@ be a problem; revisit if it bites) · `PARTLY DONE` (a residual is named in the 
 
 ## Where to start
 
-**The thing that blocked the most work is fixed, and the bottleneck moved.** §4's sampling
-defect — each sitting judging a narrower slice than the last, with the approval threshold
-moving with it — was fixed on 2026-07-28: the queue draws a stratified sample, every decision
-records what else was on screen, and §11 and §19(d) unclipped the two terms that could not
-vary. Every entry that says "measure this against the sidecar first" now waits on one
-`uv run setups` sitting.
+**The bottleneck has moved twice, and it is now variety rather than volume.** §4's sampling
+defect is fixed and its machinery complete; §27's option 1 then fixed the candidate drought it
+exposed (74 → 97, since 88 once stop padding landed). Four sittings have been held and 24 v6
+rows exist.
 
-**And that sitting has nothing to judge.** 67 of 69 candidates are already decided, so the
-command prints `Nothing to review`. The bottleneck is no longer measurement design, or code, or
-attention — it is **candidate supply**.
-
-**§6f was tried as the fix for that and did not deliver it.** `ETH/BTC` now prices, and its 29
-rows reach the gates instead of being invisible, but every one is refused: the weekly trend is
-down and the roster is majority-long. Correct behaviour, zero new candidates.
-
-**§27 was the supply lever, and it shipped on 2026-07-28** — this paragraph used to say no lever
-was left. The `timeframe_conflict` gate was counting a one-sided daily reading as a
-disagreement; releasing the 256 ranging-weekly refusals took candidates **74 → 97** and the
-queue from `Nothing to review` to **22 rows**. §4 is unblocked.
+**What those rows cannot do is vary.** Every one was drawn from the population §27 released, so
+`daily_trend` is constant across all 15 rows carrying it and `trend_alignment` is pinned at 0.0.
+Terms that need contrast — `trend_alignment`, §27's option 2 — are unmeasurable until the
+nightly mixes the population again. That is a wait, not a task.
 
 | | Entry | Why now | Cost |
 |---|---|---|---|
@@ -48,7 +38,7 @@ queue from `Nothing to review` to **22 rows**. §4 is unblocked.
 
 **Done 2026-07-28:** §4's sampler, decision context and reason vocabulary 2; §11's cap and
 §19(d)'s distance inflation, both as `SCORE_VERSION` 6; §6f's grouped unpriced tally and the
-`ETH/BTC` derived series; §27's audit and its option 1; §28's alias merges and §29's inverted-FX
+`ETH/BTC` derived series; §27's audit and its option 1; the canon alias merges and §29's inverted-FX
 guard; **ATR stop padding as `SCORE_VERSION` 7** — which also supplied the measurement
 §19's last open claim was waiting on.
 
@@ -60,8 +50,12 @@ variation, because every row they drew was the population §27's option 1 releas
 **Not blocked, but needs its own measurement first:** §15 (SMA confluence — does 50W actually
 mark turns).
 
-**The rest, by theme:** corpus supply §3 · §6 · §6b–§6h · §9 · §14 — durability §4b · §24 —
-venue and execution §22 · §23 · §25 — scoring inputs §1 · §2 · §8 · §10 · §12 — environment §13.
+**The rest, by theme:** corpus supply §3 · §6 · §6b · §6d · §6f · §6h · §9 · §14 — durability
+§4b · §24 — venue and execution §22 · §25 — scoring inputs §1 · §2 · §8 · §12 · §19 · §29.
+
+Environment failures that are fixed but *not update-safe* live in `docs/TROUBLESHOOTING.md`
+rather than here — the sandbox/proxy trap above all, which froze the corpus for two days and
+surfaces as an error that never mentions the proxy.
 
 ---
 
@@ -747,16 +741,6 @@ unverified in the same way.
 
 ---
 
-## 6e. `backfill.max_videos` is a per-tab cap, not per-channel · `WATCHING` — new 2026-07-26
-
-`resolve_recent` iterates `_TABS` (videos, streams) and applies the cap to **each**, as its
-docstring states. So `max_videos: 20` yielded **40 ingested** for Traders Reality and 38 for
-Real Vision. Not a bug — documented and deduped — but the knob reads like a per-channel budget
-and isn't one, which matters when it is being used to bound a trial cohort's cost. Either
-rename it or apply the cap after the merge.
-
----
-
 ## 6b. `brain/report.py` keeps its own staleness cliff · `OPEN` — new 2026-07-26
 
 `brain/report.py:22,32` has `_DEFAULT_STALE_DAYS = 120` and its own `STALE_AFTER_DAYS` map.
@@ -767,16 +751,6 @@ and dead in the other, with nothing reporting the disagreement.
 Not urgent — the two heads answer different questions and a cliff may genuinely suit a
 narrative report. But the constant should live in `core` once, with each head choosing how to
 apply it, rather than being independently guessed in two places.
-
----
-
-## 6c. 245 theses have no tradeable direction · `WATCHING` — new 2026-07-26
-
-`direction` is `long` 2,524 · `short` 1,082 · **`neutral` 245**. Neutral theses can never
-become setups, and now surface as `unknown_direction=229` in the rejection tally, which reads
-as a failure rather than as a category. This is correct behaviour — they are Brain-head
-material by design — but the tally should probably separate "couldn't" from "wasn't trying".
-Revisit if the tally starts getting read for signal.
 
 ---
 
@@ -850,16 +824,6 @@ the waste regardless — it pays off either way.
 
 ---
 
-## 10. `domain` is per-thesis and inconsistent per asset · `WATCHING`
-
-`SPX` appears in the corpus as `crypto`, `macro`, *and* `stock` across different theses, so
-`tier_for` can label the same asset differently depending on which thesis surfaces.
-
-Contained for now: `tier_for` gates on domain specifically to stop the SPX/memecoin rank
-collision leaking in. A per-asset domain consensus in `core/canon.py` would be steadier.
-
----
-
 ## 11. Agreement is date-blind · `PARTLY DONE 2026-07-28` — cap fixed, recency half still `OPEN`
 
 `agreement_signal` counts distinct people and saturates at 3, so seven voices score 1.0 whether
@@ -918,84 +882,6 @@ refactor through `Bar`, `PriceSeries`, `cache` (granularity in the key), all thr
 
 Note the granularity needed is **900s (15m)**, not just 1H/4H. Coinbase supports it; its cap is
 `MAX_CANDLES = 300` (the Phase 4 plan's "720" is wrong).
-
----
-
-## 13. The Claude Code sandbox strips the Webshare proxy · `RESOLVED` (workaround) — keep this written down
-
-**Kept because the fix is not update-safe and the failure is silent.** The sandbox bypasses
-`session.proxies`, so every transcript fetch egresses from the *local* IP — the one YouTube
-IP-blocks — and the error that surfaces is never the real one. It froze the corpus for two days
-and cost hours to find. If transcripts start failing again, run the probe below **first**.
-
-### The probe — proxied must differ from direct
-
-```bash
-uv run python -c "
-from ingestion.env import load_env; load_env()
-from ingestion.youtube import _proxy_config
-import requests
-px=_proxy_config().to_requests_dict()
-def ip(p):
-    s=requests.Session()
-    if p: s.proxies.update(px)
-    return s.get('https://api.ipify.org', timeout=(10,20)).text.strip()
-print('direct', ip(False)); print('proxied', ip(True))"
-```
-
-Equal → the proxy is not applied. Two different residential IPs → applied *and* rotating.
-
-### The fix — two parts, either alone is inert
-
-1. `sandbox.excludedCommands: ["uv *"]` in `.claude/settings.json`. Entries are **command
-   globs, not binary names**, and commands are invoked as `uv run …`, so a bare `"uv"` never
-   matches.
-2. A patch to the **global direnv `PreToolUse` hook**, which otherwise prefixes every command
-   with `eval "$(direnv export bash …)" &&` — making `eval` the first token the sandbox matches
-   on, so exclusion is inert for *every* command. It now emits `{}` when the command matches
-   `^\s*uv\s`. Harmless here: this repo has no `.envrc`.
-
-Verified 2026-07-25 in a fresh session with the sandbox ON: `direct 97.88.98.212` vs
-`proxied 190.233.209.115`. **Consequence accepted deliberately: every `uv run …` in this repo
-now runs unsandboxed.**
-
-**When diagnosing this class, always run a control against an exclusion entry you did not add**
-— `mkdir` against the global `"mkdir"` entry was still denied, which is what separated "my
-config is wrong" from "the mechanism is broken".
-
-### Second sandbox gap: the vault is a symlink · `FIXED, VERIFIED 2026-07-25`
-
-Writing to `~/vault/Trading/…` failed with `Operation not permitted` despite `~/vault/Trading`
-being in `allowWrite`. `~/vault` is a **symlink** to `/Users/tseitz/Obsidian/Main Vault`, and
-macOS seatbelt matches the **resolved** path. `.claude/settings.local.json` now lists both.
-**Any future vault path must be added in resolved form.**
-
-### Disproven — do not re-test
-
-- **`allowedDomains`.** Structurally cannot work: the sandbox's local proxy *terminates and
-  re-originates* the CONNECT, so allowlisting `p.webshare.io` grants permission to fetch it,
-  never to tunnel through it.
-- **`&variant=gemini` on new uploads** — present on one failing video, absent on others failing
-  identically.
-- **Video-specific / newest-only** — videos already in the corpus failed identically. Always
-  test a known-good control before believing "the new items are special".
-- **Library out of date** — `youtube-transcript-api` 1.2.4 is current.
-- **Webshare plan / bandwidth** — rotation demonstrably works outside the sandbox.
-- **Proxy can't handle chunked bodies** — 837KB chunked+gzip succeeded 4/4 with keep-alive.
-
-**Do NOT "fix" this by setting `prevent_keeping_connections_alive = False`.** It unmasks the
-real error but the library sets it deliberately — without it the IP is not rotated, so it
-trades a masked failure for broken rotation once egress is correct.
-
-**Worth building:** a preflight that probes the exit IP across 2–3 fresh sessions and aborts
-loudly when they are identical. The `TranscriptBlocked` abort path already exists and is the
-right destination — it never fires because the block never arrives as `RequestBlocked`. That
-turns this whole investigation into a 5-second error.
-
-### Genuinely dead, independent of all the above
-
-Captions disabled: `MvD7fQQ0szE` `Nlw-PZhoViQ` `S_obDkmaf8I` `duXvzmQVZ1Q` `ufwa9Ld47Jo`.
-Deleted: `_IRMBuen60Y`, `VXL1FPbgW7E`. Correctly skipped, permanent.
 
 ---
 
@@ -1389,23 +1275,6 @@ funded position. Do not ship a conversion inferred only from the ratio of the tw
 
 ---
 
-## 23. `--backfill DAYS` is a request, not a window — both venues cap it · `WATCHING` — new 2026-07-27
-
-Neither venue honours the requested span, and they miss it in opposite directions:
-
-- **Hyperliquid** returns at most **500 rows per symbol**. At hourly settlement that is
-  ~20.8 days, so `--backfill 30` silently yields 21. Needs pagination on `startTime`.
-- **Aster** ignores the window entirely — `limit=1000` reaches back as far as the rows exist,
-  which is why the first backfill wrote partitions from **2025-08** onward. Harmless (more
-  history is better) but the flag does not mean what it says.
-
-Not urgent: the log is append-only and the reader dedupes, so re-running costs nothing and
-the extra Aster depth is a bonus. It matters the moment anyone reads "30 days" as a
-guarantee — a distribution computed over 21 days of one venue and 11 months of another is
-not a comparison.
-
----
-
 ## 24. `data/funding/` is not regenerable ore, and the tree says it is · `OPEN` — new 2026-07-27
 
 Same class as §4b. `docs/ARCHITECTURE.md` describes everything under `data/` as
@@ -1789,112 +1658,11 @@ carry and §19(d) for the two R:R numbers.
 
 ---
 
-## 28. Eight instruments were routed under seventeen asset keys · `FIXED 2026-07-28`
-
-**Shipped the same day it was found.** Five groups were verified as one instrument and folded
-into `cfg/assets.yaml` aliases; two were verified as genuinely different and left split; one was
-a live wrong-direction bug and its route was removed.
-
-| canonical | absorbed | evidence |
-|---|---|---|
-| `GOLD` | `XAU`, `GC` | all 17 rows explicitly gold |
-| `SILVER` | `XAG` | all 6 rows explicitly silver; `XAG` is the ISO 4217 code for a troy ounce, not a derivative |
-| `OIL` | `CL` | all 9 rows crude — **none are Colgate**, which the routing header warns `CL` resolves to |
-| `RUT` | `RTY` | Russell 2000 |
-| `NKY` | `N225` | Nikkei |
-
-Folded in **canon, not routing**, and that placement is the whole point: `oracle_map.yaml` would
-have deduped *prices* while leaving the corpus split across two keys, so `collapse` would still
-group them apart and `agreement` would still count them separately. The now-redundant routing
-entries were removed, with a header note saying not to re-add them — if an alias ever misses, the
-label falls through to `unpriceable` and shows up in the unpriced tally rather than resolving to
-Colgate. Measured after: `SILVER` 46 → 52 rows and 10 → 11 people; `GOLD` 149 rows, 13 people;
-candidates 97 → 93 as the duplicate rows collapsed.
-
-**Left split deliberately: `EUR`/`EURUSD` and `GBP`/`GBPUSD`.** A currency is not a currency
-pair, and the corpus proves it — one `EUR` row is a **EUR/GBP cross** and a `GBP` row is
-**British Pound futures (6B)**. Folding those into the dollar pair would file a cross as a USD
-trade. They are safe today only because EUR and GBP are the pair's *base* currency, so direction
-agrees; that is a coincidence of convention, not a reason to merge.
-
-**Two regression tests now hold the line**, both reading the committed `cfg/` rather than a
-fixture, because this is a curation defect and no fixture can catch it:
-`test_no_two_asset_keys_route_to_one_instrument_unless_declared` (with an explicit
-`INTENTIONAL_SHARED_SYMBOLS` allowlist, so a new duplicate must be argued for in writing) and
-`test_a_bare_currency_never_routes_to_a_pair_that_inverts_it`.
-
-### The original entry, kept for the evidence
-
-## 28a. Eight instruments routed under seventeen asset keys · `was OPEN` — found 2026-07-28
-
-Found while previewing §4's first sitting: rows 2 and 6 of the queue were `SILVER LONG` and
-`XAG LONG`, identical in every number (R:R 19.19, scored 17.57). They are the same trade.
-`cfg/oracle_map.yaml` routes both to Yahoo `SI=F`, and nothing upstream knows they are one asset.
-
-| source | symbol | asset keys |
-|---|---|---|
-| yahoo | `GC=F` | `GOLD`, `XAU`, `GC` |
-| yahoo | `SI=F` | `SILVER`, `XAG` |
-| yahoo | `CL=F` | `OIL`, `CL` |
-| yahoo | `EURUSD=X` | `EURUSD`, `EUR` |
-| yahoo | `GBPUSD=X` | `GBPUSD`, `GBP` |
-| yahoo | `USDCAD=X` | `USDCAD`, `CAD` |
-| yahoo | `^N225` | `N225`, `NKY` |
-| yahoo | `^RUT` | `RUT`, `RTY` |
-
-**Confirmed same underlying, not merely similar.** `XAG` is the ISO 4217 code for one troy ounce
-of silver (as `XAU` is for gold) — a spelling of the metal, not a derivative of it. Spot and
-front-month futures differ by basis, but that distinction does not exist here: both keys already
-route to `SI=F`, so they resolve to the same file and the same bars.
-
-**The measured cost, split into the part that is real and the part that was overstated.** An
-earlier version of this entry claimed the `agreement` term was badly diluted — "a roster split
-between gold and XAU produces two candidates of one voice each rather than one of two". Measured
-2026-07-28 over 4,609 corpus rows, **that is mostly false**, because the same people tend to use
-both spellings:
-
-| group | rows per key | distinct people, largest single key | union after merge | voices gained |
-|---|---|---|---|---|
-| gold | `GOLD` 132 · `XAU` 14 · `GC` 3 | 13 | 13 | **0** |
-| oil | `OIL` 46 · `CL` 9 | 9 | 9 | **0** |
-| rut | `RUT` 3 · `RTY` 1 | 2 | 2 | **0** |
-| silver | `SILVER` 46 · `XAG` 6 | 10 | 11 | +1 |
-| n225 | `NKY` 4 · `N225` 1 | 2 | 3 | +1 |
-| eur | `EURUSD` 14 · `EUR` 12 | 4 | 5 | +1 |
-| cad | `USDCAD` 1 · `CAD` 1 | 1 | 2 | +1 |
-| gbp | `GBPUSD` 4 · `GBP` 3 | 3 | 5 | +2 |
-
-So merging moves `agreement` by 0–2 voices and by **exactly zero on the two largest groups**.
-Do not justify this work on the scoring term.
-
-**What is real, and was observed rather than predicted:** the queue offered `SILVER LONG` and
-`XAG LONG` as rows 2 and 6 of the same sitting, identical in every number (R:R 19.19, scored
-17.57), and again as rows 14 and 19 on the daily. That burns two of a sitting's limited slots on
-one trade, double-counts in §4's mining pass as two independent decisions, and lets the same zone
-be approved once and rejected once with nothing flagging the contradiction. `collapse` groups by
-asset key, so it cannot merge them.
-
-**Distinct from the collisions already known** (`SPX` → Coinbase memecoin, `GOLD` → Gold.com Inc
-on Yahoo — see `cfg/oracle_map.yaml`'s header). Those are *one key pointing at the wrong
-instrument*; this is *many keys pointing at one right instrument*. The existing header warns
-about the first and is silent on the second.
-
-**Where the fix belongs: `core/canon.py`, not the routing map.** `cfg/assets.yaml:36` already
-carries `SILVER: [Silver]` as the canon entry — the aliases simply do not list the tickers, so
-`resolve_asset` never folds `XAG` into `SILVER`. Fixing it in `oracle_map.yaml` would dedupe
-prices while leaving the corpus still split across two keys, which is the half-fix that leaves
-`agreement` broken. Check whether the same gap exists for crypto aliases before assuming it is
-FX/metals only.
-
-**Do not simply delete the duplicate keys.** Both spellings appear in the corpus because both
-are said out loud; the registry needs to *alias* them, so a thesis mentioning either still
-resolves.
-
----
-
 ## 29. A bare currency cannot be priced off a pair that inverts it · `OPEN` — new 2026-07-28
 
-Found while fixing §28. `cfg/oracle_map.yaml` routed `CAD` to `USDCAD=X`. CAD is the **quote**
+Found while folding eight instruments' duplicate asset keys into `cfg/assets.yaml` aliases, the
+defect `test_no_two_asset_keys_route_to_one_instrument_unless_declared` now guards.
+`cfg/oracle_map.yaml` routed `CAD` to `USDCAD=X`. CAD is the **quote**
 currency of that pair, so the two move opposite ways, and nothing in the engine flips direction:
 
 > TTrades, `direction=long`: *"Bullish CAD futures (**equivalently bearish USDCAD**) off a daily
@@ -1912,8 +1680,8 @@ suite if any 3-letter key is routed to a pair it is not the base of. `EUR`→`EU
 **The real prize is `JPY`: 13 theses, currently unrouted and therefore invisible** — Capital
 Flows, Checkmate, Traders Reality, Raoul Pal, Benjamin Cowen, TraderMayne. Yahoo's `JPY=X` *is*
 USDJPY, so routing it without inverting would create 13 wrong-direction theses in a single edit.
-That is precisely the trap "they're the same thing, merge them" walks into, and it is why §28's
-merges were verified row by row instead of applied by pattern.
+That is precisely the trap "they're the same thing, merge them" walks into, and it is why those
+alias merges were verified row by row instead of applied by pattern.
 
 **Shape when built:** an explicit `invert: true` on the routing entry, consumed where direction
 is resolved — not a negated price series, which would break every level, zone and structural

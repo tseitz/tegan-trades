@@ -124,10 +124,10 @@ step fetch-prices   uv run fetch-prices
 #
 # **A snapshot, not `--backfill`.** The backfill pulls *realised* settlements and would be the
 # better series — complete hourly data instead of one sample a night — but neither venue
-# honours the day window (see IMPROVEMENTS §23): Hyperliquid returns its full 500-row cap per
+# honours the day window (see `funding_cli._backfill`): Hyperliquid returns its 500-row cap per
 # symbol and Aster its 1000, so a nightly backfill would append ~39,000 mostly-duplicate rows
 # every night to save nothing. Run `fetch-funding --backfill 30` by hand after an outage, or
-# fix §23 and revisit. The snapshot is ~1,180 rows a night.
+# paginate Hyperliquid on `startTime` and revisit. The snapshot is ~1,180 rows a night.
 #
 # This is also the only way Lighter is ever captured — it serves no reconcilable history
 # (§22), so a night this step misses is a night of Lighter coverage that cannot be recovered.

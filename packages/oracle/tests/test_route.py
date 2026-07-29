@@ -194,7 +194,7 @@ INTENTIONAL_SHARED_SYMBOLS = {
     # A currency is not a currency pair. The corpus carries EUR/GBP crosses and British Pound
     # futures under the bare-currency keys, so folding them into the dollar pair would file a
     # cross as a USD trade. Safe today only because EUR and GBP are the *base* currency, so the
-    # direction sense of the pair matches the currency — see USDCAD in §28 for the case where
+    # direction sense of the pair matches the currency — see USDCAD below for the case where
     # it does not.
     ("yahoo", "EURUSD=X"): {"EUR", "EURUSD"},
     ("yahoo", "GBPUSD=X"): {"GBP", "GBPUSD"},
@@ -210,7 +210,7 @@ def _curated_routes():
 
 
 def test_no_two_asset_keys_route_to_one_instrument_unless_declared():
-    """§28: `SILVER` and `XAG` both routed to `SI=F`, so the queue offered one trade twice —
+    """`SILVER` and `XAG` both routed to `SI=F`, so the queue offered one trade twice —
     identical in every number — burning two slots of a sitting and double-counting it in §4's
     mining. Eight symbols were reachable under seventeen keys. The fix is an alias in
     `cfg/assets.yaml` so the two spellings resolve to one asset *before* routing is consulted;
