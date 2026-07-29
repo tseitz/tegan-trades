@@ -307,3 +307,109 @@ def test_depth_is_fetched_once_per_coin_per_session():
     broker.depth("INTL")
     broker.depth("INTL")
     assert len(calls) == 1
+
+
+# ── the account, the book, and cancelling ───────────────────────────────────────────────────
+
+# Trimmed from the live paper reply on 2026-07-29. The arithmetic in it is the evidence that
+# one field answers "what have I already spoken for" — see ``execution.account``.
+ACCOUNT = {
+    "equity": "99674.47", "buying_power": "24971.52", "initial_margin": "74702.95",
+    "multiplier": "1", "shorting_enabled": False,
+}
+
+
+def test_the_account_read_carries_more_than_equity():
+    """The same ``/v2/account`` call, parsed for everything it holds. Reading only ``equity``
+    is what let eight orders be sized against a balance three of them could not have."""
+    transport = FakeTransport({("GET", "/v2/account"): ACCOUNT})
+    account = AlpacaBroker(CREDS, transport=transport).account()
+    assert account.buying_power == 24_971.52
+    assert account.committed == 74_702.95
+    assert account.can_short is False
+
+
+def test_an_unreadable_account_disables_the_budget_rather_than_emptying_it():
+    transport = FakeTransport({("GET", "/v2/account"): {"message": "forbidden"}})
+    assert AlpacaBroker(CREDS, transport=transport).account() is None
+
+
+def test_headroom_is_not_cached_between_reads():
+    """The opposite of ``markets`` and ``depth``. Headroom that did not move between
+    candidates would not be headroom."""
+    transport = FakeTransport({("GET", "/v2/account"): ACCOUNT})
+    broker = AlpacaBroker(CREDS, transport=transport)
+    broker.account()
+    broker.account()
+    assert len(transport.calls) == 2
+
+
+def test_resting_asks_only_for_open_orders():
+    transport = FakeTransport({("GET", "/v2/orders"): []})
+    AlpacaBroker(CREDS, transport=transport).resting()
+    assert transport.calls[0]["params"]["status"] == "open"
+    assert transport.calls[0]["params"]["nested"] == "true"
+
+
+def test_resting_distinguishes_none_from_empty():
+    """"Cannot be asked" and "nothing is resting" are opposite facts: the first must not let a
+    caller conclude the account is free."""
+    assert AlpacaBroker(CREDS, transport=FakeTransport(
+        {("GET", "/v2/orders"): []})).resting() == ()
+    assert AlpacaBroker(CREDS, transport=FakeTransport(
+        {("GET", "/v2/orders"): {"message": "rate limited"}})).resting() is None
+
+
+def test_positions_join_their_age_from_the_fill_that_opened_them():
+    """Two calls, because Alpaca's position objects carry no timestamp of their own."""
+    seen = []
+
+    def transport(method, path, body=None, params=None, base=None):
+        seen.append((path, (params or {}).get("status")))
+        if path == "/v2/positions":
+            return [{"symbol": "INTL", "qty": "1639", "side": "long",
+                     "market_value": "48219.38", "unrealized_pl": "-329.82"}]
+        return [{"symbol": "INTL", "status": "filled", "position_intent": "buy_to_open",
+                 "filled_at": "2026-07-29T13:34:57Z"}]
+
+    (position,) = AlpacaBroker(CREDS, transport=transport).positions()
+    assert position.opened_at is not None
+    assert ("/v2/orders", "closed") in seen
+
+
+def test_a_failed_history_read_costs_the_age_not_the_listing():
+    def transport(method, path, body=None, params=None, base=None):
+        if path == "/v2/positions":
+            return [{"symbol": "INTL", "qty": "1", "side": "long", "market_value": "29.42"}]
+        return {"message": "rate limited"}
+
+    (position,) = AlpacaBroker(CREDS, transport=transport).positions()
+    assert position.symbol == "INTL"
+    assert position.opened_at is None
+
+
+def test_cancel_reports_success_as_nothing_to_say():
+    """A 204 decodes to no body at all, so anything falsy is success."""
+    transport = FakeTransport({("DELETE", "/v2/orders/abc"): None})
+    assert AlpacaBroker(CREDS, transport=transport).cancel("abc") is None
+    assert transport.calls[0]["method"] == "DELETE"
+
+
+def test_cancel_reports_the_venues_reason_when_it_refuses():
+    transport = FakeTransport({
+        ("DELETE", "/v2/orders/abc"): {"code": 42210000, "message": "order is not cancelable"},
+    })
+    reason = AlpacaBroker(CREDS, transport=transport).cancel("abc")
+    assert "not cancelable" in reason
+
+
+def test_an_empty_error_body_is_not_read_as_a_successful_cancel():
+    """A 204 and a bodiless 404 both decode to an empty message. Reporting a missing order as
+    cancelled would leave the reader believing the budget was freed."""
+    transport = FakeTransport({("DELETE", "/v2/orders/gone"): {"code": 404, "message": ""}})
+    assert AlpacaBroker(CREDS, transport=transport).cancel("gone") is not None
+
+
+def test_a_bodiless_204_is_a_successful_cancel():
+    transport = FakeTransport({("DELETE", "/v2/orders/ok"): {"code": 204, "message": ""}})
+    assert AlpacaBroker(CREDS, transport=transport).cancel("ok") is None

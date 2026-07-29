@@ -17,11 +17,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from execution import budget as budget_module
 from execution import guards
 from execution.participation import Depth, check_depth, max_shares
 from execution.rounding import round_price, round_size
 from execution.shares import round_share_price, round_shares
-from execution.sizing import risk_of, size_for_risk
+from execution.sizing import (
+    CAP_BUDGET,
+    CAP_CONCENTRATION,
+    CAP_LEVERAGE,
+    CAP_PARTICIPATION,
+    apply_caps,
+    notional_ceiling,
+    risk_of,
+    size_for_risk,
+)
 
 # Which set of tick/lot rules a market obeys. Two venues, two genuinely different grids, and
 # applying the wrong one is silent rather than loud: the perp rule allows three decimal places
@@ -74,11 +84,15 @@ class OrderPlan:
     notional: float
     equity: float
     candidate_key: str
-    # Set only when the participation ceiling actually bound — the size the risk budget alone
-    # asked for, before the market's own thinness cut it down. ``None`` when nothing was cut,
-    # rather than a copy of ``size``, so the render can key off it to decide whether there is
-    # anything to explain. See ``participation``.
+    # Set only when a ceiling actually bound — the size the risk budget alone asked for,
+    # before whatever cut it down. ``None`` when nothing was cut, rather than a copy of
+    # ``size``, so the render can key off it to decide whether there is anything to explain.
     capped_from: float | None = None
+    # Which ceiling did it, one of ``sizing.CAP_*``. Carried beside the number because the
+    # number alone does not say what to do about it: a concentration cut is the policy working
+    # as intended, a budget cut means something else needs cancelling, and a participation cut
+    # is the market's own answer. Set exactly when ``capped_from`` is.
+    cap_reason: str | None = None
     depth: Depth | None = None
 
     @property
@@ -102,6 +116,10 @@ def build(
     depth: Depth | None = None,
     max_participation: float | None = None,
     max_notional_frac: float | None = None,
+    max_position_frac: float | None = None,
+    headroom: float | None = None,
+    min_budget_fill: float = budget_module.MIN_BUDGET_FILL,
+    can_short: bool | None = None,
     min_notional: float = guards.MIN_ORDER_NOTIONAL_USD,
     min_volume: float = guards.MIN_DAY_VOLUME_USD,
     min_open_interest: float = guards.MIN_OPEN_INTEREST_USD,
@@ -133,7 +151,9 @@ def build(
     # for what it is — the wrong account type — rather than resized or left to the venue,
     # whose rejection names a buying-power number and not the cause.
     if market.grid == SHARE_GRID:
-        margin_refusal = guards.check_shortable(candidate.direction, equity)
+        margin_refusal = guards.check_shortable(
+            candidate.direction, equity, can_short=can_short
+        )
         if margin_refusal is not None:
             return margin_refusal
 
@@ -158,21 +178,51 @@ def build(
     if depth_refusal is not None:
         return depth_refusal
 
-    wanted = size_for_risk(
-        equity=equity, risk_pct=risk_pct, entry=entry, stop=stop,
-        max_notional_frac=max_notional_frac,
-    )
+    wanted = size_for_risk(equity=equity, risk_pct=risk_pct, entry=entry, stop=stop)
 
-    # The participation ceiling applies to the *unrounded* size, so the venue's lot is applied
-    # exactly once. Capping after rounding would floor twice and lose up to a share for no
-    # reason; capping before it keeps this identical in shape to ``max_notional_frac``, which
-    # is also a min() against the risk-derived size.
+    # Every ceiling applies to the *unrounded* size, so the venue's lot is applied exactly
+    # once. Capping after rounding would floor twice and lose up to a share for no reason.
+    #
+    # Three of the four are properties of the trade and settle together; the budget is the odd
+    # one out and comes after, because it is the only ceiling that can refuse rather than
+    # shrink, and the fraction it is judged against has to be measured after the other three
+    # have had their say — otherwise a thin market's participation cut would be counted again
+    # as a budget shortfall and the order refused for the wrong reason.
+    allowed, reason = apply_caps(wanted, (
+        (CAP_LEVERAGE, notional_ceiling(equity=equity, entry=entry, frac=max_notional_frac)),
+        (CAP_CONCENTRATION,
+         notional_ceiling(equity=equity, entry=entry, frac=max_position_frac)),
+        (CAP_PARTICIPATION,
+         max_shares(depth, max_participation)
+         if depth is not None and max_participation is not None else None),
+    ))
+
+    # Compared *after* rounding, not before. A ceiling that shaves a fraction of a share off
+    # changes nothing that goes on the wire, and reporting "capped from 99 to 99" would train
+    # the reader to skip the line that matters.
     size = round_sz(wanted, market.sz_decimals)
-    capped_from = None
-    if depth is not None and max_participation is not None:
-        allowed = round_sz(min(wanted, max_shares(depth, max_participation)), market.sz_decimals)
-        if allowed < size:
-            capped_from, size = size, allowed
+    capped_from: float | None = None
+    cap_reason: str | None = None
+    capped = round_sz(allowed, market.sz_decimals)
+    if capped < size:
+        capped_from, size, cap_reason = size, capped, reason
+
+    if headroom is not None:
+        fitted = round_sz(
+            min(allowed, budget_module.affordable(headroom, entry)), market.sz_decimals
+        )
+        headroom_refusal = budget_module.check_fill(
+            fitted=fitted, wanted=size, headroom=headroom, needed=size * entry,
+            min_fill=min_budget_fill,
+        )
+        if headroom_refusal is not None:
+            return headroom_refusal
+        if fitted < size:
+            # ``capped_from`` keeps naming what the risk budget asked for, even when a second
+            # ceiling had already cut it — the reader wants the distance from the intended
+            # trade, not from an intermediate number nothing ever proposed to send.
+            capped_from = size if capped_from is None else capped_from
+            size, cap_reason = fitted, CAP_BUDGET
 
     notional = size * entry
 
@@ -206,5 +256,6 @@ def build(
         equity=equity,
         candidate_key=candidate.key,
         capped_from=capped_from,
+        cap_reason=cap_reason,
         depth=depth,
     )

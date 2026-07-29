@@ -144,7 +144,10 @@ def offer(session, candidate, *, input_fn=input, out=print, is_dormant=liveness.
         session.decline(candidate, outcome)
         return
 
-    out(describe(outcome))
+    # The account goes in beside the plan so the preview can show the running total. Per-trade
+    # numbers alone are what let eight approvals in one sitting each read as 1% while together
+    # wanting 123.6% of the account — see `docs/IMPROVEMENTS.md` §40.
+    out(describe(outcome, session.account))
 
     # The perp liquidity gate is measured but not enforced on the rehearsal network. Saying so
     # keeps it honest — otherwise a market mainnet would never allow looks perfectly healthy

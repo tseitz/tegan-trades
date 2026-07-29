@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import pytest
 
 from execution import store
+from execution.account import Account
 from execution.config import Config
 from execution.guards import Refusal
 from execution.liquidity import Liquidity
@@ -39,13 +40,17 @@ class StubListing:
 class FakeBroker:
     """Implements the ``Broker`` protocol. Records what it was asked to do."""
 
-    def __init__(self, *, equity_by_dex=None, placement=None, live=None):
+    def __init__(self, *, equity_by_dex=None, placement=None, live=None, account=None):
         self._equity = equity_by_dex or {"": 10_000.0, "xyz": 500.0}
         self._placement = placement or Placement(ok=True, order_ids=(1, 2, 3))
         self._live = live                 # None -> conservative: every key is still live
+        # None is the perp venue's answer — no account-wide budget, so the gate stays off.
+        self._account = account
         self.placed: list[OrderPlan] = []
         self.equity_calls: list[str] = []
+        self.account_calls = 0
         self.live_keys_calls: list[set] = []
+        self.cancelled: list[str] = []
 
     def live_keys(self, keys) -> set:
         self.live_keys_calls.append(set(keys))
@@ -60,6 +65,20 @@ class FakeBroker:
     def equity(self, dex: str = "") -> float:
         self.equity_calls.append(dex)
         return self._equity.get(dex, 0.0)
+
+    def account(self):
+        self.account_calls += 1
+        return self._account
+
+    def resting(self):
+        return None
+
+    def positions(self):
+        return None
+
+    def cancel(self, order_id: str):
+        self.cancelled.append(order_id)
+        return None
 
     def liquidity(self, coin):
         return Liquidity(coin=coin, day_volume=50_000_000.0, open_interest=100_000_000.0,
@@ -248,3 +267,97 @@ def test_a_candidate_with_a_working_bracket_is_still_refused(tmp_path):
     refusal = session.prepare(StubCandidate(key="abc123"), StubListing())
     assert isinstance(refusal, Refusal)
     assert refusal.code == "duplicate"
+
+
+# ── the running total ───────────────────────────────────────────────────────────────────────
+# `docs/IMPROVEMENTS.md` §40: sizing is per-trade and nothing added it up, so eight approvals
+# in one sitting each looked like 1% and together wanted 123.6% of the account.
+
+FUNDED = Account(equity=10_000.0, buying_power=10_000.0, committed=0.0,
+                 multiplier=1.0, can_short=True)
+
+
+def _funded_session(tmp_path, buying_power=10_000.0, **cfg):
+    broker = FakeBroker(account=Account(equity=10_000.0, buying_power=buying_power,
+                                        committed=10_000.0 - buying_power,
+                                        multiplier=1.0, can_short=True))
+    return _session(tmp_path, broker, **cfg)
+
+
+def test_a_placed_order_is_subtracted_from_the_next_ones_headroom(tmp_path):
+    """The property the whole entry is about. Before the open an accepted bracket does not
+    necessarily reduce buying power at the venue, so re-reading it per candidate would show
+    every order the same untouched balance — as it did on 2026-07-29."""
+    session = _funded_session(tmp_path, buying_power=3_000.0, max_position_frac=None)
+    first = session.prepare(StubCandidate(), StubListing())
+    assert isinstance(first, OrderPlan)
+    assert first.cap_reason is None          # $2,133 of notional fits $3,000 of room
+    session.execute(first)
+
+    # $867 left. The venue would still report $3,000 at this hour; the running total is the
+    # only thing that knows otherwise.
+    second = session.prepare(StubCandidate(key="second"), StubListing())
+    assert isinstance(second, Refusal)
+    assert second.code == "no_headroom"
+
+
+def test_a_refused_placement_does_not_consume_the_budget(tmp_path):
+    """Only what the venue took counts. Charging the budget for a rejected order would refuse
+    the rest of the night's candidates on the strength of an order that does not exist."""
+    broker = FakeBroker(account=FUNDED, placement=Placement(ok=False, error="nope"))
+    session = _session(tmp_path, broker)
+    plan = session.prepare(StubCandidate(), StubListing())
+    session.execute(plan)
+    assert session._committed == 0.0
+
+
+def test_a_venue_with_no_account_leaves_the_budget_gate_off(tmp_path):
+    """The perp broker reports None, which must mean "not measured" and never "no money" —
+    the same asymmetry ``check_depth`` is built on."""
+    session = _session(tmp_path, max_position_frac=None)  # FakeBroker reports no account
+    plan = session.prepare(StubCandidate(), StubListing())
+    assert isinstance(plan, OrderPlan)
+    assert plan.cap_reason is None
+
+
+def test_a_full_account_refuses_the_next_candidate(tmp_path):
+    session = _funded_session(tmp_path, buying_power=50.0)
+    refused = session.prepare(StubCandidate(), StubListing())
+    assert isinstance(refused, Refusal)
+    assert refused.code == "no_headroom"
+
+
+def test_headroom_is_read_fresh_for_every_candidate(tmp_path):
+    """The opposite caching decision to ``equity``, and deliberately: a position filling
+    mid-session changes headroom without anyone placing anything."""
+    session = _funded_session(tmp_path)
+    session.prepare(StubCandidate(), StubListing())
+    session.prepare(StubCandidate(key="b"), StubListing())
+    assert session.broker.account_calls == 2
+
+
+# ── the preview ─────────────────────────────────────────────────────────────────────────────
+
+def test_describe_shows_the_account_total(tmp_path):
+    """The number that was on nobody's screen. Printed on every order, not only when it binds,
+    because the point is to see the total while there is still a decision to make about it."""
+    session = _funded_session(tmp_path)
+    plan = session.prepare(StubCandidate(), StubListing())
+    text = describe(plan, session.account)
+    assert "$10,000.00 free" in text
+    assert "left after this" in text
+
+
+def test_describe_says_nothing_about_an_account_it_cannot_read(tmp_path):
+    plan = _session(tmp_path).prepare(StubCandidate(), StubListing())
+    assert "free" not in describe(plan, None)
+
+
+def test_describe_names_the_ceiling_that_bound(tmp_path):
+    """Four unrelated causes produce the same small number, and each calls for a different
+    response — so the line has to say which one, not merely that something was cut."""
+    session = _funded_session(tmp_path, max_position_frac=0.20)
+    plan = session.prepare(StubCandidate(), StubListing())
+    text = describe(plan, session.account)
+    assert "capped from" in text
+    assert "at most 20% of equity" in text

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from execution import guards, participation, venues
+from execution import budget, guards, participation, venues
 from execution.alpaca_broker import AlpacaCredentials
 from execution.broker import MAINNET, TESTNET, Credentials
 
@@ -44,6 +44,17 @@ class Config:
     network: str = TESTNET
     risk_pct: float = 0.01
     max_notional_frac: float | None = 3.0
+    # The concentration ceiling, and NOT a second spelling of the one above. That one bounds
+    # *leverage* and was measured on perps; this bounds one position's share of the book, and
+    # exists because the median approved candidate wants 17% of equity — so five of them fill
+    # a cash account and the sixth is refused for reasons that have nothing to do with it.
+    max_position_frac: float | None = 0.20
+    # Smallest share of the intended size a budget-shrunk order may still be sent at. See
+    # ``budget`` — this is the one number in this file that is chosen rather than measured.
+    min_budget_fill: float = budget.MIN_BUDGET_FILL
+    # Days a resting entry may sit before ``uv run book`` offers to retire it. Nothing cancels
+    # automatically; this only decides which rows are flagged.
+    max_order_age_days: float = 14.0
     venue: str = "hyperliquid"
     # Liquidity floors. HIP-3 lets anyone deploy a market, so "the venue lists it" stopped
     # being evidence that it trades — see ``execution.liquidity``. Defaults measured against
@@ -91,6 +102,24 @@ class Config:
             raise ValueError(
                 f"max_notional_frac must be positive, got {self.max_notional_frac}"
             )
+        # Bounded above by 1.0 unlike the leverage ceiling, and for a reason worth stating:
+        # "one position may be up to 300% of the book" is not a concentration limit, and the
+        # most likely way to write one is to copy ``max_notional_frac``'s 3.0 into it.
+        if self.max_position_frac is not None and not 0 < self.max_position_frac <= 1:
+            raise ValueError(
+                f"max_position_frac must be in (0, 1], got {self.max_position_frac} — it is "
+                f"one position's share of equity, so 20% is 0.20. For a leverage ceiling "
+                f"above 1x, that is max_notional_frac."
+            )
+        if not 0 <= self.min_budget_fill <= 1:
+            raise ValueError(
+                f"min_budget_fill must be in [0, 1], got {self.min_budget_fill} — 0 means "
+                f"shrink to whatever fits, 1 means never shrink at all"
+            )
+        if self.max_order_age_days <= 0:
+            raise ValueError(
+                f"max_order_age_days must be positive, got {self.max_order_age_days}"
+            )
         # Bounded above by 1.0 as well as below by 0: a ceiling of "more than a whole median
         # session" is not a ceiling, and the most likely way to write one is a percentage
         # typed as 1 rather than as 0.01.
@@ -115,9 +144,9 @@ def load(path=DEFAULT_PATH) -> Config:
         return config
 
     doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    fields = ("network", "risk_pct", "max_notional_frac", "venue",
+    fields = ("network", "risk_pct", "max_notional_frac", "max_position_frac", "venue",
               "min_day_volume", "min_open_interest", "enforce_liquidity",
-              "max_participation")
+              "max_participation", "min_budget_fill", "max_order_age_days")
     known = {f: doc[f] for f in fields if f in doc}
     unknown = set(doc) - set(fields)
     if unknown:

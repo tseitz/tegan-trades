@@ -20,11 +20,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, cast
 
-from eth_account import Account
+# Aliased because ``execution.account.Account`` is this package's own account state and the
+# collision would be silent — both have a plausible ``Account.from_key`` reading.
+from eth_account import Account as EthAccount
 from hyperliquid.exchange import Exchange
 from hyperliquid.utils import constants
 from hyperliquid.utils.signing import OrderRequest
 
+from execution.account import Account
+from execution.book import Position, RestingOrder
 from execution.liquidity import Liquidity, parse_book, parse_context
 from execution.participation import Depth
 from execution.plan import Market, OrderPlan
@@ -121,6 +125,21 @@ class Broker(Protocol):
 
     def equity(self, dex: str = "") -> float: ...
 
+    # What the venue says about the account as a whole — buying power, what is already
+    # committed, whether it can short. ``None`` means "this venue reports no such thing",
+    # which leaves the budget gate off rather than refusing every order. See ``account``.
+    def account(self) -> Account | None: ...
+
+    # Entries still resting at the venue, oldest first. ``None`` means the venue cannot be
+    # asked; an empty tuple means it was asked and there are none. See ``book``.
+    def resting(self) -> tuple[RestingOrder, ...] | None: ...
+
+    # Positions currently open. Same None/empty distinction as ``resting``.
+    def positions(self) -> tuple[Position, ...] | None: ...
+
+    # Cancel one order by its venue id. Returns None on success, or a message saying why not.
+    def cancel(self, order_id: str) -> str | None: ...
+
     def liquidity(self, coin: str) -> Liquidity | None: ...
 
     # How a typical session in this market looks. ``None`` means "not measured" and never
@@ -157,7 +176,7 @@ class HyperliquidBroker:
         # "" is the core book and is always loaded; the rest are HIP-3 builders. Deduplicated
         # while preserving order so a caller can pass the same dex twice harmlessly.
         self.dexs = tuple(dict.fromkeys(("", *dexs)))
-        wallet = Account.from_key(credentials.secret_key)
+        wallet = EthAccount.from_key(credentials.secret_key)
         self._exchange = Exchange(
             wallet,
             base_url=NETWORKS[network],
@@ -268,6 +287,41 @@ class HyperliquidBroker:
         for the venue that has none of that.
         """
         return None
+
+    def account(self) -> Account | None:
+        """Always ``None`` — this venue's collateral accounting is already inside ``equity``.
+
+        Not a stub, and not the same question Alpaca answers. Under a unified account
+        ``equity`` already subtracts ``margin_committed`` across every loaded dex, so the
+        number returned there *is* headroom; under manual mode each dex is its own pool and a
+        single account-wide budget would be the wrong shape entirely. Returning None leaves
+        the budget gate off here rather than inventing a total that would mean something
+        different per mode.
+
+        The two facts the equity read does not cover — ``can_short`` and a broker multiplier —
+        do not arise on perps: a short is the sell side of the same contract, and leverage is
+        per-market and already bounded by ``max_notional_frac``.
+        """
+        return None
+
+    def resting(self) -> tuple[RestingOrder, ...] | None:
+        """Always ``None`` — not "no orders", but "cannot be asked".
+
+        ``wire.order_requests`` sends no ``cloid``, so an order placed by this repo is known
+        to the venue only by an oid nothing here indexes. The same blocker that keeps
+        ``live_keys`` conservative, tracked as `docs/IMPROVEMENTS.md` §33.
+        """
+        return None
+
+    def positions(self) -> tuple[Position, ...] | None:
+        """Always ``None``. Readable in principle from ``user_state.assetPositions``; unbuilt
+        because ``resting`` above cannot be answered, and half a book listing is worse than
+        none — it would show what is open while hiding what is committed."""
+        return None
+
+    def cancel(self, order_id: str) -> str | None:
+        """Refuses. Nothing here can produce an order id to pass in — see ``resting``."""
+        return f"cancelling is not implemented for {self.network}; cancel {order_id} by hand"
 
     def live_keys(self, keys) -> set[str]:
         """Every key, unchanged — this venue cannot yet answer the question.

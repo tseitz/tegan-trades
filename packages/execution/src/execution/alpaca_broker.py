@@ -25,7 +25,15 @@ from typing import Any, Callable
 
 import requests
 
+from execution.account import Account, parse_account
 from execution.alpaca_wire import bracket_order, parse_order
+from execution.book import (
+    Position,
+    RestingOrder,
+    filled_at_by_symbol,
+    parse_positions,
+    parse_resting,
+)
 from execution.liquidity import Liquidity
 from execution.participation import Depth, depth_from_bars
 from execution.plan import SHARE_GRID, Market, OrderPlan
@@ -196,6 +204,74 @@ class AlpacaBroker:
         changes without anyone editing anything, and a stale figure rescales every position.
         """
         return account_equity(self._transport("GET", "/v2/account"))
+
+    def account(self) -> Account | None:
+        """Buying power, what is already committed, and whether this account can short.
+
+        The same ``/v2/account`` call ``equity`` makes, parsed for everything it carries
+        instead of one field. Kept as a separate request rather than folded into ``equity``
+        because the two have opposite caching requirements: equity is read once per session so
+        that two approvals in a sitting are sized against the same balance, while headroom has
+        to move between candidates or it is not headroom. See ``session.read_account``.
+        """
+        return parse_account(self._transport("GET", "/v2/account"))
+
+    def resting(self) -> tuple[RestingOrder, ...] | None:
+        """Entries still working at the venue, oldest first. ``None`` if unreadable.
+
+        ``nested=true`` rolls a bracket's exits under their parent so they are not returned as
+        top-level orders — but ``parse_resting`` filters on ``position_intent`` regardless,
+        because an unnested reply must not turn a working stop into something offered for
+        cancellation. Two answers to one question, and the safe one does not depend on a query
+        parameter being honoured.
+        """
+        payload = self._transport(
+            "GET", "/v2/orders",
+            params={"status": "open", "nested": "true", "limit": 500, "direction": "asc"},
+        )
+        if not isinstance(payload, list):
+            return None
+        return parse_resting(payload)
+
+    def positions(self) -> tuple[Position, ...] | None:
+        """Open positions with their ages, largest first. ``None`` if unreadable.
+
+        Two calls, because Alpaca's position objects carry no timestamp: the positions
+        themselves, and the closed-order history that says when each one's entry filled. A
+        failed history read costs the age column and not the listing — ``parse_positions``
+        takes the map as optional for exactly that.
+        """
+        payload = self._transport("GET", "/v2/positions")
+        if not isinstance(payload, list):
+            return None
+        history = self._transport(
+            "GET", "/v2/orders",
+            params={"status": "closed", "limit": 500, "direction": "desc"},
+        )
+        opened = filled_at_by_symbol(history if isinstance(history, list) else [])
+        return parse_positions(payload, opened)
+
+    def cancel(self, order_id: str) -> str | None:
+        """Cancel one order. ``None`` on success, otherwise the venue's reason.
+
+        Cancelling a bracket *parent* takes its held exits with it, which is why only parents
+        ever reach here — see ``book.parse_resting``.
+
+        A successful cancel is a 204 with **no body at all**, which ``_request`` turns into
+        ``{"code": 204, "message": ""}``. So an empty message cannot be read as success on its
+        own: a 404 with an empty body would say the same thing, and reporting a missing order
+        as cancelled is the one failure mode this method must not have. The status code is
+        checked as well, and anything outside 2xx is a failure whether or not it explained
+        itself.
+        """
+        reply = self._transport("DELETE", f"/v2/orders/{order_id}")
+        if not isinstance(reply, dict):
+            return None
+        message = reply.get("message") or reply.get("error") or ""
+        code = reply.get("code")
+        if not message and (code is None or (isinstance(code, int) and 200 <= code < 300)):
+            return None
+        return f"{code}: {message or 'no reason given'}" if code is not None else str(message)
 
     def liquidity(self, coin: str) -> Liquidity | None:
         """Always ``None`` — and that is a statement, not a stub.

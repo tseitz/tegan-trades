@@ -22,7 +22,7 @@ Seven workspace members under `packages/`, in pipeline order:
 - `distill/` — 🔴 LLM: transcripts → structured theses. CLIs: `distill-roster`, `distill-transcript`, `distill-canon`, `distill-triage`, `distill-migrate-ids`, `fetch-tickers`.
 - `brain/` — 🔴 LLM: narrative stance extraction, retrieval, synthesis. CLIs: `brain`, `brain-extract`, `brain-index`.
 - `oracle/` — price fetching, routing, grading, cross-reference. CLIs: `fetch-prices`, `fetch-funding`, `score-roster`, `setups`.
-- `execution/` — 🔀 **the only package that holds a private key and sends a signed write.** Everything else in the repo reads. Turns an approved `Candidate` into a resting bracket order (limit entry + TP + SL) on Hyperliquid. CLI: `execute` (pre-flight only; cannot place). Reached from `setups --execute`, which is **off unless typed** — testnet by default, mainnet needs a typed confirmation. Risk settings in `cfg/execution.yaml`; the key lives in `.env` and nowhere else.
+- `execution/` — 🔀 **the only package that holds a private key and sends a signed write.** Everything else in the repo reads. Turns an approved `Candidate` into a resting bracket order (limit entry + TP + SL) on Hyperliquid. CLIs: `execute` (pre-flight only; cannot place), `book` (what the account is holding; `--cancel` retires resting entries you select — never positions). Reached from `setups --execute`, which is **off unless typed** — testnet by default, mainnet needs a typed confirmation. Risk settings in `cfg/execution.yaml`; the key lives in `.env` and nowhere else.
 - `core/` — pure logic and shared schema. Zero I/O, no network, no LLM. Imported by everything, imports nothing local.
 - `llm/` — the **only** LLM boundary (`claude -p`, subscription auth). Exactly three call sites in the repo depend on it.
 
@@ -40,7 +40,7 @@ Always from the repo root:
 
 ```bash
 uv sync                                # one venv, one lock, all seven packages
-uv run setups                          # any of the 19 console scripts
+uv run setups                          # any of the 20 console scripts
 uv run brain "where is my roster on ETH" --no-llm
 uv run pytest -q -m "not integration"  # whole workspace; excludes live-network tests
 uv run pytest packages/brain -q        # scope by path, not by --package

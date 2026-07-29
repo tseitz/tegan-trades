@@ -18,11 +18,18 @@ from execution import config as config_module
 from execution import guards
 from execution import store
 from execution import venues
+from execution.account import Account
 from execution.alpaca_broker import AlpacaBroker
 from execution.broker import Broker, HyperliquidBroker, dex_of
 from execution.config import Config
 from execution.guards import Refusal
 from execution.plan import Market, OrderPlan, build
+from execution.sizing import (
+    CAP_BUDGET,
+    CAP_CONCENTRATION,
+    CAP_LEVERAGE,
+    CAP_PARTICIPATION,
+)
 from execution.wire import Placement
 
 
@@ -58,10 +65,21 @@ class Session:
     already_placed: set[str] = field(default_factory=set)
     _equity: dict[str, float] = field(default_factory=dict)
     _liquidity: dict = field(default_factory=dict)
+    # Notional this session has successfully sent. Not a cache — a running total, and the
+    # reason the eighth approval of a sitting can see the first seven. See ``Account.headroom``
+    # for why the venue's own buying power cannot answer this alone before the open.
+    _committed: float = 0.0
+    _account: Account | None = None
 
     @property
     def network(self) -> str:
         return self.config.network
+
+    @property
+    def account(self) -> Account | None:
+        """The last account read, for the confirmation preview. ``None`` before the first
+        ``prepare`` and on any venue that does not report one."""
+        return self._account
 
     @classmethod
     def open(cls, *, config: Config, dexs: tuple[str, ...] = (),
@@ -115,6 +133,7 @@ class Session:
                 f"earlier session — cancel it before sending another",
             )
         coin = getattr(listing, "symbol", None)
+        account = self.read_account()
         return build(
             candidate,
             markets=self.markets,
@@ -126,9 +145,27 @@ class Session:
             max_participation=self.config.max_participation,
             risk_pct=self.config.risk_pct,
             max_notional_frac=self.config.max_notional_frac,
+            max_position_frac=self.config.max_position_frac,
+            headroom=account.headroom(self._committed) if account else None,
+            min_budget_fill=self.config.min_budget_fill,
+            can_short=account.can_short if account else None,
             min_volume=self.config.min_day_volume,
             min_open_interest=self.config.min_open_interest,
         )
+
+    def read_account(self) -> Account | None:
+        """The venue's current view of the account. Fetched fresh, deliberately.
+
+        The opposite decision to ``equity``, which is cached per pool so that two approvals in
+        the same sitting are not sized against different balances. Headroom is the number that
+        *must* move between candidates — that is the entire point of it — and a position
+        filling mid-session changes it without anyone placing anything.
+
+        ``None`` on a venue that reports no account, which leaves the budget gate off rather
+        than refusing everything. See ``account.parse_account``.
+        """
+        self._account = self.broker.account()
+        return self._account
 
     def liquidity(self, coin: str):
         """This market's tradability, fetched once per coin per session.
@@ -177,6 +214,10 @@ class Session:
         store.record_placement(self.orders_path, plan, placement, network=self.network)
         if placement.ok:
             self.already_placed.add(plan.candidate_key)
+            # Counted only on success, and counted here rather than at the venue: before the
+            # open, an accepted bracket does not necessarily reduce buying power, so the next
+            # candidate would otherwise be sized against room this order has already spent.
+            self._committed += plan.notional
         return placement
 
     def decline(self, candidate, refusal: Refusal) -> None:
@@ -184,7 +225,26 @@ class Session:
         store.record_refusal(self.orders_path, candidate, refusal, network=self.network)
 
 
-def describe(plan: OrderPlan) -> str:
+def cap_explanation(plan: OrderPlan) -> str:
+    """Why this order is smaller than the risk budget asked for, in the reader's terms.
+
+    Derived from the plan's own numbers rather than stored, so there is no second copy of a
+    fact to fall out of step with the first. Each phrasing names the thing to *do* about it,
+    because that is what differs between the four: raise a ceiling, accept a smaller slice,
+    trade something more liquid, or cancel a resting order.
+    """
+    if plan.cap_reason == CAP_PARTICIPATION and plan.depth is not None:
+        return f"{plan.size / plan.depth.median_volume:.1%} of a median session"
+    if plan.cap_reason == CAP_CONCENTRATION:
+        return f"one position may be at most {plan.leverage:.0%} of equity"
+    if plan.cap_reason == CAP_LEVERAGE:
+        return f"notional held to {plan.leverage:.2f}x equity"
+    if plan.cap_reason == CAP_BUDGET:
+        return f"all that ${plan.notional:,.2f} of remaining buying power pays for"
+    return "a ceiling applied"
+
+
+def describe(plan: OrderPlan, account: Account | None = None) -> str:
     """The confirmation preview — every number that is about to be transmitted.
 
     Shows realised risk rather than the configured percentage, because flooring the size to a
@@ -200,19 +260,36 @@ def describe(plan: OrderPlan) -> str:
         f"   notional ${plan.notional:,.2f} ({plan.leverage:.2f}x)",
     ]
 
-    # Only when the ceiling actually bound. A market thin enough to shrink the order is the
-    # one case where the numbers above understate what is going on — the risk line will read
-    # 0.15% where 1% was configured, and without this that looks like a bug rather than the
-    # market's own answer. Both the market and the cut are named, because "why is this small"
-    # and "how small is this market" are the two questions that follow.
-    if plan.capped_from is not None and plan.depth is not None:
-        d = plan.depth
+    # Only when a ceiling actually bound. A cut order is the one case where the numbers above
+    # understate what is going on — the risk line will read 0.15% where 1% was configured, and
+    # without this that looks like a bug rather than an answer. The cause is named because
+    # "why is this small" is the question that follows, and its four answers are unrelated.
+    if plan.capped_from is not None:
         lines.append(
-            f"    ! capped from {plan.capped_from:g} to {plan.size:g} shares — "
-            f"{plan.size / d.median_volume:.1%} of a median session"
+            f"    ! capped from {plan.capped_from:g} to {plan.size:g} — "
+            f"{cap_explanation(plan)}"
         )
+        # Only participation has a second layer worth printing: "how small is this market"
+        # is the question after "why is this small", and it is the only one of the four whose
+        # answer is not already on screen.
+        if plan.cap_reason == CAP_PARTICIPATION and plan.depth is not None:
+            d = plan.depth
+            lines.append(
+                f"      {d.median_volume:,.0f} sh/day over {d.sessions} sessions, "
+                f"{d.median_trades:,.0f} trades/day, ~${d.dollars_per_trade:,.0f} per trade"
+            )
+
+    # The total that nothing computed (`docs/IMPROVEMENTS.md` §40). Sizing is per-trade, so
+    # eight approvals in one sitting each looked like 1% and together wanted 123.6% of the
+    # account — a fact that was on nobody's screen until the venue rejected three of them at
+    # the open. Printed on every order, not only when it binds, because the point is to make
+    # the running total visible while there is still a decision to make about it.
+    if account is not None and account.buying_power is not None:
+        after = max(0.0, account.buying_power - plan.notional)
         lines.append(
-            f"      {d.median_volume:,.0f} sh/day over {d.sessions} sessions, "
-            f"{d.median_trades:,.0f} trades/day, ~${d.dollars_per_trade:,.0f} per trade"
+            f"    account ${account.buying_power:,.2f} free"
+            + (f" of ${account.equity:,.2f} (${account.committed:,.2f} committed)"
+               if account.committed is not None else "")
+            + f" — ${after:,.2f} left after this"
         )
     return "\n".join(lines)

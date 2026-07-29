@@ -65,6 +65,13 @@ def record_placement(path, plan, placement, *, network: str, at: str | None = No
         "risk": plan.risk,
         "notional": plan.notional,
         "equity": plan.equity,
+        # What the risk budget asked for before a ceiling cut it, and which ceiling did.
+        # ``None`` on an ordinary order. Recorded because the residual in §40 — whether a
+        # shrunk order is approved and held like a full-size one — cannot be asked at all
+        # unless the shrinking is on disk, and by the time someone wants to ask, it is far
+        # too late to start writing it down.
+        "capped_from": plan.capped_from,
+        "cap_reason": plan.cap_reason,
         "order_ids": list(placement.order_ids),
         "statuses": list(placement.statuses),
         "error": placement.error,

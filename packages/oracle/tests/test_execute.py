@@ -38,6 +38,20 @@ class FakeBroker:
     def equity(self, dex: str = "") -> float:
         return 10_000.0
 
+    def account(self):
+        # The perp venue's answer: no account-wide budget, so the gate stays off here. The
+        # equity broker's own reads are exercised in ``packages/execution``.
+        return None
+
+    def resting(self):
+        return None
+
+    def positions(self):
+        return None
+
+    def cancel(self, order_id: str):
+        return None
+
     def liquidity(self, coin):
         return Liquidity(coin=coin, day_volume=50_000_000.0, open_interest=100_000_000.0,
                          bid_depth=500_000.0, ask_depth=500_000.0, spread=0.0001)

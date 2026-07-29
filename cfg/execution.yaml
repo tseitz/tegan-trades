@@ -29,6 +29,59 @@ risk_pct: 0.01
 # ordinary trades.
 max_notional_frac: 3.0
 
+# The largest share of the account any ONE position may be. Shares an arithmetic with the
+# setting above and nothing else: that one bounds leverage, this one bounds concentration.
+#
+# WHY IT IS NEEDED SEPARATELY. Position size is inversely proportional to stop width, so a
+# tight zone asks for a large position without asking for much leverage. Across the 47
+# approved decisions to 2026-07-29 the median stop is 5.76% of entry, which at a 1% risk
+# budget wants 17% of equity — nowhere near 3x, and yet only five or six such positions fit a
+# 1x account. The leverage ceiling is inert on every one of them.
+#
+# 0.20 IS NOT A TAIL GUARD, and it is worth being honest about that up front: measured across
+# the 47 approved decisions, it binds on 22 of them and cuts their realised risk to a median
+# 0.56%. That is arithmetic, not a badly chosen number — `1/ceiling` positions fit at 1x, so
+# concurrency and per-trade risk are ONE choice with two names. 20% buys five concurrent
+# positions and costs about half the risk budget on the half of candidates it touches. Loosen
+# it to 0.50 and only 6 of 47 bind, but two positions fill the account.
+#
+# What it does catch outright is the tail that made this necessary: SILVER daily, whose 0.05%
+# stop wanted 1,921% of equity; YM at 114%; SPX at 71%; INTL at 49% — the one that filled and
+# took half the account with it.
+#
+# Read `uv run python scripts/probe_portfolio_budget.py --sizing` before moving this. Its
+# sweep prints bind rate and realised risk together, which is the only way to see the trade.
+#
+# APPLIES TO BOTH VENUES, and it was chosen on equity data. On a perp account a 20% cap is
+# tighter than the venue would require, which is the safe direction but not a measured one.
+# If Hyperliquid ever carries real size again this wants splitting per venue, alongside the
+# same problem max_notional_frac has in the other direction (docs/IMPROVEMENTS.md §36).
+max_position_frac: 0.20
+
+# The floor under a budget-shrunk order, as a share of the size it was going to be.
+#
+# When the account cannot fit a whole order, the alternative to refusing is to send whatever
+# fits — but that makes the risk taken an artefact of where the candidate fell in tonight's
+# queue, since the eighth approval gets the remainder. So an order that can still carry at
+# least this much of its intended risk is trimmed, and one that cannot is refused with the
+# account named.
+#
+# This is the one number in this file that is CHOSEN rather than measured, and it is round on
+# purpose so nobody reads precision into it. What would settle it is the decision sidecar
+# (docs/IMPROVEMENTS.md §4) — whether shrunk orders get approved and held like full ones — and
+# that needs shrunk orders to exist first. 0 means "always shrink"; 1 means "never shrink".
+min_budget_fill: 0.5
+
+# Days a resting entry may sit before `uv run book` flags it as stale. Nothing is cancelled
+# automatically — an unfilled entry is a live intention, and a weekly zone taking a month to
+# be reached is the ordinary case, so a sweep would retire the patient trades first.
+#
+# 14 sits inside core.setups.CARRY_HOLD_DAYS (21), so a stale entry cannot outlive the holding
+# period the carry model prices. The alternative it is measured against is the venue's own
+# default: an Alpaca GTC bracket expires after 90 days, which means an approval nobody
+# revisited holds a slice of the budget for a quarter.
+max_order_age_days: 14
+
 # Which venue's listings to route through, per cfg/venue_map.yaml.
 #
 # `hyperliquid` — perps, crypto and HIP-3 equities. Networks: testnet | mainnet.

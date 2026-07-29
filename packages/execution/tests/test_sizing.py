@@ -8,7 +8,15 @@ from __future__ import annotations
 
 import pytest
 
-from execution.sizing import risk_of, size_for_risk
+from execution.sizing import (
+    CAP_BUDGET,
+    CAP_CONCENTRATION,
+    CAP_LEVERAGE,
+    apply_caps,
+    notional_ceiling,
+    risk_of,
+    size_for_risk,
+)
 
 
 def test_sizes_to_the_risk_budget():
@@ -34,7 +42,7 @@ def test_wider_stop_buys_less():
     assert risk_of(wide, entry=3_200, stop=2_800) == pytest.approx(100)
 
 
-# ── the notional cap ────────────────────────────────────────────────────────────────────────
+# ── the notional ceilings ───────────────────────────────────────────────────────────────────
 
 def test_notional_cap_limits_a_very_tight_stop():
     """A stop a hair from entry would otherwise demand enormous leverage.
@@ -44,18 +52,54 @@ def test_notional_cap_limits_a_very_tight_stop():
     turning a modest risk budget into a liquidation.
     """
     uncapped = size_for_risk(equity=10_000, risk_pct=0.01, entry=3_200, stop=3_199)
-    capped = size_for_risk(equity=10_000, risk_pct=0.01, entry=3_200, stop=3_199,
-                           max_notional_frac=1.0)
+    ceiling = notional_ceiling(equity=10_000, entry=3_200, frac=1.0)
+    capped, reason = apply_caps(uncapped, [(CAP_LEVERAGE, ceiling)])
     assert uncapped > capped
     assert capped * 3_200 == pytest.approx(10_000)
+    assert reason == CAP_LEVERAGE
 
 
 def test_notional_cap_does_not_bind_on_a_normal_stop():
     """The cap must be inert in the ordinary case, or it is silently resizing every trade."""
     plain = size_for_risk(equity=10_000, risk_pct=0.01, entry=3_200, stop=3_050)
-    capped = size_for_risk(equity=10_000, risk_pct=0.01, entry=3_200, stop=3_050,
-                           max_notional_frac=1.0)
+    capped, reason = apply_caps(
+        plain, [(CAP_LEVERAGE, notional_ceiling(equity=10_000, entry=3_200, frac=1.0))]
+    )
     assert plain == pytest.approx(capped)
+    assert reason is None
+
+
+def test_an_absent_ceiling_is_not_a_zero_one():
+    """``None`` means the caller did not opt in. Treated as a number it would refuse every
+    order, which is the failure mode every optional value in this package is written against."""
+    assert notional_ceiling(equity=10_000, entry=3_200, frac=None) is None
+    plain = size_for_risk(equity=10_000, risk_pct=0.01, entry=3_200, stop=3_050)
+    assert apply_caps(plain, [(CAP_LEVERAGE, None)]) == (plain, None)
+
+
+def test_a_non_positive_fraction_is_refused():
+    with pytest.raises(ValueError, match="fraction"):
+        notional_ceiling(equity=10_000, entry=3_200, frac=0)
+
+
+# ── which ceiling bound ─────────────────────────────────────────────────────────────────────
+
+def test_the_tightest_ceiling_wins_and_names_itself():
+    """The reason is the whole point of routing four caps through one function: an order that
+    came out a quarter of the requested size needs to say which of four unrelated facts did
+    that, because each one calls for a different response."""
+    size, reason = apply_caps(100.0, [
+        (CAP_LEVERAGE, 90.0),
+        (CAP_CONCENTRATION, 25.0),
+        (CAP_BUDGET, 60.0),
+    ])
+    assert size == 25.0
+    assert reason == CAP_CONCENTRATION
+
+
+def test_a_ceiling_equal_to_the_request_is_not_a_cap():
+    """It changed nothing, so naming it would explain a difference that is not there."""
+    assert apply_caps(100.0, [(CAP_CONCENTRATION, 100.0)]) == (100.0, None)
 
 
 # ── refusals ────────────────────────────────────────────────────────────────────────────────

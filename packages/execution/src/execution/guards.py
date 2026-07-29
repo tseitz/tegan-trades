@@ -171,20 +171,37 @@ def check_liquidity(
     return None
 
 
-def check_shortable(direction: str, equity: float,
-                    *, min_equity: float = MARGIN_ACCOUNT_MIN_EQUITY_USD) -> Refusal | None:
+def check_shortable(direction: str, equity: float, *, can_short: bool | None = None,
+                    min_equity: float = MARGIN_ACCOUNT_MIN_EQUITY_USD) -> Refusal | None:
     """Can this account take the short side at all?
 
     Only equities need this — a perp shorts by taking the sell side of the same contract, so
     the question does not arise there. On a US brokerage a short is a borrow, which needs a
-    margin account, which needs ``min_equity``.
+    margin account.
 
-    Stated here rather than discovered from the venue because the two failures look different
-    to a person: an Alpaca rejection names a buying-power number, while what actually happened
-    is that the account is the wrong *type*, and no amount of retrying or resizing fixes it.
+    **Ask the venue; only infer when it did not say.** ``can_short`` is
+    ``account.shorting_enabled``, and when it is present it is the whole answer — the equity
+    test below is a *proxy* for it and the proxy has been observed wrong in the expensive
+    direction. The paper account holds $99,674, clears the Reg T minimum by 50x, and cannot
+    short: two CRM brackets were accepted at 04:00 ET on 2026-07-29 and rejected at the open
+    for exactly this. An account can also fail to be a margin account for reasons that have
+    nothing to do with its balance.
+
+    Refused here rather than left to the venue because the two failures look different to a
+    person: an Alpaca rejection names a buying-power number, while what actually happened is
+    that the account is the wrong *type*, and no amount of retrying or resizing fixes it.
     """
     if direction != "short":
         return None
+    if can_short is not None:
+        if can_short:
+            return None
+        return Refusal(
+            REFUSAL_NO_MARGIN,
+            "this account reports shorting is not enabled — it is a cash account, so the "
+            "order would be accepted now and rejected at the open. Equity is not the "
+            "constraint; the account type is.",
+        )
     if equity >= min_equity:
         return None
     return Refusal(

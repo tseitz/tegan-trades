@@ -237,3 +237,108 @@ def test_a_perp_short_never_consults_the_margin_floor():
     plan = build(short, markets=MARKETS, listing=StubListing(), equity=500.0,
                  risk_pct=0.01, enforce_liquidity=False)
     assert isinstance(plan, OrderPlan)
+
+
+def test_the_venues_own_answer_beats_the_equity_proxy():
+    """The failure that cost two orders on 2026-07-29. The paper account holds $99,674 —
+    fifty times the Reg T minimum — and cannot short, so the equity test says yes and the
+    venue says no six hours later at the open."""
+    short = StubCandidate(asset="MSFT", direction="short",
+                          entry=100.0, stop=110.0, target=80.0, key="k")
+    refused = build(short, markets=SHARE_MARKETS, listing=MSFT_LISTING, equity=99_674.0,
+                    risk_pct=0.01, enforce_liquidity=False, can_short=False)
+    assert isinstance(refused, guards.Refusal)
+    assert refused.code == guards.REFUSAL_NO_MARGIN
+    assert "cash account" in refused.detail
+
+
+def test_the_venue_can_also_overrule_the_proxy_the_other_way():
+    """A margin account under $2,000 is unusual but not impossible, and the proxy would refuse
+    a trade the venue would take. Whichever way it points, the venue is the authority."""
+    short = StubCandidate(asset="MSFT", direction="short",
+                          entry=100.0, stop=110.0, target=80.0, key="k")
+    plan = build(short, markets=SHARE_MARKETS, listing=MSFT_LISTING, equity=1_000.0,
+                 risk_pct=0.01, enforce_liquidity=False, can_short=True)
+    assert isinstance(plan, OrderPlan)
+
+
+# ── concentration ───────────────────────────────────────────────────────────────────────────
+
+def test_concentration_binds_where_leverage_does_not():
+    """The two ceilings share an arithmetic and nothing else. The median approved candidate
+    wants 17% of equity, which is nowhere near 3x — so ``max_notional_frac`` is inert on it
+    and only a concentration ceiling limits how many such positions fit in the account."""
+    plan = _build(max_notional_frac=3.0, max_position_frac=0.20)
+    assert isinstance(plan, OrderPlan)
+    assert plan.leverage <= 0.20 + 1e-9
+    assert plan.cap_reason == "concentration"
+    # ...and the risk actually taken falls with it, which is the honest consequence.
+    assert plan.risk < 100.0
+
+
+def test_concentration_is_inert_on_a_wide_zone():
+    """A 20% ceiling must not touch a candidate whose stop is wide enough to size small, or
+    it has stopped being a ceiling and become the sizing rule."""
+    wide = StubCandidate(entry=3_200.0, stop=2_600.0, target=4_500.0)
+    plan = _build(wide, max_position_frac=0.20)
+    assert plan.cap_reason is None
+    assert plan.capped_from is None
+
+
+def test_the_tighter_of_the_two_ceilings_is_the_one_reported():
+    """A 0.5x leverage ceiling is tighter than a 20% concentration one, and the preview has to
+    name the one that actually bound or it sends the reader to the wrong setting."""
+    plan = _build(max_notional_frac=0.5, max_position_frac=0.20)
+    assert plan.cap_reason == "concentration"
+    tighter = _build(max_notional_frac=0.1, max_position_frac=0.20)
+    assert tighter.cap_reason == "leverage"
+
+
+# ── the portfolio budget ────────────────────────────────────────────────────────────────────
+
+def test_an_order_that_fits_is_untouched():
+    """The gate must be invisible on an empty account, or it is resizing every trade."""
+    plain = _build()
+    with_room = _build(headroom=1_000_000.0)
+    assert with_room.size == pytest.approx(plain.size)
+    assert with_room.cap_reason is None
+
+
+def test_an_order_is_shrunk_to_the_room_that_is_left():
+    """$2,133 of notional wanted against $1,500 of room — 70% of the intended size, which
+    clears the fill floor, so it is trimmed rather than refused."""
+    plan = _build(headroom=1_500.0)
+    assert isinstance(plan, OrderPlan)
+    assert plan.notional <= 1_500.0
+    assert plan.cap_reason == "budget"
+    assert plan.capped_from is not None and plan.capped_from > plan.size
+
+
+def test_a_nearly_full_account_refuses_rather_than_sending_a_token_position():
+    """Below the fill floor the size is decided by where the candidate fell in tonight's queue
+    rather than by anything about the trade."""
+    refused = _build(headroom=20.0)
+    assert isinstance(refused, guards.Refusal)
+    assert refused.code == "no_headroom"
+
+
+def test_the_budget_is_judged_after_the_market_has_had_its_say():
+    """A participation-capped order must not then be refused for a budget shortfall it does
+    not have. The fraction the floor tests is what the *budget* cost, not what thinness did."""
+    from execution.participation import Depth
+    thin = Depth(sessions=30, median_volume=50.0, median_trades=100.0,
+                 median_dollar_volume=160_000.0)
+    plan = _build(depth=thin, max_participation=0.01, headroom=1_000_000.0)
+    assert isinstance(plan, OrderPlan)
+    assert plan.cap_reason == "participation"
+
+
+def test_capped_from_keeps_naming_what_the_risk_budget_asked_for():
+    """When two ceilings bind in turn, the reader wants the distance from the intended trade —
+    not from an intermediate number nothing ever proposed to send."""
+    plan = _build(max_position_frac=0.20, headroom=1_500.0)
+    assert isinstance(plan, OrderPlan)
+    assert plan.cap_reason == "budget"
+    # 1% of $10,000 over a $150 stop is 0.6666 ETH after the lot — the risk-derived size,
+    # not the 0.625 the concentration ceiling had already cut it to.
+    assert plan.capped_from == pytest.approx(0.6666, abs=1e-3)

@@ -63,9 +63,14 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"network        {network}")
     print(f"account        {credentials.account_address}")
+    # Both ceilings, because the tighter one is what a reader will actually meet and it is not
+    # the one this line used to name: 3x leverage is inert on every candidate the engine has
+    # produced, while the concentration ceiling binds on about half of them.
     print(f"risk per trade {config.risk_pct:.2%}"
-          + (f", capped at {config.max_notional_frac:g}x notional"
-             if config.max_notional_frac else ""))
+          + (f", ≤{config.max_notional_frac:g}x notional"
+             if config.max_notional_frac else "")
+          + (f", ≤{config.max_position_frac:.0%} of equity per position"
+             if config.max_position_frac else ""))
     print(f"markets        {len(markets)} perpetuals"
           + (f" across dexs {', '.join(('core', *dexs))}" if dexs else ""))
     # Printed because it decides which balance counts as collateral, and reading the wrong

@@ -42,8 +42,8 @@ mixes the queue again — a wait, not a task.
 §27's option 2.
 
 **By theme:** corpus supply §3 · §6 · §6b · §6d · §6f · §6h · §9 · §14 — durability §4b · §24 —
-venue and execution §22 · §25 · §30 — routing §29 · §31 · §32 — scoring §1 · §2 · §8 · §12 ·
-§15 · §19.
+venue and execution §22 · §25 · §30 · §33 · §35 · §36 · §39 · §40 — routing §29 · §31 · §32 —
+scoring §1 · §2 · §8 · §12 · §15 · §19.
 
 ---
 
@@ -586,6 +586,10 @@ implied leverage across approved Alpaca-listed decisions is 0.58x — but the ti
 engine has *ever* produced (0.51%) implies 1.96x, which is inside a rounding error of the
 limit. Wants a per-venue ceiling, not a lower global one; the perp number is correct for perps.
 
+**Two things changed under this since (§40).** `max_position_frac: 0.20` now dominates it on
+Alpaca, so the hazard is currently unreachable rather than fixed; and `account.multiplier` is
+read live, so the per-venue ceiling no longer has to be written down — the venue states it.
+
 **`oracle.liveness` still has no equity equivalent, but it is no longer the only signal.** It
 derives health from the funding log, and equities have no funding. `execution.participation`
 now supplies the missing measurement — median volume and trade count per session — but only at
@@ -618,21 +622,27 @@ would have refused it and is inert on an ordinary open. Measure before picking.
 
 ---
 
-## 40. Nothing sums — sizing is per-trade and the account is not · `OPEN` — new 2026-07-29
+## 40. Nothing sums — sizing is per-trade and the account is not · `PARTLY DONE`
 
-`sizing.size_for_risk` gives `notional/equity = risk_pct / stop%`, so position size is inversely
-proportional to stop width. Correct, and intended. What is missing is that **no total is
-computed anywhere**: eight 1%-risk orders wanted 123.6% of equity and 8% risk on 2026-07-29,
-and the venue enforced the budget by silently rejecting three at 04:00 ET.
+All three caps are built. `execution/budget.py` gates the portfolio total,
+`cfg/execution.yaml`'s `max_position_frac` caps concentration, and `uv run book` lists what is
+holding the budget with ages and cancels what you select. `describe` now prints the running
+total on every confirmation. Replay and sweep: `scripts/probe_portfolio_budget.py`.
 
-Three separate caps, three separate questions — do not conflate them:
+**Residual — three numbers chosen rather than measured, and each needs the sidecar (§4).**
 
-- **Portfolio budget.** Committed notional (positions **and** resting orders, both readable
-  from `AlpacaBroker`) against buying power. This is the one that stops silent rejections.
-- **Per-position concentration.** `max_notional_frac: 3.0` is a *leverage* ceiling and only
-  engages below a 0.33% stop — it is not this. A 6% cap yields 16 concurrent at 1x, 33 at 2x.
-- **Order expiry.** GTC brackets expire in 90 days, so unfilled approvals accumulate against
-  the budget indefinitely. A zone price has not reached in a week is a staler thesis too.
+- `min_budget_fill: 0.5` — the floor under a shrunk order. Nothing has measured whether
+  budget-shrunk orders are approved and held like full-size ones, and that needs shrunk orders
+  to exist first.
+- `max_position_frac: 0.20` — binds on 22 of 47 approved decisions and cuts their realised
+  risk to a median 0.56%, because `1/ceiling` positions fit at 1x. Concurrency and per-trade
+  risk are one choice with two names; the sweep in `--sizing` is what to read before moving it.
+- `max_order_age_days: 14` — nothing measures how long a zone actually takes to be reached.
+
+**Not covered: a placement the venue kills later.** `store.record_placement` writes `placed`
+from the submission reply, and Alpaca rejected three of those at the open six hours on. The
+log still says `placed`. `AlpacaBroker.live_keys` already asks the venue the right question, so
+the fix is a reconcile pass over the log, not new plumbing — same shape as §39's pre-open step.
 
 **Slippage is the real risk, not the stop distance** — so liquidity sets the size and
 `risk_pct` is the ceiling it may not reach (`execution/participation.py` is the first instance).
