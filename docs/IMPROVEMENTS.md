@@ -546,16 +546,23 @@ both routing to `URA`. A `cfg/assets.yaml` alias, not a routing change.
 shut came back `accepted` with both legs `held` — evidence in `alpaca_wire.ACCEPTED_STATUSES`.
 No scheduler required.
 
-**The residual is the entry-side gap.** An entry priced off a 16:00 close can open through its
-own stop: the resting limit becomes marketable at the open, fills, and the stop is already
-breached. `guards.check_geometry` re-checks after rounding but nothing compares the *opening*
-price to the plan. Wants a refusal, not a scheduler and not a re-price.
+**The gap loss is NOT the residual, and an earlier read of this entry had it backwards.** A
+limit is a worst price, not a target: a buy limit at 391.91 fills at 380 if the market gaps
+there. The stop leg is then born already through the market and exits at once, so the trade
+round-trips for roughly the spread. The limit *is* the protection — there is no Alpaca flag
+for "don't fill at the open" and none is needed.
 
-**Building it means placing after the open, and that is not a separate choice.** An opening
-price cannot be inspected before it exists, so the check and "place after 09:45" are the same
-fix — one mechanises the other. Do not design it as a pre-open guard; it cannot be one.
+**What the venue will not catch:** `stop_loss.stop_price must be <= base_price - 0.01`, so the
+stop is validated against the *entry limit* and never against the market. A bracket that will
+fill straight through its own stop is accepted without complaint — verified on paper.
 
-**It closes the entry hazard only.** The holding-side gap is §35 and no guard reaches it.
+**The real defect is that a round-trip consumes the candidate.** The bracket was accepted, so
+`store.placed_keys` marks the key placed and `Session.prepare` refuses it forever after as a
+duplicate — the setup is burned by a gap that cost nothing and never gave the trade. Fix that
+before anything about the open. `already_placed` needs to distinguish a live position from a
+flat round-trip.
+
+**Holding-side gaps are §35 and are a different problem.** No guard reaches those.
 
 ---
 
