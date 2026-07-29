@@ -227,7 +227,8 @@ def format_views(candidate: Candidate) -> str:
 
 def format_candidate(candidate: Candidate, *, rank: int | None = None,
                      total: int | None = None, as_of: date | None = None,
-                     color: bool = False,
+                     color: bool = False, venue_symbol: str | None = None,
+                     venue: str | None = None,
                      zones_in_thesis: int = 1, zone_index: int = 1) -> str:
     """Render one candidate as a price ladder plus four summary lines.
 
@@ -279,11 +280,13 @@ def format_candidate(candidate: Candidate, *, rank: int | None = None,
             body.append(f"    {' ' * price_w}  {gap_rail}")
 
     return "\n".join(["", _headline(c, rank=rank, total=total, color=color,
+                                    venue_symbol=venue_symbol, venue=venue,
                                     zones_in_thesis=zones_in_thesis, zone_index=zone_index), "",
                       *body, "", *_summary(c, as_of=as_of, color=color)])
 
 
 def _headline(c: Candidate, *, rank: int | None, total: int | None, color: bool,
+              venue_symbol: str | None = None, venue: str | None = None,
               zones_in_thesis: int = 1, zone_index: int = 1) -> str:
     """Asset, direction and the two numbers the whole judgement hangs on.
 
@@ -291,11 +294,29 @@ def _headline(c: Candidate, *, rank: int | None, total: int | None, color: bool,
     timeframe — and the two differ in exactly the numbers a glance skips over. Unlabelled, a
     weekly and a daily GOOGL long read as a duplicate rather than as two setups of different
     risk. The rank carries ``/total`` so the queue's remaining depth is visible mid-session.
+
+    **The row names the instrument, not just the concept.** ``CHINA`` was excluded during
+    triage as "I don't see this ticker anywhere" — it routes to ``FXI`` and was the most
+    liquid name in that queue. An exclusion is durable and nothing re-offers the asset, so one
+    missing arrow permanently dropped a tradeable setup for a reason that was not true. Shown
+    only when the symbol differs, because ``SBSW -> SBSW`` on every other row is the noise
+    that would hide the case that matters.
     """
     counter = "" if rank is None else f"[{rank}{'' if total is None else f'/{total}'}] "
     direction = c.direction.upper()
     dir_style = "bold_green" if direction == "LONG" else "bold_red"
-    head = (f"{counter}{paint(c.asset, 'bold', color=color)} "
+
+    # An unmapped asset reaches the prompt and fails at placement with "no listing on this
+    # venue" — after the judgement has been spent, which is the scarce input. Saying so here
+    # costs a word and moves the refusal to before the decision instead of after it.
+    if venue_symbol is None and venue is not None:
+        routing = f" {paint(f'(unmapped on {venue})', 'dim', color=color)}"
+    elif venue_symbol and venue_symbol != c.asset:
+        routing = f" {paint(f'→ {venue_symbol}', 'yellow', color=color)}"
+    else:
+        routing = ""
+
+    head = (f"{counter}{paint(c.asset, 'bold', color=color)}{routing} "
             f"{paint(direction, dir_style, color=color)}")
     # One thesis can yield a weekly zone and a daily one, and they are offered as two separate
     # decisions because they are two different trades. Adjacency alone reads as the duplicate

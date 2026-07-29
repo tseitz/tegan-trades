@@ -61,12 +61,12 @@ def test_assets_no_venue_lists_are_recorded_rather_than_absent():
     # Recorded so the gap is not rediscovered. Checked against all seven live venue universes
     # by scripts/probe_venue_coverage.py, not against a memory.
     #
-    # This list shrank from seven to two when Alpaca was mapped, and that is the point: five
+    # This list shrank from seven to one when Alpaca was mapped, and that is the point: five
     # of them were never exotic, just absent from every *derivatives* venue. "Needs a real
     # broker" was the right diagnosis and Alpaca is the broker. What is left is a genuine gap
-    # — DXY is an index nothing here trades, VRT is carried by no venue at all.
-    assert venue_map.unlisted() == ["DXY", "VRT"]
-    assert venue_map.venues_for("VRT") == []
+    # — DXY is an index, and nothing here trades an index.
+    assert venue_map.unlisted() == ["DXY"]
+    assert venue_map.venues_for("DXY") == []
 
 
 def test_reverse_lookup_recovers_the_canonical_symbol():
@@ -184,11 +184,17 @@ def test_alpaca_reaches_the_assets_no_derivatives_venue_carried():
     """This is what "these need a real broker" meant. CHINA trades as FXI — the fund our own
     close is already routed to, so 1:1 rather than a proxy."""
     assert venue_map.listing("CHINA", "alpaca").symbol == "FXI"
-    for asset in ("GLXY", "ILMN", "INTL", "SBSW"):
+    for asset in ("GLXY", "ILMN", "INTL", "SBSW", "VRT"):
         assert venue_map.listing(asset, "alpaca").symbol == asset
 
 
 def test_an_asset_no_venue_at_all_carries_stays_empty():
-    """VRT is the remaining genuine gap. Absence is a real answer and must not be filled in
-    by pattern just because the sections around it now have an alpaca column."""
-    assert venue_map.venues_for("VRT") == []
+    """DXY is the remaining genuine gap — an index, and nothing here trades an index. Absence
+    is a real answer and must not be filled in by pattern just because the sections around it
+    now have an alpaca column.
+
+    This test used to name VRT, and was wrong. Vertiv is NYSE-listed and sits in Alpaca's own
+    universe fetch; the empty row cost a real approval, refused at placement after the
+    judgement had been spent. An asset a venue does not list is omitted — but "listed nowhere"
+    is a claim, and a test asserting one is only as good as the check behind it."""
+    assert venue_map.venues_for("DXY") == []

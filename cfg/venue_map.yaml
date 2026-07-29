@@ -51,6 +51,16 @@
 # Banco de Chile, `TAO` is a China real-estate ETF. **Only the equities, funds and
 # previously-unlisted sections carry an `alpaca` key.** Never extend it by pattern.
 #
+# `JPY` IS THE WORKED EXAMPLE OF WHY, and the one row most likely to be added by a helpful
+# hand. Alpaca lists a `JPY` and it is tradable — the **Lazard Japanese Equity ETF**, Japanese
+# *stocks*, not the yen. It closes at 36.68; the yen is 163.7. Our own price route resolves the
+# bare ticker to the same fund, so a `JPY: {alpaca: JPY}` row would agree to the cent on both
+# sides and pass every check this repo has, while trading an equity fund on a currency thesis.
+# It is also untradeable on its own terms: 38 trades and 926 shares on 2026-07-28, quoted
+# 18.32/54.95. Leave it unmapped. `FXY` (Invesco Yen Trust, 56.00) is the instrument a
+# long-yen view actually wants, and adding it is a routing decision — see §29 and §32, not a
+# line here.
+#
 # Two whole categories are omitted from Alpaca on purpose. **Indices and futures** (`SPX`,
 # `NDX`, `RUT`, `GOLD`, `OIL`, `NATGAS`, the metals, all FX) are not tradable there at all;
 # where a fund tracks one it already has its own 1:1 row (`SPY`, `QQQ`, `IWM`, `URA`), which is
@@ -275,13 +285,19 @@ assets:
   ZM:    {hyperliquid: "xyz:ZM",    aster: ZMUSDT, alpaca: ZM}
 
   # ── listed by no DERIVATIVES venue — and this is what "needs a real broker" meant ──
-  #    Each was checked against all seven live universes, not against a memory. All five are
+  #    Each was checked against all seven live universes, not against a memory. All six are
   #    ordinary US listings, so Alpaca reaches every one of them: CHINA trades as FXI (the
   #    fund our own close is already routed to, so 1:1 rather than a proxy), and the rest on
-  #    their own tickers. VRT stays empty — no venue here carries it.
+  #    their own tickers.
   CHINA: {alpaca: FXI}
   GLXY:  {alpaca: GLXY}
   ILMN:  {alpaca: ILMN}
   INTL:  {alpaca: INTL}
   SBSW:  {alpaca: SBSW}
-  VRT:   {}
+  # Was `{}` with a comment claiming no venue carried it. Wrong on both counts: Vertiv is
+  # NYSE-listed, present in Alpaca's own 13,297-asset universe fetch, and its close matches
+  # ours to the cent (269.56 on 2026-07-28). The empty row cost a real approval — VRT was
+  # approved at the prompt and refused at placement as "no listing on this venue", after the
+  # judgement had been spent. An asset a venue does not list is omitted; an asset written down
+  # as listed nowhere is a claim, and this one was never true.
+  VRT:   {alpaca: VRT}

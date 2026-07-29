@@ -51,7 +51,7 @@ from core.setups import (
 from core.rank import parse_date
 from execution.venues import ALL_NETWORKS
 
-from oracle import cache, carry, corpus, derived, exclusions, execute, listings
+from oracle import cache, carry, corpus, derived, exclusions, execute, listings, venue_map
 # Re-exported: the sidecar's storage and its vault mirror live in their own module, but both
 # remain part of this CLI's surface for callers and tests that reach for them here.
 from oracle.decisions import append_decision, load_decisions, sync_mirror  # noqa: F401
@@ -685,7 +685,13 @@ def triage(queue, *, decisions_path, vault_path, input_fn=input, out=print,
     for i, row in enumerate(queue.rows, start=1):
         c = row.candidate
         zones, index = pairing[i - 1]
+        # Only when a session exists. Without --execute there is no venue to resolve against,
+        # and inventing one would name an instrument the run cannot trade.
+        venue = session.config.venue if session is not None else None
+        listing = venue_map.listing(c.asset, venue) if venue else None
         out(format_candidate(c, rank=i, total=total, as_of=as_of, color=color,
+                             venue=venue,
+                             venue_symbol=getattr(listing, "symbol", None),
                              zones_in_thesis=zones, zone_index=index))
         ans = input_fn(_PROMPT).strip()
         if ans.lower() in ("q", "quit"):

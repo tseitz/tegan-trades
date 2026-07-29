@@ -1022,3 +1022,37 @@ def test_a_row_with_no_carry_says_nothing_about_sample_size():
     text = format_candidate(_candidate(), rank=1, total=11)
     assert "adj" not in text
     assert "n=" not in text
+
+
+# ── the row names the instrument it would actually trade ────────────────────────────────────
+
+def test_a_concept_mapped_asset_shows_what_it_resolves_to():
+    """`CHINA` was excluded during triage as "I don't see this ticker anywhere". It routes to
+    `FXI` and was the most liquid name in that queue. The row named the concept and never the
+    instrument, so a tradeable setup was permanently excluded for a reason that was not true."""
+    line = setups_cli.format_candidate(_candidate(asset="CHINA"), venue_symbol="FXI")
+    assert "CHINA" in line
+    assert "FXI" in line
+
+
+def test_an_asset_that_maps_to_itself_says_it_once():
+    """Most rows resolve to their own ticker. `SBSW -> SBSW` on every one of them would be
+    noise, and noise is what stopped the useful case being noticed."""
+    line = setups_cli.format_candidate(_candidate(asset="SBSW"), venue_symbol="SBSW")
+    assert line.count("SBSW") == 1
+
+
+def test_an_unmapped_asset_says_so_rather_than_looking_tradeable():
+    """`VRT` and `JPY` both reached the prompt and both failed at placement with "no listing
+    on this venue" — after the judgement had already been spent."""
+    line = setups_cli.format_candidate(_candidate(asset="VRT"), venue_symbol=None,
+                                       venue="alpaca")
+    assert "VRT" in line
+    assert "unmapped on alpaca" in line
+
+
+def test_no_venue_symbol_argument_leaves_the_row_unchanged():
+    """`--list` renders without a session, so there is no venue to resolve against."""
+    line = setups_cli.format_candidate(_candidate(asset="SBSW"))
+    assert "SBSW" in line
+    assert "unmapped" not in line
