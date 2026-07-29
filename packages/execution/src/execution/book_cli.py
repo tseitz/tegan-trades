@@ -14,8 +14,13 @@ automatic sweep would quietly cancel the patient trades and keep the impatient o
 with a live stop attached to it, not budget housekeeping — and the two are one keystroke apart
 in a numbered menu, which is exactly why only one of them is numbered.
 
+``--reconcile`` answers the other half: ``store.record_placement`` writes ``placed`` from the
+*submission* reply, and Alpaca runs its buying-power and account-type checks at the open. So an
+order can be logged as placed and be dead hours later with nothing looking. This asks.
+
     uv run book               # what is holding the budget, and how old it is
     uv run book --cancel      # ...and pick entries to retire
+    uv run book --reconcile   # ...and settle what the log still calls placed
     uv run book --network live
 """
 from __future__ import annotations
@@ -26,6 +31,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 
 from execution import config as config_module
+from execution import store
 from execution.book import RestingOrder, stale
 from execution.session import open_broker
 from execution.venues import ALL_NETWORKS
@@ -40,6 +46,8 @@ def _parse_args(argv):
                         help="override cfg/execution.yaml's network")
     parser.add_argument("--cancel", action="store_true",
                         help="offer to cancel resting entries (never positions)")
+    parser.add_argument("--reconcile", action="store_true",
+                        help="ask the venue what became of every order the log calls placed")
     parser.add_argument("--max-age", type=float, default=None,
                         help="days before an entry is flagged stale "
                              "(default: cfg/execution.yaml's max_order_age_days)")
@@ -171,8 +179,80 @@ def offer(broker, orders, *, max_age: float, now: datetime, input_fn, out) -> in
     return cancelled
 
 
+def reconcile(broker, orders_path, *, network: str, out) -> int:
+    """Ask the venue what became of every order the log still calls ``placed``.
+
+    ``placed`` is written from the *submission* reply, and a GTC bracket sent while the market
+    is shut comes back ``accepted`` with the buying-power and account-type checks still to run.
+    On 2026-07-29 three of eight orders were rejected at the open and the log went on saying
+    ``placed`` for all three — so "what did I send" was answerable and "what actually happened"
+    was not.
+
+    Returns the number of orders whose fate the venue killed, because that is the number worth
+    reacting to: a rejected order means a candidate never traded and its budget was never
+    really spent.
+    """
+    keys = store.unsettled_keys(orders_path, network=network)
+    if not keys:
+        out("  nothing awaiting reconciliation")
+        return 0
+
+    # Asset names come from the log rather than the venue: the point of the log is that it is
+    # the only thing holding the candidate-to-order join, and a reconcile line without the
+    # asset in it is not a line anyone can act on.
+    assets = {str(r.get("candidate_key")): str(r.get("asset") or "?")
+              for r in store.load(orders_path)}
+
+    states = broker.states(sorted(keys))
+
+    out(f"  RECONCILING  {len(keys)} placed order(s) against {network}")
+    killed = 0
+    working = 0
+    unreadable = 0
+    for key, state in states.items():
+        asset = assets.get(key, "?")
+        if state is None:
+            # Not recorded. We do not know what happened, and writing "unknown" as a verdict
+            # would take the order off the work list and lose the question permanently.
+            unreadable += 1
+            out(f"    {asset:<8} {key}  ? unreadable — left on the list")
+            continue
+        if not state.settled:
+            working += 1
+            out(f"    {asset:<8} {key}  still working ({state.status})")
+            continue
+
+        store.record_reconciliation(orders_path, state, network=network)
+        if state.failed:
+            killed += 1
+            out(f"    {asset:<8} {key}  ! {state.status.upper()} — the log said placed; this "
+                f"candidate never traded")
+        else:
+            fill = (f" at {state.filled_avg_price:,.2f}"
+                    if state.filled_avg_price is not None else "")
+            out(f"    {asset:<8} {key}  + {state.status}{fill}")
+
+    out(f"  {killed} killed by the venue, {working} still working, "
+        f"{unreadable} unreadable")
+    # Phrased as the likely cause rather than a verdict. Nothing readable came back, and the
+    # two reasons for that look identical from here: a venue that cannot be asked about a
+    # candidate at all (Hyperliquid sends no ``cloid`` — §33), or one that simply did not
+    # answer this time. Claiming the first would be a confident guess.
+    if unreadable == len(states) and unreadable:
+        out("  nothing came back — either this venue cannot be asked about a candidate "
+            "(see IMPROVEMENTS §33) or it did not answer; the log is unchanged")
+    if killed:
+        # Said plainly because the consequence is not obvious from the word "rejected": the
+        # duplicate guard reads live state, so these candidates are already free to be offered
+        # again, and the budget they appeared to be holding was never actually committed.
+        out("  those candidates are free to be offered again — the guard reads live state, "
+            "not this log")
+    return killed
+
+
 def main(argv: list[str] | None = None, *, now: datetime | None = None,
-         input_fn=input, out=print, broker=None) -> int:
+         input_fn=input, out=print, broker=None,
+         orders_path=store.DEFAULT_PATH) -> int:
     args = _parse_args(argv)
     now = now or datetime.now(UTC)
 
@@ -195,6 +275,13 @@ def main(argv: list[str] | None = None, *, now: datetime | None = None,
 
     out(f"  {config.venue} {config.network}")
     out("")
+
+    # Before the listing, because it changes what the listing means: an order the venue killed
+    # is not holding any budget, however confidently the log says it was placed.
+    if args.reconcile:
+        reconcile(broker, orders_path, network=config.network, out=out)
+        out("")
+
     orders = broker.resting()
     positions = broker.positions()
     for line in render(orders, positions, account=broker.account(),

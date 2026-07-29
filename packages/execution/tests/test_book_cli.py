@@ -8,9 +8,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from execution import store
 from execution.account import Account
-from execution.book import parse_positions, parse_resting
-from execution.book_cli import main, offer, render, selected
+from execution.book import parse_positions, parse_resting, parse_state
+from execution.book_cli import main, offer, reconcile, render, selected
+from execution.wire import Placement
 
 NOW = datetime(2026, 7, 29, 12, 0, tzinfo=UTC)
 
@@ -202,3 +204,157 @@ def test_max_age_is_overridable_from_the_flag():
     lines: list[str] = []
     main(["--max-age", "90"], now=NOW, out=lines.append, broker=FakeBroker())
     assert not any("STALE" in line for line in lines)
+
+
+# ── reconciliation ──────────────────────────────────────────────────────────────────────────
+# `placed` is written from the submission reply, and Alpaca runs its buying-power and
+# account-type checks at the open. Three of eight orders died that way on 2026-07-29 and the
+# log went on saying `placed` for all three.
+
+class StubPlan:
+    def __init__(self, key, asset="RKLB"):
+        self.candidate_key, self.asset = key, asset
+        self.coin, self.direction = asset, "long"
+        self.size, self.entry, self.stop, self.target = 108.0, 56.91, 47.7, 151.0
+        self.risk, self.notional, self.equity = 995.0, 6_146.28, 100_000.0
+        self.capped_from = self.cap_reason = None
+
+
+def _order(status, legs=(), filled_qty="0", filled_avg_price=None):
+    return {"status": status, "filled_qty": filled_qty,
+            "filled_avg_price": filled_avg_price,
+            "legs": [{"status": s} for s in legs]}
+
+
+class StatefulBroker(FakeBroker):
+    def __init__(self, replies, **kw):
+        super().__init__(**kw)
+        self._replies = replies
+        self.asked: list[str] = []
+
+    def states(self, keys):
+        self.asked = list(keys)
+        return {k: parse_state(self._replies.get(k), k) for k in keys}
+
+
+def _logged(tmp_path, *keys):
+    path = tmp_path / "orders.jsonl"
+    for key in keys:
+        store.record_placement(path, StubPlan(key), Placement(ok=True, order_ids=("1",)),
+                               network="paper")
+    return path
+
+
+def test_a_rejection_the_log_called_placed_is_found_and_recorded(tmp_path):
+    """The exact failure. RKLB was accepted at 03:47 and rejected at the open; nothing looked."""
+    path = _logged(tmp_path, "rklb-1")
+    broker = StatefulBroker({"rklb-1": _order("rejected", ("canceled", "canceled"))})
+    lines: list[str] = []
+
+    killed = reconcile(broker, path, network="paper", out=lines.append)
+
+    assert killed == 1
+    assert any("REJECTED" in line for line in lines)
+    row = store.load(path)[-1]
+    assert row["outcome"] == store.RECONCILED
+    assert row["status"] == "rejected"
+    assert row["failed"] is True
+
+
+def test_a_still_working_order_is_left_alone(tmp_path):
+    """A resting entry is supposed to stay on the work list — it has not settled yet."""
+    path = _logged(tmp_path, "be-1")
+    broker = StatefulBroker({"be-1": _order("new", ("held", "held"))})
+    lines: list[str] = []
+
+    assert reconcile(broker, path, network="paper", out=lines.append) == 0
+    assert any("still working" in line for line in lines)
+    assert store.unsettled_keys(path, network="paper") == {"be-1"}
+
+
+def test_a_fill_is_settled_without_being_a_failure(tmp_path):
+    """It traded. That is the log being right, and it still wants recording so the candidate
+    stops being asked about."""
+    path = _logged(tmp_path, "vrt-1")
+    broker = StatefulBroker({"vrt-1": _order("filled", ("canceled", "filled"),
+                                             filled_qty="39", filled_avg_price="243.33")})
+    lines: list[str] = []
+
+    assert reconcile(broker, path, network="paper", out=lines.append) == 0
+    row = store.load(path)[-1]
+    assert row["failed"] is False
+    assert row["filled_avg_price"] == 243.33
+    assert store.unsettled_keys(path, network="paper") == set()
+
+
+def test_an_unreadable_order_stays_on_the_list(tmp_path):
+    """Recording "unknown" as a verdict would settle the row and lose the question for good."""
+    path = _logged(tmp_path, "ghost-1")
+    broker = StatefulBroker({})
+    lines: list[str] = []
+
+    assert reconcile(broker, path, network="paper", out=lines.append) == 0
+    assert any("unreadable" in line for line in lines)
+    assert store.unsettled_keys(path, network="paper") == {"ghost-1"}
+
+
+def test_running_twice_writes_one_verdict(tmp_path):
+    path = _logged(tmp_path, "rklb-1")
+    broker = StatefulBroker({"rklb-1": _order("rejected", ("canceled", "canceled"))})
+    reconcile(broker, path, network="paper", out=lambda _: None)
+    reconcile(broker, path, network="paper", out=lambda _: None)
+    assert sum(1 for r in store.load(path) if r["outcome"] == store.RECONCILED) == 1
+
+
+def test_an_empty_log_says_so_without_asking_the_venue(tmp_path):
+    broker = StatefulBroker({})
+    lines: list[str] = []
+    assert reconcile(broker, tmp_path / "none.jsonl", network="paper",
+                     out=lines.append) == 0
+    assert broker.asked == []
+    assert any("nothing awaiting" in line for line in lines)
+
+
+def test_a_venue_that_cannot_be_asked_says_so_and_records_nothing(tmp_path):
+    """Hyperliquid returns None for every key. That must not be read as "all fine"."""
+    path = _logged(tmp_path, "hl-1", "hl-2")
+    broker = StatefulBroker({})
+    lines: list[str] = []
+
+    assert reconcile(broker, path, network="paper", out=lines.append) == 0
+    assert any("cannot be asked" in line for line in lines)
+    assert all(r["outcome"] == store.PLACED for r in store.load(path))
+
+
+def test_one_unreadable_order_is_not_reported_as_an_unaskable_venue(tmp_path):
+    """The two look identical from the data alone, so the distinction has to come from whether
+    ANYTHING answered — otherwise a single 404 reads as "this venue does not support it"."""
+    path = _logged(tmp_path, "ghost-1", "be-1")
+    broker = StatefulBroker({"be-1": _order("new", ("held", "held"))})
+    lines: list[str] = []
+
+    reconcile(broker, path, network="paper", out=lines.append)
+    text = "\n".join(lines)
+    assert "unreadable" in text
+    assert "cannot be asked" not in text
+
+
+def test_the_reconcile_flag_runs_before_the_listing(tmp_path):
+    """Order matters: an order the venue killed is not holding budget, however confidently the
+    log says it was placed."""
+    path = _logged(tmp_path, "rklb-1")
+    broker = StatefulBroker({"rklb-1": _order("rejected", ("canceled", "canceled"))},
+                            orders=ORDERS)
+    lines: list[str] = []
+
+    main(["--reconcile"], now=NOW, out=lines.append, broker=broker, orders_path=path)
+    text = "\n".join(lines)
+    assert text.index("RECONCILING") < text.index("RESTING ENTRIES")
+
+
+def test_the_listing_alone_asks_nothing_about_past_orders(tmp_path):
+    """One round trip per placed order is not free, so it stays behind the flag."""
+    broker = StatefulBroker({}, orders=ORDERS)
+    main([], now=NOW, out=lambda _: None, broker=broker,
+         orders_path=_logged(tmp_path, "rklb-1"))
+    assert broker.asked == []

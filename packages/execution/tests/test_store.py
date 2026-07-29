@@ -116,3 +116,98 @@ def test_unfiltered_placed_keys_still_sees_every_network(tmp_path):
     path = tmp_path / "orders.jsonl"
     store.record_placement(path, PLAN, Placement(ok=True), network="testnet")
     assert store.placed_keys(path) == {"abc123"}
+
+
+# ── reconciliation ──────────────────────────────────────────────────────────────────────────
+
+class StubState:
+    """An ``execution.book.OrderState`` shaped stub — the store reads it structurally."""
+
+    def __init__(self, key="abc123", status="rejected", failed=True, filled_qty=0.0,
+                 filled_avg_price=None, legs=("canceled", "canceled")):
+        self.candidate_key = key
+        self.status = status
+        self.failed = failed
+        self.filled_qty = filled_qty
+        self.filled_avg_price = filled_avg_price
+        self.leg_statuses = legs
+
+
+def test_a_reconciliation_is_appended_not_a_correction(tmp_path):
+    """Both facts are true and the timing between them is the story: the submission WAS
+    accepted, and it WAS killed six hours later at the open."""
+    path = tmp_path / "orders.jsonl"
+    store.record_placement(path, PLAN, Placement(ok=True, order_ids=("1",)), network="paper")
+    store.record_reconciliation(path, StubState(), network="paper")
+
+    rows = store.load(path)
+    assert [r["outcome"] for r in rows] == [store.PLACED, store.RECONCILED]
+    assert rows[1]["status"] == "rejected"
+    assert rows[1]["failed"] is True
+
+
+def test_the_venues_own_word_is_kept_beside_our_reading_of_it(tmp_path):
+    """``failed`` is this repo's interpretation; a status Alpaca adds later still has to be
+    interpretable from what is on disk."""
+    path = tmp_path / "orders.jsonl"
+    store.record_reconciliation(
+        path, StubState(status="something_new", failed=False), network="paper")
+    row = store.load(path)[0]
+    assert row["status"] == "something_new"
+    assert row["failed"] is False
+
+
+def test_a_fill_records_its_price(tmp_path):
+    """So §39's question — did the open gap the entry away from its plan — stays answerable
+    without a second pass over the venue."""
+    path = tmp_path / "orders.jsonl"
+    store.record_reconciliation(
+        path, StubState(status="filled", failed=False, filled_qty=39.0,
+                        filled_avg_price=243.33), network="paper")
+    row = store.load(path)[0]
+    assert row["filled_qty"] == 39.0
+    assert row["filled_avg_price"] == 243.33
+
+
+# ── the work list ───────────────────────────────────────────────────────────────────────────
+
+def test_a_placed_order_is_unsettled(tmp_path):
+    path = tmp_path / "orders.jsonl"
+    store.record_placement(path, PLAN, Placement(ok=True, order_ids=("1",)), network="paper")
+    assert store.unsettled_keys(path, network="paper") == {"abc123"}
+
+
+def test_a_reconciled_order_drops_off_the_work_list(tmp_path):
+    """Otherwise every run re-asks about every order this repo has ever sent, and writes a
+    duplicate verdict each time."""
+    path = tmp_path / "orders.jsonl"
+    store.record_placement(path, PLAN, Placement(ok=True, order_ids=("1",)), network="paper")
+    store.record_reconciliation(path, StubState(), network="paper")
+    assert store.unsettled_keys(path, network="paper") == set()
+
+
+def test_a_re_placed_candidate_becomes_unsettled_again(tmp_path):
+    """The case a set of reconciled keys gets wrong. Rejected, the duplicate guard releases
+    the candidate, it is approved again and sent again — and the second placement must not be
+    marked settled by the first one's verdict."""
+    path = tmp_path / "orders.jsonl"
+    store.record_placement(path, PLAN, Placement(ok=True, order_ids=("1",)), network="paper")
+    store.record_reconciliation(path, StubState(), network="paper")
+    store.record_placement(path, PLAN, Placement(ok=True, order_ids=("2",)), network="paper")
+    assert store.unsettled_keys(path, network="paper") == {"abc123"}
+
+
+def test_a_failed_placement_is_never_unsettled(tmp_path):
+    """It never reached the book, so there is nothing at the venue to ask about."""
+    path = tmp_path / "orders.jsonl"
+    store.record_placement(path, PLAN, Placement(ok=False, error="nope"), network="paper")
+    assert store.unsettled_keys(path, network="paper") == set()
+
+
+def test_the_work_list_is_scoped_to_one_network(tmp_path):
+    """A testnet rehearsal's orders cannot be asked about on the mainnet connection, and the
+    ids would not resolve there anyway."""
+    path = tmp_path / "orders.jsonl"
+    store.record_placement(path, PLAN, Placement(ok=True, order_ids=("1",)), network="testnet")
+    assert store.unsettled_keys(path, network="paper") == set()
+    assert store.unsettled_keys(path, network="testnet") == {"abc123"}

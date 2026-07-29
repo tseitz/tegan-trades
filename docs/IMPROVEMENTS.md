@@ -549,6 +549,10 @@ venue knows those orders only by an oid this repo would have to index itself. Se
 `candidate_key` as the `cloid` on the entry leg makes the same question answerable there —
 that is how Alpaca can answer it at all.
 
+**Two readers depend on that now, not one.** `Broker.states` is the single place a candidate is
+asked about, and `book --reconcile` (§40) reads it too — so on Hyperliquid the order log cannot
+be settled either, not just the guard. The `cloid` buys both.
+
 **One settled fact worth not re-deriving** (`alpaca_wire`, verified on paper): a GTC bracket
 sent with the market shut is `accepted`, so the 06:15 nightly needs no scheduler.
 
@@ -618,16 +622,20 @@ read the prior close at placement, and at the open re-check before allowing the 
 scheduler, which is why §33 was right that *placement* does not.
 
 The threshold is the open question. `VRT` consumed 91% of its stop distance; a rule near 50%
-would have refused it and is inert on an ordinary open. Measure before picking.
+would have refused it and is inert on an ordinary open. Measure before picking — `book
+--reconcile` (§40) now records each entry's realised fill price, so the plan-versus-open
+comparison has a source that accumulates instead of needing a hand query per order.
 
 ---
 
 ## 40. Nothing sums — sizing is per-trade and the account is not · `PARTLY DONE`
 
-All three caps are built. `execution/budget.py` gates the portfolio total,
-`cfg/execution.yaml`'s `max_position_frac` caps concentration, and `uv run book` lists what is
-holding the budget with ages and cancels what you select. `describe` now prints the running
-total on every confirmation. Replay and sweep: `scripts/probe_portfolio_budget.py`.
+All three caps are built, plus the detection gap behind them. `execution/budget.py` gates the
+portfolio total, `max_position_frac` caps concentration, `uv run book` lists what is holding the
+budget and cancels what you select, and `book --reconcile` asks the venue what became of every
+order the log still calls `placed` — which found the three 2026-07-29 rejections and recorded
+`VRT`'s real fill at 243.33 against its approved 266.52 (§39). Replay and sweep:
+`scripts/probe_portfolio_budget.py`.
 
 **Residual — three numbers chosen rather than measured, and each needs the sidecar (§4).**
 
@@ -639,10 +647,10 @@ total on every confirmation. Replay and sweep: `scripts/probe_portfolio_budget.p
   risk are one choice with two names; the sweep in `--sizing` is what to read before moving it.
 - `max_order_age_days: 14` — nothing measures how long a zone actually takes to be reached.
 
-**Not covered: a placement the venue kills later.** `store.record_placement` writes `placed`
-from the submission reply, and Alpaca rejected three of those at the open six hours on. The
-log still says `placed`. `AlpacaBroker.live_keys` already asks the venue the right question, so
-the fix is a reconcile pass over the log, not new plumbing — same shape as §39's pre-open step.
+**Residual — reconcile settles the submission, not the trade.** A filled entry is recorded with
+its price; how the position *ended* (which exit leg hit, at what price) is not. That is the
+outcome half of §4's ground truth rather than a hole in this entry, and `OrderState` already
+carries the leg statuses it would read.
 
 **Slippage is the real risk, not the stop distance** — so liquidity sets the size and
 `risk_pct` is the ceiling it may not reach (`execution/participation.py` is the first instance).

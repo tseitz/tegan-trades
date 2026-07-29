@@ -21,13 +21,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-# Order states the venue can still act on. Everything else is done with, and is excluded for
-# the same fail-closed reason ``alpaca_broker.TERMINAL_STATUSES`` exists: an unrecognised
-# status is treated as still-working, because offering a dead order for cancellation is
-# harmless while hiding a live one is not.
-DEAD_STATUSES = frozenset({
-    "canceled", "expired", "rejected", "done_for_day", "replaced", "filled",
-})
+# Statuses from which nothing can still happen. Anything not listed here — including a status
+# Alpaca adds later — is treated as still-working, because the cost of the two mistakes is not
+# symmetric: wrongly reading an order as dead releases the duplicate guard onto a live bracket,
+# while wrongly reading it as live costs one re-entry.
+TERMINAL_STATUSES = frozenset({"canceled", "expired", "rejected", "done_for_day", "replaced"})
+
+# ``filled`` is terminal *for the order* and yet the opposite of dead for the account — it is a
+# position. The two sets exist because the two readers want different questions answered: the
+# resting listing wants "can this still fill" (so filled is out), and the duplicate guard wants
+# "is anything still working" (so a filled parent depends on its legs).
+DEAD_STATUSES = TERMINAL_STATUSES | {"filled"}
+
+# Terminal without ever having traded. The set that makes a ``placed`` row in the order log a
+# lie: the venue took the order, then killed it, and nothing went back to look.
+FAILED_STATUSES = frozenset({"canceled", "expired", "rejected", "done_for_day"})
 
 # The venue's own label for "this order opens exposure". The only orders safe to cancel.
 OPENING_INTENTS = frozenset({"buy_to_open", "sell_to_open"})
@@ -44,7 +52,12 @@ def _number(value) -> float | None:
 
 def _timestamp(value) -> datetime | None:
     """Alpaca sends RFC 3339 with a ``Z``. Returns None rather than raising on anything else —
-    an unparseable timestamp costs an age column, not the whole listing."""
+    an unparseable timestamp costs an age column, not the whole listing.
+
+    The ``tzinfo`` fallback is not redundant (ruff FURB162 reads it as such): the ``Z`` swap
+    above only covers offsets that were *stated*, and a value carrying none at all parses naive.
+    Subtracting a naive datetime from an aware one raises, which would cost the whole listing.
+    """
     if not isinstance(value, str) or not value:
         return None
     try:
@@ -92,6 +105,82 @@ class Position:
         if self.opened_at is None:
             return None
         return (now - self.opened_at).total_seconds() / 86_400
+
+
+@dataclass(frozen=True)
+class OrderState:
+    """What the venue says has become of one candidate's bracket, asked by ``candidate_key``.
+
+    Answerable only because ``candidate_key`` goes out as the ``client_order_id``, so a
+    candidate can be asked about directly rather than through a stored order id.
+
+    Two readers, one question. The duplicate guard wants "is anything still working"; the
+    reconcile pass wants "did this actually happen". Both are properties of this object rather
+    than two separate trips to the venue, which is what keeps them from disagreeing.
+    """
+    candidate_key: str
+    status: str
+    filled_qty: float
+    filled_avg_price: float | None
+    leg_statuses: tuple[str, ...]
+
+    @property
+    def settled(self) -> bool:
+        """Nothing more can happen to this order, whether it traded or not."""
+        return self.status in DEAD_STATUSES
+
+    @property
+    def traded(self) -> bool:
+        return self.filled_qty > 0
+
+    @property
+    def failed(self) -> bool:
+        """The venue took it and then killed it. A ``placed`` row against this is a lie."""
+        return self.status in FAILED_STATUSES and not self.traded
+
+
+def parse_state(payload, candidate_key: str) -> OrderState | None:
+    """One order as the venue reports it now. ``None`` when it cannot be read.
+
+    None is not a status. It means the venue did not answer or no longer knows this id, and
+    both readers treat it as "assume the order is still out there" — see ``is_live``.
+    """
+    if not isinstance(payload, dict) or "status" not in payload:
+        return None
+    legs = tuple(
+        str((leg or {}).get("status") or "")
+        for leg in (payload.get("legs") or [])
+        if isinstance(leg, dict)
+    )
+    return OrderState(
+        candidate_key=candidate_key,
+        status=str(payload.get("status") or ""),
+        filled_qty=_number(payload.get("filled_qty")) or 0.0,
+        filled_avg_price=_number(payload.get("filled_avg_price")),
+        leg_statuses=legs,
+    )
+
+
+def is_live(state: OrderState | None) -> bool:
+    """Is there still something at the venue for this candidate? Fail CLOSED.
+
+    The one place in this package where not-knowing must mean "assume yes": double-placing a
+    bracket onto a position that already has one is worse than missing a re-entry, and the
+    order log still says an order went out.
+
+    A **filled** parent is live only while an exit leg is still working — that is the position
+    being open and protected. Once both legs are done the position is closed and there is
+    nothing left to duplicate; a bracket that filled through its own stop on a gapped open
+    round-trips flat in seconds, and blocking that candidate forever burns a setup that never
+    really traded.
+    """
+    if state is None:
+        return True
+    if state.status in TERMINAL_STATUSES:
+        return False
+    if state.status == "filled":
+        return any(leg not in DEAD_STATUSES for leg in state.leg_statuses)
+    return True
 
 
 def parse_resting(payload) -> tuple[RestingOrder, ...]:

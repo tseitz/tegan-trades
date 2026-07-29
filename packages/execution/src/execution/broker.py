@@ -28,7 +28,7 @@ from hyperliquid.utils import constants
 from hyperliquid.utils.signing import OrderRequest
 
 from execution.account import Account
-from execution.book import Position, RestingOrder
+from execution.book import OrderState, Position, RestingOrder, is_live as order_is_live
 from execution.liquidity import Liquidity, parse_book, parse_context
 from execution.participation import Depth
 from execution.plan import Market, OrderPlan
@@ -148,6 +148,11 @@ class Broker(Protocol):
     def depth(self, coin: str) -> Depth | None: ...
 
     def place(self, plan: OrderPlan) -> Placement: ...
+
+    # What became of each candidate's bracket. A ``None`` value is "cannot be read", which is
+    # not a status — see ``book.is_live``. The duplicate guard and the reconcile pass both read
+    # this, so neither can reach a different conclusion about the same order.
+    def states(self, keys) -> dict[str, OrderState | None]: ...
 
     def live_keys(self, keys) -> set[str]: ...
 
@@ -323,6 +328,15 @@ class HyperliquidBroker:
         """Refuses. Nothing here can produce an order id to pass in — see ``resting``."""
         return f"cancelling is not implemented for {self.network}; cancel {order_id} by hand"
 
+    def states(self, keys) -> dict[str, OrderState | None]:
+        """Every key unreadable — this venue cannot be asked about a candidate at all.
+
+        ``wire.order_requests`` sends no ``cloid``, so an order this repo placed is known to
+        the venue only by an oid nothing here indexes. ``None`` is exactly right for that: not
+        a status, but "no answer available", which every reader already handles.
+        """
+        return {key: None for key in keys}
+
     def live_keys(self, keys) -> set[str]:
         """Every key, unchanged — this venue cannot yet answer the question.
 
@@ -335,8 +349,11 @@ class HyperliquidBroker:
         So the guard keeps its old meaning here — placed once, blocked thereafter — which is
         safe and occasionally costs a re-entry. Sending a ``cloid`` per leg is the fix; it is
         a wire change and is tracked in `docs/IMPROVEMENTS.md` §33 rather than guessed at.
+
+        Derived from ``states`` rather than returning ``set(keys)`` directly, so that the day a
+        ``cloid`` starts going out, this method is already correct.
         """
-        return set(keys)
+        return {key for key, state in self.states(keys).items() if order_is_live(state)}
 
     def place(self, plan: OrderPlan) -> Placement:
         """Send the bracket as one grouped action, and report what came back."""

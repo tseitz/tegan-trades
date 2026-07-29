@@ -28,6 +28,8 @@ DEFAULT_PATH = REPO_ROOT / "data" / "execution" / "orders.jsonl"
 PLACED = "placed"
 FAILED = "failed"
 REFUSED = "refused"
+# What the venue said had become of a ``placed`` order when someone went back and asked.
+RECONCILED = "reconciled"
 
 
 def _append(path, record: dict) -> None:
@@ -99,6 +101,65 @@ def record_refusal(path, candidate, refusal, *, network: str, at: str | None = N
     }
     _append(path, record)
     return record
+
+
+def record_reconciliation(path, state, *, network: str, at: str | None = None) -> dict:
+    """Log what the venue says became of an order this file already called ``placed``.
+
+    **``placed`` means "the venue accepted the submission", and that is weaker than it reads.**
+    A GTC bracket sent while the market is shut comes back ``accepted``; the buying-power and
+    account-type checks run at the open, hours later. On 2026-07-29 three of eight orders were
+    rejected that way and this file went on saying ``placed`` for all three.
+
+    Appended rather than corrected in place, because the log is append-only and both facts are
+    true: the submission *was* accepted, and it *was* later killed. Overwriting the first would
+    lose the timing, which is the whole story.
+    """
+    record = {
+        "at": at or _now(),
+        "outcome": RECONCILED,
+        "network": network,
+        "candidate_key": state.candidate_key,
+        # The venue's word, unmodified. ``failed`` is this repo's reading of it, kept beside
+        # rather than instead of, so a status Alpaca adds later is still on disk to interpret.
+        "status": state.status,
+        "failed": state.failed,
+        "filled_qty": state.filled_qty,
+        "filled_avg_price": state.filled_avg_price,
+        "leg_statuses": list(state.leg_statuses),
+    }
+    _append(path, record)
+    return record
+
+
+def latest_outcomes(path, *, network: str | None = None) -> dict[str, str]:
+    """The most recent outcome recorded for each candidate key, in file order.
+
+    Needed because a candidate can legitimately go round more than once — placed, reconciled
+    as rejected, then placed again once the duplicate guard released it. Anything that answered
+    "has this been reconciled" from the *set* of reconciled keys would mark the second
+    placement settled on the strength of the first one's verdict.
+    """
+    outcomes: dict[str, str] = {}
+    for row in load(path):
+        if network is not None and row.get("network") != network:
+            continue
+        key = row.get("candidate_key")
+        outcome = row.get("outcome")
+        if key and outcome:
+            outcomes[str(key)] = str(outcome)
+    return outcomes
+
+
+def unsettled_keys(path, *, network: str | None = None) -> set[str]:
+    """Candidates this file says reached the venue and nothing has since resolved.
+
+    The reconcile pass's work list. A key drops out of it once a ``reconciled`` row lands, so
+    running the pass twice costs one round trip per still-working order and writes nothing —
+    and an order that is still resting is *supposed* to stay on the list.
+    """
+    return {key for key, outcome in latest_outcomes(path, network=network).items()
+            if outcome == PLACED}
 
 
 def load(path) -> list[dict]:

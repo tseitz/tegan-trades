@@ -28,11 +28,14 @@ import requests
 from execution.account import Account, parse_account
 from execution.alpaca_wire import bracket_order, parse_order
 from execution.book import (
+    OrderState,
     Position,
     RestingOrder,
     filled_at_by_symbol,
-    parse_positions,
+    is_live as order_is_live,   # aliased: this class has an ``is_live`` of its own,
+    parse_positions,             # and it answers a different question (the network, not an order)
     parse_resting,
+    parse_state,
 )
 from execution.liquidity import Liquidity
 from execution.participation import Depth, depth_from_bars
@@ -73,11 +76,6 @@ TIMEOUT = 20
 # concept and a bare 0 here would read as a placeholder rather than a rule.
 SHARE_DECIMALS = 0
 
-# Order states from which nothing can still happen. Everything else — including any status
-# Alpaca adds later — is treated as live, because the cost of the two mistakes is not
-# symmetric: wrongly blocking a re-entry loses one setup, wrongly releasing the guard sends a
-# second bracket onto a position that already has one.
-TERMINAL_STATUSES = frozenset({"canceled", "expired", "rejected", "done_for_day", "replaced"})
 
 
 @dataclass(frozen=True)
@@ -323,6 +321,25 @@ class AlpacaBroker:
         self._depth[coin] = depth
         return depth
 
+    def states(self, keys) -> dict[str, OrderState | None]:
+        """What became of each candidate's bracket, keyed by ``candidate_key``.
+
+        One request per key, and the only place this package asks the venue that question.
+        ``live_keys`` and the reconcile pass both read the result rather than each making their
+        own trip, so they cannot come to different conclusions about the same order.
+
+        A ``None`` value means unreadable, or that the venue no longer knows the id. It is
+        deliberately not a status — see ``book.is_live`` for what each reader does with it.
+        """
+        return {
+            key: parse_state(
+                self._transport("GET", "/v2/orders:by_client_order_id",
+                                params={"client_order_id": key}),
+                key,
+            )
+            for key in keys
+        }
+
     def live_keys(self, keys) -> set[str]:
         """Of these candidate keys, which still have something live at the venue.
 
@@ -332,35 +349,10 @@ class AlpacaBroker:
         own stop on a gapped open round-trips flat within seconds, yet it was ``ok``, so the
         log marks the candidate placed and the setup is never offered again.
 
-        Answerable only because ``candidate_key`` goes out as the ``client_order_id``, so the
-        venue can be asked about a candidate directly rather than through a stored order id.
-
-        A **filled** parent is live only while an exit leg is still working — that is the
-        position being open and protected. Once both legs are done the position is closed and
-        there is nothing left to duplicate.
+        The rule itself lives in ``book.is_live``, because the reconcile pass needs the same
+        statuses read the same way.
         """
-        live: set[str] = set()
-        for key in keys:
-            order = self._transport(
-                "GET", "/v2/orders:by_client_order_id", params={"client_order_id": key},
-            )
-            if not isinstance(order, dict) or "status" not in order:
-                # Unreadable, or the venue no longer knows this id. The log still says an
-                # order went out, so stay blocked rather than guess.
-                live.add(key)
-                continue
-            status = str(order.get("status") or "")
-            if status in TERMINAL_STATUSES:
-                continue
-            if status == "filled":
-                legs = order.get("legs") or []
-                if any(str((leg or {}).get("status") or "") not in TERMINAL_STATUSES
-                       and str((leg or {}).get("status") or "") != "filled"
-                       for leg in legs):
-                    live.add(key)
-                continue
-            live.add(key)
-        return live
+        return {key for key, state in self.states(keys).items() if order_is_live(state)}
 
     def place(self, plan: OrderPlan) -> Placement:
         """Send the bracket as one OTOCO order, and report what came back."""
