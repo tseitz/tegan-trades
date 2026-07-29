@@ -10,7 +10,10 @@
 
 # testnet | mainnet. Overridable per-run with `--network`; mainnet additionally requires a
 # typed confirmation phrase before a session opens.
-network: testnet
+# Left unset on purpose: an unset network resolves to the venue's rehearsal (paper for
+# alpaca, testnet for hyperliquid), so switching `venue` below cannot leave a stale network
+# behind that names the other venue's rehearsal — or fails validation, as `testnet` did here.
+# network: paper
 
 # Fraction of account equity risked per trade, measured to the stop the engine computed.
 # 0.01 = 1%. Equity is read live from the venue, so this stays honest as the balance moves.
@@ -40,7 +43,7 @@ max_notional_frac: 3.0
 # is deliberate for now: it keeps the equity and crypto books legible as separate books. It
 # also means running both venues risks `risk_pct` TWICE in aggregate, which is the thing to
 # revisit before treating them as one account.
-venue: hyperliquid
+venue: alpaca
 
 # Liquidity floors, in USD. Applied to EVERY market, not just HIP-3 ones — core-book markets
 # can be thin too, healthy ones pass trivially, and a gate with an exemption list is a gate
@@ -61,3 +64,26 @@ venue: hyperliquid
 # xyz:SP500 quotes a TIGHTER spread than core-book BTC.
 min_day_volume: 1000000
 min_open_interest: 1000000
+
+# The equity counterpart to the two floors above, and the one setting here that RESIZES rather
+# than refuses. Fraction of a median trading session this order may be, measured over ~30
+# sessions of daily bars. See `packages/execution/participation.py`.
+#
+# It caps instead of refusing because the size is derived from a risk budget: a market too
+# thin to carry 1% of the account is not automatically a market not worth trading, it is one
+# that can carry less. The shrunken order is printed with the cut and the market's own numbers
+# beside it, and the confirmation prompt is unchanged — so the decision stays with the person,
+# who now has the one fact they were missing. The shrunken risk IS the signal: an order capped
+# to 1% of INTL's median session risks 0.15% of the account rather than the 1% configured.
+#
+# Measured 2026-07-28 across the eight then-queued candidates mapped to Alpaca. Participation
+# of the risk-derived order against the median session:
+#
+#   INTL   6.6%    median 24,707 sh/day,        175 trades/day
+#   SBSW   0.04%   median 5,358,410 sh/day,  26,862 trades/day
+#   the other six: 0.00%
+#
+# That is one outlier and a floor, not a continuum — so anything from 0.1% to 5% separates
+# them and 1% is chosen to sit far from both edges. It is inert on every candidate the engine
+# has produced except INTL, which it cuts from 1,639 shares to 247.
+max_participation: 0.01

@@ -122,6 +122,8 @@ class Session:
             equity=self.equity(coin) if coin else 0.0,
             liquidity=self.liquidity(coin) if coin else None,
             enforce_liquidity=self.config.liquidity_enforced,
+            depth=self.depth(coin) if coin else None,
+            max_participation=self.config.max_participation,
             risk_pct=self.config.risk_pct,
             max_notional_frac=self.config.max_notional_frac,
             min_volume=self.config.min_day_volume,
@@ -139,6 +141,17 @@ class Session:
         if coin not in self._liquidity:
             self._liquidity[coin] = self.broker.liquidity(coin)
         return self._liquidity[coin]
+
+    def depth(self, coin: str):
+        """A typical session in this market, for the participation ceiling. Broker-cached.
+
+        Guarded by the same universe check as ``liquidity``: a coin this account cannot reach
+        is refused by ``check_listing`` long before a size exists to cap, so paying for the
+        bars would be spending a network call to learn nothing.
+        """
+        if coin not in self.markets:
+            return None
+        return self.broker.depth(coin)
 
     def liquidity_verdict(self, plan: OrderPlan) -> Refusal | None:
         """What the liquidity gate *would* say, whether or not it is enforced here.
@@ -180,9 +193,26 @@ def describe(plan: OrderPlan) -> str:
     """
     side = "BUY" if plan.is_buy else "SELL"
     risk_pct = plan.risk / plan.equity if plan.equity else 0.0
-    return "\n".join([
+    lines = [
         f"  {side} {plan.size:g} {plan.coin} @ {plan.entry:g}  (limit, GTC)",
         f"    take profit {plan.target:g}   stop loss {plan.stop:g}",
         f"    risk ${plan.risk:,.2f} ({risk_pct:.2%} of ${plan.equity:,.2f})"
         f"   notional ${plan.notional:,.2f} ({plan.leverage:.2f}x)",
-    ])
+    ]
+
+    # Only when the ceiling actually bound. A market thin enough to shrink the order is the
+    # one case where the numbers above understate what is going on — the risk line will read
+    # 0.15% where 1% was configured, and without this that looks like a bug rather than the
+    # market's own answer. Both the market and the cut are named, because "why is this small"
+    # and "how small is this market" are the two questions that follow.
+    if plan.capped_from is not None and plan.depth is not None:
+        d = plan.depth
+        lines.append(
+            f"    ! capped from {plan.capped_from:g} to {plan.size:g} shares — "
+            f"{plan.size / d.median_volume:.1%} of a median session"
+        )
+        lines.append(
+            f"      {d.median_volume:,.0f} sh/day over {d.sessions} sessions, "
+            f"{d.median_trades:,.0f} trades/day, ~${d.dollars_per_trade:,.0f} per trade"
+        )
+    return "\n".join(lines)

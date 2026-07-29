@@ -14,8 +14,10 @@ reach this module at all.
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
+from execution import venues
 from execution.broker import MAINNET, dex_of
-from execution.config import Config
 from execution.config import load as load_config
 from execution.guards import Refusal
 from execution.session import Session, describe
@@ -74,12 +76,12 @@ def open_session(*, network: str | None = None, config_path=None, input_fn=input
     """
     config = load_config(config_path) if config_path else load_config()
     if network is not None:
-        config = Config(
-            network=network,
-            risk_pct=config.risk_pct,
-            max_notional_frac=config.max_notional_frac,
-            venue=config.venue,
-        )
+        # ``replace`` and not a field-by-field rebuild. The rebuild listed four of the eight
+        # settings, so passing --network silently reset the liquidity floors, the enforcement
+        # override and the participation ceiling to their defaults — a flag about *where* to
+        # trade quietly changing *how much* to risk. Every field added since would have had
+        # to remember to appear here, and none of them would have failed a test by not.
+        config = replace(config, network=network)
         config.validate()
 
     if config.network == MAINNET and not confirm_mainnet(input_fn, out):
@@ -126,11 +128,17 @@ def offer(session, candidate, *, input_fn=input, out=print, is_dormant=liveness.
 
     out(describe(outcome))
 
-    # On the rehearsal venue the liquidity gate is measured but not enforced, because testnet
-    # books are mock and enforcing would refuse everything while protecting nothing. Saying so
-    # here is what keeps that honest — otherwise a market mainnet would never allow looks
-    # perfectly healthy in rehearsal, which is the opposite of what a rehearsal is for.
-    if not session.config.liquidity_enforced:
+    # The perp liquidity gate is measured but not enforced on the rehearsal network. Saying so
+    # keeps it honest — otherwise a market mainnet would never allow looks perfectly healthy
+    # in rehearsal, which is the opposite of what a rehearsal is for.
+    #
+    # ONLY ON HYPERLIQUID. This whole block used to run for Alpaca too, where it printed a
+    # constant: ``AlpacaBroker.liquidity`` returns None for every equity, so the "could not
+    # read this market's liquidity" line fired identically on a fund trading 175 times a day
+    # and on one trading 39,000 — a warning that cannot distinguish them teaches you to skip
+    # warnings. The equity check is the participation cap, which ``describe`` prints as part
+    # of the order because it changes the order.
+    if not session.config.liquidity_enforced and session.config.venue != venues.ALPACA:
         verdict = session.liquidity_verdict(outcome)
         if verdict is not None:
             # Careful with the claim. The verdict is computed from *this* network's book, so
@@ -139,6 +147,10 @@ def offer(session, candidate, *, input_fn=input, out=print, is_dormant=liveness.
             # confident falsehood, and a warning that cries wolf teaches you to skip warnings.
             out(f"  ! would fail the liquidity gate on {session.network} data — "
                 f"{verdict.detail}")
+            # True of Hyperliquid testnet and false of Alpaca paper, which is why this line is
+            # now unreachable from Alpaca: paper reads the same market data as live — there is
+            # no paper price — and only the *fill* is simulated. Claiming otherwise told you
+            # to discount the one number that was real.
             out(f"    not enforced here: {session.network} books are mock, so this is not a "
                 f"verdict on the real market")
 

@@ -42,6 +42,9 @@ class FakeBroker:
         return Liquidity(coin=coin, day_volume=50_000_000.0, open_interest=100_000_000.0,
                          bid_depth=500_000.0, ask_depth=500_000.0, spread=0.0001)
 
+    def depth(self, coin):
+        return None
+
     def place(self, plan):
         if self._raises:
             raise self._raises
@@ -270,3 +273,80 @@ def test_no_warning_when_liquidity_is_healthy(tmp_path):
     rec = Recorder(["n"])
     execute.offer(session, StubCandidate(), input_fn=rec.input, out=rec.out)
     assert "would fail the liquidity gate" not in rec.text
+
+
+# ── the equity venue does not inherit the perp venue's warning ──────────────────────────────
+
+def test_alpaca_does_not_print_the_liquidity_warning(tmp_path):
+    """It was a constant. ``AlpacaBroker.liquidity`` returns None for every equity, so the
+    "could not read this market's liquidity" line fired identically on a fund trading 175
+    times a day and one trading 39,000 — it could not distinguish them, so it said nothing."""
+    broker = ThinBroker()
+    session = Session(
+        broker=broker,
+        config=Config(venue="alpaca", network="paper"),
+        markets=broker.markets(),
+        orders_path=tmp_path / "orders.jsonl",
+    )
+    rec = Recorder(["n"])
+    execute.offer(session, StubCandidate(), input_fn=rec.input, out=rec.out)
+    assert not any("liquidity gate" in line for line in rec.lines)
+
+
+def test_alpaca_paper_is_never_called_mock(tmp_path):
+    """Paper reads the same market data as live — there is no paper price. Only the fill is
+    simulated, and optimistically. Telling the reader to discount real data was backwards."""
+    broker = ThinBroker()
+    session = Session(
+        broker=broker,
+        config=Config(venue="alpaca", network="paper"),
+        markets=broker.markets(),
+        orders_path=tmp_path / "orders.jsonl",
+    )
+    rec = Recorder(["n"])
+    execute.offer(session, StubCandidate(), input_fn=rec.input, out=rec.out)
+    assert not any("mock" in line for line in rec.lines)
+
+
+# ── --network changes where, never how much ─────────────────────────────────────────────────
+
+def test_a_network_override_preserves_every_other_setting(tmp_path):
+    """The rebuild this replaced listed four of eight fields, so ``--network`` silently reset
+    the liquidity floors, the enforcement override and the participation ceiling to defaults.
+    A flag about *where* to trade must not change *how much* to risk."""
+    path = tmp_path / "execution.yaml"
+    path.write_text(
+        "venue: hyperliquid\nnetwork: testnet\nrisk_pct: 0.005\n"
+        "min_day_volume: 42\nmin_open_interest: 43\nmax_participation: 0.002\n"
+        "max_notional_frac: 1.5\nenforce_liquidity: false\n"
+    )
+    captured = {}
+
+    class FakeSession:
+        markets: dict = {}
+        orders_path = "unused"
+
+        @classmethod
+        def open(cls, *, config, dexs=()):
+            captured["config"] = config
+            return cls()
+
+    # Patched at the seam because the real ``Session.open`` connects and needs credentials;
+    # the config it is handed is the whole subject here.
+    original, execute.Session = execute.Session, FakeSession
+    try:
+        execute.open_session(
+            network="mainnet", config_path=path,
+            input_fn=lambda _: "yes, real money", out=lambda _: None,
+        )
+    finally:
+        execute.Session = original
+
+    config = captured["config"]
+    assert config.network == "mainnet"        # the one thing the flag may change
+    assert config.risk_pct == 0.005
+    assert config.min_day_volume == 42
+    assert config.min_open_interest == 43
+    assert config.max_participation == 0.002
+    assert config.max_notional_frac == 1.5
+    assert config.enforce_liquidity is False

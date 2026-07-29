@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from execution import guards
+from execution.participation import Depth, check_depth, max_shares
 from execution.rounding import round_price, round_size
 from execution.shares import round_share_price, round_shares
 from execution.sizing import risk_of, size_for_risk
@@ -73,6 +74,12 @@ class OrderPlan:
     notional: float
     equity: float
     candidate_key: str
+    # Set only when the participation ceiling actually bound — the size the risk budget alone
+    # asked for, before the market's own thinness cut it down. ``None`` when nothing was cut,
+    # rather than a copy of ``size``, so the render can key off it to decide whether there is
+    # anything to explain. See ``participation``.
+    capped_from: float | None = None
+    depth: Depth | None = None
 
     @property
     def is_buy(self) -> bool:
@@ -92,6 +99,8 @@ def build(
     risk_pct: float,
     liquidity=None,
     enforce_liquidity: bool = True,
+    depth: Depth | None = None,
+    max_participation: float | None = None,
     max_notional_frac: float | None = None,
     min_notional: float = guards.MIN_ORDER_NOTIONAL_USD,
     min_volume: float = guards.MIN_DAY_VOLUME_USD,
@@ -142,13 +151,29 @@ def build(
     if rounded_refusal is not None:
         return rounded_refusal
 
-    size = round_sz(
-        size_for_risk(
-            equity=equity, risk_pct=risk_pct, entry=entry, stop=stop,
-            max_notional_frac=max_notional_frac,
-        ),
-        market.sz_decimals,
+    # Before sizing, because a market that measurably does not trade cannot carry any size —
+    # unlike the ceiling below, which only decides how much. ``None`` depth passes: see
+    # ``participation.check_depth`` for why an unmeasured market must not refuse.
+    depth_refusal = check_depth(depth)
+    if depth_refusal is not None:
+        return depth_refusal
+
+    wanted = size_for_risk(
+        equity=equity, risk_pct=risk_pct, entry=entry, stop=stop,
+        max_notional_frac=max_notional_frac,
     )
+
+    # The participation ceiling applies to the *unrounded* size, so the venue's lot is applied
+    # exactly once. Capping after rounding would floor twice and lose up to a share for no
+    # reason; capping before it keeps this identical in shape to ``max_notional_frac``, which
+    # is also a min() against the risk-derived size.
+    size = round_sz(wanted, market.sz_decimals)
+    capped_from = None
+    if depth is not None and max_participation is not None:
+        allowed = round_sz(min(wanted, max_shares(depth, max_participation)), market.sz_decimals)
+        if allowed < size:
+            capped_from, size = size, allowed
+
     notional = size * entry
 
     size_refusal = guards.check_size(size, notional, min_notional=min_notional)
@@ -180,4 +205,6 @@ def build(
         notional=notional,
         equity=equity,
         candidate_key=candidate.key,
+        capped_from=capped_from,
+        depth=depth,
     )

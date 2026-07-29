@@ -558,24 +558,6 @@ rather than a stop. Neither needs work.
 
 ---
 
-## 34. The liquidity gate does not cover equities, and is off rather than absent · `OPEN` — new 2026-07-28
-
-`Config.liquidity_enforced` returns False for `venue: alpaca` because `AlpacaBroker.liquidity`
-honestly reports "not measured" and an unmeasured market is a refusal — so enforcing would
-refuse every equity. Correct, and documented at both sites, but it means **the one venue that
-can trade a $14 microcap has no depth check at all** while the perp venue has three.
-
-Two of the three measures genuinely do not transfer: an equity has no open interest, and the
-order-entry API publishes no book. The third does — Alpaca's market-data snapshot endpoint
-carries a daily bar and a quote, so 24h dollar volume and near-touch depth are both reachable
-with the key the venue already needs.
-
-**Build it as its own check rather than widening `check_liquidity`**, whose three refusal codes
-are named for perp facts. Until then the exposure is bounded by `MAX_DEPTH_FRACTION` not
-applying: on `USAR` at $14 a 1%-risk order is small, but nothing enforces that.
-
----
-
 ## 35. On equities a stop is an intent, not a bound · `OPEN` — new 2026-07-29
 
 A stop is a market order once triggered, so on a gapped open it fills at the open and not at
@@ -605,7 +587,28 @@ implied leverage across approved Alpaca-listed decisions is 0.58x — but the ti
 engine has *ever* produced (0.51%) implies 1.96x, which is inside a rounding error of the
 limit. Wants a per-venue ceiling, not a lower global one; the perp number is correct for perps.
 
-**`oracle.liveness` has no equity equivalent.** It derives a market's health from the funding
-log, and equities have no funding. So the Alpaca venue has no liveness signal at all, where the
-perp venues have one that already caught `xyz:DXY`. Volume from the market-data snapshot is the
-obvious substitute and overlaps §34 — build them together or not at all.
+**`oracle.liveness` still has no equity equivalent, but it is no longer the only signal.** It
+derives health from the funding log, and equities have no funding. `execution.participation`
+now supplies the missing measurement — median volume and trade count per session — but only at
+the point of sizing, so the queue still cannot tell a thin market from a liquid one until a
+candidate is approved. Surfacing `Depth` in the queue render is the remaining half, and it is
+cheap: the fetch already exists and is cached per session.
+
+---
+
+## 37. Alpaca `live` reaches real money without the typed confirmation · `OPEN` — new 2026-07-29
+
+`oracle/execute.py:85` gates the barrier on `config.network == MAINNET`. That string is
+Hyperliquid's. Alpaca's real-money network is spelled `live`, so it does not match and
+`open_session` connects to a funded brokerage account with no confirmation typed —
+exactly the failure `execution/venues.py`'s module docstring was written to prevent.
+
+`config.requires_typed_confirmation()` already exists, is tested (`test_venues.py:52`), and
+is written against the venue table. It has **zero non-test callers**. The fix is to call it.
+
+`confirm_mainnet` then needs the venue's own wording — a prompt that says `*** MAINNET ***`
+on an Alpaca account is one a reader would be right to distrust. Name and phrase both.
+
+Not reachable today: `cfg/execution.yaml` is on `alpaca`/`paper` and `--network` on `setups`
+offers only `{mainnet, testnet}`, so `live` cannot currently be selected from the CLI at all.
+That is a second bug holding the first one shut, and it will not survive the first fix.

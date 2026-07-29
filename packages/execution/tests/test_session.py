@@ -65,6 +65,11 @@ class FakeBroker:
         return Liquidity(coin=coin, day_volume=50_000_000.0, open_interest=100_000_000.0,
                          bid_depth=500_000.0, ask_depth=500_000.0, spread=0.0001)
 
+    def depth(self, coin):
+        # A perp broker reports no sessions, so the participation cap never engages here.
+        # Overridden in the tests that exercise it.
+        return None
+
     def place(self, plan):
         self.placed.append(plan)
         return self._placement

@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 
 from execution.alpaca_broker import (
+    DATA_URL,
     LIVE,
     NETWORKS,
     PAPER,
@@ -253,3 +254,56 @@ def test_no_keys_means_no_requests():
             calls.append(path); return None
     assert AlpacaBroker(CREDS, transport=T()).live_keys(set()) == set()
     assert calls == []
+
+
+# ── depth: the participation cap's input ────────────────────────────────────────────────────
+
+def test_depth_reads_the_data_host_not_the_trading_host():
+    """Market data is a third host, paired with neither network. Sending this to paper-api
+    returns a 404 that ``depth_from_bars`` would read as an unmeasurable market."""
+    calls = []
+
+    def transport(method, path, body=None, params=None, base=None):
+        calls.append((path, base, params))
+        return {"bars": {"INTL": [{"v": 100, "n": 5, "vw": 30.0}]}}
+
+    broker = AlpacaBroker(CREDS, network=PAPER, transport=transport)
+    broker.depth("INTL")
+
+    path, base, params = calls[0]
+    assert base == DATA_URL
+    assert path == "/v2/stocks/bars"
+    assert params["symbols"] == "INTL" and params["timeframe"] == "1Day"
+
+
+def test_depth_is_the_same_on_paper_and_live():
+    """There is no paper price. Both networks read one feed, which is what makes a
+    participation cap measured in rehearsal a real statement about the real market."""
+    def transport(method, path, body=None, params=None, base=None):
+        return {"bars": {"INTL": [{"v": 24_707, "n": 175, "vw": 29.8}]}}
+
+    paper = AlpacaBroker(CREDS, network=PAPER, transport=transport).depth("INTL")
+    live = AlpacaBroker(CREDS, network=LIVE, transport=transport).depth("INTL")
+    assert paper == live
+
+
+def test_an_unreadable_feed_is_not_measured_rather_than_dead():
+    """It must degrade to "no cap applied". A data outage that refused every equity would be
+    the same mistake that forced ``liquidity_enforced`` off for this venue."""
+    def transport(*a, **kw):
+        raise ConnectionError("data host unreachable")
+
+    assert AlpacaBroker(CREDS, network=PAPER, transport=transport).depth("INTL") is None
+
+
+def test_depth_is_fetched_once_per_coin_per_session():
+    calls = []
+
+    def transport(method, path, body=None, params=None, base=None):
+        calls.append(path)
+        return {"bars": {"INTL": [{"v": 100, "n": 5, "vw": 30.0}]}}
+
+    broker = AlpacaBroker(CREDS, network=PAPER, transport=transport)
+    broker.depth("INTL")
+    broker.depth("INTL")
+    assert len(calls) == 1

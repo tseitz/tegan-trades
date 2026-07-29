@@ -26,6 +26,7 @@ from hyperliquid.utils import constants
 from hyperliquid.utils.signing import OrderRequest
 
 from execution.liquidity import Liquidity, parse_book, parse_context
+from execution.participation import Depth
 from execution.plan import Market, OrderPlan
 from execution.wire import GROUPING, Placement, order_requests, parse_placement
 
@@ -121,6 +122,11 @@ class Broker(Protocol):
     def equity(self, dex: str = "") -> float: ...
 
     def liquidity(self, coin: str) -> Liquidity | None: ...
+
+    # How a typical session in this market looks. ``None`` means "not measured" and never
+    # "not tradable" — only the equity broker answers it, because only an equity venue
+    # publishes sessions. See ``participation``.
+    def depth(self, coin: str) -> Depth | None: ...
 
     def place(self, plan: OrderPlan) -> Placement: ...
 
@@ -252,6 +258,16 @@ class HyperliquidBroker:
             coin=coin, day_volume=volume, open_interest=open_interest,
             bid_depth=bid_depth, ask_depth=ask_depth, spread=spread,
         )
+
+    def depth(self, coin: str) -> Depth | None:
+        """Always ``None`` — a perp has no sessions to take a median over.
+
+        Not a gap. This venue already answers the same question better and live, through
+        ``liquidity``: open interest and near-touch depth are stronger evidence than a month
+        of daily bars, and ``check_liquidity`` already enforces them. ``participation`` exists
+        for the venue that has none of that.
+        """
+        return None
 
     def live_keys(self, keys) -> set[str]:
         """Every key, unchanged — this venue cannot yet answer the question.

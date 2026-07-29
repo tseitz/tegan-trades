@@ -20,12 +20,14 @@ Four venue facts that shape it, each of which is silent when wrong:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any, Callable
 
 import requests
 
 from execution.alpaca_wire import bracket_order, parse_order
 from execution.liquidity import Liquidity
+from execution.participation import Depth, depth_from_bars
 from execution.plan import SHARE_GRID, Market, OrderPlan
 from execution.wire import Placement
 
@@ -38,6 +40,20 @@ NETWORKS = {
     PAPER: "https://paper-api.alpaca.markets",
     LIVE: "https://api.alpaca.markets",
 }
+
+# Market data is a THIRD host, and it is not paired with either network above. Paper and live
+# read the identical feed — there is no paper market data, because there is no such thing as a
+# paper price. This is the fact that makes ``participation``'s measurement trustworthy in
+# rehearsal, and it is the reason the "rehearsal books are mock" warning inherited from
+# Hyperliquid testnet is false here: only the *fill* is simulated on paper, never the data.
+DATA_URL = "https://data.alpaca.markets"
+
+# Calendar days of bars to ask for. Over-asked on purpose: ~45 calendar days is ~31 trading
+# sessions after weekends and holidays, and asking for 30 calendar days would return ~21.
+# One month of *trading* is long enough that INTL's 28x volume range (7,966 to 222,872 shares,
+# 2026-06-15..07-28) does not decide the answer, and short enough to describe the market as it
+# trades now.
+DEPTH_LOOKBACK_DAYS = 45
 
 KEY_HEADER = "APCA-API-KEY-ID"
 SECRET_HEADER = "APCA-API-SECRET-KEY"
@@ -116,6 +132,10 @@ class AlpacaBroker:
         self._credentials = credentials
         self._transport = transport or self._request
         self._markets: dict[str, Market] | None = None
+        # Cached per coin per session, including the ``None`` of a failed read: a market that
+        # would not answer once is not worth asking about again mid-triage, and re-asking
+        # would make one candidate's cap depend on how many times it was looked at.
+        self._depth: dict[str, Depth | None] = {}
 
     @property
     def is_live(self) -> bool:
@@ -130,15 +150,19 @@ class AlpacaBroker:
         }
 
     def _request(self, method: str, path: str, body: dict | None = None,
-                 params: dict | None = None) -> Any:
+                 params: dict | None = None, base: str | None = None) -> Any:
         """The one place this package touches Alpaca's network.
 
         Returns the decoded body on any status. A 4xx carries Alpaca's own ``code`` and
         ``message``, which ``parse_order`` turns into a reportable refusal — raising here
         would throw away the only description of what was wrong.
+
+        ``base`` overrides the host for market data, which lives on ``DATA_URL`` rather than
+        on the trading host. Passed explicitly rather than inferred from the path so that the
+        one boundary that separates paper from live stays a single, readable assignment.
         """
         response = requests.request(
-            method, f"{self.base_url}{path}",
+            method, f"{base or self.base_url}{path}",
             headers=self.headers, json=body, params=params, timeout=TIMEOUT,
         )
         try:
@@ -184,11 +208,44 @@ class AlpacaBroker:
 
         Returning None rather than a fabricated ``Liquidity`` keeps that honest: it means
         "not measured", and ``check_liquidity`` refuses on it. So the gate must be OFF for
-        this venue (``Config.liquidity_enforced``), and building a real equity check off the
-        market-data snapshot endpoint is tracked as its own piece of work rather than faked
-        here.
+        this venue (``Config.liquidity_enforced``) — and the real equity check is ``depth``
+        below, built off the market-data bars rather than faked into this shape.
         """
         return None
+
+    def depth(self, coin: str) -> Depth | None:
+        """Median session over the last ``DEPTH_SESSIONS`` trading days. None if unreadable.
+
+        One call, from ``DATA_URL`` — the same feed paper and live both read, so this measures
+        the real market even in rehearsal.
+
+        The lookback is calendar days, deliberately over-asked: 45 calendar days yields ~31
+        sessions after weekends and holidays, and asking for exactly 30 would return ~21.
+        ``depth_from_bars`` medians over whatever comes back rather than requiring a count,
+        so an over-ask costs nothing and an under-ask would quietly narrow the window.
+
+        Failure returns None, which ``check_depth`` treats as "no cap applied" rather than as
+        a refusal — a data outage must not stop trading, it must only stop *shrinking*.
+        """
+        if coin in self._depth:
+            return self._depth[coin]
+
+        depth = None
+        try:
+            start = (datetime.now(UTC) - timedelta(days=DEPTH_LOOKBACK_DAYS)).date().isoformat()
+            payload = self._transport(
+                "GET", "/v2/stocks/bars",
+                params={"symbols": coin, "timeframe": "1Day", "start": start,
+                        "feed": "sip", "limit": 10_000},
+                base=DATA_URL,
+            )
+            bars = ((payload or {}).get("bars") or {}).get(coin) if isinstance(payload, dict) else None
+            depth = depth_from_bars(bars)
+        except Exception:  # noqa: BLE001 - unreadable is "not measured", not a crash
+            depth = None
+
+        self._depth[coin] = depth
+        return depth
 
     def live_keys(self, keys) -> set[str]:
         """Of these candidate keys, which still have something live at the venue.

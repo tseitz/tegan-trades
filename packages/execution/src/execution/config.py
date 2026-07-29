@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from execution import guards, venues
+from execution import guards, participation, venues
 from execution.alpaca_broker import AlpacaCredentials
 from execution.broker import MAINNET, TESTNET, Credentials
 
@@ -50,6 +50,10 @@ class Config:
     # mainnet, where they clear a market with no book at all and one doing $133k a day.
     min_day_volume: float = guards.MIN_DAY_VOLUME_USD
     min_open_interest: float = guards.MIN_OPEN_INTEREST_USD
+    # The equity counterpart, and it *caps* rather than refuses — see ``participation``. The
+    # two are not alternatives: this one applies wherever the broker can report sessions,
+    # which today is Alpaca and only Alpaca.
+    max_participation: float | None = participation.MAX_PARTICIPATION
     # None means "decide from the network". Testnet books are mock and mostly empty — every
     # HIP-3 market there fails ``no_book`` — so enforcing would make the rehearsal venue
     # unusable while protecting nothing. It stays *measured and reported* on testnet, just
@@ -87,6 +91,14 @@ class Config:
             raise ValueError(
                 f"max_notional_frac must be positive, got {self.max_notional_frac}"
             )
+        # Bounded above by 1.0 as well as below by 0: a ceiling of "more than a whole median
+        # session" is not a ceiling, and the most likely way to write one is a percentage
+        # typed as 1 rather than as 0.01.
+        if self.max_participation is not None and not 0 < self.max_participation <= 1:
+            raise ValueError(
+                f"max_participation must be in (0, 1], got {self.max_participation} "
+                f"— it is a fraction of a median session, so 1% is 0.01"
+            )
 
 
 def load(path=DEFAULT_PATH) -> Config:
@@ -104,7 +116,8 @@ def load(path=DEFAULT_PATH) -> Config:
 
     doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     fields = ("network", "risk_pct", "max_notional_frac", "venue",
-              "min_day_volume", "min_open_interest", "enforce_liquidity")
+              "min_day_volume", "min_open_interest", "enforce_liquidity",
+              "max_participation")
     known = {f: doc[f] for f in fields if f in doc}
     unknown = set(doc) - set(fields)
     if unknown:
