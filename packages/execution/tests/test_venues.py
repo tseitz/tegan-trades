@@ -153,3 +153,16 @@ def test_an_alpaca_config_opens_an_alpaca_broker():
 def test_an_unknown_venue_opens_nothing():
     with pytest.raises(ValueError, match="unknown venue"):
         open_broker(Config(venue="ftx"), None)
+
+
+def test_all_networks_spans_every_venue():
+    """The CLI's ``--network`` choices come from here. Built from the table rather than
+    written out, because a venue added without its networks appearing in the flag is a venue
+    only reachable by editing cfg/execution.yaml by hand."""
+    assert venues.ALL_NETWORKS == {TESTNET, MAINNET, PAPER, LIVE}
+
+
+def test_all_networks_is_the_union_not_the_rehearsals():
+    """It has to include the real-money ones — otherwise --network cannot express them and
+    the typed confirmation guards a path nobody can reach."""
+    assert venues.REAL_MONEY <= venues.ALL_NETWORKS

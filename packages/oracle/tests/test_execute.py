@@ -206,17 +206,71 @@ def test_an_exception_does_not_end_the_session(tmp_path):
     assert store.load(session.orders_path)[0]["reason"] == "error"
 
 
-# ── the mainnet barrier ─────────────────────────────────────────────────────────────────────
+# ── the real-money barrier ──────────────────────────────────────────────────────────────────
 
-def test_mainnet_needs_the_exact_phrase():
+@pytest.mark.parametrize("venue,network", [("hyperliquid", "mainnet"), ("alpaca", "live")])
+def test_real_money_needs_the_exact_phrase(venue, network):
     rec = Recorder(["yes"])
-    assert execute.confirm_mainnet(rec.input, rec.out) is False
+    assert execute.confirm_real_money(venue, network, rec.input, rec.out) is False
     assert "not confirmed" in rec.text
 
 
-def test_mainnet_accepts_the_phrase():
-    rec = Recorder([execute.MAINNET_CONFIRMATION])
-    assert execute.confirm_mainnet(rec.input, rec.out) is True
+@pytest.mark.parametrize("venue,network", [("hyperliquid", "mainnet"), ("alpaca", "live")])
+def test_real_money_accepts_the_phrase(venue, network):
+    rec = Recorder([execute.REAL_MONEY_CONFIRMATION])
+    assert execute.confirm_real_money(venue, network, rec.input, rec.out) is True
+
+
+@pytest.mark.parametrize("venue,network", [("hyperliquid", "mainnet"), ("alpaca", "live")])
+def test_the_banner_names_the_account_it_is_about(venue, network):
+    """A prompt reading *** MAINNET *** over an Alpaca brokerage account is one a reader
+    would be right to distrust, and distrusting this prompt is the whole failure mode."""
+    rec = Recorder([execute.REAL_MONEY_CONFIRMATION])
+    execute.confirm_real_money(venue, network, rec.input, rec.out)
+    assert venue in rec.text.lower()
+    assert network in rec.text.lower()
+
+
+@pytest.mark.parametrize("venue,network", [("hyperliquid", "mainnet"), ("alpaca", "live")])
+def test_every_real_money_network_is_gated(tmp_path, venue, network):
+    """The bug this replaces: the gate compared against ``MAINNET`` alone, which is
+    Hyperliquid's spelling. Alpaca's real-money network is ``live``, did not match, and so a
+    funded brokerage account connected with nothing typed."""
+    path = tmp_path / "execution.yaml"
+    path.write_text(f"venue: {venue}\nnetwork: {network}\n")
+    rec = Recorder(["no thanks"])
+
+    assert execute.open_session(config_path=path, input_fn=rec.input, out=rec.out) is None
+    assert "not confirmed" in rec.text
+
+
+@pytest.mark.parametrize("venue,network", [("hyperliquid", "testnet"), ("alpaca", "paper")])
+def test_no_rehearsal_network_is_gated(tmp_path, venue, network):
+    """The barrier must stay inert on both rehearsals — one that fires on paper is one that
+    gets typed through by reflex, which is how it stops being a barrier on live."""
+    path = tmp_path / "execution.yaml"
+    path.write_text(f"venue: {venue}\nnetwork: {network}\n")
+    asked = []
+
+    class FakeSession:
+        markets: dict = {}
+        orders_path = "unused"
+
+        @classmethod
+        def open(cls, *, config, dexs=()):
+            return cls()
+
+    original, execute.Session = execute.Session, FakeSession
+    try:
+        session = execute.open_session(
+            config_path=path,
+            input_fn=lambda p: asked.append(p) or "", out=lambda _: None,
+        )
+    finally:
+        execute.Session = original
+
+    assert session is not None
+    assert asked == []          # nothing was typed, because nothing was asked
 
 
 # ── HIP-3 discovery ─────────────────────────────────────────────────────────────────────────

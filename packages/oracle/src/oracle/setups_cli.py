@@ -49,7 +49,7 @@ from core.setups import (
     cross_reference,
 )
 from core.rank import parse_date
-from execution.broker import NETWORKS
+from execution.venues import ALL_NETWORKS
 
 from oracle import cache, carry, corpus, derived, exclusions, execute, listings
 # Re-exported: the sidecar's storage and its vault mirror live in their own module, but both
@@ -881,9 +881,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--execute", action="store_true",
                         help="after approving, offer to place the trade on the configured "
                              "venue (default: off — approvals are recorded only)")
-    parser.add_argument("--network", choices=sorted(NETWORKS), default=None,
-                        help="override cfg/execution.yaml's network; mainnet additionally "
-                             "requires a typed confirmation")
+    # Choices span every venue, and the venue/network pairing is checked by
+    # ``Config.validate`` rather than by argparse — which cannot know which venue the config
+    # names. Taking these from Hyperliquid's table alone made `--network paper` an argparse
+    # error and `--network live` unreachable, so the typed confirmation guarded a path that
+    # could not be walked.
+    parser.add_argument("--network", choices=sorted(ALL_NETWORKS), default=None,
+                        help="override cfg/execution.yaml's network; must be one the "
+                             "configured venue has, and a real-money one (mainnet, live) "
+                             "additionally requires a typed confirmation")
     return parser.parse_args(argv)
 
 

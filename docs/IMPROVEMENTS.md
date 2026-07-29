@@ -593,22 +593,3 @@ now supplies the missing measurement — median volume and trade count per sessi
 the point of sizing, so the queue still cannot tell a thin market from a liquid one until a
 candidate is approved. Surfacing `Depth` in the queue render is the remaining half, and it is
 cheap: the fetch already exists and is cached per session.
-
----
-
-## 37. Alpaca `live` reaches real money without the typed confirmation · `OPEN` — new 2026-07-29
-
-`oracle/execute.py:85` gates the barrier on `config.network == MAINNET`. That string is
-Hyperliquid's. Alpaca's real-money network is spelled `live`, so it does not match and
-`open_session` connects to a funded brokerage account with no confirmation typed —
-exactly the failure `execution/venues.py`'s module docstring was written to prevent.
-
-`config.requires_typed_confirmation()` already exists, is tested (`test_venues.py:52`), and
-is written against the venue table. It has **zero non-test callers**. The fix is to call it.
-
-`confirm_mainnet` then needs the venue's own wording — a prompt that says `*** MAINNET ***`
-on an Alpaca account is one a reader would be right to distrust. Name and phrase both.
-
-Not reachable today: `cfg/execution.yaml` is on `alpaca`/`paper` and `--network` on `setups`
-offers only `{mainnet, testnet}`, so `live` cannot currently be selected from the CLI at all.
-That is a second bug holding the first one shut, and it will not survive the first fix.

@@ -27,6 +27,13 @@ NETWORKS: dict[str, tuple[str, str]] = {
 # what triggers the typed confirmation — see ``config.requires_typed_confirmation``.
 REAL_MONEY = frozenset(real for _, real in NETWORKS.values())
 
+# Every network any venue has. This is what ``setups --network`` offers as choices, and it
+# has to be derived rather than written down: the flag previously took its choices from
+# ``execution.broker.NETWORKS``, which is Hyperliquid's alone, so ``--network paper`` was
+# rejected by argparse and ``--network live`` could not be typed at all. A venue whose
+# networks do not appear here is a venue reachable only by hand-editing cfg/execution.yaml.
+ALL_NETWORKS = frozenset(n for pair in NETWORKS.values() for n in pair)
+
 
 def default_network(venue: str) -> str:
     """The rehearsal network for a venue. Raises on an unknown venue rather than guessing —

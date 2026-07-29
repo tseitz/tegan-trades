@@ -16,8 +16,9 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from execution import config as config_module
 from execution import venues
-from execution.broker import MAINNET, dex_of
+from execution.broker import dex_of
 from execution.config import load as load_config
 from execution.guards import Refusal
 from execution.session import Session, describe
@@ -25,9 +26,13 @@ from execution.session import Session, describe
 from oracle import liveness, venue_map
 
 # Typed rather than a keystroke. ``--network mainnet`` sits one arrow-key away from
-# ``--network testnet`` in shell history, so the barrier has to be something a stray press
-# cannot produce.
-MAINNET_CONFIRMATION = "yes, real money"
+# ``--network testnet`` in shell history — and ``live`` is one word from ``paper`` — so the
+# barrier has to be something a stray press cannot produce.
+#
+# Deliberately venue-neutral wording. The phrase names what is true of every real-money
+# network rather than one venue's spelling of it, which is the mistake this whole path made
+# for a week: the gate compared against ``MAINNET``, so Alpaca's ``live`` walked through it.
+REAL_MONEY_CONFIRMATION = "yes, real money"
 
 DECLINED = "declined"
 
@@ -56,19 +61,25 @@ def hyperliquid_dexs(venue: str = "hyperliquid", *, path=venue_map.CFG_PATH) -> 
     return tuple(sorted(dexs - {""}))
 
 
-def confirm_mainnet(input_fn, out) -> bool:
-    """Make real money an explicit, typed act. Returns False unless the phrase matches."""
+def confirm_real_money(venue: str, network: str, input_fn, out) -> bool:
+    """Make real money an explicit, typed act. Returns False unless the phrase matches.
+
+    The banner names the venue and the network because they are what differ, and because a
+    prompt reading ``*** MAINNET ***`` over an Alpaca brokerage account is one a reader would
+    be right to distrust — and distrusting this particular prompt is the entire failure mode
+    it exists to prevent.
+    """
     out("")
-    out("  *** MAINNET — orders will use real funds ***")
-    typed = input_fn(f'  type "{MAINNET_CONFIRMATION}" to continue: ').strip().lower()
-    if typed == MAINNET_CONFIRMATION:
+    out(f"  *** {venue.upper()} {network.upper()} — orders will use real funds ***")
+    typed = input_fn(f'  type "{REAL_MONEY_CONFIRMATION}" to continue: ').strip().lower()
+    if typed == REAL_MONEY_CONFIRMATION:
         return True
     out("  not confirmed — no session opened")
     return False
 
 
 def open_session(*, network: str | None = None, config_path=None, input_fn=input, out=print):
-    """Load config, take the mainnet barrier if needed, and connect. None if not executing.
+    """Load config, take the real-money barrier if needed, and connect. None if not executing.
 
     Every failure here lands before the first candidate is shown, mirroring
     ``setups_cli.resolve_vault_note``: a session that dies mid-triage discards the judgement
@@ -84,7 +95,14 @@ def open_session(*, network: str | None = None, config_path=None, input_fn=input
         config = replace(config, network=network)
         config.validate()
 
-    if config.network == MAINNET and not confirm_mainnet(input_fn, out):
+    # Asked of the venue table, never of one venue's spelling. ``requires_typed_confirmation``
+    # is the single place that knows which networks move real money — it existed and was
+    # tested throughout, but nothing called it, and this line compared against ``MAINNET``
+    # instead. Alpaca's real-money network is ``live``, which did not match, so a funded
+    # brokerage account opened a session with nothing typed.
+    if config_module.requires_typed_confirmation(config.network) and not confirm_real_money(
+        config.venue, config.network, input_fn, out
+    ):
         return None
 
     session = Session.open(config=config, dexs=hyperliquid_dexs(config.venue))
