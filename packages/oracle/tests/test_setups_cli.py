@@ -997,3 +997,28 @@ def test_thesis_pairing_separates_the_two_directions_of_one_asset():
     rows = [_candidate(asset="AAA", direction="long"),
             _candidate(asset="AAA", direction="short")]
     assert thesis_pairing(rows) == [(1, 1), (1, 1)]
+
+
+def test_a_carry_number_off_a_thin_sample_shows_its_count():
+    """Widening `cfg/venue_map.yaml` put medians measured over three nights beside medians
+    measured over a month, and the queue printed them identically. `FundingOutlook.n` exists to
+    tell those apart and previously stopped at the engine's door."""
+    from oracle.setups_render import THIN_OBSERVATIONS, format_candidate
+    text = format_candidate(
+        _candidate(carry_reward_risk=11.62, funding_n=5), rank=1, total=11)
+    assert "adj" in text
+    assert "n=5" in text
+
+    settled = format_candidate(
+        _candidate(carry_reward_risk=1.71, funding_n=THIN_OBSERVATIONS), rank=1, total=11)
+    assert "adj" in settled
+    assert "n=" not in settled
+
+
+def test_a_row_with_no_carry_says_nothing_about_sample_size():
+    """Absent and free are different — the same contract `carry.outlooks_for` keeps. A row the
+    funding log cannot price must not gain a count that implies it was measured."""
+    from oracle.setups_render import format_candidate
+    text = format_candidate(_candidate(), rank=1, total=11)
+    assert "adj" not in text
+    assert "n=" not in text

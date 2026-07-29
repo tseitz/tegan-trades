@@ -22,6 +22,16 @@ from datetime import date
 
 from core.setups import ARRIVAL, Candidate
 
+# Below this many observations, a carry number is shown with its sample count so it cannot be
+# read as a settled rate. A display marker and nothing more — it must not become a gate, and
+# deliberately lives here rather than in `core` so it cannot drift into scoring.
+#
+# The honest measure would be the *span* the observations cover, which `FundingOutlook` does
+# not carry. This stands in for it: the nightly writes one sweep per market per run, so a
+# market first seen days ago cannot reach a count that a month-old one clears easily. Live
+# 2026-07-29 the split was stark enough not to need precision — HOOD 477 against ZM's 5.
+THIN_OBSERVATIONS = 20
+
 # ── colour ────────────────────────────────────────────────────────────────────────────────────
 
 _RESET = "\033[0m"
@@ -314,6 +324,13 @@ def _headline(c: Candidate, *, rank: int | None, total: int | None, color: bool,
         drift = "green" if c.carry_reward_risk >= c.reward_risk else "red"
         stats += (f"  {paint('adj', 'dim', color=color)} "
                   f"{paint(f'{c.carry_reward_risk:.2f}', drift, color=color)}")
+        # A thin outlook is shown with its sample count, a well-observed one without. `n` was
+        # put on FundingOutlook so a reader could "tell a measured rate from one observation"
+        # and then never reached the queue — which stopped mattering only while the funding log
+        # covered nothing but long-mapped markets. Widening cfg/venue_map.yaml put medians over
+        # three nights beside medians over a month, printed identically.
+        if c.funding_n is not None and c.funding_n < THIN_OBSERVATIONS:
+            stats += f" {paint(f'n={c.funding_n}', 'dim', color=color)}"
     return f"{head}  {meta}   {stats}"
 
 

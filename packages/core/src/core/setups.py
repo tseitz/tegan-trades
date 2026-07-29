@@ -506,6 +506,10 @@ class Setup:
                                              # positive = paid, negative = collected
     carry_reward_risk: float | None = None       # R:R once carry is charged to both legs
     carry_reward_risk_p90: float | None = None   # the same at the venue's p90 rate
+    # How many observations the median above was drawn from. Carried so a reader can tell a
+    # rate measured over a month from one measured over three nights — the distinction
+    # ``FundingOutlook.n`` exists for, which previously stopped at the engine's door.
+    funding_n: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -551,6 +555,7 @@ class Candidate:
     carry: float | None = None
     carry_reward_risk: float | None = None
     carry_reward_risk_p90: float | None = None
+    funding_n: int | None = None
 
     @property
     def people(self) -> tuple[str, ...]:
@@ -686,6 +691,7 @@ def collapse(outcomes, *, weights: SetupWeights = DEFAULT_WEIGHTS) -> tuple[Cand
             funding_annual=rep.funding_annual, carry=rep.carry,
             carry_reward_risk=rep.carry_reward_risk,
             carry_reward_risk_p90=rep.carry_reward_risk_p90,
+            funding_n=rep.funding_n,
         ))
     # ── ordering: thesis groups by their best zone, weekly first *within* a group ──
     #
@@ -983,7 +989,7 @@ def cross_reference(
     # Reported, never scored. `_score` does not see these fields and `score_version` does not
     # move — per §21, the weighting decision waits on a session of decisions recorded with
     # both numbers, so this run cannot change any ranking.
-    funding_annual = carry = carry_rr = carry_rr_p90 = None
+    funding_annual = carry = carry_rr = carry_rr_p90 = funding_n = None
     if context.funding is not None:
         # Fractions of entry price, matching what ``carry_adjusted_rr`` expects.
         reward_frac = abs(target - entry) / entry
@@ -999,6 +1005,7 @@ def cross_reference(
             reward_frac, risk_frac, context.funding.p90, CARRY_HOLD_DAYS, side
         )
         funding_annual = context.funding.median
+        funding_n = context.funding.n
         carry, carry_rr, carry_rr_p90 = adjusted.carry, adjusted.ratio, stressed.ratio
 
         # A gate, not a score — the trade loses money *at its own target*, which is a fact
@@ -1030,6 +1037,7 @@ def cross_reference(
                      freshness=freshness, trend_alignment=trend_alignment),
         funding_annual=funding_annual, carry=carry,
         carry_reward_risk=carry_rr, carry_reward_risk_p90=carry_rr_p90,
+        funding_n=funding_n,
     )
 
 
