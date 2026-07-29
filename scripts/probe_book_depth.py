@@ -20,6 +20,39 @@ so this makes one request per (venue, asset) and no retries.
 
     uv run python scripts/probe_book_depth.py
     uv run python scripts/probe_book_depth.py --assets SILVER GOLD BTC
+
+## What venue comparisons have already established — do not re-derive these
+
+**Split by DIRECTION, not by asset class.** The obvious-looking "crypto on Hyperliquid, equities
+on Aster" is *strictly worse than either single venue*. Hyperliquid's funding is positive on
+every approved equity and Aster's is zero, and zero funding only helps when you would be
+*paying* it: measured across all 11 mapped equities, longs were cheaper on Aster 11/11 and
+shorts better on Hyperliquid 11/11. Routing all equities to Aster sends every short to the venue
+that pays nothing — and the corpus is 1,082 shorts against 2,524 longs.
+
+**Rank on slippage, never on depth.** These are different quantities and silver separates them:
+Lighter carries the *most* resting size within 10bp ($2.03M against Hyperliquid's $1.72M) and
+still costs 3–5x more to cross, because its spread is 2.8bp against 0.2bp. The size is there,
+it is just not near the touch.
+
+**The ordering is stable; the magnitudes are not.** A second SILVER snapshot minutes later moved
+Lighter's slippage from 3.0/4.3/4.7bp to 0.8/1.0/2.2bp. *Which* venue wins survived the
+re-measure; *by how much* did not. Quote the ordering, and re-run before sizing anything.
+
+**Do not re-argue the thin-book objection from liquidity alone.** It was tested by walking both
+real books, and the 24h volume gap (NVDA $90M vs $82k) predicts the opposite of what the books
+actually do at retail size. Hyperliquid carries a fixed ~0.86% drag that Aster's ~10x worse
+slippage never catches up to below ~$50k.
+
+**Never quote a testnet liquidity number as a fact about a market.** `xyz:SILVER traded $0 in
+24h` above is the *mock* book; measured on mainnet the same instrument is the tightest of the
+three. `execute.py` says as much — on the rehearsal venue the liquidity gate is measured but
+not enforced.
+
+**Liveness is answered from the funding log, not from config** (`oracle/liveness.py`): a market
+is dormant when its venue cohort reported and it did not. Do not add `dormant:` flags to
+`cfg/venue_map.yaml` — a curated flag rots toward "looks alive", the same error the liquidity
+gate exists to catch.
 """
 from __future__ import annotations
 

@@ -4,7 +4,7 @@ Free, local, re-runnable. Reads ``data/setups/decisions.jsonl`` only — no netw
 no price fetch. Nothing here mutates anything.
 
 **Why this probe exists.** ``freshness`` separated approvals from negatives in two sessions
-(docs/IMPROVEMENTS.md §4, §16) while carrying the second-smallest weight of five, and raising
+(docs/IMPROVEMENTS.md §4) while carrying the second-smallest weight of five, and raising
 it was the one named pending scoring change. This was written to measure *how far* to raise
 it rather than picking a number by argument — the rule §18 states for the ``collapse`` rep:
 "needs measuring against §4's sidecar, not picking by argument".
@@ -13,7 +13,7 @@ it rather than picking a number by argument — the rule §18 states for the ``c
 is distinguishable from chance.** The composite ``score`` is 0.671 with a 95% interval of
 [0.48, 0.84] — it includes 0.5. ``freshness`` is the single term whose interval clears chance,
 at 0.727 [0.54, 0.88], and that is roughly *half* the 0.922 the first sitting showed. Every
-per-timeframe cell now carries a '?'. Nothing is shipped off this probe. See §20.
+per-timeframe cell now carries a '?'. Nothing is shipped off this probe.
 
 **Corrected 2026-07-28: a good part of that was the pooling, not the scorer.** ``within_sitting``
 below forms the U statistic inside each sitting and pools the counts, which is the standard

@@ -16,6 +16,44 @@ and lose every reason you passed on something".
 The mirror is **subordinate to the primary, never a gate on it**. Every write goes to the
 sidecar first and succeeds or fails on its own; a mirror that cannot be written warns and is
 skipped. Losing a backup is recoverable, losing a session's judgement is not.
+
+Both files are append-only, so one is normally a prefix of the other, and that gives three
+cases real meaning: mirror behind → copy forward; **mirror ahead → restore the primary from
+it**; neither a prefix → touch nothing and warn, because splicing two histories invents a
+sequence that never happened.
+
+## Reading these rows — the traps, learned the hard way
+
+Anyone mining this file for "what does Tegan actually approve" hits all of these. They are
+properties of the *data*, so no test can enforce them.
+
+- **Never backfill a missing field on an old row.** A re-run yields today's value, not the
+  decision-time one — one candidate's score moved 0.665 → 0.790 inside a single session. If a
+  backfill is ever unavoidable, stamp it ``recomputed_at`` and never present it as captured
+  live.
+- **Never pool rows across sittings without conditioning on the sitting.** The approval
+  threshold moves between them: one sitting approved at a median score of 0.484 while an
+  earlier one *rejected* at 0.518. "Approved" is relative to what else was on screen, not an
+  absolute quality label. Forming the statistic inside each sitting and pooling the counts is
+  the remedy, and it *raised* every estimate — the headline "almost nothing in the scorer beats
+  chance" was substantially an artefact of pooling incomparable screens.
+- **Partition on ``score_version``.** The scale changed at every bump; ``queue_mode`` says
+  whether a sitting may be pooled at all, and ``queue_band`` narrows it further, because the
+  head band is a score-ordered slice that marches down between sittings while only ``tail`` is
+  a genuine sample.
+- **The 8 ``archived`` rows carrying no ``reason`` and no ``reason_vocab`` are not clean
+  negatives.** The old ``x`` key meant both "I don't trade this asset" and "stale, bury it";
+  the meaning was never recorded and cannot be recovered. Absence of those two fields is how
+  you identify them.
+- **``reason_vocab: 1`` rows use a vocabulary that cut across the categories rather than along
+  them** — ``other`` was never a residue bucket and ``trade_quality`` was 80% not about trade
+  quality. Every vocabulary-2 string is distinct from every vocabulary-1 string, so partition
+  on ``reason`` alone. The hand-labelled mapping for the 29 legacy rows is in the commit that
+  introduced vocabulary 2.
+- **``freshness`` scoring well may be partly circular.** It is the strongest term measured, and
+  8 of 29 rejections say in words "this is old" — so it is partly measuring the scorer agreeing
+  about age rather than fresh setups performing better. Re-run excluding stale rejections
+  before quoting it.
 """
 
 from __future__ import annotations

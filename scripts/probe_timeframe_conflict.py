@@ -16,10 +16,44 @@ arguing:
    different *span of history* on each leg, and two legs measuring different spans will
    disagree as a matter of construction rather than as a finding about the market.
 
-Reads the price cache and the distilled corpus only — no network, no LLM, no cost.
+Reads the price cache and the distilled corpus only — no network, no LLM, no cost. Reproduces
+the shipped engine exactly: 74 candidates and ``timeframe_conflict=1017`` both matched
+``setups --list --limit 0`` on the audit run.
 
     uv run python scripts/probe_timeframe_conflict.py
     uv run python scripts/probe_timeframe_conflict.py --detail ETH/BTC
+    uv run python scripts/probe_timeframe_conflict.py --release --sweep
+
+## What the audit found, 2026-07-28 — do not re-derive these
+
+**Question 2 was pointed the wrong way, and the original guess was backwards.** Measured over
+315 priced assets, the weekly leg spans a median of **125 days** and the daily leg **21** — the
+weekly reads *6x more* history, not less. A 3-week reading was vetoing a 4-month one. The
+pre-audit text asserted the reverse, which is what made "``TREND_DEPTH`` is too coarse" look
+like the answer.
+
+**``TREND_DEPTH`` is not the knob.** Swept 2→12 on the daily leg: no interior optimum. Depths
+3–6 cost candidates outright (74 → 58) while conflicts stay flat or rise; conflicts only
+collapse at 8–12, by which point the daily leg reads 69–99% of the weekly's span and has
+stopped being a second opinion. **Agreement bought by redundancy is not a fix** — the same tell
+``probe_freshness_weight`` records for its own flat sweep. So ``TREND_DEPTH = 2`` is doing its
+job; the defect was that a short-term reading was wired as a *veto* instead of as *timing*.
+
+**745 of 761 genuine conflicts are one shape:** the daily retracing against the weekly, which is
+the textbook entry condition rather than a contradiction. The sharpest case is the 112
+``downtrend / uptrend_failed_breakout / short`` rows — ``_family_of`` maps failed breaks to the
+bullish family (correctly, for its own stated purpose) and that is what makes them "conflict"
+with a short. Its docstring argues against the use the gate put it to.
+
+**A stronger claim was made and withdrawn the same day. Do not restate it.** The first pass
+reported that 0 of the 48 blocked candidates were zones price had traded through, and read that
+as the gate refusing candidates exactly when they become tradeable. **The control shows the
+baseline is also 0 of 74** — ``price_past_stop`` removes traded-through zones upstream, so every
+candidate in the engine is approaching-or-inside by construction. Any future "look how
+well-placed the blocked ones are" measurement needs the kept population as its control.
+
+**``SILVER long daily`` comes back with R:R 2930.22.** Unrelated to this gate — see
+``scripts/probe_stop_padding.py``, which measures why: its stop is 0.02 ATR wide.
 """
 from __future__ import annotations
 
