@@ -49,6 +49,12 @@ TIMEOUT = 20
 # concept and a bare 0 here would read as a placeholder rather than a rule.
 SHARE_DECIMALS = 0
 
+# Order states from which nothing can still happen. Everything else — including any status
+# Alpaca adds later — is treated as live, because the cost of the two mistakes is not
+# symmetric: wrongly blocking a re-entry loses one setup, wrongly releasing the guard sends a
+# second bracket onto a position that already has one.
+TERMINAL_STATUSES = frozenset({"canceled", "expired", "rejected", "done_for_day", "replaced"})
+
 
 @dataclass(frozen=True)
 class AlpacaCredentials:
@@ -183,6 +189,45 @@ class AlpacaBroker:
         here.
         """
         return None
+
+    def live_keys(self, keys) -> set[str]:
+        """Of these candidate keys, which still have something live at the venue.
+
+        The duplicate guard exists to stop **two live brackets on one candidate**, not to
+        record that an order was once sent. ``store.placed_keys`` can only answer the second
+        question, and the difference is a real lost trade: a bracket that filled through its
+        own stop on a gapped open round-trips flat within seconds, yet it was ``ok``, so the
+        log marks the candidate placed and the setup is never offered again.
+
+        Answerable only because ``candidate_key`` goes out as the ``client_order_id``, so the
+        venue can be asked about a candidate directly rather than through a stored order id.
+
+        A **filled** parent is live only while an exit leg is still working — that is the
+        position being open and protected. Once both legs are done the position is closed and
+        there is nothing left to duplicate.
+        """
+        live: set[str] = set()
+        for key in keys:
+            order = self._transport(
+                "GET", "/v2/orders:by_client_order_id", params={"client_order_id": key},
+            )
+            if not isinstance(order, dict) or "status" not in order:
+                # Unreadable, or the venue no longer knows this id. The log still says an
+                # order went out, so stay blocked rather than guess.
+                live.add(key)
+                continue
+            status = str(order.get("status") or "")
+            if status in TERMINAL_STATUSES:
+                continue
+            if status == "filled":
+                legs = order.get("legs") or []
+                if any(str((leg or {}).get("status") or "") not in TERMINAL_STATUSES
+                       and str((leg or {}).get("status") or "") != "filled"
+                       for leg in legs):
+                    live.add(key)
+                continue
+            live.add(key)
+        return live
 
     def place(self, plan: OrderPlan) -> Placement:
         """Send the bracket as one OTOCO order, and report what came back."""

@@ -124,6 +124,8 @@ class Broker(Protocol):
 
     def place(self, plan: OrderPlan) -> Placement: ...
 
+    def live_keys(self, keys) -> set[str]: ...
+
 
 @dataclass(frozen=True)
 class Credentials:
@@ -250,6 +252,21 @@ class HyperliquidBroker:
             coin=coin, day_volume=volume, open_interest=open_interest,
             bid_depth=bid_depth, ask_depth=ask_depth, spread=spread,
         )
+
+    def live_keys(self, keys) -> set[str]:
+        """Every key, unchanged — this venue cannot yet answer the question.
+
+        Deliberately conservative rather than unimplemented. ``AlpacaBroker`` can narrow the
+        duplicate guard to candidates that still have something working, because it sends
+        ``candidate_key`` as the ``client_order_id`` and can ask the venue about a candidate
+        directly. Nothing here does: ``order_requests`` sends no ``cloid``, so the venue knows
+        these orders only by an oid this repo would have to keep its own index of.
+
+        So the guard keeps its old meaning here — placed once, blocked thereafter — which is
+        safe and occasionally costs a re-entry. Sending a ``cloid`` per leg is the fix; it is
+        a wire change and is tracked in `docs/IMPROVEMENTS.md` §33 rather than guessed at.
+        """
+        return set(keys)
 
     def place(self, plan: OrderPlan) -> Placement:
         """Send the bracket as one grouped action, and report what came back."""

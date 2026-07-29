@@ -179,3 +179,77 @@ def test_a_venue_error_body_becomes_a_reported_refusal():
     placement = AlpacaBroker(CREDS, transport=transport).place(PLAN)
     assert not placement.ok
     assert "42210000" in (placement.error or "")
+
+
+# ── which candidates still have something live ──────────────────────────────────────────────
+#
+# The duplicate guard exists to stop TWO LIVE BRACKETS on one candidate. It is not a record of
+# history: a bracket that was accepted and is now flat — cancelled, expired, or round-tripped
+# by a gap — leaves nothing to duplicate, and blocking it burns the setup forever.
+
+def _order(status, legs=()):
+    return {"id": "x", "status": status,
+            "legs": [{"id": f"l{i}", "status": s} for i, s in enumerate(legs)]}
+
+
+def _broker_with(orders):
+    class T:
+        def __call__(self, method, path, body=None, params=None):
+            if path == "/v2/orders:by_client_order_id":
+                return orders.get(params["client_order_id"], {"code": 404, "message": "not found"})
+            return None
+    return AlpacaBroker(CREDS, transport=T())
+
+
+def test_a_resting_bracket_is_live():
+    broker = _broker_with({"k1": _order("accepted", ("held", "held"))})
+    assert broker.live_keys({"k1"}) == {"k1"}
+
+
+def test_a_filled_entry_with_armed_exits_is_live():
+    """Position open and protected — a second bracket here really would be a duplicate."""
+    broker = _broker_with({"k1": _order("filled", ("held", "held"))})
+    assert broker.live_keys({"k1"}) == {"k1"}
+
+
+def test_a_gap_round_trip_is_not_live():
+    """THE BUG THIS FIXES. Entry filled through its own stop, the stop exited at once, the
+    take-profit was cancelled by the OCO. The bracket was `ok` so the log says PLACED — but
+    the position is flat and the setup should be offered again if price returns to the zone."""
+    broker = _broker_with({"k1": _order("filled", ("canceled", "filled"))})
+    assert broker.live_keys({"k1"}) == set()
+
+
+def test_a_cancelled_bracket_is_not_live():
+    broker = _broker_with({"k1": _order("canceled", ("canceled", "canceled"))})
+    assert broker.live_keys({"k1"}) == set()
+
+
+@pytest.mark.parametrize("status", ["expired", "rejected", "done_for_day"])
+def test_other_terminal_states_are_not_live(status):
+    assert _broker_with({"k1": _order(status)}).live_keys({"k1"}) == set()
+
+
+def test_an_unreadable_or_missing_order_stays_blocked():
+    """Fail CLOSED, and this is the one place in the package that direction is right. Not
+    knowing must not release the guard — double-placing a live bracket is worse than missing
+    one re-entry, and the log still says an order went out."""
+    assert _broker_with({}).live_keys({"k1"}) == {"k1"}
+
+
+def test_an_unrecognised_status_stays_blocked():
+    assert _broker_with({"k1": _order("something_new")}).live_keys({"k1"}) == {"k1"}
+
+
+def test_only_the_keys_asked_about_are_returned():
+    broker = _broker_with({"k1": _order("canceled"), "k2": _order("accepted")})
+    assert broker.live_keys({"k1", "k2"}) == {"k2"}
+
+
+def test_no_keys_means_no_requests():
+    calls = []
+    class T:
+        def __call__(self, method, path, body=None, params=None):
+            calls.append(path); return None
+    assert AlpacaBroker(CREDS, transport=T()).live_keys(set()) == set()
+    assert calls == []

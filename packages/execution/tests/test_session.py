@@ -39,11 +39,17 @@ class StubListing:
 class FakeBroker:
     """Implements the ``Broker`` protocol. Records what it was asked to do."""
 
-    def __init__(self, *, equity_by_dex=None, placement=None):
+    def __init__(self, *, equity_by_dex=None, placement=None, live=None):
         self._equity = equity_by_dex or {"": 10_000.0, "xyz": 500.0}
         self._placement = placement or Placement(ok=True, order_ids=(1, 2, 3))
+        self._live = live                 # None -> conservative: every key is still live
         self.placed: list[OrderPlan] = []
         self.equity_calls: list[str] = []
+        self.live_keys_calls: list[set] = []
+
+    def live_keys(self, keys) -> set:
+        self.live_keys_calls.append(set(keys))
+        return set(keys) if self._live is None else set(keys) & set(self._live)
 
     def markets(self):
         return {
@@ -195,3 +201,45 @@ def test_describe_labels_a_short_as_sell(tmp_path):
         StubListing(),
     )
     assert "SELL" in describe(plan)
+
+
+# ── the duplicate guard asks the venue, not just the log ────────────────────────────────────
+
+def test_a_candidate_whose_bracket_is_gone_is_offered_again(tmp_path):
+    """THE BUG. A bracket that filled through its own stop on a gapped open round-trips flat
+    within seconds — but it was `ok`, so the log records PLACED. Reading the log alone would
+    refuse that candidate forever, burning a setup that never actually traded."""
+    orders = tmp_path / "orders.jsonl"
+    broker = FakeBroker(live=set())                       # venue: nothing is still working
+    plan = OrderPlan(asset="ETH", coin="ETH", direction="long", size=0.03,
+                     entry=3_200.0, stop=3_050.0, target=3_900.0, risk=4.5,
+                     notional=96.0, equity=10_000.0, candidate_key="abc123")
+    store.record_placement(orders, plan, Placement(ok=True, order_ids=(1,)), network="testnet")
+
+    session = Session(
+        broker=broker, config=Config(network="testnet"), markets=broker.markets(),
+        orders_path=orders,
+        already_placed=broker.live_keys(store.placed_keys(orders, network="testnet")),
+    )
+    assert session.already_placed == set()
+    assert broker.live_keys_calls == [{"abc123"}]         # the log's answer was asked about
+
+
+def test_a_candidate_with_a_working_bracket_is_still_refused(tmp_path):
+    """The guard's real job, unchanged: never two live brackets on one candidate."""
+    orders = tmp_path / "orders.jsonl"
+    broker = FakeBroker(live={"abc123"})
+    plan = OrderPlan(asset="ETH", coin="ETH", direction="long", size=0.03,
+                     entry=3_200.0, stop=3_050.0, target=3_900.0, risk=4.5,
+                     notional=96.0, equity=10_000.0, candidate_key="abc123")
+    store.record_placement(orders, plan, Placement(ok=True, order_ids=(1,)), network="testnet")
+
+    session = Session(
+        broker=broker, config=Config(network="testnet"), markets=broker.markets(),
+        orders_path=orders,
+        already_placed=broker.live_keys(store.placed_keys(orders, network="testnet")),
+    )
+    assert session.already_placed == {"abc123"}
+    refusal = session.prepare(StubCandidate(key="abc123"), StubListing())
+    assert isinstance(refusal, Refusal)
+    assert refusal.code == "duplicate"

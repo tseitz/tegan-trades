@@ -75,14 +75,19 @@ class Session:
         """
         creds = credentials or config_module.credentials_for(config.venue)
         broker = open_broker(config, creds, dexs=dexs)
+        # The log says which candidates an order was ever sent for; the venue says which of
+        # those still have something working. Only the second is the duplicate guard's actual
+        # question — a bracket that filled through its own stop on a gapped open round-trips
+        # flat in seconds, and blocking that candidate forever burns a setup that never
+        # traded. Scoped to this network, so a testnet rehearsal cannot veto the mainnet trade
+        # it was rehearsing for (see ``store.placed_keys``).
+        placed = store.placed_keys(orders_path, network=config.network)
         return cls(
             broker=broker,
             config=config,
             markets=broker.markets(),
             orders_path=Path(orders_path),
-            # Scoped to this network: a testnet rehearsal must not veto the mainnet trade it
-            # was rehearsing for. See ``store.placed_keys``.
-            already_placed=store.placed_keys(orders_path, network=config.network),
+            already_placed=broker.live_keys(placed),
         )
 
     def equity(self, coin: str) -> float:
