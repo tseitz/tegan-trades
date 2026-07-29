@@ -95,6 +95,35 @@ matches the **resolved** path. `.claude/settings.local.json` now lists both form
 
 ---
 
+## `git push` fails with `Connection closed by UNKNOWN port 65535`
+
+**Symptom:** an SSH push dies instantly inside a Claude Code session and succeeds the moment the
+sandbox is disabled. `github.com` is already in the sandbox's `allowedDomains`, so the config
+looks right.
+
+**Cause: no `allowedDomains` entry can fix this, and chasing one is the trap.** The sandbox
+permits outbound traffic only through a path `ssh` cannot use — raw TCP is refused on *every*
+port, 443 included (`socket.connect` → `Operation not permitted`), while HTTPS clients reach the
+network normally. The allowlist governs the proxied HTTP path; SSH is not on it at all.
+
+**The fix — push over HTTPS with the `gh` token, verified in-sandbox 2026-07-29:**
+
+```bash
+git config url."https://github.com/".pushInsteadOf git@github.com:
+git config credential."https://github.com".helper ""
+git config --add credential."https://github.com".helper "!gh auth git-credential"
+```
+
+**This lives in `.git/config`, so a fresh clone does not have it** — that is why it is written
+down here. Fetch keeps using SSH; only pushes are rewritten. Note the config commands themselves
+must run **outside** the sandbox: `.git/config` is write-protected, and that guardrail is worth
+keeping rather than widening.
+
+**`fatal: failed to store: 100001` on every push is cosmetic.** It is the credential *store*
+step failing against the macOS keychain, which the sandbox blocks. The push exits 0.
+
+---
+
 ## Videos that are genuinely dead
 
 Not a bug — these are correctly skipped, permanently.
