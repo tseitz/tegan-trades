@@ -537,32 +537,24 @@ both routing to `URA`. A `cfg/assets.yaml` alias, not a routing change.
 
 ---
 
-## 33. An equity order can open through its own stop · `PARTLY DONE`
+## 33. Hyperliquid's duplicate guard cannot tell a live bracket from a dead one · `PARTLY DONE`
 
-`venue: alpaca` places into a market open 09:30–16:00 ET while the nightly runs at 06:15 and
-`core.setups` assumes a 24/7 tape.
+`Broker.live_keys` narrows the guard from "an order was once sent" to "something is still
+working", so a bracket that round-tripped flat no longer burns its candidate. `AlpacaBroker`
+implements it against the venue; `HyperliquidBroker` returns every key unchanged, keeping the
+old conservative meaning.
 
-**Queuing is confirmed and needs no work.** A `gtc` bracket placed at 22:45 ET with the market
-shut came back `accepted` with both legs `held` — evidence in `alpaca_wire.ACCEPTED_STATUSES`.
-No scheduler required.
+**The blocker is the wire, not the guard.** `wire.order_requests` sends no `cloid`, so the
+venue knows those orders only by an oid this repo would have to index itself. Sending
+`candidate_key` as the `cloid` on the entry leg makes the same question answerable there —
+that is how Alpaca can answer it at all.
 
-**The gap loss is NOT the residual, and an earlier read of this entry had it backwards.** A
-limit is a worst price, not a target: a buy limit at 391.91 fills at 380 if the market gaps
-there. The stop leg is then born already through the market and exits at once, so the trade
-round-trips for roughly the spread. The limit *is* the protection — there is no Alpaca flag
-for "don't fill at the open" and none is needed.
+**Two settled facts worth not re-deriving** (both in `alpaca_wire`, verified on paper): a GTC
+bracket sent with the market shut is `accepted`, so the 06:15 nightly needs no scheduler; and
+a limit entry fills at a gapped-open price rather than at its limit, so a gap costs a spread
+rather than a stop. Neither needs work.
 
-**What the venue will not catch:** `stop_loss.stop_price must be <= base_price - 0.01`, so the
-stop is validated against the *entry limit* and never against the market. A bracket that will
-fill straight through its own stop is accepted without complaint — verified on paper.
-
-**The real defect is that a round-trip consumes the candidate.** The bracket was accepted, so
-`store.placed_keys` marks the key placed and `Session.prepare` refuses it forever after as a
-duplicate — the setup is burned by a gap that cost nothing and never gave the trade. Fix that
-before anything about the open. `already_placed` needs to distinguish a live position from a
-flat round-trip.
-
-**Holding-side gaps are §35 and are a different problem.** No guard reaches those.
+**Holding-side gaps are §35 and no guard reaches those.**
 
 ---
 
