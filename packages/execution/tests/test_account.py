@@ -112,3 +112,76 @@ def test_headroom_never_goes_negative():
     """An over-committed account has no room, not negative room — the caller compares an
     order's notional against this and a negative would read as a very large deficit."""
     assert parse_account(PAPER).headroom(placed=99_999.0) == 0.0
+
+
+# ── overnight is not intraday, and the venue reports both ────────────────────────────────────
+#
+# Positions here are held ~21 sessions (``core.setups.CARRY_HOLD_DAYS``), so the limit that binds
+# is Reg T's overnight one and never the day-trading one. Alpaca publishes both and puts the
+# *larger* in ``buying_power`` on a PDT-eligible account.
+
+def test_a_cash_account_reports_one_buying_power_and_they_agree():
+    # Measured on the live paper account 2026-07-29: multiplier 1, and buying_power,
+    # regt_buying_power and effective_buying_power are all 24,971.52.
+    account = parse_account({"equity": "99641.69", "buying_power": "24971.52",
+                             "regt_buying_power": "24971.52", "multiplier": "1"})
+    assert account is not None
+    assert account.headroom() == pytest.approx(24_971.52)
+
+
+def test_a_day_trading_account_is_sized_against_its_overnight_power_not_its_intraday():
+    """The trap. On a 4x account Alpaca puts *day-trading* buying power in ``buying_power`` —
+    four times excess equity — while ``regt_buying_power`` is the 2x figure that survives the
+    close. Sizing 21-day holds against the intraday number invites a Reg T call at 16:00 on a
+    position nobody intended to day-trade.
+    """
+    account = parse_account({"equity": "100000", "buying_power": "400000",
+                             "regt_buying_power": "200000", "multiplier": "4"})
+    assert account is not None
+    assert account.headroom() == pytest.approx(200_000.0)
+
+
+def test_the_smaller_of_the_two_wins_whichever_field_it_is_in():
+    # Written as a min rather than a preference, so a venue that ever reports them the other way
+    # round cannot enlarge the budget by relabelling a field.
+    account = parse_account({"equity": "100000", "buying_power": "150000",
+                             "regt_buying_power": "200000"})
+    assert account is not None
+    assert account.headroom() == pytest.approx(150_000.0)
+
+
+def test_a_venue_that_reports_no_overnight_figure_keeps_its_buying_power():
+    # Hyperliquid reports no account at all; a venue that reports one field and not the other
+    # must not have the gate turned off, only left where it was.
+    account = parse_account({"equity": "100000", "buying_power": "150000"})
+    assert account is not None
+    assert account.headroom() == pytest.approx(150_000.0)
+
+
+def test_the_overnight_multiplier_is_the_venue_s_own_leverage_ceiling():
+    account = parse_account({"equity": "100000", "multiplier": "2"})
+    assert account is not None
+    assert account.overnight_multiplier == pytest.approx(2.0)
+
+
+def test_a_four_times_account_may_still_only_hold_two_overnight():
+    """``multiplier: 4`` is an intraday allowance. §36 wanted a per-venue ceiling instead of a
+    lower global one; this is the venue stating its own, so nothing has to be written down.
+    """
+    account = parse_account({"equity": "100000", "multiplier": "4"})
+    assert account is not None
+    assert account.overnight_multiplier == pytest.approx(2.0)
+
+
+def test_a_cash_account_states_one_times():
+    account = parse_account({"equity": "100000", "multiplier": "1"})
+    assert account is not None
+    assert account.overnight_multiplier == pytest.approx(1.0)
+
+
+def test_a_venue_that_states_no_multiplier_states_no_ceiling():
+    # None and not 1.0: a perp venue reports no multiplier, and clamping it to 1x would silently
+    # override ``max_notional_frac``, which is measured on perps and correct for them.
+    account = parse_account({"equity": "100000"})
+    assert account is not None
+    assert account.overnight_multiplier is None

@@ -11,7 +11,9 @@ from execution.config import Config
 from execution.guards import Refusal
 from execution.liquidity import Liquidity
 from execution.plan import Market, OrderPlan
-from execution.session import Session, describe
+from execution.portfolio import Book, combine
+from execution import session as session_module
+from execution.session import Session, describe, describe_book
 from execution.wire import Placement
 
 
@@ -361,3 +363,135 @@ def test_describe_names_the_ceiling_that_bound(tmp_path):
     text = describe(plan, session.account)
     assert "capped from" in text
     assert "at most 20% of equity" in text
+
+
+# ── the pooled risk line ────────────────────────────────────────────────────────────────────
+
+def _plan(risk=1_000.0, key="k"):
+    return OrderPlan(asset="ETH", coin="ETH", direction="long", size=1.0, entry=3_200.0,
+                     stop=3_050.0, target=3_900.0, risk=risk, notional=3_200.0,
+                     equity=100_000.0, candidate_key=key)
+
+
+def _opened(tmp_path, path, broker, monkeypatch):
+    """``Session.open`` against a fake broker. Patched at ``open_broker`` rather than given a
+    broker parameter — the seam already exists and production code should not grow one for a
+    test."""
+    monkeypatch.setattr(session_module, "open_broker", lambda config, creds, dexs=(): broker)
+    return Session.open(config=Config(network="testnet"), orders_path=path,
+                        credentials=object())
+
+
+def _book(spent=3_000.0, **kw):
+    reported = kw.pop("reported", {"alpaca": 100_000.0})
+    return Book(pool=combine(reported), spent=spent, **kw)
+
+
+def test_the_preview_shows_what_the_whole_book_already_risks():
+    line = describe_book(_plan(), _book(3_000.0))
+    assert line is not None
+    assert "3.00% of $100,000.00" in line
+
+
+def test_the_preview_shows_where_the_book_lands_after_this_order():
+    # The number that was on nobody's screen on 2026-07-29: each order read 1% and the eighth
+    # took the account to 7.94%.
+    line = describe_book(_plan(1_000.0), _book(3_000.0))
+    assert line is not None
+    assert "4.00% after this" in line
+
+
+def test_the_preview_names_the_ceiling_so_the_total_can_be_judged_against_something():
+    line = describe_book(_plan(), _book(3_000.0, max_risk=0.05))
+    assert line is not None
+    assert "ceiling 5%" in line
+
+
+def test_the_preview_names_a_venue_the_total_could_not_reach():
+    """A lower bound presented as a total is exactly how "unmeasured" comes to read as "zero" —
+    the failure this whole slice keeps finding. The caveat rides with the number.
+    """
+    line = describe_book(_plan(), _book(reported={"alpaca": 100_000.0, "hyperliquid": None}))
+    assert line is not None
+    assert "hyperliquid not counted" in line
+
+
+def test_the_preview_names_live_orders_whose_risk_is_unrecorded():
+    line = describe_book(_plan(), _book(unpriced=2))
+    assert line is not None
+    assert "2 live order(s)" in line
+
+
+def test_a_clean_total_carries_no_caveat():
+    line = describe_book(_plan(), _book())
+    assert line is not None
+    assert "!" not in line
+
+
+def test_there_is_no_book_line_when_the_ceiling_does_not_apply():
+    # Rather than a line reading 0% of $0, which would look like an empty account.
+    assert describe_book(_plan(), _book(reported={"alpaca": None})) is None
+
+
+def test_the_book_line_is_separate_from_the_buying_power_line():
+    """Two quantities, two lines, deliberately. One pools across venues and one cannot, and a
+    reader who conflates them cancels the wrong order.
+    """
+    text = describe(_plan(), Account(equity=100_000.0, buying_power=25_000.0), _book())
+    assert "free" in text and "at risk across" in text
+
+
+def test_the_preview_is_unchanged_when_no_book_is_supplied():
+    text = describe(_plan(), Account(equity=100_000.0, buying_power=25_000.0))
+    assert "at risk across" not in text
+
+
+# ── the risk a session opens with, and what it adds ─────────────────────────────────────────
+
+def test_a_session_opens_carrying_the_risk_of_what_is_still_live(tmp_path, monkeypatch):
+    """Seeded from the order log, not from zero. A position opened last night is still at risk,
+    and a pooled ceiling that reset itself every evening would be no ceiling at all.
+    """
+    path = tmp_path / "orders.jsonl"
+    store.record_placement(path, _plan(risk=400.0, key="alive"),
+                           Placement(ok=True), network="testnet")
+    store.record_placement(path, _plan(risk=900.0, key="closed"),
+                           Placement(ok=True), network="testnet")
+
+    opened = _opened(tmp_path, path, FakeBroker(live={"alive"}), monkeypatch)
+    assert opened.risk_at_stake == 400.0, "the closed candidate is no longer at risk"
+    assert opened.risk_unpriced == 0
+
+
+def test_risk_from_another_network_is_not_carried(tmp_path, monkeypatch):
+    # Same reason ``placed_keys`` is scoped: a testnet rehearsal must not spend the real budget.
+    path = tmp_path / "orders.jsonl"
+    store.record_placement(path, _plan(risk=400.0, key="alive"),
+                           Placement(ok=True), network="mainnet")
+    opened = _opened(tmp_path, path, FakeBroker(live={"alive"}), monkeypatch)
+    assert opened.risk_at_stake == 0.0
+
+
+def test_a_live_order_with_no_recorded_risk_is_counted_as_unpriced(tmp_path, monkeypatch):
+    """Not as zero. An under-counted total *loosens* the pooled ceiling, which is the dangerous
+    direction, so the count travels with the number.
+    """
+    path = tmp_path / "orders.jsonl"
+    store._append(path, {"outcome": store.PLACED, "candidate_key": "alive",
+                         "network": "testnet"})
+    opened = _opened(tmp_path, path, FakeBroker(live={"alive"}), monkeypatch)
+    assert opened.risk_at_stake == 0.0
+    assert opened.risk_unpriced == 1
+
+
+def test_a_placed_order_adds_its_risk_to_the_running_total(tmp_path):
+    live = _session(tmp_path)
+    before = live.risk_at_stake
+    live.execute(_plan(risk=250.0, key="new"))
+    assert live.risk_at_stake == before + 250.0
+
+
+def test_a_rejected_order_adds_nothing(tmp_path):
+    live = _session(tmp_path, broker=FakeBroker(placement=Placement(ok=False, error="no")))
+    live.execute(_plan(risk=250.0, key="new"))
+    assert live.risk_at_stake == 0.0

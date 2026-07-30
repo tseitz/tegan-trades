@@ -4,8 +4,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
+from execution import desk as desk_module
 from execution import store
-from execution.config import Config
+from execution.config import Config, MissingCredentials
+from execution.desk import Desk, Unroutable
 from execution.liquidity import Liquidity
 from execution.plan import Market, OrderPlan
 from execution.session import Session
@@ -245,6 +247,48 @@ def test_the_banner_names_the_account_it_is_about(venue, network):
     assert network in rec.text.lower()
 
 
+def _hyperliquid_config(tmp_path, network: str):
+    """A config naming Hyperliquid, so the *other* venue is Alpaca and the tier translation is
+    the thing under test. cfg/execution.yaml names alpaca, and reading it here would make these
+    tests move with a setting."""
+    path = tmp_path / "execution.yaml"
+    path.write_text(f"venue: hyperliquid\nnetwork: {network}\n")
+    return path
+
+
+class DeskFactory:
+    """A session factory for ``open_desk``: records which venues it was asked to connect to."""
+
+    def __init__(self, fails=None):
+        self.fails = fails or {}
+        self.configs: list = []
+
+    def __call__(self, *, config, dexs=(), orders_path=None):
+        self.configs.append(config)
+        if config.venue in self.fails:
+            raise self.fails[config.venue]
+        return _FakeVenueSession(config)
+
+    @property
+    def venues(self) -> list[str]:
+        return [c.venue for c in self.configs]
+
+
+class _FakeVenueSession:
+    markets: dict = {}
+
+    def __init__(self, config):
+        self.config = config
+        self.orders_path = "unused"
+
+    @property
+    def network(self) -> str:
+        return self.config.network
+
+    def read_account(self):
+        return None
+
+
 @pytest.mark.parametrize("venue,network", [("hyperliquid", "mainnet"), ("alpaca", "live")])
 def test_every_real_money_network_is_gated(tmp_path, venue, network):
     """The bug this replaces: the gate compared against ``MAINNET`` alone, which is
@@ -254,7 +298,8 @@ def test_every_real_money_network_is_gated(tmp_path, venue, network):
     path.write_text(f"venue: {venue}\nnetwork: {network}\n")
     rec = Recorder(["no thanks"])
 
-    assert execute.open_session(config_path=path, input_fn=rec.input, out=rec.out) is None
+    assert execute.open_desk(wanted=(), config_path=path,
+                             input_fn=rec.input, out=rec.out) is None
     assert "not confirmed" in rec.text
 
 
@@ -266,25 +311,75 @@ def test_no_rehearsal_network_is_gated(tmp_path, venue, network):
     path.write_text(f"venue: {venue}\nnetwork: {network}\n")
     asked = []
 
-    class FakeSession:
-        markets: dict = {}
-        orders_path = "unused"
-
-        @classmethod
-        def open(cls, *, config, dexs=()):
-            return cls()
-
-    original, execute.Session = execute.Session, FakeSession
-    try:
-        session = execute.open_session(
-            config_path=path,
-            input_fn=lambda p: asked.append(p) or "", out=lambda _: None,
-        )
-    finally:
-        execute.Session = original
-
-    assert session is not None
+    desk = execute.open_desk(
+        wanted=(), config_path=path, session_factory=DeskFactory(),
+        input_fn=lambda p: asked.append(p) or "", out=lambda _: None,
+    )
+    assert desk is not None
     assert asked == []          # nothing was typed, because nothing was asked
+
+
+def test_the_barrier_is_taken_once_per_real_money_venue(tmp_path):
+    """A run at the real-money tier reaches real money on every venue it opens, because the
+    tier is translated and not the word — so each venue is asked for itself. Asking once and
+    applying the answer to both would let one typed phrase open a brokerage account nobody
+    named."""
+    rec = Recorder([execute.REAL_MONEY_CONFIRMATION, execute.REAL_MONEY_CONFIRMATION])
+    desk = execute.open_desk(
+        wanted=("alpaca",), config_path=_hyperliquid_config(tmp_path, "mainnet"),
+        session_factory=DeskFactory(), input_fn=rec.input, out=rec.out,
+    )
+    assert desk is not None
+    assert sorted(desk.routable) == ["alpaca", "hyperliquid"]
+    banners = [ln for ln in rec.lines if "real funds" in ln]
+    assert len(banners) == 2, "each venue gets its own banner naming its own network"
+    assert any("ALPACA LIVE" in ln for ln in banners)
+    assert any("HYPERLIQUID MAINNET" in ln for ln in banners)
+
+
+def test_declining_one_venue_leaves_the_other_routable(tmp_path):
+    """"Real funds on the perp book tonight, not on the brokerage account" is an answer worth
+    being able to give, and a single up-front barrier could not express it."""
+    rec = Recorder([execute.REAL_MONEY_CONFIRMATION, "no thanks"])
+    factory = DeskFactory()
+    desk = execute.open_desk(
+        wanted=("alpaca",), config_path=_hyperliquid_config(tmp_path, "mainnet"),
+        session_factory=factory, input_fn=rec.input, out=rec.out,
+    )
+    assert desk is not None
+    assert desk.routable == ("hyperliquid",)
+    assert factory.venues == ["hyperliquid"], "a declined venue must not be connected to"
+    assert desk.refusal_for("alpaca").reason == desk_module.REASON_NOT_CONFIRMED
+
+
+def test_the_configured_venue_is_always_opened_even_when_nothing_routes_to_it(tmp_path):
+    # It is the fallback for a candidate routing has no answer for, so discovering it is
+    # unreachable at that point would be discovering it too late.
+    desk = execute.open_desk(wanted=("alpaca",), session_factory=DeskFactory(),
+                             config_path=_hyperliquid_config(tmp_path, "testnet"),
+                             out=lambda _: None)
+    assert desk is not None
+    assert sorted(desk.routable) == ["alpaca", "hyperliquid"]
+
+
+def test_a_venue_that_cannot_be_reached_does_not_end_the_run(tmp_path):
+    factory = DeskFactory(fails={"alpaca": MissingCredentials("ALPACA_API_KEY_ID not set")})
+    rec = Recorder([])
+    desk = execute.open_desk(wanted=("alpaca",), session_factory=factory,
+                             config_path=_hyperliquid_config(tmp_path, "testnet"),
+                             input_fn=rec.input, out=rec.out)
+    assert desk is not None
+    assert desk.routable == ("hyperliquid",)
+    assert "ALPACA_API_KEY_ID" in rec.text, "the reason belongs on screen, not only in the object"
+
+
+def test_no_reachable_venue_is_reported_and_returns_nothing(tmp_path):
+    factory = DeskFactory(fails={"hyperliquid": MissingCredentials("HYPERLIQUID_SECRET_KEY")})
+    rec = Recorder([])
+    assert execute.open_desk(wanted=(), session_factory=factory,
+                             config_path=_hyperliquid_config(tmp_path, "testnet"),
+                             input_fn=rec.input, out=rec.out) is None
+    assert "no venue is reachable" in rec.text
 
 
 # ── HIP-3 discovery ─────────────────────────────────────────────────────────────────────────
@@ -388,29 +483,14 @@ def test_a_network_override_preserves_every_other_setting(tmp_path):
         "min_day_volume: 42\nmin_open_interest: 43\nmax_participation: 0.002\n"
         "max_notional_frac: 1.5\nenforce_liquidity: false\n"
     )
-    captured = {}
-
-    class FakeSession:
-        markets: dict = {}
-        orders_path = "unused"
-
-        @classmethod
-        def open(cls, *, config, dexs=()):
-            captured["config"] = config
-            return cls()
-
-    # Patched at the seam because the real ``Session.open`` connects and needs credentials;
+    # Injected at the seam because the real ``Session.open`` connects and needs credentials;
     # the config it is handed is the whole subject here.
-    original, execute.Session = execute.Session, FakeSession
-    try:
-        execute.open_session(
-            network="mainnet", config_path=path,
-            input_fn=lambda _: "yes, real money", out=lambda _: None,
-        )
-    finally:
-        execute.Session = original
-
-    config = captured["config"]
+    factory = DeskFactory()
+    execute.open_desk(
+        wanted=(), network="mainnet", config_path=path,
+        session_factory=factory, input_fn=lambda _: "yes, real money", out=lambda _: None,
+    )
+    config = factory.configs[0]
     assert config.network == "mainnet"        # the one thing the flag may change
     assert config.risk_pct == 0.005
     assert config.min_day_volume == 42
@@ -418,3 +498,72 @@ def test_a_network_override_preserves_every_other_setting(tmp_path):
     assert config.max_participation == 0.002
     assert config.max_notional_frac == 1.5
     assert config.enforce_liquidity is False
+
+
+# ── the routed venue is the venue, and never quietly the other one ───────────────────────────
+
+def _desk(tmp_path, sessions, *, unroutable=None):
+    return Desk(
+        config=Config(venue="hyperliquid", network="testnet"),
+        orders_path=tmp_path / "orders.jsonl",
+        sessions=sessions,
+        unroutable=unroutable or {},
+    )
+
+
+def test_a_candidate_is_offered_on_the_venue_it_was_routed_to(tmp_path):
+    session = _session(tmp_path)
+    desk = _desk(tmp_path, {"hyperliquid": session})
+    rec = Recorder(["y"])
+    execute.offer_routed(desk, StubCandidate(), "hyperliquid",
+                         input_fn=rec.input, out=rec.out, is_dormant=lambda *_: False)
+    assert len(session.broker.placed) == 1
+
+
+def test_an_unreachable_routed_venue_is_never_silently_swapped_for_another(tmp_path):
+    """The failure this guards is subtle and expensive: the queue has already printed which
+    venue was cheaper and by how much, so placing on the runner-up makes that line a false
+    statement about an order that exists — and pays the difference the router was built to
+    stop paying.
+    """
+    fallback = _session(tmp_path)
+    desk = _desk(tmp_path, {"hyperliquid": fallback}, unroutable={
+        "alpaca": Unroutable("alpaca", desk_module.REASON_NO_CREDENTIALS, "no key"),
+    })
+    rec = Recorder(["y"])
+    execute.offer_routed(desk, StubCandidate(), "alpaca",
+                         input_fn=rec.input, out=rec.out, is_dormant=lambda *_: False)
+    assert fallback.broker.placed == [], "nothing may be placed on a venue nobody chose"
+    assert "not executable" in rec.text
+    assert "alpaca" in rec.text and "no key" in rec.text
+
+
+def test_an_unreachable_routed_venue_is_recorded_not_merely_printed(tmp_path):
+    # "Approved and not sent" is the class of outcome the order log exists to keep.
+    desk = _desk(tmp_path, {}, unroutable={
+        "alpaca": Unroutable("alpaca", desk_module.REASON_NO_CREDENTIALS, "no key"),
+    })
+    execute.offer_routed(desk, StubCandidate(), "alpaca",
+                         input_fn=lambda _: "y", out=lambda _: None)
+    rows = store.load(desk.orders_path)
+    assert [r["reason"] for r in rows] == [execute.UNROUTABLE]
+    assert rows[0]["network"] == desk.network
+
+
+def test_no_routing_answer_falls_back_to_the_configured_venue(tmp_path):
+    # ``Config.venue`` is no longer the decision, and this is what is left of it.
+    session = _session(tmp_path)
+    desk = _desk(tmp_path, {"hyperliquid": session})
+    rec = Recorder(["y"])
+    execute.offer_routed(desk, StubCandidate(), None,
+                         input_fn=rec.input, out=rec.out, is_dormant=lambda *_: False)
+    assert len(session.broker.placed) == 1
+
+
+def test_a_fallback_to_an_unreachable_configured_venue_refuses_too(tmp_path):
+    desk = _desk(tmp_path, {}, unroutable={
+        "hyperliquid": Unroutable("hyperliquid", desk_module.REASON_UNREACHABLE, "api down"),
+    })
+    rec = Recorder(["y"])
+    execute.offer_routed(desk, StubCandidate(), None, input_fn=rec.input, out=rec.out)
+    assert "hyperliquid" in rec.text and "api down" in rec.text

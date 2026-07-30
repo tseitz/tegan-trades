@@ -15,9 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from execution import config as config_module
-from execution import guards
-from execution import store
-from execution import venues
+from execution import guards, store, venues
+from execution import portfolio as portfolio_module
 from execution.account import Account
 from execution.alpaca_broker import AlpacaBroker
 from execution.broker import Broker, HyperliquidBroker, dex_of
@@ -29,6 +28,7 @@ from execution.sizing import (
     CAP_CONCENTRATION,
     CAP_LEVERAGE,
     CAP_PARTICIPATION,
+    CAP_VENUE_LEVERAGE,
 )
 from execution.wire import Placement
 
@@ -69,11 +69,30 @@ class Session:
     # reason the eighth approval of a sitting can see the first seven. See ``Account.headroom``
     # for why the venue's own buying power cannot answer this alone before the open.
     _committed: float = 0.0
+    # Dollars at risk on this venue: what everything still live would cost if it stopped out.
+    # SEEDED FROM THE ORDER LOG at open, not zero — a position from last night is still at risk,
+    # and the pooled ceiling starting fresh each sitting would be a ceiling that resets itself
+    # every evening. See ``store.risk_by_key``: the log is the only record of this, because a
+    # venue reports a position and its stop as two unrelated objects.
+    _risk: float = 0.0
+    # Live orders whose risk the log cannot state. Kept because ``_risk`` is then a LOWER bound,
+    # and an under-counted total loosens the pooled ceiling — the dangerous direction.
+    _risk_unpriced: int = 0
     _account: Account | None = None
 
     @property
     def network(self) -> str:
         return self.config.network
+
+    @property
+    def risk_at_stake(self) -> float:
+        """USD this venue would lose if everything live stopped out. A lower bound when
+        ``risk_unpriced`` is non-zero."""
+        return self._risk
+
+    @property
+    def risk_unpriced(self) -> int:
+        return self._risk_unpriced
 
     @property
     def account(self) -> Account | None:
@@ -100,12 +119,19 @@ class Session:
         # traded. Scoped to this network, so a testnet rehearsal cannot veto the mainnet trade
         # it was rehearsing for (see ``store.placed_keys``).
         placed = store.placed_keys(orders_path, network=config.network)
+        live = broker.live_keys(placed)
+        # The opening risk balance, from the same log and the same live set — no extra call. A
+        # live key includes a *filled* bracket whose exit legs are still working, which is
+        # exactly the position that is still at risk, so the two questions share one answer.
+        recorded = store.risk_by_key(orders_path, network=config.network)
         return cls(
             broker=broker,
             config=config,
             markets=broker.markets(),
             orders_path=Path(orders_path),
-            already_placed=broker.live_keys(placed),
+            already_placed=live,
+            _risk=sum(recorded[key] for key in live if key in recorded),
+            _risk_unpriced=sum(1 for key in live if key not in recorded),
         )
 
     def equity(self, coin: str) -> float:
@@ -120,11 +146,17 @@ class Session:
             self._equity[dex] = self.broker.equity(dex)
         return self._equity[dex]
 
-    def prepare(self, candidate, listing) -> OrderPlan | Refusal:
+    def prepare(self, candidate, listing, *,
+                book: portfolio_module.Book | None = None) -> OrderPlan | Refusal:
         """Price, size and vet a candidate — no network write, nothing recorded.
 
         Safe to call speculatively, which is what lets the confirmation prompt show real
         numbers rather than an estimate the placement might not honour.
+
+        ``book`` is the *portfolio's* risk state and is passed in rather than built here,
+        because a session knows only its own venue and the pooled ceiling spans all of them.
+        ``None`` leaves that ceiling off — which is the state of every caller that has not been
+        given a ``Desk``.
         """
         if candidate.key in self.already_placed:
             return Refusal(
@@ -146,7 +178,9 @@ class Session:
             risk_pct=self.config.risk_pct,
             max_notional_frac=self.config.max_notional_frac,
             max_position_frac=self.config.max_position_frac,
+            venue_multiplier=account.overnight_multiplier if account else None,
             headroom=account.headroom(self._committed) if account else None,
+            book=book,
             min_budget_fill=self.config.min_budget_fill,
             can_short=account.can_short if account else None,
             min_volume=self.config.min_day_volume,
@@ -218,6 +252,9 @@ class Session:
             # open, an accepted bracket does not necessarily reduce buying power, so the next
             # candidate would otherwise be sized against room this order has already spent.
             self._committed += plan.notional
+            # The same argument for risk, one level up: this total spans venues once a ``Desk``
+            # sums it, so the sixth approval of a sitting sees the first five wherever they went.
+            self._risk += plan.risk
         return placement
 
     def decline(self, candidate, refusal: Refusal) -> None:
@@ -239,12 +276,46 @@ def cap_explanation(plan: OrderPlan) -> str:
         return f"one position may be at most {plan.leverage:.0%} of equity"
     if plan.cap_reason == CAP_LEVERAGE:
         return f"notional held to {plan.leverage:.2f}x equity"
+    if plan.cap_reason == CAP_VENUE_LEVERAGE:
+        # Named as the venue's rule, not as a setting, because it is not one: Reg T caps an
+        # overnight position at 2x however the account is configured, and telling the reader to
+        # raise a ceiling they cannot raise is worse than saying nothing.
+        return (f"the venue will hold {plan.leverage:.2f}x overnight — Reg T, not a setting")
     if plan.cap_reason == CAP_BUDGET:
         return f"all that ${plan.notional:,.2f} of remaining buying power pays for"
     return "a ceiling applied"
 
 
-def describe(plan: OrderPlan, account: Account | None = None) -> str:
+def describe_book(plan: OrderPlan, book: portfolio_module.Book) -> str | None:
+    """The pooled risk total, and what this order does to it. ``None`` when there is no ceiling.
+
+    Printed on every order rather than only when it binds, for the same reason the account line
+    is: the point is to make the running total visible while there is still a decision to make
+    about it. On 2026-07-29 eight orders each read 1% and together risked 7.94%, and that number
+    was on nobody's screen until the venue rejected three at the open.
+
+    **The caveats ride along with the number.** A total that cannot see one venue's equity, or
+    cannot price a live order's risk, is a lower bound — and a lower bound presented as a total
+    is exactly how "unmeasured" comes to read as "zero".
+    """
+    if book.remaining is None:
+        return None
+    after = (book.spent + plan.risk) / book.pool.equity if book.pool.equity else 0.0
+    caveats = []
+    if book.pool.silent:
+        caveats.append(f"{', '.join(book.pool.silent)} not counted")
+    if book.unpriced:
+        caveats.append(f"{book.unpriced} live order(s) with no recorded risk")
+    ceiling = f", ceiling {book.max_risk:.0%}" if book.max_risk is not None else ""
+    return (
+        f"    book {book.at_stake:.2%} of ${book.pool.equity:,.2f} at risk across "
+        f"{', '.join(book.pool.answered)} — {after:.2%} after this{ceiling}"
+        + (f"   ! {'; '.join(caveats)}" if caveats else "")
+    )
+
+
+def describe(plan: OrderPlan, account: Account | None = None,
+             book: portfolio_module.Book | None = None) -> str:
     """The confirmation preview — every number that is about to be transmitted.
 
     Shows realised risk rather than the configured percentage, because flooring the size to a
@@ -292,4 +363,12 @@ def describe(plan: OrderPlan, account: Account | None = None) -> str:
                if account.committed is not None else "")
             + f" — ${after:,.2f} left after this"
         )
+
+    # The line above is this venue's buying power; this one is the whole book's risk. They are
+    # deliberately two lines because they are two quantities — one pools across venues and one
+    # cannot — and a reader who confuses them will cancel the wrong order.
+    if book is not None:
+        pooled = describe_book(plan, book)
+        if pooled is not None:
+            lines.append(pooled)
     return "\n".join(lines)

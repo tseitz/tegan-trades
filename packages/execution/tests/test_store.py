@@ -211,3 +211,69 @@ def test_the_work_list_is_scoped_to_one_network(tmp_path):
     store.record_placement(path, PLAN, Placement(ok=True, order_ids=("1",)), network="testnet")
     assert store.unsettled_keys(path, network="paper") == set()
     assert store.unsettled_keys(path, network="testnet") == {"abc123"}
+
+
+# ── what is at stake, per candidate ─────────────────────────────────────────────────────────
+#
+# The only record of it: no venue reports "how much would this position cost if it stopped out",
+# because the size and the stop are separate objects there. See ``store.risk_by_key``.
+
+def _placed(tmp_path, rows):
+    path = tmp_path / "orders.jsonl"
+    for row in rows:
+        store._append(path, {"outcome": store.PLACED, **row})
+    return path
+
+
+def test_risk_is_read_back_per_candidate(tmp_path):
+    path = _placed(tmp_path, [
+        {"candidate_key": "a", "network": "paper", "risk": 999.79},
+        {"candidate_key": "b", "network": "paper", "risk": 994.77},
+    ])
+    assert store.risk_by_key(path, network="paper") == {"a": 999.79, "b": 994.77}
+
+
+def test_risk_is_scoped_by_network(tmp_path):
+    # Same reason ``placed_keys`` is: a testnet rehearsal must not spend the mainnet budget.
+    path = _placed(tmp_path, [
+        {"candidate_key": "a", "network": "testnet", "risk": 7.0},
+        {"candidate_key": "b", "network": "paper", "risk": 999.0},
+    ])
+    assert store.risk_by_key(path, network="paper") == {"b": 999.0}
+
+
+def test_the_latest_row_for_a_candidate_wins(tmp_path):
+    # A candidate can legitimately be placed twice — a re-entry after a bracket round-tripped
+    # flat. Summing both would charge the book for a position that no longer exists.
+    path = _placed(tmp_path, [
+        {"candidate_key": "a", "network": "paper", "risk": 100.0},
+        {"candidate_key": "a", "network": "paper", "risk": 250.0},
+    ])
+    assert store.risk_by_key(path, network="paper") == {"a": 250.0}
+
+
+def test_a_row_with_no_risk_is_absent_rather_than_zero(tmp_path):
+    """The distinction that matters: "nothing at stake" and "this log cannot say" must not read
+    the same. A missing field counted as 0.0 would quietly enlarge the pooled ceiling.
+    """
+    path = _placed(tmp_path, [{"candidate_key": "a", "network": "paper"}])
+    assert store.risk_by_key(path, network="paper") == {}
+
+
+def test_a_later_row_without_risk_retracts_an_earlier_one(tmp_path):
+    path = _placed(tmp_path, [
+        {"candidate_key": "a", "network": "paper", "risk": 100.0},
+        {"candidate_key": "a", "network": "paper", "risk": None},
+    ])
+    assert store.risk_by_key(path, network="paper") == {}
+
+
+def test_refusals_carry_no_risk(tmp_path):
+    path = tmp_path / "orders.jsonl"
+    store._append(path, {"outcome": store.REFUSED, "candidate_key": "a",
+                         "network": "paper", "risk": 100.0})
+    assert store.risk_by_key(path, network="paper") == {}
+
+
+def test_a_missing_log_has_nothing_at_stake(tmp_path):
+    assert store.risk_by_key(tmp_path / "absent.jsonl", network="paper") == {}

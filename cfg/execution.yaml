@@ -58,6 +58,31 @@ max_notional_frac: 3.0
 # same problem max_notional_frac has in the other direction (docs/IMPROVEMENTS.md §36).
 max_position_frac: 0.20
 
+# The risk ceiling for the WHOLE BOOK, across venues, as a share of combined equity.
+#
+# The only setting in this file that is not per-venue, and that is the point. Buying power
+# cannot be pooled — there is no transfer path between a perp margin pool and equity buying
+# power — but risk must be, because losing 1% on each of two accounts is losing 2% of one
+# person's money. The comment on `venue` below used to name that as the thing to revisit before
+# treating the two books as one account. This is that.
+#
+# MEASURED, and this is the sitting it exists for: on 2026-07-29 eight brackets went out between
+# 03:24 and 04:01 ET, each sized to risk 1% of the same $100,000, and the account carried 7.94%
+# in aggregate. Nothing computed that and nothing showed it; the way it surfaced was Alpaca
+# rejecting three orders at the open, hours after this repo had logged them as placed. At 5% the
+# first five go in full and the sixth is offered 3.2% of what it asked for — refused with the
+# book named, rather than sent and killed later.
+#
+# 5% IS NOT AN INDEPENDENT CHOICE. `max_position_frac: 0.20` already says five positions fit a
+# 1x account, and five positions at a 1% risk budget risk 5%. The two settings are one decision
+# wearing two names, so moving either without the other makes one of them dead. Re-measure with
+# `uv run python scripts/probe_portfolio_budget.py --risk` before changing it.
+#
+# Comment it out to switch the ceiling off entirely. It also switches off when no venue can
+# report equity, because a ceiling computed from a zero denominator refuses every order — the
+# same None-versus-zero asymmetry `packages/execution/account.py` is built on.
+max_portfolio_risk: 0.05
+
 # The floor under a budget-shrunk order, as a share of the size it was going to be.
 #
 # When the account cannot fit a whole order, the alternative to refusing is to send whatever
@@ -82,20 +107,33 @@ min_budget_fill: 0.5
 # revisited holds a slice of the budget for a quarter.
 max_order_age_days: 14
 
-# Which venue's listings to route through, per cfg/venue_map.yaml.
+# The DEFAULT venue, and the tier anchor. No longer the decision.
 #
 # `hyperliquid` — perps, crypto and HIP-3 equities. Networks: testnet | mainnet.
 # `alpaca`      — US equities and ETFs, long or short. Networks: paper | live.
+#
+# Which venue a trade goes to is now decided per candidate, by cost, in `core/routing.py` — the
+# queue shows the winner, what it costs there, and the runner-up. This setting does two smaller
+# jobs instead:
+#
+#   1. THE TIER ANCHOR. `network` below is read against this venue, and every other venue opens
+#      at the same *tier* under its own name — so `network: mainnet` here also reaches Alpaca
+#      `live`, because the fact they share is "real money" and not the word. Each real-money
+#      venue takes its own typed confirmation, so declining one leaves the other routable.
+#   2. THE FALLBACK, for a candidate routing has no answer for.
+#
+# A routed venue is never silently swapped for this one. If the router picks Alpaca and Alpaca
+# is unreachable, the candidate is refused and recorded — placing it here instead would make
+# the cost line the queue already printed a false statement about an order that exists.
 #
 # THE NETWORK IS PART OF THE VENUE, not a free-standing setting. Naming a venue without a
 # network resolves to that venue's rehearsal (testnet / paper), never to the other venue's —
 # and both real-money networks require the same typed confirmation, which is why the check
 # reads the venue table rather than comparing against "mainnet" alone.
 #
-# The two accounts are entirely separate pools and `risk_pct` applies to each on its own. That
-# is deliberate for now: it keeps the equity and crypto books legible as separate books. It
-# also means running both venues risks `risk_pct` TWICE in aggregate, which is the thing to
-# revisit before treating them as one account.
+# The two accounts remain separate pools for buying power, because there is no transfer path
+# between them. Risk is pooled across both — see `max_portfolio_risk` above, which is what
+# stopped `risk_pct` being risked once per venue.
 venue: alpaca
 
 # Liquidity floors, in USD. Applied to EVERY market, not just HIP-3 ones — core-book markets

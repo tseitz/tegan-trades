@@ -198,3 +198,34 @@ def test_the_cohort_is_the_whole_universe_not_the_assets_asked_for():
 def test_asking_about_nothing_still_yields_a_usable_cohort():
     empty = venue_routing.build(set())
     assert len(empty.cohort) > 1
+
+
+# ── which venues are worth opening a session to ──────────────────────────────────────────────
+
+def test_the_venues_to_open_are_the_ones_that_quote():
+    r = Router(alpaca_symbols={"BE": "BE"}, cohort={"BE": _gaps(300, -0.01)},
+               hl_outlooks={"SOL": _outlook(0.05)})
+    got = venue_routing.candidate_venues(
+        r, [_Cand("BE", "long", 100.0, 96.0), _Cand("SOL", "long", 100.0, 96.0)])
+    assert got == ("alpaca", "hyperliquid")
+
+
+def test_a_venue_that_quotes_nothing_is_left_shut():
+    r = Router(alpaca_symbols={}, cohort={}, hl_outlooks={"SOL": _outlook(0.05)})
+    assert venue_routing.candidate_venues(r, [_Cand("SOL", "long", 100.0, 96.0)]) \
+        == ("hyperliquid",)
+
+
+def test_a_venue_gated_out_of_every_candidate_is_still_opened():
+    """The loop this avoids: a short-heavy queue with ``can_short`` unknown gates Alpaca out of
+    every row, so choosing venues by *winner* would leave Alpaca shut — and ``can_short`` is
+    read from Alpaca's own account, so it would stay unknown, so Alpaca would stay gated.
+    """
+    r = Router(alpaca_symbols={"CRM": "CRM"}, cohort={"CRM": _gaps(300, 0.01)}, hl_outlooks={})
+    short = _Cand("CRM", "short", 100.0, 110.0)
+    assert r.decide(short).winner is None, "no winner, because shortability was never asked"
+    assert venue_routing.candidate_venues(r, [short]) == ("alpaca",)
+
+
+def test_an_empty_queue_wants_no_venues():
+    assert venue_routing.candidate_venues(venue_routing.build(set()), []) == ()

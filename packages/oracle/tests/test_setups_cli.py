@@ -1218,38 +1218,120 @@ def test_routing_line_survives_being_rendered_in_colour():
     assert setups_render._visible_len(painted) == len(plain)
 
 
-def test_triage_reads_the_account_so_shorting_capability_reaches_the_router(tmp_path):
-    """Regression: ``Session.account`` is a *property* (the last read, None until one happens)
-    and ``read_account()`` is the fetch. Calling the property raised TypeError, and no test
-    passed a session to ``triage`` — so the whole suite stayed green while ``--execute`` was
-    broken. This is the missing coverage, not just the fix.
-    """
-    calls = []
+class _FakeDesk:
+    """Enough of ``execution.desk.Desk`` for ``triage``: it answers ``can_short``."""
 
-    class _Account:
-        can_short = True
+    def __init__(self, *, can_short=None, routable=("alpaca", "hyperliquid")):
+        self._can_short = can_short
+        self._routable = routable
+        self.asked: list[str] = []
+        self.offered: list[tuple[str, str | None]] = []
 
-    class _Config:
-        venue = "alpaca"
+    def can_short(self, venue):
+        self.asked.append(venue)
+        return self._can_short
 
-    class _Session:
-        config = _Config()
+    default_venue = "alpaca"
 
-        def read_account(self):
-            calls.append("read")
-            return _Account()
+    def session_for(self, venue):
+        return object() if venue in self._routable else None
 
-    lines = []
+    def refusal_for(self, venue):
+        return None
+
+
+def _triage_lines(candidates, *, tmp_path, desk=None, router=None):
+    lines: list[str] = []
     setups_cli.triage(
-        _queue([_candidate(asset="CRM", direction="short", entry=100.0, stop=110.0,
-                           target=80.0)]),
-        decisions_path=tmp_path / "d.jsonl", vault_path=None,
-        input_fn=lambda _: "q", out=lines.append, color=False, session=_Session(),
+        _queue(candidates), decisions_path=tmp_path / "d.jsonl", vault_path=None,
+        input_fn=lambda _: "q", out=lines.append, color=False, desk=desk, router=router,
     )
-    assert calls == ["read"], "triage must fetch the account, not read the stale property"
+    return lines
+
+
+def test_shortability_is_asked_of_alpaca_and_reaches_the_router(tmp_path):
+    """Regression, twice over. First: ``Session.account`` is a *property* (the last read, None
+    until one happens) while ``read_account()`` is the fetch, and nothing passed a session to
+    ``triage`` — so the suite stayed green while ``--execute`` was broken. Now the question is
+    asked of the venue it is *about*, because a Hyperliquid session answers "no account" to a
+    question only Alpaca can settle.
+    """
+    desk = _FakeDesk(can_short=True)
+    lines = _triage_lines(
+        [_candidate(asset="CRM", direction="short", entry=100.0, stop=110.0, target=80.0)],
+        tmp_path=tmp_path, desk=desk)
+    assert desk.asked == ["alpaca"], "shortability is Alpaca's fact, so Alpaca is who is asked"
     venue_lines = [ln for ln in lines if "venue" in ln]
     assert venue_lines
     assert "pending account check" not in venue_lines[0]
+
+
+def test_without_a_desk_shortability_stays_unknown(tmp_path):
+    # And "not asked" is a distinct refusal from a measured "cannot short" — Alpaca has been
+    # seen disagreeing with itself on exactly that pair of fields.
+    lines = _triage_lines(
+        [_candidate(asset="CRM", direction="short", entry=100.0, stop=110.0, target=80.0)],
+        tmp_path=tmp_path)
+    assert any("pending account check" in ln for ln in lines)
+
+
+class _FixedRouter:
+    """A router that always names ``winner``, so the display can be tested on its own."""
+
+    def __init__(self, winner):
+        self.winner = winner
+
+    def decide(self, candidate):
+        # The winner is decided by cost, so the costs are what get flipped — ordering the
+        # quotes would not have moved it, and a test that thinks it controls the winner while
+        # the ranking quietly disagrees is worse than no test.
+        cheap, dear = (0.001, 0.05) if self.winner == "alpaca" else (0.05, 0.001)
+        return _decide(routing.quote("alpaca", "FXI", gap=cheap, crossing=0.0),
+                       routing.quote("hyperliquid", "CHINA", carry=dear, crossing=0.0))
+
+
+def test_the_headline_names_the_instrument_the_routed_venue_would_trade(tmp_path):
+    """The payoff, and it is visible on exactly the assets where the two venues disagree about
+    what the instrument *is*. CHINA is FXI on Alpaca and unmapped on Hyperliquid, so the same
+    candidate has to read differently depending on where it routes. Before routing this was
+    ``Config.venue`` for every row — correct only because every row went there.
+    """
+    headline = next(ln for ln in _triage_lines(
+        [_candidate(asset="CHINA")], tmp_path=tmp_path,
+        desk=_FakeDesk(can_short=True), router=_FixedRouter("alpaca")) if "CHINA" in ln)
+    assert "FXI" in headline
+
+
+def test_the_headline_says_unmapped_when_the_routed_venue_does_not_list_it(tmp_path):
+    headline = next(ln for ln in _triage_lines(
+        [_candidate(asset="CHINA")], tmp_path=tmp_path,
+        desk=_FakeDesk(can_short=True), router=_FixedRouter("hyperliquid")) if "CHINA" in ln)
+    assert "unmapped on hyperliquid" in headline
+
+
+def test_the_headline_names_no_instrument_without_a_desk(tmp_path):
+    # Without --execute there is no run to name an instrument for, and inventing one would print
+    # a ticker nothing could trade. The routing line still shows the cost comparison.
+    headline = next(ln for ln in _triage_lines(
+        [_candidate(asset="CHINA")], tmp_path=tmp_path,
+        router=_FixedRouter("alpaca")) if "CHINA" in ln)
+    assert "FXI" not in headline and "unmapped" not in headline
+
+
+def test_a_supplied_router_is_not_rebuilt(tmp_path):
+    """``main`` builds the router before the desk, because the desk is opened over the venues
+    the router names. Rebuilding here would re-read the funding log and every cohort series for
+    a second, identical answer.
+    """
+    class _Router:
+        calls = 0
+
+        def decide(self, candidate):
+            type(self).calls += 1
+            return _decide()
+
+    _triage_lines([_candidate(asset="CRM")], tmp_path=tmp_path, router=_Router())
+    assert _Router.calls == 1
 
 
 def test_routing_line_says_when_the_cost_is_mostly_pooled():

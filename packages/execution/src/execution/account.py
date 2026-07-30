@@ -28,6 +28,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# The most leverage a US broker will hold through the close. Reg T, and it is the limit that
+# matters here because positions are held ~21 sessions — see ``core.setups.CARRY_HOLD_DAYS``.
+# A ``multiplier`` of 4 is an *intraday* allowance and says nothing about what survives 16:00.
+OVERNIGHT_MULTIPLIER = 2.0
+
 
 @dataclass(frozen=True)
 class Account:
@@ -43,6 +48,27 @@ class Account:
     committed: float | None = None
     multiplier: float | None = None
     can_short: bool | None = None
+    # Reg T buying power — what the account may hold *through the close*. Carried separately
+    # because on a PDT-eligible account ``buying_power`` is the DAY-TRADING figure, four times
+    # excess equity, and this repo holds positions for weeks. Measured on the live paper account
+    # 2026-07-29: at ``multiplier: 1`` the two agree exactly (both 24,971.52), so the difference
+    # is invisible until the account becomes a margin account — and then it is a factor of two.
+    regt_buying_power: float | None = None
+
+    @property
+    def overnight_multiplier(self) -> float | None:
+        """The leverage this venue will actually hold overnight. ``None`` means it did not say.
+
+        §36 asked for a per-venue leverage ceiling rather than a lower global one, since
+        ``max_notional_frac: 3.0`` is measured on perps and correct for perps. This is the venue
+        stating its own, so nothing has to be written down and nothing can drift.
+
+        ``None`` and not 1.0 when the venue reports no multiplier: a perp venue reports none, and
+        clamping it to 1x would silently override the setting that *is* right for it.
+        """
+        if self.multiplier is None:
+            return None
+        return min(self.multiplier, OVERNIGHT_MULTIPLIER)
 
     def headroom(self, placed: float = 0.0) -> float | None:
         """Notional this account can still commit, less what this session has already sent.
@@ -59,9 +85,16 @@ class Account:
 
         Floors at zero: an over-committed account has no room, not negative room.
         """
-        if self.buying_power is None:
+        # The OVERNIGHT figure when the venue reports one, because these positions are held for
+        # weeks. Written as a min rather than a preference for ``regt_buying_power`` so that a
+        # venue reporting the two fields the other way round cannot enlarge the budget by
+        # relabelling one. See ``OVERNIGHT_MULTIPLIER``.
+        available = self.buying_power
+        if available is None:
             return None
-        return max(0.0, self.buying_power - max(0.0, placed))
+        if self.regt_buying_power is not None:
+            available = min(available, self.regt_buying_power)
+        return max(0.0, available - max(0.0, placed))
 
 
 def _number(payload: dict, key: str) -> float | None:
@@ -93,6 +126,7 @@ def parse_account(payload) -> Account | None:
         # Floored, matching the equity read this replaces: a debit balance is not a budget.
         equity=max(0.0, equity),
         buying_power=_number(payload, "buying_power"),
+        regt_buying_power=_number(payload, "regt_buying_power"),
         committed=_number(payload, "initial_margin"),
         multiplier=_number(payload, "multiplier"),
         can_short=bool(shorting) if isinstance(shorting, bool) else None,

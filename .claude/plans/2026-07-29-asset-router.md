@@ -102,7 +102,40 @@ pooled-risk ceiling joins this, and must report itself the same way.
 
 ## Tasks
 
-> **Progress.** T1 ✅ · T2 ✅ · T3 ✅ · T4 ✅ (`oracle/venue_routing.py` + `format_routing`;
+> **Progress.** T1–T7 ✅. T5–T7 notes below; T1–T4 shipped in `88c0213`.
+>
+> **T5 deviated from the plan in one way worth recording: the map is EAGER, not lazy.** The plan
+> asked for lazy construction so a run touching one venue does not authenticate three, but lazy
+> would surface a missing key *mid-triage* — and `Session.open`'s whole ordering argument is that
+> a session dying mid-triage discards judgement, the scarce input. So `Desk.open` connects up
+> front to the venues the router names (`venue_routing.candidate_venues`), which is neither lazy
+> nor "all of them". That function deliberately uses the venues that **quote**, not the ones that
+> **win**: a winner depends on `can_short`, which is read from Alpaca's own account, so choosing
+> by winner lets a short-heavy queue gate Alpaca out for want of the read that opening Alpaca
+> would have supplied — and it stays gated, having proved itself unnecessary.
+> Also: the network is **translated, not copied** (`mainnet`→`live` is a tier, not a word), and a
+> bad venue/network pair raises rather than degrading to `unreachable` — a yaml typo reported as
+> an outage sends someone to check the wrong thing.
+>
+> **T6 turned out not to be correctness-in-advance.** Measured live 2026-07-30, the book already
+> sits at **3.98%** of the 5% ceiling — seeded from the order log, four live keys on Alpaca paper
+> plus three on HL testnet — so the next full-size order lands at 4.96% and the one after is
+> refused. The ceiling is not 5% by taste: `max_position_frac: 0.20` already says five positions
+> fit a 1x account, and five at the 1% budget risk 5%, so the two settings are one decision with
+> two names. Running it live found a defect no unit test had: the refusal compared risk-dollars
+> left against a *notional* needed, and that notional was the post-cap size, which had rounded to
+> zero — "leaving $8.27 against the $0.00 this order needs". Now pinned by test.
+>
+> **T7's live half was not the one §36 described.** Per position the venue ceiling cannot bind
+> while `max_position_frac` (0.20) sits below the multiplier, so that half is genuinely
+> correctness-in-advance and is now pinned by a test that will fail if either number moves. The
+> half that *is* live is headroom: on a 4x account Alpaca's `buying_power` is **day-trading**
+> buying power, and these positions are held ~21 sessions, so sizing against it invites a Reg T
+> call at the close. `regt_buying_power` is the overnight figure; both read 24,971.52 today
+> because the account is still `multiplier: 1`, with `max_margin_multiplier: 4` configured — one
+> settlement away from a silent factor of two.
+>
+> **T1 ✅ · T2 ✅ · T3 ✅ · T4 ✅** (`oracle/venue_routing.py` + `format_routing`;
 > 1653 green). T4 notes: routing shows **with or without a session**, since which venue is
 > cheapest is a fact about the candidate and deferring it to placement would reveal it after the
 > judgement was spent. Only `can_short` needs a session, and "not asked" is now a *distinct*

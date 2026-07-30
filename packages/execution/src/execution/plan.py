@@ -19,6 +19,7 @@ from dataclasses import dataclass
 
 from execution import budget as budget_module
 from execution import guards
+from execution import portfolio as portfolio_module
 from execution.participation import Depth, check_depth, max_shares
 from execution.rounding import round_price, round_size
 from execution.shares import round_share_price, round_shares
@@ -27,6 +28,8 @@ from execution.sizing import (
     CAP_CONCENTRATION,
     CAP_LEVERAGE,
     CAP_PARTICIPATION,
+    CAP_PORTFOLIO,
+    CAP_VENUE_LEVERAGE,
     apply_caps,
     notional_ceiling,
     risk_of,
@@ -117,7 +120,9 @@ def build(
     max_participation: float | None = None,
     max_notional_frac: float | None = None,
     max_position_frac: float | None = None,
+    venue_multiplier: float | None = None,
     headroom: float | None = None,
+    book: portfolio_module.Book | None = None,
     min_budget_fill: float = budget_module.MIN_BUDGET_FILL,
     can_short: bool | None = None,
     min_notional: float = guards.MIN_ORDER_NOTIONAL_USD,
@@ -190,11 +195,23 @@ def build(
     # as a budget shortfall and the order refused for the wrong reason.
     allowed, reason = apply_caps(wanted, (
         (CAP_LEVERAGE, notional_ceiling(equity=equity, entry=entry, frac=max_notional_frac)),
+        # The venue's own overnight limit, beside the configured one rather than folded into it,
+        # because the two call for different responses: ``max_notional_frac`` is a setting that
+        # may be raised, and this is Reg T. §36 asked for a per-venue ceiling instead of a lower
+        # global one — this is the venue stating it, so nothing is written down to drift.
+        (CAP_VENUE_LEVERAGE,
+         notional_ceiling(equity=equity, entry=entry, frac=venue_multiplier)),
         (CAP_CONCENTRATION,
          notional_ceiling(equity=equity, entry=entry, frac=max_position_frac)),
         (CAP_PARTICIPATION,
          max_shares(depth, max_participation)
          if depth is not None and max_participation is not None else None),
+        # The one ceiling here that is not a property of this venue: risk pools across venues
+        # because losing 1% on each of two books is losing 2% of one person's account, so a
+        # position resting on Hyperliquid can bind an Alpaca order. Buying power deliberately
+        # does not pool — see ``portfolio`` for why the two are different quantities.
+        (CAP_PORTFOLIO,
+         None if book is None else book.size_ceiling(entry=entry, stop=stop)),
     ))
 
     # Compared *after* rounding, not before. A ceiling that shaves a fraction of a share off
@@ -206,6 +223,26 @@ def build(
     capped = round_sz(allowed, market.sz_decimals)
     if capped < size:
         capped_from, size, cap_reason = size, capped, reason
+
+    # The portfolio floor, judged only when the pooled ceiling is what bound. If concentration
+    # or participation cut deeper, the order is not small *because* the book is full and saying
+    # so would name the wrong cause — the same reasoning ``budget.check_fill`` applies to
+    # ``wanted``. Before the buying-power check because a full book and a full account call for
+    # different acts, and the more general one should be reported first.
+    if book is not None and cap_reason == CAP_PORTFOLIO:
+        # ``needed`` is RISK, not notional, and that is not a detail — the number it is compared
+        # against is risk left in the book. ``budget`` passes a notional there because buying
+        # power is a notional; mixing the two produced "leaving $8.27 against the $0.00 this
+        # order needs" on a live run, which is two different quantities and a rounded-away size.
+        # Measured from ``capped_from``: what the risk budget asked for, before this cap took it.
+        intended = capped_from if capped_from is not None else size
+        portfolio_refusal = book.check_fill(
+            fitted=size, wanted=intended,
+            needed=risk_of(intended, entry=entry, stop=stop),
+            min_fill=min_budget_fill,
+        )
+        if portfolio_refusal is not None:
+            return portfolio_refusal
 
     if headroom is not None:
         fitted = round_sz(

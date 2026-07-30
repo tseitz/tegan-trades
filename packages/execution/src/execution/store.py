@@ -188,3 +188,33 @@ def placed_keys(path, *, network: str | None = None) -> set[str]:
         r["candidate_key"] for r in load(path)
         if r.get("outcome") == PLACED and (network is None or r.get("network") == network)
     }
+
+
+def risk_by_key(path, *, network: str | None = None) -> dict[str, float]:
+    """What each placed candidate risks, in USD, keyed by candidate. Latest row wins.
+
+    The source for the pooled risk ceiling's opening balance. **This is the only record of what
+    is at stake**, because no venue reports it: a position's size is visible and its stop is a
+    separate resting order, so "how much would this cost if it stopped out" exists nowhere but
+    here — written at placement, when the number was known exactly.
+
+    Latest row wins because the log is append-only and a candidate can legitimately appear
+    twice: a testnet rehearsal followed by the real order, or a re-entry after a bracket
+    round-tripped flat. Scoped by network for the same reason ``placed_keys`` is.
+
+    A row with no ``risk`` is **omitted rather than counted as zero**, so a caller can see the
+    difference between "nothing at stake" and "the log predates this field". Every row written
+    since ``store`` existed carries it; a hand-edited or migrated log might not.
+    """
+    out: dict[str, float] = {}
+    for row in load(path):
+        if row.get("outcome") != PLACED:
+            continue
+        if network is not None and row.get("network") != network:
+            continue
+        risk = row.get("risk")
+        if isinstance(risk, bool) or not isinstance(risk, (int, float)):
+            out.pop(row["candidate_key"], None)
+            continue
+        out[row["candidate_key"]] = float(risk)
+    return out

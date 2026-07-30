@@ -175,6 +175,21 @@ class Router:
                               self.quotes_for(candidate), can_short=self.can_short)
 
 
+def candidate_venues(router: Router, candidates) -> tuple[str, ...]:
+    """Every venue that quotes at least one candidate — the set worth connecting to.
+
+    Deliberately the venues that **quote**, not the venues that **win**, and the difference is
+    a loop rather than a nicety. A winner depends on ``can_short``, which is read from a venue's
+    own account, so choosing what to open from the winners would let a short-heavy queue gate
+    Alpaca out for want of an account read that only opening Alpaca could have provided — and
+    it would stay gated, having proved itself unnecessary.
+
+    A venue that quotes nothing is one no candidate in this sitting could reach, and that one is
+    safe to leave shut.
+    """
+    return tuple(sorted({q.venue for c in candidates for q in router.quotes_for(c)}))
+
+
 def build(assets, *, hold_days: int = CARRY_HOLD_DAYS, can_short: bool | None = None,
           hl_outlooks: dict | None = None) -> Router:
     """Load a ``Router`` for ``assets`` from cached ore. Free — no network.

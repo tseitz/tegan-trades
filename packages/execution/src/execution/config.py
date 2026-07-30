@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from execution import budget, guards, participation, venues
+from execution import budget, guards, participation, portfolio, venues
 from execution.alpaca_broker import AlpacaCredentials
 from execution.broker import MAINNET, TESTNET, Credentials
 
@@ -49,8 +49,16 @@ class Config:
     # exists because the median approved candidate wants 17% of equity — so five of them fill
     # a cash account and the sixth is refused for reasons that have nothing to do with it.
     max_position_frac: float | None = 0.20
+    # The risk ceiling for the WHOLE BOOK, across venues, as a fraction of combined equity.
+    # The one setting here that is not per-venue, and deliberately: buying power cannot be
+    # pooled (no transfer path) but risk must be, because losing 1% on each of two accounts is
+    # losing 2% of one person's money. See ``portfolio`` — 0.05 is ``max_position_frac``
+    # restated in risk terms rather than an independent choice.
+    max_portfolio_risk: float | None = portfolio.MAX_PORTFOLIO_RISK
     # Smallest share of the intended size a budget-shrunk order may still be sent at. See
     # ``budget`` — this is the one number in this file that is chosen rather than measured.
+    # Reused by the pooled risk ceiling: the question is identical, and a second knob nobody
+    # tunes is a second knob that drifts.
     min_budget_fill: float = budget.MIN_BUDGET_FILL
     # Days a resting entry may sit before ``uv run book`` offers to retire it. Nothing cancels
     # automatically; this only decides which rows are flagged.
@@ -111,6 +119,22 @@ class Config:
                 f"one position's share of equity, so 20% is 0.20. For a leverage ceiling "
                 f"above 1x, that is max_notional_frac."
             )
+        # Bounded above by 1.0: "the book may risk 300% of itself" is not a ceiling, and the
+        # likeliest way to write one is to copy ``max_notional_frac``'s 3.0 into it.
+        if self.max_portfolio_risk is not None and not 0 < self.max_portfolio_risk <= 1:
+            raise ValueError(
+                f"max_portfolio_risk must be in (0, 1], got {self.max_portfolio_risk} — it is "
+                f"the share of COMBINED equity the whole book may have at risk at once, so 5% "
+                f"is 0.05. It is not a per-trade number; that is risk_pct."
+            )
+        # A pooled ceiling under the per-trade budget makes every single order impossible, which
+        # is a configuration nobody means and which would otherwise fail one candidate at a time
+        # with a message about the book being full.
+        if self.max_portfolio_risk is not None and self.max_portfolio_risk < self.risk_pct:
+            raise ValueError(
+                f"max_portfolio_risk {self.max_portfolio_risk} is below risk_pct "
+                f"{self.risk_pct}; no single order could ever fit the book"
+            )
         if not 0 <= self.min_budget_fill <= 1:
             raise ValueError(
                 f"min_budget_fill must be in [0, 1], got {self.min_budget_fill} — 0 means "
@@ -146,7 +170,8 @@ def load(path=DEFAULT_PATH) -> Config:
     doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     fields = ("network", "risk_pct", "max_notional_frac", "max_position_frac", "venue",
               "min_day_volume", "min_open_interest", "enforce_liquidity",
-              "max_participation", "min_budget_fill", "max_order_age_days")
+              "max_participation", "min_budget_fill", "max_order_age_days",
+              "max_portfolio_risk")
     known = {f: doc[f] for f in fields if f in doc}
     unknown = set(doc) - set(fields)
     if unknown:

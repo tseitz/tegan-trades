@@ -30,6 +30,13 @@ CAP_LEVERAGE = "leverage"            # notional as a multiple of equity — see 
 CAP_CONCENTRATION = "concentration"  # one position's share of the book — see max_position_frac
 CAP_PARTICIPATION = "participation"  # share of a median session — see ``participation``
 CAP_BUDGET = "budget"                # what the account has left to commit — see ``budget``
+# What the VENUE will hold overnight, from its own live answer rather than a written-down number.
+# Distinct from CAP_LEVERAGE because the remedy differs: that one is a setting you may raise,
+# this one is Reg T and nothing in cfg/ can change it. See ``account.overnight_multiplier``.
+CAP_VENUE_LEVERAGE = "venue_leverage"
+# What the whole book has left to risk, ACROSS venues — see ``portfolio``. The only one of the
+# five that is not a fact about this venue: a position on the other venue can bind it.
+CAP_PORTFOLIO = "portfolio"
 
 
 def size_for_risk(*, equity: float, risk_pct: float, entry: float, stop: float) -> float:

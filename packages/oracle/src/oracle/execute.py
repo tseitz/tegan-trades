@@ -17,11 +17,13 @@ from __future__ import annotations
 from dataclasses import replace
 
 from execution import config as config_module
-from execution import venues
+from execution import desk as desk_module
+from execution import store, venues
 from execution.broker import dex_of
 from execution.config import load as load_config
+from execution.desk import Desk, Unroutable
 from execution.guards import Refusal
-from execution.session import Session, describe
+from execution.session import describe
 
 from oracle import liveness, venue_map
 
@@ -42,6 +44,12 @@ DECLINED = "declined"
 # ``execution.guards`` because there is no pure check behind it — the evidence is the funding
 # log, which ``execution`` neither reads nor should learn about.
 DORMANT = "dormant"
+
+# Routed somewhere this run cannot place. Its own code, and not ``unlisted`` or ``dormant``:
+# those two are facts about the asset and the venue, while this one is a fact about *tonight* —
+# a key that is absent, a venue that is down, a real-money confirmation that was declined. The
+# trade is fine; re-run it once the venue is back.
+UNROUTABLE = "unroutable"
 
 
 def hyperliquid_dexs(venue: str = "hyperliquid", *, path=venue_map.CFG_PATH) -> tuple[str, ...]:
@@ -78,12 +86,21 @@ def confirm_real_money(venue: str, network: str, input_fn, out) -> bool:
     return False
 
 
-def open_session(*, network: str | None = None, config_path=None, input_fn=input, out=print):
-    """Load config, take the real-money barrier if needed, and connect. None if not executing.
+def open_desk(*, wanted, network: str | None = None, config_path=None, input_fn=input,
+              out=print, session_factory=None) -> Desk | None:
+    """Load config, take the real-money barrier per venue, and connect to each. None if nothing
+    is reachable.
 
     Every failure here lands before the first candidate is shown, mirroring
     ``setups_cli.resolve_vault_note``: a session that dies mid-triage discards the judgement
-    already entered, and judgement is the scarce input.
+    already entered, and judgement is the scarce input. That is why the desk is opened over
+    every venue the queue *might* route to rather than lazily on first use — one extra
+    authentication is cheaper than learning about a missing key after nine decisions.
+
+    **The barrier is per venue and declining one leaves the others.** A run at the real-money
+    tier reaches real money on every venue it opens (``desk.network_for`` translates the tier,
+    it does not carry the word), so each one is asked separately — and "real funds on the perp
+    book tonight, not on the brokerage account" is an answer worth being able to give.
     """
     config = load_config(config_path) if config_path else load_config()
     if network is not None:
@@ -95,23 +112,84 @@ def open_session(*, network: str | None = None, config_path=None, input_fn=input
         config = replace(config, network=network)
         config.validate()
 
-    # Asked of the venue table, never of one venue's spelling. ``requires_typed_confirmation``
-    # is the single place that knows which networks move real money — it existed and was
-    # tested throughout, but nothing called it, and this line compared against ``MAINNET``
-    # instead. Alpaca's real-money network is ``live``, which did not match, so a funded
-    # brokerage account opened a session with nothing typed.
-    if config_module.requires_typed_confirmation(config.network) and not confirm_real_money(
-        config.venue, config.network, input_fn, out
-    ):
+    # The configured venue is always opened, whether or not the queue routed anything to it:
+    # it is what a candidate with no routing answer falls back to, and discovering it is
+    # unreachable at that point would be discovering it too late.
+    order = tuple(dict.fromkeys((config.venue, *wanted)))
+
+    declined: dict[str, Unroutable] = {}
+    for venue in order:
+        if venue not in venues.NETWORKS:
+            continue  # no adapter — ``Desk.open`` reports it, and there is nothing to confirm
+        venue_network = desk_module.network_for(config, venue)
+        # Asked of the venue table, never of one venue's spelling. ``requires_typed_confirmation``
+        # is the single place that knows which networks move real money — it existed and was
+        # tested throughout, but nothing called it, and the call site compared against
+        # ``MAINNET`` instead. Alpaca's real-money network is ``live``, which did not match, so
+        # a funded brokerage account opened a session with nothing typed.
+        if config_module.requires_typed_confirmation(venue_network) and not confirm_real_money(
+            venue, venue_network, input_fn, out
+        ):
+            declined[venue] = Unroutable(
+                venue, desk_module.REASON_NOT_CONFIRMED,
+                f"real money on {venue} {venue_network} was not confirmed",
+            )
+
+    desk = Desk.open(
+        config=config, wanted=order, unroutable=declined,
+        # Always asked of Hyperliquid, whatever the configured venue is. Without these the SDK
+        # loads only the core book and ``xyz:GOLD`` fails to resolve to an asset index.
+        dexs=hyperliquid_dexs(),
+        **({} if session_factory is None else {"session_factory": session_factory}),
+    )
+    if not desk.routable:
+        out("  no venue is reachable — no session opened")
+        out(desk_module.describe(desk))
         return None
 
-    session = Session.open(config=config, dexs=hyperliquid_dexs(config.venue))
-    out(f"  execution ON — {config.network}, risking {config.risk_pct:.2%} per trade")
-    out(f"  {len(session.markets)} markets available; orders log to {session.orders_path}")
-    return session
+    out(f"  execution ON — {desk.network} tier, risking {config.risk_pct:.2%} per trade")
+    out(desk_module.describe(desk))
+    out(f"  orders log to {desk.orders_path}")
+    return desk
 
 
-def offer(session, candidate, *, input_fn=input, out=print, is_dormant=liveness.dormant) -> None:
+def offer_routed(desk, candidate, venue: str | None, *, input_fn=input, out=print,
+                 is_dormant=liveness.dormant) -> None:
+    """Offer ``candidate`` on the venue routing chose, or record why it could not be.
+
+    **A candidate is never placed anywhere but where the queue said it would be.** The routing
+    line has already told the reader which venue was cheaper and by how much; substituting the
+    runner-up because the winner is unreachable would make that line a false statement about an
+    order that exists, and the whole point of pricing both venues was to stop paying the
+    difference by accident. So an unreachable winner is a refusal — recorded, not just printed,
+    because "approved and not sent" is the class of outcome the order log exists to keep.
+
+    ``venue=None`` is routing having no answer at all, and that is what the configured venue
+    is for.
+    """
+    target = desk.default_venue if venue is None else venue
+    session = desk.session_for(target)
+    if session is None:
+        dropped = desk.refusal_for(target)
+        detail = (f"{candidate.asset} routes to {target}, which this run cannot reach"
+                  + (f" ({dropped.reason}) — {dropped.detail}" if dropped is not None else ""))
+        out(f"  ! not executable — {detail}")
+        # Recorded against the run's own network. The field scopes the duplicate guard, and an
+        # order that was never sent has nothing to guard — what matters is that the log can
+        # answer "what did tonight refuse, and why" without the venue being reachable to ask.
+        store.record_refusal(desk.orders_path, candidate, Refusal(UNROUTABLE, detail),
+                             network=desk.network)
+        return
+    # The pooled risk book, read here because only the desk spans venues. Built per candidate
+    # rather than per sitting: ``Session.equity`` caches the round-trips, and the total has to
+    # move as orders go out — the whole failure it prevents is the sixth approval not seeing the
+    # first five.
+    offer(session, candidate, book=desk.book(), input_fn=input_fn, out=out,
+          is_dormant=is_dormant)
+
+
+def offer(session, candidate, *, book=None, input_fn=input, out=print,
+          is_dormant=liveness.dormant) -> None:
     """Offer to execute one approved candidate. Never raises past the caller.
 
     A failure to place must not take down a triage session — the approval is already durable
@@ -137,7 +215,7 @@ def offer(session, candidate, *, input_fn=input, out=print, is_dormant=liveness.
         return
 
     listing = venue_map.listing(candidate.asset, venue)
-    outcome = session.prepare(candidate, listing)
+    outcome = session.prepare(candidate, listing, book=book)
 
     if isinstance(outcome, Refusal):
         out(f"  ! not executable — {outcome.detail}")
@@ -147,7 +225,7 @@ def offer(session, candidate, *, input_fn=input, out=print, is_dormant=liveness.
     # The account goes in beside the plan so the preview can show the running total. Per-trade
     # numbers alone are what let eight approvals in one sitting each read as 1% while together
     # wanting 123.6% of the account — see `docs/IMPROVEMENTS.md` §40.
-    out(describe(outcome, session.account))
+    out(describe(outcome, session.account, book))
 
     # The perp liquidity gate is measured but not enforced on the rehearsal network. Saying so
     # keeps it honest — otherwise a market mainnet would never allow looks perfectly healthy

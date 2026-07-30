@@ -48,7 +48,7 @@ from core.setups import (
     collapse,
     cross_reference,
 )
-from execution.venues import ALL_NETWORKS
+from execution.venues import ALL_NETWORKS, ALPACA
 
 from oracle import (
     cache,
@@ -676,9 +676,20 @@ def append_note(vault_path, section: str) -> None:
 
 # ── interactive triage loop ──────────────────────────────────────────────────────────────────
 
+def routing_plan(queue) -> tuple[venue_routing.Router, tuple[str, ...]]:
+    """The router for this sitting, and the venues worth opening a session to. Free — no network.
+
+    Two things that have to be decided in this order and are easy to get backwards. The desk is
+    opened over the venues the *router* names, so the router comes first; but the router's
+    ``can_short`` comes from a venue's own account, so it is filled in afterwards by whoever
+    opened the desk. Hence a plain function returning both rather than one call doing all of it.
+    """
+    router = venue_routing.build({c.asset for c in queue.candidates})
+    return router, venue_routing.candidate_venues(router, queue.candidates)
+
 def triage(queue, *, decisions_path, vault_path, input_fn=input, out=print,
            as_of: date | None = None, color: bool | None = None,
-           mirror_path=None, exclusions_path=None, session=None) -> dict[str, int]:
+           mirror_path=None, exclusions_path=None, desk=None, router=None) -> dict[str, int]:
     """Present each candidate in queue order; approve -> vault note (if given) + sidecar,
     all decisions -> sidecar. Quit stops immediately without consuming further input.
 
@@ -699,19 +710,29 @@ def triage(queue, *, decisions_path, vault_path, input_fn=input, out=print,
     stick across zones. Every write here is subordinate to the sidecar for the same reason the
     vault mirror is — losing a config line is recoverable, losing the judgement is not.
 
-    ``session`` is an ``execution.session.Session`` when ``--execute`` was passed, and None
-    otherwise — which is the default and the entire behaviour of this loop before it existed.
-    It is offered **after** the approval has been written, never before: an order is a
-    consequence of a decision, so the decision must already be durable when it is proposed.
-    Declining the order leaves the approval standing.
+    ``desk`` is an ``execution.desk.Desk`` when ``--execute`` was passed, and None otherwise —
+    which is the default and the entire behaviour of this loop before it existed. An order is
+    offered **after** the approval has been written, never before: an order is a consequence of
+    a decision, so the decision must already be durable when it is proposed. Declining the
+    order leaves the approval standing.
 
-    **Venue routing is shown with or without a session**, because which venue is cheapest is a
+    ``router`` is built here when the caller does not supply one. ``main`` does supply one,
+    because the desk has to be opened over the venues the router names and that happens before
+    the first prompt — and once built there is no reason to re-read the funding log and every
+    cohort series a second time.
+
+    **Venue routing is shown with or without a desk**, because which venue is cheapest is a
     fact about the candidate rather than about the run — and it is one of the numbers the
     judgement should be made *on*, so deferring it to placement would show it after the scarce
-    input was already spent. Only the account-dependent half needs a session: ``can_short`` is
+    input was already spent. Only the account-dependent half needs a desk: ``can_short`` is
     unknown without one, which ``core.routing`` reports as a distinct refusal from a measured
     "cannot short" rather than guessing (Alpaca has been seen disagreeing with itself on exactly
     that pair of fields).
+
+    **The venue in the headline is the venue the order will go to**, which is the whole payoff:
+    it names the instrument that would actually be traded, so a candidate routed to Alpaca shows
+    its Alpaca ticker and not the perp's. Before routing existed this was ``Config.venue`` for
+    every row, which was correct only because every row went there.
     """
     counts = {APPROVED: 0, LATER: 0, REJECTED: 0, ARCHIVED: 0}
     decided_at = datetime.now(UTC).isoformat(timespec="seconds")
@@ -721,20 +742,19 @@ def triage(queue, *, decisions_path, vault_path, input_fn=input, out=print,
     # Built once for the whole sitting: the funding log and every cohort series get read here
     # rather than per candidate. The pooled gap rate is still recomputed per candidate, because
     # it depends on that candidate's own stop — see ``core.gaps.pooled_excess``.
-    # ``read_account`` and not the ``account`` property: the property is the *last* read and is
-    # None until something has read one, so using it here would report "pending account check" on
-    # every short even with --execute. One live call, and --execute already implies the network.
-    account = session.read_account() if session is not None else None
-    router = venue_routing.build(
-        {c.asset for c in queue.candidates},
-        can_short=account.can_short if account is not None else None,
-    )
+    if router is None:
+        router = venue_routing.build(
+            {c.asset for c in queue.candidates},
+            can_short=desk.can_short(ALPACA) if desk is not None else None,
+        )
     for i, row in enumerate(queue.rows, start=1):
         c = row.candidate
         zones, index = pairing[i - 1]
-        # Only when a session exists. Without --execute there is no venue to resolve against,
-        # and inventing one would name an instrument the run cannot trade.
-        venue = session.config.venue if session is not None else None
+        routed = router.decide(c)
+        # The routed venue, or None when nothing can take this candidate. Only resolved with a
+        # desk: without --execute there is no run to name an instrument for, and inventing one
+        # would print a ticker nothing could trade.
+        venue = routed.winner.venue if desk is not None and routed.winner else None
         listing = venue_map.listing(c.asset, venue) if venue else None
         out(format_candidate(c, rank=i, total=total, as_of=as_of, color=color,
                              venue=venue,
@@ -742,7 +762,7 @@ def triage(queue, *, decisions_path, vault_path, input_fn=input, out=print,
                              zones_in_thesis=zones, zone_index=index))
         # A fifth summary line rather than a headline field: it is four facts (venue, cost,
         # margin, what is unpriced) and the headline is already carrying five.
-        out(format_routing(router.decide(c), hold_days=CARRY_HOLD_DAYS, color=color))
+        out(format_routing(routed, hold_days=CARRY_HOLD_DAYS, color=color))
         ans = input_fn(_PROMPT).strip()
         if ans.lower() in ("q", "quit"):
             break
@@ -765,8 +785,8 @@ def triage(queue, *, decisions_path, vault_path, input_fn=input, out=print,
         # Strictly after the decision is on disk. An order is a consequence of an approval,
         # so the approval must survive independently of whether the order does — and a venue
         # timeout must never be able to lose the judgement that preceded it.
-        if session is not None and decision == APPROVED:
-            execute.offer(session, c, input_fn=input_fn, out=out)
+        if desk is not None and decision == APPROVED:
+            execute.offer_routed(desk, c, venue, input_fn=input_fn, out=out)
     return counts
 
 
@@ -1075,24 +1095,31 @@ def main(argv: list[str] | None = None) -> int:
     if mirror_path is not None:
         print(f"  decisions mirrored to {mirror_path}")
 
+    # Built before the desk, because which venues are worth connecting to is the router's
+    # answer and not a constant — see ``venue_routing.candidate_venues``.
+    router, wanted = routing_plan(queue)
+
     # Opened before the first candidate is shown, for the same reason the vault note is
     # resolved there: a missing key or an unreachable venue must fail while the cost is zero,
     # not after a session's worth of judgement has been entered.
-    session = None
+    desk = None
     if args.execute:
         try:
-            session = execute.open_session(network=args.network)
+            desk = execute.open_desk(wanted=wanted, network=args.network)
         except Exception as exc:  # noqa: BLE001 - surfaced as a message, not a traceback
             print(f"error: could not start execution — {exc}", file=sys.stderr)
             return 1
-        if session is None:
+        if desk is None:
             return 1
+        # Asked of Alpaca specifically, and only now that there is an account to ask. This is
+        # the one routing input a run cannot know offline, and it gates every equity short.
+        router = replace(router, can_short=desk.can_short(ALPACA))
     elif args.network is not None:
         print("  note: --network has no effect without --execute", file=sys.stderr)
 
     counts = triage(  # pragma: no cover - interactive
         queue, decisions_path=decisions_path, vault_path=vault_note, as_of=as_of,
-        mirror_path=mirror_path, exclusions_path=args.exclusions, session=session)
+        mirror_path=mirror_path, exclusions_path=args.exclusions, desk=desk, router=router)
     print("\n" + format_counts(counts))
     return 0
 

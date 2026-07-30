@@ -5,9 +5,11 @@ from dataclasses import dataclass
 
 import pytest
 
-from execution import guards
+from execution import guards, portfolio
 from execution.liquidity import Liquidity
 from execution.plan import SHARE_GRID, Market, OrderPlan, build
+from execution.portfolio import Book, combine
+from execution.sizing import CAP_PORTFOLIO, CAP_VENUE_LEVERAGE
 
 
 # ── stubs ───────────────────────────────────────────────────────────────────────────────────
@@ -342,3 +344,141 @@ def test_capped_from_keeps_naming_what_the_risk_budget_asked_for():
     # 1% of $10,000 over a $150 stop is 0.6666 ETH after the lot — the risk-derived size,
     # not the 0.625 the concentration ceiling had already cut it to.
     assert plan.capped_from == pytest.approx(0.6666, abs=1e-3)
+
+
+# ── the pooled risk ceiling ─────────────────────────────────────────────────────────────────
+#
+# The one ceiling here that is not a fact about this venue. See ``portfolio``: risk pools across
+# venues because losing 1% on each of two books is losing 2% of one account, while buying power
+# does not pool because no transfer path exists between a margin pool and equity buying power.
+
+def _book(spent, *, equity=10_000.0, max_risk=0.05):
+    return Book(pool=combine({"hyperliquid": equity}), spent=spent, max_risk=max_risk)
+
+
+def test_an_empty_book_does_not_cap_the_order():
+    plan = _build(book=_book(0.0))
+    assert isinstance(plan, OrderPlan)
+    assert plan.cap_reason is None
+
+
+def test_no_book_at_all_leaves_the_ceiling_off():
+    # The default, and the behaviour of every caller before the pooled ceiling existed.
+    plan = _build(book=None)
+    assert isinstance(plan, OrderPlan)
+    assert plan.cap_reason is None
+
+
+def test_a_nearly_full_book_shrinks_the_order_and_names_the_reason():
+    # $10k equity at 5% is $500 of risk; $420 is already at stake, so $80 is left against the
+    # $100 this trade's 1% budget asks for.
+    plan = _build(book=_book(420.0))
+    assert isinstance(plan, OrderPlan)
+    assert plan.cap_reason == CAP_PORTFOLIO
+    assert plan.capped_from is not None and plan.risk < 100.0
+
+
+def test_a_full_book_refuses_rather_than_sending_a_token_order():
+    plan = _build(book=_book(499.0))
+    assert isinstance(plan, guards.Refusal)
+    assert plan.code == portfolio.REFUSAL_PORTFOLIO_FULL
+
+
+def test_the_refusal_names_the_book_and_not_this_venue_s_buying_power():
+    refused = _build(book=_book(499.0))
+    assert isinstance(refused, guards.Refusal)
+    assert "max_portfolio_risk" in refused.detail
+    assert "buying power" not in refused.detail
+
+
+def test_risk_taken_on_another_venue_binds_an_order_on_this_one():
+    """The whole point of pooling. Nothing about this Hyperliquid candidate changed — the
+    constraint is a position sitting on Alpaca.
+    """
+    elsewhere = Book(pool=combine({"hyperliquid": 10_000.0, "alpaca": 0.0}),
+                     spent=430.0, max_risk=0.05)
+    plan = _build(book=elsewhere)
+    assert isinstance(plan, OrderPlan)
+    assert plan.cap_reason == CAP_PORTFOLIO
+
+
+def test_a_tighter_ceiling_elsewhere_is_not_blamed_on_the_portfolio():
+    """If concentration cuts deeper, the order is not small *because* the book is full, and the
+    preview must not say it is — the same reasoning ``budget.check_fill`` applies to ``wanted``.
+    A misnamed cause sends the reader to cancel orders that were never the problem.
+    """
+    plan = _build(book=_book(0.0), max_position_frac=0.01)
+    assert isinstance(plan, OrderPlan)
+    assert plan.cap_reason == "concentration"
+
+
+def test_a_deeper_cut_elsewhere_cannot_trigger_the_portfolio_refusal():
+    # Concentration cuts to 0.5% of equity, far under the fill floor — and that is allowed,
+    # because a concentration cut is the policy working as intended and never a refusal.
+    plan = _build(book=_book(0.0), max_position_frac=0.005)
+    assert isinstance(plan, OrderPlan)
+
+
+# ── the venue's own overnight ceiling (§36) ─────────────────────────────────────────────────
+#
+# CORRECTNESS IN ADVANCE, and worth being honest about which half is which. Per position this
+# cap cannot bind while ``max_position_frac`` (0.20) is below the multiplier — concentration
+# always cuts first. What *is* live is the headroom half: on a 4x account Alpaca's
+# ``buying_power`` is the day-trading figure, and sizing 21-day holds against it invites a Reg T
+# call at the close. See ``account.headroom``.
+
+# A 4-point stop on a $3,200 market: a 1% risk budget then wants 8x equity, which is where any
+# leverage ceiling becomes reachable at all. The engine's tightest stop to date is 0.51%, so this
+# is not far off what it can actually produce.
+TIGHT = StubCandidate(stop=3_196.0)
+
+
+def test_the_venue_s_overnight_limit_caps_the_order():
+    # Liquidity off: a 1x-of-equity order is larger than 1% of the stub book's near-touch depth,
+    # and that gate is not what this test is about.
+    plan = _build(TIGHT, venue_multiplier=1.0, max_position_frac=None, max_notional_frac=3.0,
+                  enforce_liquidity=False)
+    assert isinstance(plan, OrderPlan)
+    assert plan.cap_reason == CAP_VENUE_LEVERAGE
+    assert plan.leverage <= 1.0
+
+
+def test_a_venue_stating_no_limit_leaves_the_configured_one_alone():
+    # A perp venue reports no multiplier, and ``max_notional_frac: 3.0`` is measured on perps.
+    plan = _build(venue_multiplier=None, max_position_frac=None, max_notional_frac=3.0)
+    assert isinstance(plan, OrderPlan)
+    assert plan.cap_reason is None
+
+
+def test_the_tighter_of_the_two_leverage_limits_wins():
+    plan = _build(TIGHT, venue_multiplier=2.0, max_notional_frac=0.5, max_position_frac=None,
+                  enforce_liquidity=False)
+    assert isinstance(plan, OrderPlan)
+    assert plan.cap_reason == "leverage", "the configured ceiling was the tighter one"
+
+
+def test_the_venue_limit_is_named_separately_from_the_configured_one():
+    """Different remedies. ``max_notional_frac`` is a setting a reader may raise; Reg T is not,
+    and telling someone to raise a ceiling they cannot raise is worse than saying nothing.
+    """
+    assert CAP_VENUE_LEVERAGE != "leverage"
+
+
+def test_concentration_still_dominates_on_a_real_alpaca_account():
+    # The honest statement of §36's status: with max_position_frac at 0.20 and a 1x account, the
+    # venue ceiling is unreachable per position. This pins that so a future change to either
+    # number makes the interaction visible rather than surprising.
+    plan = _build(venue_multiplier=1.0, max_position_frac=0.20, max_notional_frac=3.0)
+    assert isinstance(plan, OrderPlan)
+    assert plan.cap_reason == "concentration"
+
+
+def test_the_portfolio_refusal_compares_risk_against_risk():
+    """Found on a live run: the message read "leaving $8.27 against the $0.00 this order needs".
+    Two defects in one line — the room left is *risk* dollars while what was needed was passed as
+    a *notional*, and that notional was the post-cap size, which had rounded to zero. A refusal
+    whose two numbers are different quantities cannot be checked by the person reading it.
+    """
+    refused = _build(TIGHT, book=_book(499.0), enforce_liquidity=False)
+    assert isinstance(refused, guards.Refusal)
+    assert "of risk against the $100.00 this order wants" in refused.detail, refused.detail

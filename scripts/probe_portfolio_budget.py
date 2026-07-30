@@ -11,6 +11,10 @@ account. Alpaca accepted all eight — the market was shut — and rejected thre
 ``RKLB`` for buying power, and two ``CRM`` shorts because the account cannot short at all. The
 repo's own log still reads ``placed`` for all three.
 
+``--risk`` is the pooled ceiling's evidence and the half of that night nothing computed: the
+eight orders each risked ~1% and together risked **7.94%** of the account. See
+``execution.portfolio`` — 5% admits the first five and refuses the sixth at a 3.2% fill.
+
 Run it with no arguments for the replay. ``--sizing`` prints the distribution behind
 ``max_position_frac`` instead, and the finding worth not re-deriving is that a concentration
 ceiling is **not** a tail guard: at 1% risk the median approved candidate wants 17.4% of
@@ -124,6 +128,64 @@ def replay(rows, *, equity: float, config, can_short: bool | None) -> None:
           f"({sent_total / equity:.1%} of equity)")
 
 
+def pooled_risk(rows: list[dict], config) -> None:
+    """What the recorded sitting risked in aggregate, and where a pooled ceiling would bind.
+
+    The counterpart to the notional replay above. That one asks "could the account afford these
+    positions"; this asks "how much of the account was on the line at once", which is a different
+    quantity with a different answer — buying power is per venue and risk is not.
+    """
+    ceiling = config.max_portfolio_risk
+    equity = rows[0].get("equity") or 0.0
+    if equity <= 0:
+        print("  the log records no equity for this sitting; nothing to express risk against")
+        return
+
+    print(f"  {rows[0].get('network')}, {len(rows)} orders against ${equity:,.2f}")
+    print(f"  pooled ceiling {'off' if ceiling is None else f'{ceiling:.0%}'}"
+          f"   per-trade budget {config.risk_pct:.2%}   fill floor {config.min_budget_fill:.0%}\n")
+    print(f"  {'asset':<8}{'dir':<7}{'risk':>12}{'cumulative':>12}  under the ceiling")
+
+    spent = 0.0
+    room = None if ceiling is None else ceiling * equity
+    for row in rows:
+        risk = row.get("risk") or 0.0
+        verdict = "—"
+        if room is not None:
+            left = max(0.0, room - spent)
+            if left >= risk:
+                verdict = "sent"
+                spent += risk
+            else:
+                fill = left / risk if risk else 0.0
+                # A refused order consumes nothing. Charging the book for it would understate
+                # every following order's fill and hide that they were all offered the same room.
+                if fill < config.min_budget_fill:
+                    verdict = f"REFUSED [portfolio_full], {fill:.1%} fill"
+                else:
+                    verdict = f"capped to {fill:.0%}"
+                    spent += left
+        print(f"  {row['asset']:<8}{row['direction']:<7}{risk:>12,.2f}"
+              f"{sum_so_far(rows, row):>12.2%}  {verdict}")
+
+    total = sum(r.get('risk') or 0.0 for r in rows)
+    print(f"\n  as sent that night: {total / equity:.2%} of equity across {len(rows)} orders")
+    if room is not None:
+        print(f"  under a {ceiling:.0%} ceiling:  {spent / equity:.2%}")
+
+
+def sum_so_far(rows: list[dict], upto: dict) -> float:
+    """Cumulative risk through ``upto``, as a fraction. Recomputed rather than accumulated so the
+    column reads the same whether or not a ceiling was applied."""
+    equity = rows[0].get("equity") or 1.0
+    total = 0.0
+    for row in rows:
+        total += row.get("risk") or 0.0
+        if row is upto:
+            break
+    return total / equity
+
+
 def sizing(config) -> None:
     """What each approved decision asks of the account, so the ceiling can be set on evidence."""
     approved = [r for r in _rows(DECISIONS)
@@ -175,6 +237,9 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--sizing", action="store_true",
                         help="the distribution behind max_position_frac, not the replay")
+    parser.add_argument("--risk", action="store_true",
+                        help="the aggregate RISK of the recorded sitting, and where a pooled "
+                             "ceiling would have bound. The evidence for max_portfolio_risk.")
     parser.add_argument("--equity", type=float, default=100_000.0,
                         help="account size to replay against (default: 100000, the paper "
                              "account on the night in question)")
@@ -189,6 +254,14 @@ def main(argv=None) -> int:
     config = load_config()
     if args.sizing:
         sizing(config)
+        return 0
+
+    if args.risk:
+        rows = placements(args.network)
+        if not rows:
+            print(f"  no orders recorded in {ORDERS}")
+            return 0
+        pooled_risk(rows, config)
         return 0
 
     rows = placements(args.network)
