@@ -387,7 +387,7 @@ def _summary(c: Candidate, *, as_of: date | None, color: bool) -> list[str]:
     unaligned = "" if c.trend_alignment else (
         " · " + paint("no macro alignment", "yellow", color=color))
 
-    label = lambda text: paint(_pad(text, 7), "dim", color=color)  # noqa: E731
+    label = lambda text: paint(_pad(text, 7), "dim", color=color)
     return [
         f"  {label('called')}{called}{paint(span, 'dim', color=color)}"
         f"{paint(f' · freshness {c.freshness:.2f}', 'dim', color=color)}",
@@ -395,6 +395,82 @@ def _summary(c: Candidate, *, as_of: date | None, color: bool) -> list[str]:
         f"  {label('trend')}weekly {c.weekly_trend} · daily {c.daily_trend}{unaligned}",
         f"  {label('who')}{format_views(c)} · agreement {c.agreement}",
     ]
+
+
+def format_routing(decision, *, hold_days: int, color: bool = False) -> str:
+    """Which venue this trade should go to, what it costs there, and how firm the call is.
+
+    **The margin is the point, not the winner.** Measured 2026-07-29, the median candidate costs
+    0.595% on Alpaca against 0.53% on Hyperliquid — so on a typical row the two venues are a coin
+    flip, while on the tails they differ by whole percent (``PLTR`` short is *paid* 0.32% on a perp
+    against 7.21% of gap cost on Alpaca). Printing only the winner would render those two rows
+    identically and quietly turn noise into an instruction.
+
+    Softness is shown for the same reason ``_summary`` shows ``no macro alignment`` and the
+    headline shows ``n=``: a soft signal that isn't displayed is worse than a hard one, because
+    the row arrives looking like every other and the judgement it was softened to enable cannot
+    be made. Two flavours, and they are different: ``coin flip`` means the costs are inside
+    ``NOISE_FLOOR``, while a named unpriced term means the comparison is missing a number
+    altogether (§43 — ``crossing`` is unpriced on every venue, and it decided ``GOOGL`` on 0.116%).
+    """
+    winner = decision.winner
+    refused = " · ".join(f"{r.venue} {_REFUSAL_WORDS.get(r.reason, r.reason)}"
+                         for r in decision.refused)
+
+    if winner is None:
+        # Unlisted and gated are different problems with different fixes — one wants a row in
+        # `cfg/venue_map.yaml`, the other wants an account change or is simply impossible. Saying
+        # "cannot take this" for an asset nobody was even asked about sends the reader at the
+        # wrong one. §30's one surviving recommendation is to record this rather than drop it.
+        body = ("no venue can take this" if decision.refused
+                else "no venue lists this asset")
+        return f"  {paint(_pad('venue', 7), 'dim', color=color)}" \
+               f"{paint(body, 'yellow', color=color)}" + (
+                   f"{paint(' · ' + refused, 'dim', color=color)}" if refused else "")
+
+    # A credit reads as one. "-0.32%" is easy to skim as a small cost rather than as income.
+    cost = (f"paid {abs(winner.total):.2%}" if winner.total < 0
+            else f"costs {winner.total:.2%}")
+    style = "green" if winner.total <= 0 else "bold"
+    parts = [(f"{paint(winner.venue, 'bold', color=color)} "
+              f"{paint(cost, style, color=color)}"
+              f"{paint(f' over {hold_days}d', 'dim', color=color)}")]
+    if winner.dominant:
+        parts.append(paint(winner.dominant, "dim", color=color))
+
+    runner_up, margin = decision.runner_up, decision.margin
+    if runner_up is not None and margin is not None:
+        parts.append(paint(f"vs {runner_up.venue} {runner_up.total:.2%}, "
+                           f"saves {margin:.2%}", "dim", color=color))
+
+    if not decision.decisive and runner_up is not None:
+        why = {"evidence": "better evidenced", "preference": "stated preference"}.get(
+            decision.tie_break or "", "no margin")
+        parts.append(paint(f"COIN FLIP, chose on {why}", "yellow", color=color))
+    if winner.unpriced:
+        parts.append(paint(f"{'+'.join(winner.unpriced)} unpriced", "yellow", color=color))
+    # Shown for the same reason the headline shows ``n=`` on a thin funding median: 13 of 18
+    # Alpaca-listed assets in the live queue lean more than half on the cohort, and a cost
+    # printed without that is the pool wearing this instrument's ticker. ``core.gaps`` requires
+    # this in its own docstring and the first cut of this line dropped it on the floor.
+    borrowed = [t for t in winner.borrowed if t in winner.priced]
+    if borrowed:
+        parts.append(paint(f"{'+'.join(borrowed)} mostly pooled", "yellow", color=color))
+    if refused:
+        parts.append(paint(refused, "dim", color=color))
+
+    return f"  {paint(_pad('venue', 7), 'dim', color=color)}{' · '.join(parts)}"
+
+
+# Refusal codes as something a person reads mid-sitting. ``short_unknown`` is deliberately not
+# "cannot short": the queue holds no credentials, so it has never asked, and saying otherwise
+# would state a stale measurement as current.
+_REFUSAL_WORDS = {
+    "long_only": "is long-only",
+    "cannot_short": "cannot short",
+    "short_unknown": "pending account check",
+    "unpriced": "unpriced, cannot rank",
+}
 
 
 def thesis_pairing(candidates) -> list[tuple[int, int]]:

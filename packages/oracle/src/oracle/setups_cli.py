@@ -23,7 +23,6 @@ append-only so a decision, once made, is never silently overwritten.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from collections import Counter
 from dataclasses import dataclass, replace
@@ -31,6 +30,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 from core.canon import Registry, load_registry, resolve_asset
+from core.rank import parse_date
 from core.setups import (
     ARRIVAL,
     CARRY_HOLD_DAYS,
@@ -48,21 +48,32 @@ from core.setups import (
     collapse,
     cross_reference,
 )
-from core.rank import parse_date
 from execution.venues import ALL_NETWORKS
 
-from oracle import cache, carry, corpus, derived, exclusions, execute, listings, venue_map
-# Re-exported: the sidecar's storage and its vault mirror live in their own module, but both
-# remain part of this CLI's surface for callers and tests that reach for them here.
-from oracle.decisions import append_decision, load_decisions, sync_mirror  # noqa: F401
-from oracle.exclusions import DEFAULT_EXCLUSIONS
+from oracle import (
+    cache,
+    carry,
+    corpus,
+    derived,
+    exclusions,
+    execute,
+    listings,
+    venue_map,
+    venue_routing,
+)
+
 # Re-exported: choosing which candidates a sitting sees is its own concern now — see that
 # module's docstring for why it stopped being ``qualified[:limit]`` — but both names remain
 # part of this CLI's surface for callers and tests that reach for them here.
 from oracle import queue as queue_mod
-from oracle.queue import QueuePosition, build_queue, filter_candidates  # noqa: F401
-from oracle.resample import to_weekly
 from oracle import route as route_mod
+
+# Re-exported: the sidecar's storage and its vault mirror live in their own module, but both
+# remain part of this CLI's surface for callers and tests that reach for them here.
+from oracle.decisions import append_decision, load_decisions, sync_mirror
+from oracle.exclusions import DEFAULT_EXCLUSIONS
+from oracle.queue import QueuePosition, build_queue, filter_candidates
+from oracle.resample import to_weekly
 from oracle.route import (
     DerivedRef,
     OracleRef,
@@ -72,10 +83,12 @@ from oracle.route import (
     load_routing_table,
     route,
 )
+
 # Re-exported: the queue's layout lives in its own module, but ``format_candidate`` remains
 # part of this CLI's surface for callers and tests that reach for it here.
-from oracle.setups_render import (  # noqa: F401
+from oracle.setups_render import (
     format_candidate,
+    format_routing,
     format_views,
     supports_color,
     thesis_pairing,
@@ -275,6 +288,13 @@ def _load_daily(resolved: Priceable, *, table: RoutingTable, series_cache: dict)
     and therefore obey the same curation. **Each leg must resolve to a fetched series** — a leg
     that is itself derived returns None rather than recursing, because nothing in the corpus
     needs a ratio of ratios and refusing is cheaper than reasoning about cycles.
+
+    **This reads ``trade_symbol``, not ``symbol``** — the divergence from ``score_cli``, and
+    deliberate. Everything downstream of here is a number a human approves and a broker
+    receives: zone edges, stop, target, ATR. Those have to be quoted on the instrument the
+    order reaches, so a Dow setup is drawn on DIA's own swings rather than on ^DJI's divided
+    by a ratio that drifts with every distribution. Grading stays on ``symbol`` next door,
+    which is what keeps this from regrading the corpus (cfg/venue_map.yaml's `pricing` note).
     """
     if resolved.asset in series_cache:
         return series_cache[resolved.asset]
@@ -291,7 +311,7 @@ def _load_daily(resolved: Priceable, *, table: RoutingTable, series_cache: dict)
         if all(leg is not None for leg in legs):
             series = derived.ratio(legs[0], legs[1], symbol=resolved.asset)
     else:
-        series = cache.load(resolved.source, resolved.symbol)
+        series = cache.load(resolved.source, resolved.trade_symbol)
 
     series_cache[resolved.asset] = series
     return series
@@ -684,12 +704,31 @@ def triage(queue, *, decisions_path, vault_path, input_fn=input, out=print,
     It is offered **after** the approval has been written, never before: an order is a
     consequence of a decision, so the decision must already be durable when it is proposed.
     Declining the order leaves the approval standing.
+
+    **Venue routing is shown with or without a session**, because which venue is cheapest is a
+    fact about the candidate rather than about the run — and it is one of the numbers the
+    judgement should be made *on*, so deferring it to placement would show it after the scarce
+    input was already spent. Only the account-dependent half needs a session: ``can_short`` is
+    unknown without one, which ``core.routing`` reports as a distinct refusal from a measured
+    "cannot short" rather than guessing (Alpaca has been seen disagreeing with itself on exactly
+    that pair of fields).
     """
     counts = {APPROVED: 0, LATER: 0, REJECTED: 0, ARCHIVED: 0}
     decided_at = datetime.now(UTC).isoformat(timespec="seconds")
     color = supports_color() if color is None else color
     total = len(queue.rows)
     pairing = thesis_pairing(queue.candidates)
+    # Built once for the whole sitting: the funding log and every cohort series get read here
+    # rather than per candidate. The pooled gap rate is still recomputed per candidate, because
+    # it depends on that candidate's own stop — see ``core.gaps.pooled_excess``.
+    # ``read_account`` and not the ``account`` property: the property is the *last* read and is
+    # None until something has read one, so using it here would report "pending account check" on
+    # every short even with --execute. One live call, and --execute already implies the network.
+    account = session.read_account() if session is not None else None
+    router = venue_routing.build(
+        {c.asset for c in queue.candidates},
+        can_short=account.can_short if account is not None else None,
+    )
     for i, row in enumerate(queue.rows, start=1):
         c = row.candidate
         zones, index = pairing[i - 1]
@@ -701,6 +740,9 @@ def triage(queue, *, decisions_path, vault_path, input_fn=input, out=print,
                              venue=venue,
                              venue_symbol=getattr(listing, "symbol", None),
                              zones_in_thesis=zones, zone_index=index))
+        # A fifth summary line rather than a headline field: it is four facts (venue, cost,
+        # margin, what is unpriced) and the headline is already carrying five.
+        out(format_routing(router.decide(c), hold_days=CARRY_HOLD_DAYS, color=color))
         ans = input_fn(_PROMPT).strip()
         if ans.lower() in ("q", "quit"):
             break

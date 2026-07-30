@@ -21,7 +21,8 @@ from core.setups import (
 )
 from core.structure import BULLISH, SWING_HIGH, SWING_LOW, Break, OrderBlock, Swing
 
-from oracle import exclusions, queue, setups_cli
+from core import routing
+from oracle import exclusions, queue, setups_cli, setups_render
 from oracle.queue import build_queue
 from oracle.setups_cli import format_unpriced
 
@@ -1056,3 +1057,226 @@ def test_no_venue_symbol_argument_leaves_the_row_unchanged():
     line = setups_cli.format_candidate(_candidate(asset="SBSW"))
     assert "SBSW" in line
     assert "unmapped" not in line
+
+
+# ── zones are drawn on the instrument an order can reach ─────────────────────
+
+def _empty_table():
+    """A table these tests never consult — `_load_daily` only routes for `DerivedRef` legs."""
+    return setups_cli.RoutingTable(
+        curated={}, coinbase_symbols=frozenset(), kraken_symbols=frozenset(),
+        domain_consensus={},
+    )
+
+
+def test_load_daily_reads_the_traded_instrument_not_the_priced_one(monkeypatch):
+    """The whole point of `tradeable`: a Dow zone, stop and target must be quoted in DIA
+    prices, because 51,885 is not an order price on a $527 fund. `score-roster` keeps
+    reading ^DJI — see `score_cli._load_series`, which deliberately still uses `.symbol`."""
+    asked = []
+    monkeypatch.setattr(
+        setups_cli.cache, "load",
+        lambda source, symbol, **kw: asked.append((source, symbol)) or "series",
+    )
+    ref = setups_cli.OracleRef(
+        asset="DJI", source="yahoo", symbol="^DJI", curated=True, tradeable="DIA"
+    )
+    series = setups_cli._load_daily(ref, table=_empty_table(), series_cache={})
+    assert asked == [("yahoo", "DIA")]
+    assert series == "series"
+
+
+def test_load_daily_is_unchanged_for_an_asset_with_no_proxy(monkeypatch):
+    """Every other asset in the corpus must take the identical path it took before."""
+    asked = []
+    monkeypatch.setattr(
+        setups_cli.cache, "load",
+        lambda source, symbol, **kw: asked.append((source, symbol)) or "series",
+    )
+    ref = setups_cli.OracleRef(asset="BTC", source="coinbase", symbol="BTC-USD")
+    setups_cli._load_daily(ref, table=_empty_table(), series_cache={})
+    assert asked == [("coinbase", "BTC-USD")]
+
+
+def test_the_routing_arrow_carries_a_proxy_whose_prices_are_its_own():
+    """Same arrow as CHINA -> FXI, doing heavier work. There it means "one instrument, two
+    names"; here it means "different instrument, and every number on the rows below is quoted
+    on IT". A Dow setup shows ~530 for a 51,594 index, and the arrow is the only thing on
+    screen that explains why — without it the row reads as a decimal bug."""
+    line = setups_cli.format_candidate(_candidate(asset="DJI"), venue_symbol="DIA")
+    assert "DJI" in line and "DIA" in line
+    assert "unmapped" not in line
+
+
+# ── format_routing (T4) ──────────────────────────────────────────────────────
+
+def _decide(*quotes, direction="long", can_short=None):
+    return routing.decide("X", direction, list(quotes), can_short=can_short)
+
+
+def test_routing_line_names_the_venue_the_cost_and_the_dominant_term():
+    line = setups_render.format_routing(
+        _decide(routing.quote("hyperliquid", "X", carry=0.0032, crossing=0.0005),
+                routing.quote("alpaca", "X", gap=0.0103, crossing=0.0005)),
+        hold_days=21)
+    assert "hyperliquid" in line
+    assert "0.37%" in line          # 0.0032 + 0.0005
+    assert "carry" in line
+    assert "21d" in line
+
+
+def test_routing_line_shows_the_margin_because_the_margin_is_the_point():
+    # Median row: 0.595% on Alpaca against 0.53% on HL is a coin flip; the tails are whole
+    # percents. Without the margin those two render identically.
+    line = setups_render.format_routing(
+        _decide(routing.quote("alpaca", "X", gap=0.0, crossing=0.0),
+                routing.quote("hyperliquid", "X", carry=0.0235, crossing=0.0)),
+        hold_days=21)
+    assert "vs hyperliquid" in line
+    assert "saves 2.35%" in line
+
+
+def test_routing_line_reads_a_credit_as_income_not_as_a_small_cost():
+    line = setups_render.format_routing(
+        _decide(routing.quote("hyperliquid", "X", carry=-0.0032, crossing=0.0)),
+        hold_days=21)
+    assert "paid 0.32%" in line
+    assert "-0.32%" not in line
+
+
+def test_routing_line_marks_a_coin_flip_so_noise_does_not_read_as_an_instruction():
+    line = setups_render.format_routing(
+        _decide(routing.quote("alpaca", "X", gap=0.00595, crossing=0.0),
+                routing.quote("hyperliquid", "X", carry=0.0053, crossing=0.0)),
+        hold_days=21)
+    assert "COIN FLIP" in line
+    assert "stated preference" in line
+
+
+def test_routing_line_names_an_unpriced_term_because_it_may_have_decided_it():
+    # §43: crossing is unpriced everywhere and it decided GOOGL on a 0.116% margin.
+    line = setups_render.format_routing(
+        _decide(routing.quote("alpaca", "X", gap=0.00206),
+                routing.quote("hyperliquid", "X", carry=0.00322)),
+        hold_days=21)
+    assert "crossing unpriced" in line
+
+
+def test_routing_line_says_pending_rather_than_cannot_short_when_unasked():
+    # The queue holds no credentials, so it has never asked. Printing "cannot short" would
+    # assert a stale measurement — and Alpaca reports no_shorting false while shorting_enabled
+    # is false, so the two really disagree.
+    line = setups_render.format_routing(
+        _decide(routing.quote("alpaca", "X", gap=0.01),
+                routing.quote("hyperliquid", "X", carry=0.003),
+                direction="short"),
+        hold_days=21)
+    assert "pending account check" in line
+    assert "cannot short" not in line
+
+
+def test_routing_line_says_cannot_short_when_the_account_actually_answered():
+    line = setups_render.format_routing(
+        _decide(routing.quote("alpaca", "X", gap=0.01),
+                routing.quote("hyperliquid", "X", carry=0.003),
+                direction="short", can_short=False),
+        hold_days=21)
+    assert "cannot short" in line
+
+
+def test_routing_line_reports_no_venue_rather_than_going_quiet():
+    line = setups_render.format_routing(
+        _decide(routing.quote("alpaca", "X", gap=0.01), direction="short", can_short=False),
+        hold_days=21)
+    assert "no venue can take this" in line
+    assert "cannot short" in line
+
+
+def test_routing_line_separates_unlisted_from_gated():
+    # Different problems, different fixes: unlisted wants a cfg/venue_map.yaml row, gated wants
+    # an account change. AI, TON and LNGX are unlisted in the live queue, not refused.
+    unlisted = setups_render.format_routing(_decide(), hold_days=21)
+    gated = setups_render.format_routing(
+        _decide(routing.quote("alpaca", "X", gap=0.01), direction="short", can_short=False),
+        hold_days=21)
+    assert "no venue lists this asset" in unlisted
+    assert "can take this" not in unlisted
+    assert "no venue can take this" in gated
+
+
+def test_routing_line_survives_being_rendered_in_colour():
+    args = dict(hold_days=21)
+    plain = setups_render.format_routing(
+        _decide(routing.quote("alpaca", "X", gap=0.0, crossing=0.0),
+                routing.quote("hyperliquid", "X", carry=0.02, crossing=0.0)),
+        color=False, **args)
+    painted = setups_render.format_routing(
+        _decide(routing.quote("alpaca", "X", gap=0.0, crossing=0.0),
+                routing.quote("hyperliquid", "X", carry=0.02, crossing=0.0)),
+        color=True, **args)
+    assert "\033[" in painted
+    assert setups_render._visible_len(painted) == len(plain)
+
+
+def test_triage_reads_the_account_so_shorting_capability_reaches_the_router(tmp_path):
+    """Regression: ``Session.account`` is a *property* (the last read, None until one happens)
+    and ``read_account()`` is the fetch. Calling the property raised TypeError, and no test
+    passed a session to ``triage`` — so the whole suite stayed green while ``--execute`` was
+    broken. This is the missing coverage, not just the fix.
+    """
+    calls = []
+
+    class _Account:
+        can_short = True
+
+    class _Config:
+        venue = "alpaca"
+
+    class _Session:
+        config = _Config()
+
+        def read_account(self):
+            calls.append("read")
+            return _Account()
+
+    lines = []
+    setups_cli.triage(
+        _queue([_candidate(asset="CRM", direction="short", entry=100.0, stop=110.0,
+                           target=80.0)]),
+        decisions_path=tmp_path / "d.jsonl", vault_path=None,
+        input_fn=lambda _: "q", out=lines.append, color=False, session=_Session(),
+    )
+    assert calls == ["read"], "triage must fetch the account, not read the stale property"
+    venue_lines = [ln for ln in lines if "venue" in ln]
+    assert venue_lines
+    assert "pending account check" not in venue_lines[0]
+
+
+def test_routing_line_says_when_the_cost_is_mostly_pooled():
+    """The review's HIGH: ``pooled_weight`` was computed and then dropped, so a cohort's number
+    printed as this instrument's own. Marked the way the headline marks a thin funding median
+    with ``n=`` — 13 of 18 live Alpaca-listed assets are in this state.
+    """
+    line = setups_render.format_routing(
+        _decide(routing.quote("alpaca", "BE", gap=0.006, crossing=0.0, borrowed=("gap",)),
+                routing.quote("hyperliquid", "BE", carry=0.0235, crossing=0.0)),
+        hold_days=21)
+    assert "mostly pooled" in line
+
+
+def test_routing_line_omits_the_pooled_note_when_the_history_is_its_own():
+    line = setups_render.format_routing(
+        _decide(routing.quote("alpaca", "BE", gap=0.006, crossing=0.0),
+                routing.quote("hyperliquid", "BE", carry=0.0235, crossing=0.0)),
+        hold_days=21)
+    assert "mostly pooled" not in line
+
+
+def test_a_win_on_a_pooled_number_is_reported_as_a_coin_flip():
+    # Not merely annotated — the margin itself is untrustworthy, so the line must not read firm.
+    line = setups_render.format_routing(
+        _decide(routing.quote("alpaca", "BE", gap=0.0, crossing=0.0, borrowed=("gap",)),
+                routing.quote("hyperliquid", "BE", carry=0.0235, crossing=0.0)),
+        hold_days=21)
+    assert "COIN FLIP" in line
+    assert "mostly pooled" in line
