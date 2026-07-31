@@ -172,6 +172,12 @@ def one_per_asset(candidates) -> tuple[list[Candidate], int]:
 
     Keyed on the asset alone, not on (asset, direction). A long and a short on one ticker is
     the worst version of the thing being prevented, not an exemption from it.
+
+    **The asset is already the instrument by the time this runs.** Two corpus labels for one
+    instrument — RUT and IWM — used to arrive here as two tickers and survive this filter as
+    two commitments on one trade. That is fixed upstream in ``collapse``, which merges them so
+    their supporters count once; see ``oracle.instruments``. This stays keyed on the label
+    because after that merge the label *is* the instrument.
     """
     seen: set[str] = set()
     kept = []

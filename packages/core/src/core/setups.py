@@ -38,6 +38,7 @@ a permanent assumption.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 from hashlib import sha256
@@ -550,6 +551,10 @@ class Candidate:
     views: tuple[View, ...]
     thesis_ids: tuple[str, ...]
     score: float
+    # Other corpus labels for this same instrument, folded in by ``collapse``. Carried rather
+    # than dropped because the label is what ``cfg/exclusions.yaml`` and the decision key are
+    # written in: a spelling absorbed silently takes any standing "I don't trade this" with it.
+    aliases: tuple[str, ...] = ()
     # Carry, taken from the representative setup — see ``Setup``. Reported, never scored.
     funding_annual: float | None = None
     carry: float | None = None
@@ -609,11 +614,31 @@ class NotASetup:
 Outcome = Setup | NotASetup
 
 
-def collapse(outcomes, *, weights: SetupWeights = DEFAULT_WEIGHTS) -> tuple[Candidate, ...]:
+def collapse(
+    outcomes,
+    *,
+    weights: SetupWeights = DEFAULT_WEIGHTS,
+    aliases: Mapping[str, str] | None = None,
+) -> tuple[Candidate, ...]:
     """Fold per-thesis setups into one candidate per zone, best score first.
 
     ``outcomes`` may contain ``NotASetup`` entries; they are ignored, so a caller can pass the
     raw stream straight through.
+
+    ``aliases`` maps a corpus label onto the label of the instrument it is actually traded as,
+    and is how *two spellings of one ticker* stop being two candidates. The corpus says both
+    ``RUT`` and ``IWM``, and a Russell setup is quoted on IWM's own bars (``oracle_map``'s
+    ``tradeable``), so the two rows come out digit-for-digit identical — same block, same stop,
+    same target — and were offered as two decisions on one trade. That is the defect the
+    paragraph below already describes for people, one level up: the supporters of a zone were
+    split by how the transcript happened to name it, so agreement read 2 and 2 where it should
+    read 3. Live on 2026-07-30 for RUT/IWM, EUR/EURUSD and GBP/GBPUSD.
+
+    **Which label survives is the caller's decision, not this function's**, because the answer
+    depends on venue coverage and nothing in ``core`` knows about venues. What matters here is
+    only that it is *stable*: the label sets the decision key and the venue lookup, so a row
+    that flipped between ``RUT`` and ``IWM`` with the target selection would route differently
+    from one run to the next. The absorbed labels travel on ``Candidate.aliases``.
 
     Target selection is two-stage, and the order matters. **A target someone actually stated
     beats a structural one** — "if they call something, we listen" — and only among equals does
@@ -636,17 +661,19 @@ def collapse(outcomes, *, weights: SetupWeights = DEFAULT_WEIGHTS) -> tuple[Cand
     the precedence in the sort rather than as a score weight keeps it a rule, per the split this
     module opens with: a rule is gated or ordered, never quietly priced into a continuum.
     """
+    labels = aliases or {}
     groups: dict[tuple, list[Setup]] = defaultdict(list)
     for outcome in outcomes:
         if isinstance(outcome, Setup):
             # ``zone_timeframe`` is part of the identity because ``block.index`` is only unique
             # within the series it indexes — daily bar 42 and weekly bar 42 are unrelated.
-            key = (outcome.asset, outcome.direction, outcome.zone_timeframe,
-                   outcome.block.index, outcome.block.confirmed_at)
+            key = (labels.get(outcome.asset, outcome.asset), outcome.direction,
+                   outcome.zone_timeframe, outcome.block.index, outcome.block.confirmed_at)
             groups[key].append(outcome)
 
     candidates = []
-    for members in groups.values():
+    for (asset, *_), members in groups.items():
+        folded = tuple(sorted({s.asset for s in members} - {asset}))
         authored = [s for s in members if s.target_source != STRUCTURAL]
         rep = min(authored or members, key=lambda s: abs(s.target - s.entry))
 
@@ -668,7 +695,10 @@ def collapse(outcomes, *, weights: SetupWeights = DEFAULT_WEIGHTS) -> tuple[Cand
         # out of ``collapse``, which has no business knowing today's date.
         freshness = max(s.freshness for s in members)
         candidates.append(Candidate(
-            asset=rep.asset, direction=rep.direction, block=rep.block,
+            # The group's label, not the representative's: ``rep`` is chosen by target
+            # distance, which would let the ticker a row is filed under depend on who called
+            # the nearest target.
+            asset=asset, aliases=folded, direction=rep.direction, block=rep.block,
             entry=rep.entry, entry_top=rep.entry_top, entry_bottom=rep.entry_bottom,
             stop=rep.stop, invalidation=rep.invalidation,
             target=rep.target, target_source=rep.target_source,

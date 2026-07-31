@@ -316,7 +316,14 @@ def _headline(c: Candidate, *, rank: int | None, total: int | None, color: bool,
     else:
         routing = ""
 
-    head = (f"{counter}{paint(c.asset, 'bold', color=color)}{routing} "
+    # The other spellings folded into this row. Shown for the same reason the arrow above is:
+    # the corpus called this the Russell and the row says IWM, and a supporter who only ever
+    # said "RUT" would otherwise appear on the `who` line with nothing tying them to it.
+    folded = ""
+    if c.aliases:
+        folded = " " + paint("(= " + ", ".join(c.aliases) + ")", "dim", color=color)
+
+    head = (f"{counter}{paint(c.asset, 'bold', color=color)}{routing}{folded} "
             f"{paint(direction, dir_style, color=color)}")
     # One thesis can yield a weekly zone and a daily one, and they are offered as two separate
     # decisions because they are two different trades. Adjacency alone reads as the duplicate

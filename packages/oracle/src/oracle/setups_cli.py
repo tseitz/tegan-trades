@@ -57,6 +57,7 @@ from oracle import (
     derived,
     exclusions,
     execute,
+    instruments,
     listings,
     venue_map,
     venue_routing,
@@ -405,9 +406,15 @@ def build_candidates(
                 counted_once.add((outcome.thesis_id, outcome.reason))
                 rejections[outcome.reason] += 1
 
+    # Two spellings of one instrument are one trade, and `collapse` cannot see that on its own
+    # — the zone, stop and target are drawn on `trade_symbol`, so RUT and IWM come out
+    # identical while the supporters of that single zone read as 2 and 2. Built from the same
+    # routing table the contexts were, so nothing can be aliased that was not also priced.
+    aliases = instruments.alias_map(assets, table, venues_for=venue_map.venues_for)
+
     # One row per ticker, before sampling rather than after. Sampling after would let the
     # draw pick the daily zone and discard the weekly the precedence rule says outranks it.
-    kept, duplicate_zones = queue_mod.one_per_asset(collapse(outcomes))
+    kept, duplicate_zones = queue_mod.one_per_asset(collapse(outcomes, aliases=aliases))
     candidates = tuple(kept)          # collapse's return type; callers index and unpack it
     stats = BuildStats(
         assets_total=len(assets), assets_priced=len(contexts),

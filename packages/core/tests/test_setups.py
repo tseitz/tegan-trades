@@ -866,6 +866,61 @@ def test_a_candidate_everyone_has_gone_quiet_on_outscores_nothing_but_ranks_low(
     assert 0.0 < quiet.score < current.score
 
 
+# ── two corpus labels, one instrument ───────────────────────────────────────
+#
+# The corpus names the same instrument more than one way, and the zone, stop and target are
+# drawn on the instrument — so those rows are digit-for-digit the same trade. Live on
+# 2026-07-30: RUT/IWM, EUR/EURUSD and GBP/GBPUSD, offered twice each.
+
+
+def test_two_labels_for_one_instrument_collapse_into_one_candidate():
+    """The same defect ``collapse`` already fixes for people, one level up: the supporters of
+    one zone were being split across two spellings of its ticker."""
+    ctx = _ctx()
+    index = cross_reference(_row(id="a", asset="RUT", person="DataDash"), ctx,
+                            published_close=100.0)
+    fund = cross_reference(_row(id="b", asset="IWM", person="Raoul"), ctx,
+                           published_close=100.0)
+    (candidate,) = collapse([index, fund], aliases={"RUT": "IWM"})
+    assert candidate.agreement == 2
+    assert set(candidate.people) == {"DataDash", "Raoul"}
+
+
+def test_the_merged_row_is_labelled_by_the_instrument_not_by_the_representative():
+    """The label decides venue lookup and the decision key, so it cannot depend on which
+    member happened to win target selection — ``RUT`` reaches Alpaca alone, ``IWM`` reaches
+    three venues, and a row that flips between them routes differently run to run."""
+    ctx = _ctx()
+    nearer = cross_reference(_row(id="a", asset="RUT", key_levels=[130.0]), ctx,
+                             published_close=100.0)
+    further = cross_reference(_row(id="b", asset="IWM", key_levels=[150.0]), ctx,
+                              published_close=100.0)
+    (candidate,) = collapse([nearer, further], aliases={"RUT": "IWM"})
+    assert candidate.target == 130.0     # the representative is still RUT's row
+    assert candidate.asset == "IWM"
+
+
+def test_a_folded_label_is_recorded_rather_than_discarded():
+    """``cfg/exclusions.yaml`` and the queue both key on the label, so a spelling that is
+    silently absorbed takes a standing "I don't trade this" with it."""
+    ctx = _ctx()
+    setups = [cross_reference(_row(id="a", asset=a), ctx, published_close=100.0)
+              for a in ("RUT", "IWM")]
+    (candidate,) = collapse(setups, aliases={"RUT": "IWM"})
+    assert candidate.aliases == ("RUT",)
+
+
+def test_an_unaliased_label_keeps_its_own_candidate_and_carries_no_aliases():
+    """The map is the only thing that merges anything. Two tickers that merely trade alike
+    stay two trades."""
+    ctx = _ctx()
+    setups = [cross_reference(_row(id="a", asset=a), ctx, published_close=100.0)
+              for a in ("SPY", "QQQ")]
+    candidates = collapse(setups)
+    assert len(candidates) == 2
+    assert all(c.aliases == () for c in candidates)
+
+
 def test_the_nearest_target_wins_among_disagreeing_views():
     """If they can't agree how far price goes, the smallest claim is the one to hold them to."""
     ctx = _ctx()

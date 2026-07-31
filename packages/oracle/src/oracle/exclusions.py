@@ -159,10 +159,17 @@ def unmatched_symbols(excluded: dict[str, str], corpus_assets) -> tuple[str, ...
 def partition(candidates, excluded: dict[str, str]):
     """``(kept, removed)``. Removed is returned, never quietly dropped — a filter nobody can
     see is indistinguishable from a corpus that went quiet, which is the whole complaint §6d
-    and §6h are about."""
+    and §6h are about.
+
+    **Aliases count.** ``collapse`` folds two spellings of one instrument into a single row and
+    keeps whichever label reaches more venues, so a "no" written against the folded spelling
+    would otherwise go inert — a gate that quietly stops gating, which is worse than one that
+    was never written. ``RUT`` and ``IWM`` are one market and the rule was about the market.
+    """
     if not excluded:
         return list(candidates), []
     kept, removed = [], []
     for candidate in candidates:
-        (removed if candidate.asset in excluded else kept).append(candidate)
+        labels = (candidate.asset, *candidate.aliases)
+        (removed if any(label in excluded for label in labels) else kept).append(candidate)
     return kept, removed

@@ -1052,6 +1052,21 @@ def test_an_unmapped_asset_says_so_rather_than_looking_tradeable():
     assert "unmapped on alpaca" in line
 
 
+def test_a_row_that_absorbed_another_spelling_says_which_one():
+    """`collapse` folds RUT into IWM and the supporters travel with it, so the `who` line grows
+    a person who — as far as the corpus is concerned — never mentioned IWM. Naming the folded
+    label is what connects them to the row."""
+    line = setups_cli.format_candidate(_candidate(asset="IWM", aliases=("RUT",)))
+    assert "IWM" in line
+    assert "RUT" in line
+
+
+def test_an_unmerged_row_carries_no_alias_marker():
+    """Almost every row is one label. `(= ...)` on all of them is the noise that would hide
+    the handful where it means something — the same reason `SBSW -> SBSW` is suppressed."""
+    assert "(=" not in setups_cli.format_candidate(_candidate(asset="SBSW"))
+
+
 def test_no_venue_symbol_argument_leaves_the_row_unchanged():
     """`--list` renders without a session, so there is no venue to resolve against."""
     line = setups_cli.format_candidate(_candidate(asset="SBSW"))

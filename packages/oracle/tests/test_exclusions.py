@@ -72,8 +72,9 @@ def test_an_asset_the_canon_registry_cannot_resolve_is_still_matched():
 # ── filtering ───────────────────────────────────────────────────────────────
 
 class _Candidate:
-    def __init__(self, asset):
+    def __init__(self, asset, aliases=()):
         self.asset = asset
+        self.aliases = tuple(aliases)
 
 
 def test_excluded_assets_are_partitioned_out_not_dropped():
@@ -97,6 +98,19 @@ def test_every_zone_and_direction_on_an_excluded_asset_goes():
     )
     assert [c.asset for c in kept] == ["BTC"]
     assert len(removed) == 3
+
+
+def test_a_standing_no_still_bites_when_its_label_was_folded_into_another():
+    """`collapse` merges two spellings of one instrument and keeps the label with the wider
+    venue coverage, so an exclusion written against the folded spelling would go inert without
+    anything saying so — a gate that silently stops gating. "Not my market" is about the
+    market, and RUT and IWM are one market."""
+    kept, removed = exclusions.partition(
+        [_Candidate("IWM", aliases=("RUT",)), _Candidate("BTC")],
+        {"RUT": "I don't trade the Russell"},
+    )
+    assert [c.asset for c in kept] == ["BTC"]
+    assert [c.asset for c in removed] == ["IWM"]
 
 
 # ── appending ───────────────────────────────────────────────────────────────
