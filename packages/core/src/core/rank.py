@@ -104,11 +104,18 @@ def recency_signal(published_at: str | None, *, newest: str | None, oldest: str 
     return max(0.0, min(1.0, (at - lo).days / span))
 
 
-def agreement_signal(count: int, *, cap: int = 3) -> float:
+def agreement_signal(count: float, *, cap: int = 3) -> float:
     """Distinct other-person agreement, with diminishing returns and no ceiling.
 
     ``cap`` is the **half-way point**, not a clamp: three voices score 0.5, and every further
     voice adds less than the one before without ever reaching 1.0.
+
+    ``count`` is a float because the curve is defined for any non-negative real and the ``int``
+    it used to be annotated as described the only caller rather than the function. §11 asks
+    whether a voice should count for less as it ages, which makes the count fractional;
+    ``scripts/probe_recency_weight.py`` needs to feed it exactly this transform, and a probe
+    that re-implemented the formula locally would silently stop matching if it ever changed.
+    Nothing about the shipped head-count path changes — an ``int`` is still an ``int`` here.
 
     It used to be ``min(count / cap, 1.0)``, and §11 is the account of why that failed. Recorded
     agreement counts run to 12 while the clamp bit at 3, so the term sat pinned at 1.0 for **12
