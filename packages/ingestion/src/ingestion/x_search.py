@@ -13,7 +13,8 @@ number. And because X posts get deleted and accounts go private, the verbatim ca
 here is unrecoverable ore — storing Grok's *interpretation* instead would make X the one source
 that can never be re-distilled under a new schema, which is the whole living-schema bet.
 
-**Three things measured on 2026-07-26 shape this module** (see `docs/phase-0-findings.md`):
+**Three things measured on 2026-07-26 shape this module.** Each is a failure that returns a
+plausible-looking success, so each is stated here with the defence it forced:
 
 1. A strict ``text.format`` json_schema **silently disables the search** — 4 tool calls to 0,
    still HTTP 200, still well-formed, reading as a quiet day. So the payload is requested as

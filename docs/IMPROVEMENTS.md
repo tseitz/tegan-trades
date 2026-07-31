@@ -26,23 +26,25 @@ be a problem; revisit if it bites) · `PARTLY DONE` (a residual is named in the 
 
 ## Where to start
 
-The bottleneck is variety, not volume. §4's machinery is complete and §27 fixed the candidate
-drought, but all 24 recorded decisions were drawn from the single population §27 released, so
-`daily_trend` is constant across them. Terms needing contrast are unmeasurable until the nightly
-mixes the queue again — a wait, not a task.
+The mixed sitting arrived and the first thing it measured was a defect in the scorer, not a
+weight: `agreement` and `freshness` are r=0.771 collinear, so 0.35 of the weight buys one
+measurement twice (§11). The bottleneck is no longer variety in general — it is that the terms
+still waiting each need a *specific* contrast the corpus has not thrown yet: funding history
+depth for §21, failed-break states for §27, stated targets for §18.
 
 | | Entry | Why now | Cost |
 |---|---|---|---|
 | 1 | **§32** — routes that resolve to the wrong instrument | Three of 307 priced assets are confirmably not what they claim, and one of them (`JPY`) is in tonight's queue. The check that found them already exists (§31). | free, network |
 | 2 | **§27 residual** — targets vs the range rule | 68 candidates on a ranging weekly, only 20 target within 2% of the bound the rule names. Read §18 first. | free, local |
 | 3 | **§6f residual** — routed but never fetched | 26 rows that route fine and were never fetched. Some are `needs_validation` guesses that may not resolve. | free, network |
-| 4 | **§4** — more sittings | Needs a *mixed* population, which arrives on the market's schedule. | your attention |
+| 4 | **§4** — the `agreement`/`freshness` overlap | The first re-weight with evidence behind it, and it removes a term rather than adding one. Read §11 first. | free, local |
 
-**Waiting on a mixed sitting, not on code:** §11's recency half · §18 · §21's measurement ·
-§27's option 2.
+**Still waiting on the corpus, not on code:** §18 (7 stated targets in 47 rows) · §21's
+measurement (13 rows carry funding, 4 usable pairs) · §27's option 2 (`daily_trend` varies now,
+but the failed-break state it names has n=1).
 
 **By theme:** corpus supply §3 · §6 · §6b · §6d · §6f · §6h · §9 · §14 — durability §4b · §24 —
-venue and execution §22 · §25 · §30 · §33 · §35 · §36 · §39 · §40 — routing §29 · §31 · §32 —
+venue and execution §22 · §25 · §30 · §33 · §35 · §36 · §39 · §40 · §43 — routing §29 · §31 · §32 —
 scoring §1 · §2 · §8 · §12 · §15 · §19.
 
 ---
@@ -108,14 +110,15 @@ the ranker's own terms — is the only ground truth available.
 **The machinery is done:** the queue draws a stratified sample (`oracle/queue.py`), every
 decision records what else was on screen, and the reason vocabulary derives scope from cause.
 
-**Residual: the recorded decisions cannot vary.** All 24 v6 rows came from the population §27
-released, so `daily_trend` is constant and `trend_alignment` pinned at 0.0. Needs a mixed
-sitting, which arrives on the market's schedule.
+**The mixed-sitting residual is closed** — v7's 23 rows span two sittings with `daily_trend`
+taking four values, giving 203 same-sitting pairs against the old 154. `score`, `freshness` and
+now `agreement` clear chance; everything else spans it. Read the mining traps in
+`oracle/decisions.py` first — they are properties of the data and no test enforces them. Replay
+with `scripts/probe_freshness_weight.py`, which reproduces the shipped scorer exactly.
 
-**No mandate to re-weight, and the bar is high.** `score` and `freshness` clear chance;
-everything else spans it. Read the mining traps in `oracle/decisions.py` before touching this —
-they are properties of the data and no test enforces them. Replay with
-`scripts/probe_freshness_weight.py`, which reproduces the shipped scorer exactly.
+**Next, and the first re-weight with evidence behind it:** `agreement` and `freshness` correlate
+at r=0.771, so 0.35 of the weight buys one measurement twice (§11). Resolving that is a
+*removal*, not a new term — which is why it clears this entry's bar where adding one would not.
 
 ---
 
@@ -254,18 +257,20 @@ The audit, before any billing change or bulk pass:
 
 ---
 
-## 11. Agreement is date-blind · `PARTLY DONE`
+## 11. Agreement is date-blind · `PARTLY DONE` — measured 2026-07-31
 
-**Residual: weight each voice by recency** rather than counting heads. `core.rank.recency_signal`
-already exists.
+**Yes for the term, no for the score.** Discounting each voice by its age beats counting heads
+(paired +0.103 [+0.020, +0.195] at a 7-day half-life); swapping it into the composite moves
+nothing. Sweep, method and the reason both are true: `scripts/probe_recency_weight.py`.
 
-Evidence: one ETH candidate's seven supporters span 2026-01-20 to 2026-07-22 — a 186-day-old
-view counted equally with one from three days prior. Not a staleness failure; the old view is a
-macro thesis and legitimately survives. The question is whether a macro bull from January is the
-same evidence as a swing bull from last week.
+**Do not ship the term on its own.** The gain cannot reach the score because `agreement`
+already correlates with `freshness` at r=0.771 *before* any weighting — a sharper agreement
+term is a third view of what the scorer already carries twice (§4).
 
-Needs a sidecar correlation, so it waits on a mixed sitting (§4). Interacts with §2 — if
-horizons go event-based, "current view" becomes better defined and this may partly solve itself.
+**Residual: the two terms should probably become one**, recency-weighted agreement being the
+better candidate to survive. That is a re-weight, so it is gated on §4's mandate. Interacts with
+§2 — event-based horizons would give "current view" a definition and stop the half-life being a
+free constant.
 
 ---
 
@@ -285,7 +290,8 @@ The granularity needed is **900s**, not just 1H/4H. Coinbase supports it; its ca
 
 ## 14. X/Twitter ingestion is decided but entirely unbuilt · `DECIDED` (zero code)
 
-`docs/phase-0-findings.md` chose Grok `x_search` over the official X API (~$1–5/mo vs $200/mo).
+Grok `x_search` was chosen over the official X API on cost — ~$1–5/mo metered against $200/mo
+for the cheapest tier that allows the reads this needs.
 `cfg/watchlist.yaml` already encodes the intent — 17 channels marked `access: grok` and an
 `x_grok_digest:` list. **Nothing reads that key.**
 
@@ -401,18 +407,20 @@ outright. **Decide whether it wants the vault mirror `oracle/decisions.py` alrea
 
 ---
 
-## 25. Route each order to the venue that is actually cheapest · `DECIDED` — gated on a trigger
+## 25. Route each order to the venue that is actually cheapest · `PARTLY DONE` — 2026-07-30
 
-Once a candidate is approved, pick the venue rather than assuming one. The machinery to *price*
-that choice already exists: `cfg/venue_map.yaml` is keyed `(asset, venue)`,
-`carry.outlooks_for(venue=…)` re-prices the queue, and `setups --funding-venue aster` runs
-today. The residual is small — choose per candidate by the sign of funding, and record which
-venue the decision assumed.
+Shipped: `core/gaps.py` prices Alpaca's gap term, `core/routing.py` ranks venues on one unit,
+`execution/desk.py` opens both at once, and an approved candidate is placed on the venue the
+queue said it would be — never silently on the other one. Kraken is priced and deliberately not
+routable (no map rows, no adapter). Plan: `.claude/plans/2026-07-29-asset-router.md`.
 
-**The trigger, so this stays a measurement and not a judgement call:** build it when Aster's
-equity funding median is still ~0% over 60+ days of logged data
-(`uv run fetch-funding --report --window 60`) and typical size stays under ~$25k. Until then a
-single venue — Hyperliquid — is right, and it is also simply the tightest book.
+**Residual — `crossing` is unpriced on every venue (§43), and it decided two live rows.** Until
+it is measured, a sub-10bp margin is not a real margin; `Decision.decisive` already refuses to
+call those firm, so this is a precision limit and not a correctness one.
+
+**Residual — a venue-level cost has no home.** Kraken's 0.50% round trip and Alpaca's
+zero-commission are per-venue constants, not per-asset measurements, and nothing carries them.
+They only matter once a third venue is routable.
 
 **Read `scripts/probe_book_depth.py` before re-opening this.** It records what is already
 settled, including the counterintuitive part: split by *direction*, not asset class.
@@ -475,22 +483,26 @@ See §30, which owns the class; this entry still owns the inversion rule.
 
 ---
 
-## 30. A crypto short has no venue this repo can legally reach · `OPEN` — new 2026-07-28
+## 30. A crypto short's only venue is one whose terms exclude us · `DECIDED` — revised 2026-07-29
 
-Alpaca + Kraken covers **32 of 38 approved decisions**; the residue is almost entirely one
-shape — a **short on a crypto asset**. Kraken spot is long-only and US margin is closed to
-retail; Alpaca shorts equities and ETFs but lists no crypto. Four of six approved shorts route
-to Alpaca; the two `SOL` shorts have nowhere to go.
+The residue of Alpaca+Kraken coverage is almost entirely one shape — a **short on a crypto
+asset**. Kraken spot is long-only and US margin is closed to retail; Alpaca shorts equities and
+ETFs but lists no crypto. (Coverage counts once quoted here were re-measured and had reversed
+within a day; ask `probe_venue_coverage.py`, do not quote a number from prose.)
 
-**Do not solve this with a perp DEX.** Every venue checked writes US persons out of its terms
-(Hyperliquid §1.5, Ondo Perps) — structural CFTC exposure, not a geoblock to route around.
+**Tegan's decision 2026-07-29 reverses this entry's original "do not solve this with a perp
+DEX".** Hyperliquid is in scope and competes on cost, its §1.5 Restricted-Persons exposure
+accepted as a known risk rather than a blocker. The fact is unchanged — every perp DEX checked
+writes US persons out of its terms — so it stays recorded here as the largest unpriced term in
+any routing decision (§25).
 
-**Options worth pricing, roughly in order:** an inverse ETF where the asset class has one; a put
-on a listed proxy (`COIN`, `MSTR`, `IBIT`) via Alpaca options; or refusing crypto shorts and
-**recording the refusal in the queue**, so the gap stays visible rather than silently dropped.
-The third is the cheapest and should ship first regardless of what follows it.
+**Still worth building, and not superseded:** where *no* venue can reach an asset, **record the
+refusal in the queue** so the gap stays visible rather than silently dropped. Cheapest of the
+options and independent of the venue question. An inverse ETF or a put on a listed proxy
+(`COIN`, `MSTR`, `IBIT`) via Alpaca options remain the alternatives if the exposure is later
+reconsidered.
 
-**Measure before building:** six approved shorts is a thin base — confirm the rate holds over a
+**Measure before building:** eight approved shorts is a thin base — confirm the rate holds over a
 wider sample first. Source: `data/setups/decisions.jsonl`.
 
 ---
@@ -532,8 +544,8 @@ correctly gives 81.75 · `PURR` prices at exactly 100x Hyperliquid's. All three 
 have to survive the cross-source comparison before it prices anything. The venue mark only
 exists for assets a venue lists, so this hardens the tradeable half of the corpus, not the tail.
 
-**Related, same cause, smaller:** `URANIUM` and `URA` are two canonical labels for one fund,
-both routing to `URA`. A `cfg/assets.yaml` alias, not a routing change.
+**Related, same cause, smaller:** `URANIUM` and `URA` were two canonical labels for one fund.
+Folded by `oracle.instruments` — done, and it needed no `cfg/assets.yaml` edit.
 
 ---
 
@@ -577,22 +589,32 @@ worth more than the pooled one.
 number is the intent on a continuous tape. Anything more is a real modelling decision — sizing
 off gap-adjusted risk, or a per-asset gap premium — and should not be reached for first.
 
+**The router (§25) now reaches for it — it is the whole Alpaca cost column.** The per-asset rate
+is not estimable from the cached window: 19 of 28 approved assets hold under 250 sessions
+(BE/GLNG/WMB: 98), because `oracle/plan.py` scopes each fetch to the asset's earliest thesis
+mention. Shrink toward the pooled rate by sample size and fetch gap history as a *separate* job;
+reasoning and measurement live in `core/gaps.py`.
+
 **Do not "fix" this with a stop-limit.** A limit on the stop leg is what makes a gap
 un-exitable rather than merely expensive; `alpaca_wire` omits it deliberately.
 
 ---
 
-## 36. Two perp guards do not transfer to equities, and one is a latent trap · `OPEN` — new 2026-07-29
+## 36. Two perp guards do not transfer to equities · `PARTLY DONE` — 2026-07-30
 
-**`max_notional_frac: 3.0` exceeds what a US broker will hold overnight.** Reg T allows 2x on
-an overnight position; 3.0 was measured against Hyperliquid perps. Inert today — the widest
-implied leverage across approved Alpaca-listed decisions is 0.58x — but the tightest stop the
-engine has *ever* produced (0.51%) implies 1.96x, which is inside a rounding error of the
-limit. Wants a per-venue ceiling, not a lower global one; the perp number is correct for perps.
+**The leverage half is done and the venue states its own ceiling.** `Account.overnight_multiplier`
+is `min(multiplier, 2)` and caps as `CAP_VENUE_LEVERAGE`, so nothing is written down to drift and
+`max_notional_frac: 3.0` stays correct for perps. `Account.headroom` now sizes against
+`regt_buying_power` too, which is the live half: on a 4x account Alpaca's `buying_power` is the
+*day-trading* figure, and these positions are held ~21 sessions. The paper account reports
+`multiplier: 1` with `max_margin_multiplier: 4` configured, so the divergence is one settlement
+away and currently invisible — both fields read 24,971.52.
 
-**Two things changed under this since (§40).** `max_position_frac: 0.20` now dominates it on
-Alpaca, so the hazard is currently unreachable rather than fixed; and `account.multiplier` is
-read live, so the per-venue ceiling no longer has to be written down — the venue states it.
+**Residual — no equity liveness signal in the queue.** `oracle.liveness` derives health from the
+funding log and equities have no funding. `execution.participation` supplies the missing
+measurement but only at sizing time, so the queue still cannot tell a thin market from a liquid
+one until a candidate is approved. Surfacing `Depth` in the render is the remaining half and is
+cheap — the fetch exists and is cached per session.
 
 **`oracle.liveness` still has no equity equivalent, but it is no longer the only signal.** It
 derives health from the funding log, and equities have no funding. `execution.participation`
@@ -637,6 +659,17 @@ order the log still calls `placed` — which found the three 2026-07-29 rejectio
 `VRT`'s real fill at 243.33 against its approved 266.52 (§39). Replay and sweep:
 `scripts/probe_portfolio_budget.py`.
 
+**The risk half is now built too.** `execution/portfolio.py` pools risk across venues at 5% of
+combined equity — `max_position_frac`'s 20% restated in risk terms, since `1/ceiling` positions
+fit at 1x. Measured against the sitting in question it admits five orders and refuses the sixth;
+measured live 2026-07-30 the book already sits at 3.98% of the ceiling. Buying power is
+deliberately *not* pooled: no transfer path exists between a margin pool and equity buying power.
+`--risk` in the probe is the evidence.
+
+**Residual — risk from positions opened by hand is invisible.** The pooled total is seeded from
+the order log, so it counts only what this repo placed and the venue still reports live. It reads
+as a lower bound and says so, but a hand-opened position genuinely does not appear.
+
 **Residual — three numbers chosen rather than measured, and each needs the sidecar (§4).**
 
 - `min_budget_fill: 0.5` — the floor under a shrunk order. Nothing has measured whether
@@ -656,3 +689,61 @@ carries the leg statuses it would read.
 `risk_pct` is the ceiling it may not reach (`execution/participation.py` is the first instance).
 Do not tune against the current approval rate; it is inflated by deliberate over-approval
 while testing.
+
+---
+
+## 41. Most of the roster's Dow conviction is in the key with no route · `OPEN` — new 2026-07-29
+
+`DJI` 22 theses and `YM` 25 (the Mini Dow future, `YM=F`). `DJI` reaches Alpaca as DIA; `YM`
+reaches nothing, so over half the Dow view is unreachable rather than duplicated.
+
+`oracle.instruments` will not fold these — `YM=F` and `DIA` are different series, correctly. A
+continuous front-month future carries roll discontinuities its ETF does not, so pointing `YM`
+at DIA is not the trivial edit `DJI`'s was: the zones would be drawn on one instrument and the
+conviction measured on another. Decide whether `YM` is a `tradeable: DIA` row or genuinely a
+separate market before it is worth 25 theses.
+
+## 42. RUT's Lighter and Aster rows need a re-probe on the new basis · `OPEN` — new 2026-07-29
+
+Both carried `scale: 10.05` measured against `^RUT`. Moving RUT's execution pricing to IWM
+(`oracle_map`'s `tradeable`, see §41) makes those numbers stale by construction — not wrong by a little, wrong
+by their whole reason for existing. They were removed rather than flipped to 1:1, because
+guessing 1:1 wrong sends an order at ten times the intended price, and that exact bug has been
+caught in this file once already (see the RUT comment history in `cfg/venue_map.yaml`).
+
+Both are *probably* 1:1 with the ETF now. `scripts/probe_venue_coverage.py` is what settles it;
+it needs the venues reachable, which is why this wasn't done in the same pass. Until then RUT
+refuses on those two with `REFUSAL_UNLISTED` instead of `REFUSAL_PROXY` — both refuse, so
+nothing regressed. Note both books were measured effectively dead (<$2k/day), so this may not
+be worth reviving at all; check volume before spending the probe.
+
+---
+
+## 43. `crossing` is the last unpriced routing term, and it decides real calls · `OPEN` — new 2026-07-29
+
+`core/routing.py` prices carry (`core.funding`) and gap (`core.gaps`), but **spread + slippage is
+unpriced on every venue**, so every quote carries one unknown. Because both sides carry the *same*
+unknown, the evidence-parity rule in `Decision.decisive` cannot catch it.
+
+That is not academic. Routing the live queue on 2026-07-29, `GOOGL` went to Alpaca on a **0.116%**
+margin and `HOOD` on **0.132%** — both just over `NOISE_FLOOR` (10bp) and therefore reported
+decisive, while the missing term is plausibly the same order of magnitude. Anything in the
+10–25bp band is currently a coin flip wearing a verdict.
+
+**Bounded once, cheaply, and it lowers the urgency: liquid names are single-digit bp.** Alpaca
+quotes for `BE` on 2026-07-29 put best bid and ask on the same exchange one cent apart — 0.6bp,
+and NBBO is never wider than one exchange. So crossing cannot flip a 12bp margin *on a liquid
+name*; it plausibly can on a thin one (`INTL` trades ~9k shares/day). Rank the close calls by
+liquidity before spending anything here.
+
+**It is a slice, not a cache — that was the first read and it was wrong.** Three reasons.
+`probe_book_depth.py`'s own docstring says magnitudes are unstable (a SILVER re-measure minutes
+later moved 3.0bp → 0.8bp), so one snapshot is a confident wrong number and the term needs a
+logged distribution like `data/funding/`. Alpaca publishes no book on the order-entry API at all,
+so its side must come from quotes — and raw quote records are **per-exchange, not NBBO**, so a
+naive bid/ask difference across two venues' books overstates badly. And HL's `l2Book` returns ~20
+levels regardless of what is asked, making its depth a floor and its slippage a ceiling, never
+like-for-like against a 500-level venue.
+
+Do not raise `NOISE_FLOOR` to paper over it: that discards real tail differences to hide one
+missing measurement.
