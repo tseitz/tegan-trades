@@ -44,7 +44,7 @@ measurement (13 rows carry funding, 4 usable pairs) · §27's option 2 (`daily_t
 but the failed-break state it names has n=1).
 
 **By theme:** corpus supply §3 · §6 · §6b · §6d · §6f · §6h · §9 · §14 — durability §4b · §24 —
-venue and execution §22 · §25 · §30 · §33 · §35 · §36 · §39 · §40 · §43 — routing §29 · §31 · §32 —
+venue and execution §22 · §25 · §30 · §33 · §35 · §36 · §39 · §40 · §43 — routing §29 · §31 · §32 · §44 —
 scoring §1 · §2 · §8 · §12 · §15 · §19.
 
 ---
@@ -747,3 +747,24 @@ like-for-like against a 500-level venue.
 
 Do not raise `NOISE_FLOOR` to paper over it: that discards real tail differences to hide one
 missing measurement.
+
+---
+
+## 44. Nothing compares the instruments an asset could be expressed as · `OPEN` — new 2026-07-31
+
+Which instrument stands for an asset is typed by hand in `cfg/oracle_map.yaml` (`symbol`,
+`tradeable`) and `cfg/venue_map.yaml`, and nothing below revisits it: `core/routing.py` ranks
+venues for an instrument already fixed, and `guards.check_liquidity` can only refuse the result.
+So `OIL` prices on `CL=F` and executes on three perps, and `USO` was ruled out on roll decay
+without anyone measuring its depth. Each choice was argued against the one alternative that came
+to mind, never against the set.
+
+`scripts/probe_book_depth.py` already computes what this needs — VWAP fill against mid,
+`depth10bp` both sides — but takes the instrument as given and compares venues for it.
+
+**Supply evidence, do not auto-select.** A scorer that picks instruments reintroduces the exact
+silent-catastrophe risk hand-curation exists to prevent. Enumerate the candidate expressions with
+depth and spread and let the curator decide, as `probe_venue_coverage.py` does for identity.
+
+Would give §41 (`YM` against DIA for the Dow) a basis rather than a judgement call. Needs §32
+first: ranking expressions is meaningless until each candidate is confirmed to be the asset.
