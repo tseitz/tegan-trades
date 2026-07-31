@@ -92,6 +92,24 @@ class OracleRef:
     # True when the symbol is an unverified guess off a transcript — the fetch stage must
     # confirm the instrument exists before any price it returns is trusted.
     needs_validation: bool = False
+    # A second instrument on the same source: the one an order can actually reach, when
+    # ``symbol`` names something no venue lists. ``^DJI`` is the Dow the roster's theses are
+    # about; ``DIA`` is the only Dow anyone can buy. Curated only — see ``trade_symbol``.
+    tradeable: str | None = None
+
+    @property
+    def trade_symbol(self) -> str:
+        """The instrument a zone, a stop and an order are quoted on.
+
+        Splitting this from ``symbol`` is what lets an unbuyable index still produce a
+        placeable order *without* regrading the corpus: ``score-roster`` keeps reading
+        ``symbol`` (was this person right about the Dow?) while ``setups`` reads this one
+        (where do I put a stop?). Collapsing the two is the move cfg/venue_map.yaml's
+        header refuses, and for this reason.
+
+        Safe to read unconditionally: absent a curated ``tradeable`` it *is* ``symbol``.
+        """
+        return self.tradeable or self.symbol
 
 
 @dataclass(frozen=True)
@@ -174,6 +192,7 @@ def route(asset: str, table: RoutingTable) -> Route:
             source=curated["source"],
             symbol=curated["symbol"],
             curated=True,
+            tradeable=curated.get("tradeable"),
         )
 
     domain = table.domain_consensus.get(asset)

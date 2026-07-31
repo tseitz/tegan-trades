@@ -34,6 +34,14 @@
 # against the index itself (^GSPC). Execution and pricing are different questions and
 # collapsing them regrades every stored thesis against the wrong instrument.
 #
+# THAT STILL HOLDS, and oracle_map's `tradeable` key is not a violation of it — it is the way
+# round it. An asset with no venue at its own scale (DJI, RUT) keeps `symbol` as its grading
+# basis and names a second instrument that `setups` draws zones on. So grading never moves,
+# and the candidate's numbers arrive already quoted on the thing an order reaches. Such an
+# asset's row here is 1:1 and carries NO `scale`, because by then there is no ratio left to
+# apply. `scale` remains the right answer only where the asset is *also* traded at its own
+# scale somewhere else — which is SPX and NDX, and is why they keep index pricing.
+#
 # Venues: hyperliquid (core), hyperliquid:<dex> (HIP-3 builder), lighter, aster, alpaca.
 # An asset a venue does not list is OMITTED, never guessed. Absence is a real answer.
 #
@@ -62,9 +70,11 @@
 # line here.
 #
 # Two whole categories are omitted from Alpaca on purpose. **Indices and futures** (`SPX`,
-# `NDX`, `RUT`, `GOLD`, `OIL`, `NATGAS`, the metals, all FX) are not tradable there at all;
+# `NDX`, `GOLD`, `OIL`, `NATGAS`, the metals, all FX) are not tradable there at all;
 # where a fund tracks one it already has its own 1:1 row (`SPY`, `QQQ`, `IWM`, `URA`), which is
-# the split this file's header already describes. **Commodity ETF proxies** were considered and
+# the split this file's header already describes. `DJI` and `RUT` are the exceptions and they
+# are not exceptions to the rule — they reach Alpaca as DIA and IWM only because oracle_map
+# now *prices them there for execution*, so no index price ever becomes an order price. **Commodity ETF proxies** were considered and
 # rejected: `USO` and `UNG` carry roll decay that compounds over `core.setups.CARRY_HOLD_DAYS`,
 # so a flat three weeks in crude still loses money in the proxy. That is a different trade, not
 # a scaled one, and `scale` cannot express it.
@@ -171,14 +181,20 @@ assets:
     lighter: US100                # the index itself, 1:1
     aster: QQQUSDT                # ETF proxy
     scale: {aster: 41.08}
+  # Now priced for execution on IWM (oracle_map `tradeable`), so this row is 1:1 and Alpaca
+  # is the only venue on it. Lighter's IWM and Aster's IWMUSDT are DELIBERATELY OMITTED, not
+  # forgotten: their old `scale: 10.05` was measured against ^RUT, and changing the basis to
+  # IWM makes every one of those numbers stale by construction. Both are *probably* 1:1 with
+  # the ETF now — probably is not the standard this file holds, and guessing 1:1 wrong sends
+  # an order at ten times the intended price. Re-probe them, then add them back.
   RUT:
-    lighter: IWM                  # ETF proxy; both books are effectively dead (<$2k/day)
-    aster: IWMUSDT
-    # Measured 10.06 (Lighter) and 10.04 (Aster) against ^RUT the same session. This entry
-    # carried no `scale` at all until the price probe caught it, which meant `is_proxy` was
-    # False and an order quoted on the index would have gone out against an instrument at
-    # a tenth of the price. The other two index entries had it; this one was simply missed.
-    scale: {lighter: 10.05, aster: 10.05}
+    alpaca: IWM
+  # The Dow had no row here at all until now — not omitted on principle like the commodities
+  # below, just never reachable. No venue carries a Dow market, so it read as a gap the queue
+  # printed as "unmapped on alpaca" while offering the setup anyway. 1:1 on DIA because
+  # oracle_map prices it there for execution; DIA is 30% margin, shortable and easy-to-borrow.
+  DJI:
+    alpaca: DIA
   # Hyperliquid's `xyz:DXY` is GONE — absent from the builder's universe entirely, having
   # previously carried zero open interest. Recorded as unlisted rather than deleted, so the
   # next person to look does not re-add it from the same stale note. `oracle/liveness.py`

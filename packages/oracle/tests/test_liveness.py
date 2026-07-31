@@ -82,15 +82,20 @@ def test_observations_outside_the_window_do_not_keep_a_market_alive(tmp_path):
 
 
 def test_dormancy_is_per_venue_not_per_asset(tmp_path):
-    # RUT: IWM on lighter, IWMUSDT on aster. Trading on one venue is not evidence for the
+    # NDX: US100 on lighter, QQQUSDT on aster. Trading on one venue is not evidence for the
     # other -- that is the whole reason the map is keyed (asset, venue).
+    #
+    # This used RUT until RUT's lighter and aster rows came out of the map (it is priced and
+    # traded on IWM now, and those two need a re-probe against the new basis). The mechanism
+    # under test never had anything to do with RUT; any asset whose venues use different
+    # native tickers exercises it, so the example moved rather than the assertion.
     _seed(tmp_path, [
-        _rate("IWMUSDT", venue="aster", hours=8.0),
+        _rate("QQQUSDT", venue="aster", hours=8.0),
         _rate("BTCUSDT", venue="aster", hours=8.0),
-        _rate("US500", venue="lighter", hours=8.0),
+        _rate("US500", venue="lighter", hours=8.0),   # SPX's lighter market, not NDX's
     ])
-    assert liveness.dormant("RUT", venue="aster", root=tmp_path, now=NOW) is False
-    assert liveness.dormant("RUT", venue="lighter", root=tmp_path, now=NOW) is True
+    assert liveness.dormant("NDX", venue="aster", root=tmp_path, now=NOW) is False
+    assert liveness.dormant("NDX", venue="lighter", root=tmp_path, now=NOW) is True
 
 
 def test_an_aster_symbol_joins_on_its_own_native_ticker(tmp_path):

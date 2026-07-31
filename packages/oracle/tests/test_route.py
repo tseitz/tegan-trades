@@ -245,3 +245,34 @@ def test_a_bare_currency_never_routes_to_a_pair_that_inverts_it():
             f"thesis would score as a long {pair}, which is the opposite trade. Drop the "
             f"route or add an explicit inversion (§29)."
         )
+
+
+# ── tradeable instrument: what an order goes to, when the priced thing can't be bought ──
+
+def test_a_curated_entry_can_name_a_tradeable_instrument_apart_from_the_priced_one():
+    """The Dow is priced on ^DJI because that is what the roster's theses are about, and
+    traded as DIA because no venue in this repo lists an index. Two different questions,
+    so two different fields — see the `pricing` paragraph in cfg/venue_map.yaml."""
+    table = _table(curated={"DJI": {"source": "yahoo", "symbol": "^DJI", "tradeable": "DIA"}})
+    ref = route("DJI", table)
+    assert ref == OracleRef(
+        asset="DJI", source="yahoo", symbol="^DJI", curated=True, tradeable="DIA"
+    )
+    assert ref.symbol == "^DJI"       # grading basis, unchanged
+    assert ref.trade_symbol == "DIA"  # what a zone and an order are quoted on
+
+
+def test_trade_symbol_falls_back_to_the_priced_symbol():
+    """Every asset without a proxy must behave exactly as it did before, so `trade_symbol`
+    is safe to read unconditionally rather than guarded at each call site."""
+    table = _table(curated={"SPX": {"source": "yahoo", "symbol": "^GSPC"}})
+    ref = route("SPX", table)
+    assert ref.tradeable is None
+    assert ref.trade_symbol == "^GSPC"
+
+
+def test_an_uncurated_asset_has_no_tradeable_override():
+    """`tradeable` is curation-only. Inferring "the ETF for this index" from a ticker string
+    is the same guess that routes GOLD to Gold.com, Inc."""
+    table = _table(domain_consensus={"HOOD": "stock"})
+    assert route("HOOD", table).trade_symbol == "HOOD"

@@ -22,17 +22,43 @@
 # unpriced tally — rather than to Colgate. That is the safe direction to fail.
 #
 # Entries are either {source, symbol} or {unpriceable: <reason>}.
+#
+# `tradeable` IS A THIRD, OPTIONAL KEY, AND IT IS NOT A SECOND PRICE ROUTE. It names another
+# symbol on the same source: the instrument an order can actually reach, for an asset whose
+# `symbol` is something no venue lists. `symbol` stays the grading basis — `score-roster` asks
+# "was this person right about the Dow" and ^DJI answers that best — while `setups` draws its
+# zone, stop and target on `tradeable`, because 51,885 is not an order price on a $527 fund.
+#
+# Add one ONLY when no venue in cfg/venue_map.yaml carries the asset at its own scale. That
+# is the whole test, and it is why SPX and NDX must NOT get one: they trade 1:1 as `xyz:SP500`
+# and `US500`, and rerouting their zones to SPY/QQQ would misprice the venues where they are
+# already correct. DJI and RUT qualify because no venue lists a Dow or a Russell at all.
+#
+# The alternative — one price route, scaled at placement — was rejected, and NOT only because
+# `scale` drifts. A fund is not a scaled copy of its index. Over the 117 sessions ^DJI and DIA
+# share, the close ratio spans 99.67-100.21 but the LOW ratio spans 98.79-100.19 — nearly three
+# times the spread, and lows are what set a bullish block's invalidation and so its stop. The
+# index's daily range runs consistently wider (2026-04-08: index 2.17%, DIA 0.97%), because an
+# index prints extremes off staggered constituent opens that the fund's own book never trades.
+# Scaling index levels therefore yields stops outside where the instrument actually traded —
+# wider zones, flattering R:R. Measured on the change that introduced this key: the same 9 DJI
+# theses read as candidates on ^DJI and `price_past_stop` on DIA for 2026-07-29, on a day both
+# charts fell 2.19%. Same move, different structure. Draw on what you can buy.
 
 assets:
   # ── indices ──────────────────────────────────────────────────────────────
   SPX:      {source: yahoo, symbol: "^GSPC"}      # S&P 500
   NDX:      {source: yahoo, symbol: "^NDX"}       # NASDAQ-100
-  DJI:      {source: yahoo, symbol: "^DJI"}       # Dow Jones Industrial Average
+  # Traded as DIA: no venue here lists a Dow, and DIA is ~1/97.9 of the index (526.89 against
+  # 51,594 on 2026-07-28) — a ratio, so index levels are not order prices. Zones come off DIA.
+  DJI:      {source: yahoo, symbol: "^DJI", tradeable: DIA}   # Dow Jones Industrial Average
   DXY:      {source: yahoo, symbol: "DX-Y.NYB"}   # US Dollar Index
   DAX40:    {source: yahoo, symbol: "^GDAXI"}
   NKY:      {source: yahoo, symbol: "^N225"}
   VIX:      {source: yahoo, symbol: "^VIX"}       # bare VIX resolves to a MUTUALFUND
-  RUT:      {source: yahoo, symbol: "^RUT"}       # bare RUT resolves to a MUTUALFUND
+  # Traded as IWM, same reason as DJI — Lighter and Aster carry only IWM-scaled proxies, never
+  # the index. Note IWM is also its own asset with its own 7 theses; the two are not merged.
+  RUT:      {source: yahoo, symbol: "^RUT", tradeable: IWM}    # bare RUT -> a MUTUALFUND
   CHINA:    {source: yahoo, symbol: "FXI"}        # iShares China Large-Cap ETF as proxy
 
   # ── metals & energy (futures, not the equities that share these names) ───

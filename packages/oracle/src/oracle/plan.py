@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 
 from oracle.benchmarks import benchmark_refs
@@ -31,6 +31,23 @@ def _parse(value: str | None) -> date | None:
         return date.fromisoformat(value[:10])
     except ValueError:
         return None
+
+
+def _legs(ref: OracleRef) -> tuple[str, ...]:
+    """The symbols this asset needs on disk — its priced one, plus its traded one if they
+    differ. Ordered priced-first so a dry-run plan reads in the same order as the map."""
+    if ref.tradeable is None or ref.tradeable == ref.symbol:
+        return (ref.symbol,)
+    return (ref.symbol, ref.tradeable)
+
+
+def _leg_ref(ref: OracleRef, symbol: str) -> OracleRef:
+    """The job for one leg. The traded leg drops ``tradeable`` so it does not describe itself
+    as a proxy for itself, and drops ``needs_validation`` because a curated proxy is named by
+    hand — probing it would ask Yahoo to confirm a symbol we chose deliberately."""
+    if symbol == ref.symbol:
+        return ref
+    return replace(ref, symbol=symbol, tradeable=None, needs_validation=False)
 
 
 def plan_fetches(
@@ -104,10 +121,15 @@ def plan_fetches(
         # is measured against it, including ones made before anyone first named it.
         if (resolved.source, resolved.symbol) in benchmark_refs() and corpus_start:
             start = min(start, corpus_start)
-        cached = cached_spans.get((resolved.source, resolved.symbol))
-        if cached and cached[0] <= start and cached[1] >= today:
-            continue
-        jobs.append(FetchJob(ref=resolved, start=start, end=today))
+        # An asset with a tradeable proxy needs BOTH series over the same window: `symbol` is
+        # the grading basis `score-roster` reads, `tradeable` is the instrument `setups` draws
+        # zones on. Planning one and not the other is a silent half-failure — the asset simply
+        # lands in `assets_uncached` with no indication which leg was missing.
+        for symbol in _legs(resolved):
+            cached = cached_spans.get((resolved.source, symbol))
+            if cached and cached[0] <= start and cached[1] >= today:
+                continue
+            jobs.append(FetchJob(ref=_leg_ref(resolved, symbol), start=start, end=today))
 
     # Benchmarks that are never mentioned as assets still need fetching.
     planned = {(j.ref.source, j.ref.symbol) for j in jobs}

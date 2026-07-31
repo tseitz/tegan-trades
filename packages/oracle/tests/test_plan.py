@@ -173,3 +173,36 @@ def test_a_legs_own_earlier_mention_is_not_narrowed_by_the_ratio():
         _table(curated=_DERIVED), today=TODAY, cached_spans={})
     btc = next(j for j in _asset_jobs(jobs) if j.ref.asset == "BTC")
     assert btc.start < date(2024, 1, 2)
+
+
+# ── a tradeable proxy needs BOTH series cached ───────────────────────────────
+
+def test_a_tradeable_proxy_plans_the_priced_symbol_and_the_traded_one():
+    """Two consumers, two symbols: `score-roster` grades on ^DJI, `setups` draws zones on
+    DIA. Planning only the priced symbol leaves setups with no bars and the asset counted
+    as `assets_uncached` — a silent skip, not an error."""
+    table = _table(curated={"DJI": {"source": "yahoo", "symbol": "^DJI", "tradeable": "DIA"}})
+    jobs, _ = plan_fetches(_rows(("DJI", "2026-02-17")), table, today=TODAY, pad_days=0)
+    symbols = {j.ref.symbol for j in _asset_jobs(jobs)}
+    assert symbols == {"^DJI", "DIA"}
+    assert all(j.start == date(2026, 2, 17) for j in _asset_jobs(jobs)), \
+        "both legs need the same history or the zone and the grade disagree on dates"
+
+
+def test_the_traded_leg_is_not_itself_marked_tradeable():
+    """Otherwise the job carries a `tradeable` pointing at itself, and the next reader of
+    `trade_symbol` on a fetch job resolves DIA -> DIA -> ... reading as a proxy chain."""
+    table = _table(curated={"DJI": {"source": "yahoo", "symbol": "^DJI", "tradeable": "DIA"}})
+    jobs, _ = plan_fetches(_rows(("DJI", "2026-02-17")), table, today=TODAY, pad_days=0)
+    traded = [j for j in _asset_jobs(jobs) if j.ref.symbol == "DIA"][0]
+    assert traded.ref.tradeable is None
+    assert traded.ref.needs_validation is False   # curated, so never probed
+
+
+def test_an_already_cached_traded_leg_is_not_refetched():
+    table = _table(curated={"DJI": {"source": "yahoo", "symbol": "^DJI", "tradeable": "DIA"}})
+    spans = {("yahoo", "DIA"): (date(2026, 1, 1), TODAY)}
+    jobs, _ = plan_fetches(
+        _rows(("DJI", "2026-02-17")), table, today=TODAY, pad_days=0, cached_spans=spans
+    )
+    assert {j.ref.symbol for j in _asset_jobs(jobs)} == {"^DJI"}

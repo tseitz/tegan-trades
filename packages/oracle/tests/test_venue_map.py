@@ -63,8 +63,9 @@ def test_assets_no_venue_lists_are_recorded_rather_than_absent():
     #
     # This list shrank from seven to one when Alpaca was mapped, and that is the point: five
     # of them were never exotic, just absent from every *derivatives* venue. "Needs a real
-    # broker" was the right diagnosis and Alpaca is the broker. What is left is a genuine gap
-    # — DXY is an index, and nothing here trades an index.
+    # broker" was the right diagnosis and Alpaca is the broker. What is left is a genuine gap —
+    # DXY, whose tracking funds are not 1:1 with it, so it cannot follow DJI and RUT through
+    # `tradeable` either. See test_an_asset_no_venue_at_all_carries_stays_empty.
     assert venue_map.unlisted() == ["DXY"]
     assert venue_map.venues_for("DXY") == []
 
@@ -88,7 +89,12 @@ def test_every_etf_proxy_for_an_index_declares_a_scale():
     # RUT carried IWM with no `scale`, so `is_proxy` was False and `guards.check_listing` would
     # have let an order quoted on the index (2953) go out against an instrument at a tenth of
     # it. Any index whose venue instrument is a fund must say so.
-    for asset in ("SPX", "NDX", "RUT"):
+    #
+    # RUT has since left this list, and NOT by being fixed the way it was fixed the first time.
+    # It is priced on IWM for execution (oracle_map `tradeable`), so there is no longer an
+    # index price to be a ratio away from — the row is genuinely 1:1 and a `scale` on it would
+    # be the lie. SPX and NDX stay because they are still traded at index scale elsewhere.
+    for asset in ("SPX", "NDX"):
         proxies = [
             listing
             for venue in venue_map.venues_for(asset)
@@ -150,13 +156,13 @@ def test_no_crypto_asset_carries_an_alpaca_listing():
         assert venue_map.listing(asset, "alpaca") is None, f"{asset} must not map to Alpaca"
 
 
-def test_an_index_has_no_alpaca_listing_but_its_fund_does():
-    """Alpaca trades neither indices nor futures. Where a fund tracks one it gets its own 1:1
-    row, which is the SPX/SPY split this file already models — so the index resolves to
-    nothing rather than to a scaled proxy."""
+def test_an_index_still_traded_at_its_own_scale_has_no_alpaca_listing():
+    """Alpaca trades neither indices nor futures. SPX and NDX therefore resolve to nothing
+    rather than to a scaled proxy — and they must KEEP resolving to nothing, because both are
+    traded at index scale on Hyperliquid and Lighter, so their prices have to stay the index's.
+    Giving either one an alpaca row is only safe after it stops being priced on the index."""
     assert venue_map.listing("SPX", "alpaca") is None
     assert venue_map.listing("NDX", "alpaca") is None
-    assert venue_map.listing("RUT", "alpaca") is None
     assert venue_map.listing("SPY", "alpaca").symbol == "SPY"
     assert venue_map.listing("QQQ", "alpaca").symbol == "QQQ"
     assert venue_map.listing("IWM", "alpaca").symbol == "IWM"
@@ -189,12 +195,53 @@ def test_alpaca_reaches_the_assets_no_derivatives_venue_carried():
 
 
 def test_an_asset_no_venue_at_all_carries_stays_empty():
-    """DXY is the remaining genuine gap — an index, and nothing here trades an index. Absence
-    is a real answer and must not be filled in by pattern just because the sections around it
-    now have an alpaca column.
+    """DXY is the remaining genuine gap. It used to be describable as "an index, and nothing
+    here trades an index" — no longer true, since DJI and RUT now reach Alpaca as their funds.
+    What keeps DXY empty is narrower: no venue lists a dollar-index market, and the ETFs that
+    track it (UUP, USDU) are not 1:1 with it, so `tradeable` cannot rescue it the way it
+    rescued the Dow. Absence is a real answer and must not be filled in by pattern just
+    because the sections around it now have an alpaca column.
 
     This test used to name VRT, and was wrong. Vertiv is NYSE-listed and sits in Alpaca's own
     universe fetch; the empty row cost a real approval, refused at placement after the
     judgement had been spent. An asset a venue does not list is omitted — but "listed nowhere"
     is a claim, and a test asserting one is only as good as the check behind it."""
     assert venue_map.venues_for("DXY") == []
+
+
+# ── the rule that lets an index reach Alpaca at all ──────────────────────────
+
+def _curated():
+    from oracle.route import load_curated
+    return load_curated(venue_map.CFG_PATH.parent)
+
+
+def test_an_asset_traded_through_a_fund_is_priced_on_that_fund():
+    """The invariant that makes DJI's and RUT's alpaca rows safe, and it spans two files:
+    the row is 1:1 *because* oracle_map moved execution pricing onto the same instrument.
+    Either half alone is a live mispricing — a 1:1 row with index pricing sends 51,885 to a
+    $527 fund; index pricing with no row just refuses. Only the pair is correct."""
+    for asset, fund in (("DJI", "DIA"), ("RUT", "IWM")):
+        listing = venue_map.listing(asset, "alpaca")
+        assert listing is not None and listing.symbol == fund
+        assert not listing.is_proxy, f"{asset} is priced on {fund}, so nothing is scaled"
+        assert _curated()[asset].get("tradeable") == fund, (
+            f"{asset} has a 1:1 {fund} row but is not priced on {fund} — "
+            "the zone would still be quoted on the index"
+        )
+
+
+def test_an_index_traded_at_its_own_scale_anywhere_keeps_index_pricing():
+    """The other direction, and the reason this is a rule rather than a preference. SPX trades
+    1:1 as `xyz:SP500` and `US500`. Moving its pricing to SPY to unlock Alpaca would misprice
+    the two venues where it is already correct — 425 theses, the corpus's largest asset."""
+    for asset, one_to_one in (("SPX", {"xyz:SP500", "US500"}), ("NDX", {"xyz:XYZ100", "US100"})):
+        symbols = {
+            listing.symbol
+            for venue in venue_map.venues_for(asset)
+            if (listing := venue_map.listing(asset, venue)) is not None
+        }
+        assert symbols & one_to_one, f"{asset} no longer trades at index scale — revisit"
+        assert _curated()[asset].get("tradeable") is None, (
+            f"{asset} is traded at index scale somewhere, so it must stay priced on the index"
+        )
