@@ -68,27 +68,18 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from core.canon import load_registry
-from oracle import cache, corpus, http, listings, venue_map
+from core.identity import DIFFERS, IN_RANGE, MATCH, NO_PRICE, compare
+from oracle import cache, corpus, listings, venue_map
+from oracle.marks import Mark, aster_marks, hyperliquid_marks, index_marks, lighter_marks
 from oracle.route import OracleRef, load_routing_table, route
-from oracle.sources import aster, hyperliquid, lighter
+from oracle.sources import aster, lighter
 
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "cfg"
-
-# How far the venue's live mark may sit from our last cached close and still be the same
-# instrument. Generous on purpose: the close is a daily bar and the mark is right now, so an
-# overnight gap is normal and a *false* match is what this tolerance has to survive — the
-# nearest real collision (SPX vs SPX6900) is four orders of magnitude away, not 12%.
-MATCH_TOLERANCE = 0.12
 
 # Beyond this the cached close is not evidence of anything. Equities do not price on weekends,
 # so a Friday close read on Monday is fine; a month-old one is a stale fetch, and calling a
 # market a mismatch off it would blame the venue for our own staleness.
 MAX_CLOSE_AGE_DAYS = 10
-
-# Quote suffixes venues bolt onto a base ticker. Stripped when reading a venue's universe so
-# `BTCUSDT` is recognised as a candidate for `BTC` — the candidate still has to clear the mark
-# check, which is the whole point.
-QUOTE_SUFFIXES = ("USDT", "USDC", "USD")
 
 # How many recent sessions the mark may match instead of the latest close. A venue's oracle
 # can sit a session behind, and on a volatile name that reads as a collision: `BE` marked 187.4
@@ -96,16 +87,6 @@ QUOTE_SUFFIXES = ("USDT", "USDC", "USD")
 # The window is a second basis, never a looser tolerance — it reports as its own verdict so a
 # reader always knows which number confirmed the pair.
 RANGE_SESSIONS = 5
-
-MATCH, IN_RANGE, DIFFERS, NO_PRICE = "MATCH", "IN RANGE", "DIFFERS", "NO PRICE"
-
-
-@dataclass(frozen=True, slots=True)
-class Mark:
-    venue: str          # "hyperliquid", "hyperliquid:xyz", "lighter", "aster"
-    symbol: str         # as the venue names it, dex prefix stripped
-    price: float
-
 
 @dataclass(frozen=True, slots=True)
 class Check:
@@ -120,92 +101,25 @@ class Check:
     high: float = 0.0
 
     @property
+    def _comparison(self):
+        """``core.identity`` owns the arithmetic; this probe owns the presentation.
+
+        **The raw ratio is deliberately what gets compared, with no ``scale`` applied**, even
+        for a pairing the map already declares one for. Applying it would confirm the very
+        thing the reader is here to judge: `RUT` carried IWM at a tenth of the index with no
+        `scale` recorded, and a scaled comparison would have printed MATCH and hidden it. The
+        gates apply `scale`; this reports what is actually on the wire.
+        """
+        return compare(mark=self.mark, close=self.close, low=self.low, high=self.high)
+
+    @property
     def ratio(self) -> float | None:
         """Venue mark over our close. 1.0 is the same instrument; 10.03 is SPY against SPX."""
-        if not self.close:
-            return None
-        return self.mark / self.close
+        return self._comparison.ratio
 
     @property
     def verdict(self) -> str:
-        r = self.ratio
-        if r is None:
-            return NO_PRICE
-        if abs(r - 1.0) <= MATCH_TOLERANCE:
-            return MATCH
-        if self.low and self.low <= self.mark <= self.high:
-            return IN_RANGE
-        return DIFFERS
-
-
-def _f(raw) -> float | None:
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return None
-    return value if value > 0 else None
-
-
-def hyperliquid_marks(*, post_json=http.post_json) -> list[Mark]:
-    """Core book plus every HIP-3 builder. `metaAndAssetCtxs` positionally zips universe to
-    contexts exactly as the funding source does, and the same length-mismatch rule applies:
-    truncate rather than raise, since a partial reading beats none."""
-    marks: list[Mark] = []
-    dexs = ["", *hyperliquid.parse_dexs(post_json(hyperliquid.BASE, {"type": "perpDexs"}))]
-    for dex in dexs:
-        payload = post_json(hyperliquid.BASE, {"type": "metaAndAssetCtxs", "dex": dex})
-        if not payload or len(payload) < 2:
-            continue
-        universe = (payload[0] or {}).get("universe") or []
-        venue = f"{hyperliquid.VENUE}:{dex}" if dex else hyperliquid.VENUE
-        for asset, ctx in zip(universe, payload[1] or []):
-            name = (asset or {}).get("name")
-            if not name or (asset or {}).get("isDelisted"):
-                continue
-            price = _f((ctx or {}).get("markPx"))
-            if price is None:
-                continue
-            marks.append(Mark(venue, name.split(":", 1)[-1], price))
-    return marks
-
-
-def lighter_marks(*, get_json=http.get_json) -> list[Mark]:
-    payload = get_json(f"{lighter.BASE}/orderBookDetails")
-    rows = payload.get("order_book_details") if isinstance(payload, dict) else payload
-    out = []
-    for row in rows or ():
-        symbol, price = (row or {}).get("symbol"), _f((row or {}).get("mark_price"))
-        if symbol and price is not None and (row or {}).get("status") == "active":
-            out.append(Mark(lighter.VENUE, symbol, price))
-    return out
-
-
-def aster_marks(*, get_json=http.get_json) -> list[Mark]:
-    out = []
-    for row in get_json(f"{aster.BASE}/premiumIndex") or ():
-        symbol, price = (row or {}).get("symbol"), _f((row or {}).get("markPrice"))
-        if symbol and price is not None:
-            out.append(Mark(aster.VENUE, symbol, price))
-    return out
-
-
-def base_of(symbol: str) -> str:
-    """`BTCUSDT` -> `BTC`. Only strips a suffix that leaves something behind, so `USDC` and
-    the handful of markets whose whole name is a quote token survive intact."""
-    upper = symbol.upper()
-    for suffix in QUOTE_SUFFIXES:
-        if upper.endswith(suffix) and len(upper) > len(suffix):
-            return upper[: -len(suffix)]
-    return upper
-
-
-def index_marks(marks) -> dict[tuple[str, str], list[Mark]]:
-    """(venue, base ticker) -> the markets whose name reduces to it. A list because a venue can
-    carry both `EUR` and `EURUSD`, and picking one for the reader would be the guess."""
-    index: dict[tuple[str, str], list[Mark]] = {}
-    for mark in marks:
-        index.setdefault((mark.venue, base_of(mark.symbol)), []).append(mark)
-    return index
+        return self._comparison.verdict
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,8 +218,10 @@ def check_all(marks, closes, *, mapped_only: bool = False) -> list[Check]:
                 add(asset, mark, mapped=True)
                 continue
             # A mapped symbol no venue returns is the failure mode the map cannot self-report:
-            # it reads as curated fact and would refuse at order time. Zero mark, so it lands
-            # under NO PRICE or DIFFERS and never under MATCH.
+            # it reads as curated fact and would refuse at order time. Zero mark, which
+            # `core.identity` reads as absence — so this lands under NO PRICE, never MATCH and
+            # no longer under DIFFERS. "Nobody answered" is not "answered differently", and the
+            # gates have to tell those apart even where a report could blur them.
             checks.append(build(asset, log_venue, symbol, 0.0, True))
 
     if not mapped_only:
