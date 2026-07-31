@@ -76,6 +76,32 @@ def test_missing_credentials_raise_with_both_variable_names(env):
         config.credentials(env)
 
 
+def test_credentials_fall_back_to_the_repo_dotenv(tmp_path, monkeypatch):
+    """`uv run` and the nightly launchd job inherit no shell exports, so a .env that has to be
+    sourced by hand is a .env that is not there when it matters."""
+    (tmp_path / ".env").write_text(
+        f"{config.ADDRESS_VAR}=0xfromfile\n{config.SECRET_VAR}=0xkeyfromfile\n"
+    )
+    monkeypatch.setattr("core.env.REPO_ROOT", tmp_path)
+    monkeypatch.delenv(config.ADDRESS_VAR, raising=False)
+    monkeypatch.delenv(config.SECRET_VAR, raising=False)
+
+    creds = config.credentials()      # no env passed — the real lookup path
+
+    assert creds.account_address == "0xfromfile"
+    assert creds.secret_key == "0xkeyfromfile"
+
+
+def test_an_injected_environment_ignores_the_dotenv(tmp_path, monkeypatch):
+    """Otherwise a test's stated environment would be quietly topped up from an untracked file
+    on the developer's machine, and `missing credentials` would pass or fail by accident."""
+    (tmp_path / ".env").write_text(f"{config.SECRET_VAR}=0xkeyfromfile\n")
+    monkeypatch.setattr("core.env.REPO_ROOT", tmp_path)
+
+    with pytest.raises(config.MissingCredentials, match=config.SECRET_VAR):
+        config.credentials({config.ADDRESS_VAR: "0xabc"})
+
+
 def test_credentials_are_never_read_from_the_config_file(tmp_path):
     """cfg/ is committed. A key placed there would survive in history after one commit, so
     the loader must not have a field that could accept one."""

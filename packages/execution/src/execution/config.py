@@ -14,6 +14,8 @@ from pathlib import Path
 
 import yaml
 
+from core.env import load_env
+
 from execution import budget, guards, participation, portfolio, venues
 from execution.alpaca_broker import AlpacaCredentials
 from execution.broker import MAINNET, TESTNET, Credentials
@@ -193,6 +195,25 @@ def load(path=DEFAULT_PATH) -> Config:
     return config
 
 
+def _environment(env):
+    """The process environment, with the repo's ``.env`` folded in first.
+
+    Here rather than at each CLI's ``main``: this is the one place a secret is read, so it is
+    the one place that can guarantee the file was consulted no matter which entrypoint got
+    here — ``setups --execute`` probing routability, ``execute``, ``book``, or the nightly
+    job, which has no interactive shell to have sourced anything. An explicitly exported
+    variable still wins (see ``load_env``), so a one-off override is still just an export.
+
+    An injected ``env`` is left alone: passing a dict is how the tests state the environment
+    exactly, and silently mixing the developer's real ``.env`` into it would make those tests
+    pass or fail on what happens to be in an untracked file.
+    """
+    if env is not None:
+        return env
+    load_env()
+    return os.environ
+
+
 def credentials(env=None) -> Credentials:
     """The signing key, from the environment only.
 
@@ -200,16 +221,17 @@ def credentials(env=None) -> Credentials:
     explicit message naming the two variables is more useful than a ``NoneType`` traceback
     three frames into the SDK.
     """
-    env = os.environ if env is None else env
+    env = _environment(env)
     address = (env.get(ADDRESS_VAR) or "").strip()
     secret = (env.get(SECRET_VAR) or "").strip()
     missing = [name for name, value in ((ADDRESS_VAR, address), (SECRET_VAR, secret))
                if not value]
     if missing:
         raise MissingCredentials(
-            f"{' and '.join(missing)} not set. Add them to .env (gitignored) and load with "
-            f"`set -a; source .env; set +a`. Use an API wallet generated under More -> API, "
-            f"not your main wallet key — an agent wallet can trade but cannot withdraw."
+            f"{' and '.join(missing)} not set. Add them to {REPO_ROOT / '.env'} (gitignored); "
+            f"it is read automatically, no `source` needed. Use an API wallet generated under "
+            f"More -> API, not your main wallet key — an agent wallet can trade but cannot "
+            f"withdraw."
         )
     return Credentials(account_address=address, secret_key=secret)
 
@@ -221,15 +243,15 @@ def alpaca_credentials(env=None) -> AlpacaCredentials:
     of the account, because withdrawals are ACH to a bank on file and are not reachable from
     the trading API. They can still place and cancel orders, so they stay out of ``cfg/``.
     """
-    env = os.environ if env is None else env
+    env = _environment(env)
     key_id = (env.get(ALPACA_KEY_VAR) or "").strip()
     secret = (env.get(ALPACA_SECRET_VAR) or "").strip()
     missing = [name for name, value in ((ALPACA_KEY_VAR, key_id), (ALPACA_SECRET_VAR, secret))
                if not value]
     if missing:
         raise MissingCredentials(
-            f"{' and '.join(missing)} not set. Add them to .env (gitignored) and load with "
-            f"`set -a; source .env; set +a`. Generate a PAPER key first at "
+            f"{' and '.join(missing)} not set. Add them to {REPO_ROOT / '.env'} (gitignored); "
+            f"it is read automatically, no `source` needed. Generate a PAPER key first at "
             f"https://app.alpaca.markets/paper/dashboard/overview — paper and live keys are "
             f"different pairs and a live key will not authenticate against the paper host."
         )

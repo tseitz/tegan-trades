@@ -6,8 +6,9 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from core.env import load_env
+
 from ingestion import verify, x_roster
-from ingestion.env import load_env
 from ingestion.store import DATA_ROOT
 from ingestion.x_search import (
     SearchNotRun,

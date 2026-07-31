@@ -1,6 +1,6 @@
 import os
 
-from ingestion.env import load_env
+from core.env import load_env
 
 
 def test_loads_keys_from_repo_root_env(tmp_path, monkeypatch):

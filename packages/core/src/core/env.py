@@ -1,20 +1,27 @@
 """Load repo-root ``.env`` into the process environment.
 
-``youtube._proxy_config`` reads ``WEBSHARE_PROXY_*`` straight from ``os.environ``, and
-nothing populated it — so creating a ``.env`` (as ``.env.example`` and CLAUDE.md both
-invite you to) had no effect at all, and transcript fetches silently ran unproxied. This
-closes that gap at the CLI boundary.
+Every consumer of a secret — ``youtube._proxy_config`` for ``WEBSHARE_PROXY_*``,
+``execution.config`` for the venue keys — reads ``os.environ`` directly, and nothing
+populated it. So creating a ``.env`` (as ``.env.example`` and CLAUDE.md both invite you to)
+had no effect at all: transcript fetches silently ran unproxied and every venue reported
+``no_credentials`` until the caller remembered to ``source`` the file by hand. Each reader
+calls this at the point it reads, so the file works the same from a shell, from ``uv run``,
+and from the nightly launchd job — none of which inherit an interactive shell's exports.
 
-Hand-rolled rather than depending on python-dotenv: the format we need is four lines of
-``KEY=value`` and a dependency isn't worth it. Deliberately narrow — no interpolation, no
-multiline values.
+Lives in ``core`` because it is the only package everything else may import; the alternative
+was a copy per package, and two loaders that disagree about precedence is exactly the bug
+this file exists to prevent. It reads config, like ``core.canon`` — it writes nothing.
+
+Hand-rolled rather than depending on python-dotenv: the format we need is a handful of
+``KEY=value`` lines and a dependency isn't worth it. Deliberately narrow — no interpolation,
+no multiline values.
 """
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
-# src/ingestion/env.py -> src/ingestion -> src -> ingestion -> packages -> <repo root>
+# src/core/env.py -> src/core -> src -> core -> packages -> <repo root>
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
