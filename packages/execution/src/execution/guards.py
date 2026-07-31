@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from core.identity import DIFFERS, IN_RANGE, MATCH, Comparison
+
 # The venue's minimum order value. Below this the order is rejected outright, so catching it
 # here turns a generic venue error into a sentence explaining that the risk budget was too
 # small for this market.
@@ -31,6 +33,8 @@ REFUSAL_ILLIQUID = "illiquid"
 REFUSAL_TOO_BIG = "too_big_for_book"
 REFUSAL_NO_LIQUIDITY_DATA = "no_liquidity_data"
 REFUSAL_NO_MARGIN = "no_margin"
+REFUSAL_IDENTITY_MISMATCH = "identity_mismatch"
+REFUSAL_IDENTITY_UNCONFIRMED = "identity_unconfirmed"
 
 # Equity below which a US brokerage account cannot short at all.
 #
@@ -94,6 +98,66 @@ def check_listing(asset: str, listing, universe) -> Refusal | None:
             f"({len(universe)} markets) — check the network, not the venue map",
         )
     return None
+
+
+def check_identity(asset: str, comparison: Comparison | None, *,
+                   symbol: str, venue: str) -> Refusal | None:
+    """Is the instrument quoted at ``symbol`` on ``venue`` actually ``asset``?
+
+    ``check_listing`` asks whether the venue map says this symbol exists; this asks whether the
+    venue map is *right* — a name match is not evidence, since the venues list a memecoin under
+    ``SPX`` at 0.33 while the index sits at 7403, and Yahoo's bare ``WTI`` prices at 3.51 (W&T
+    Offshore, the E&P company) while crude trades at 81.75. Both resolve to a real, liquid,
+    entirely wrong market, and only a live price comparison — done by ``core.identity.compare``,
+    passed in here rather than fetched here so this package need not import ``oracle`` — can
+    catch it before the order does.
+
+    Two failures, matching ``core.identity``'s own split (see its module docstring for why
+    there are four verdicts rather than two):
+
+    * **Mismatch** (``DIFFERS``). The mark disagrees by an order of magnitude, not a percentage
+      — 23x for crude against the E&P company, 4.3x for the yen against Yahoo's bare ``JPY``.
+      The ratio rides along in the detail because the verdict alone can't say whether it was an
+      undeclared proxy (10.03, an index tracked at a ratio nobody told this guard about) or a
+      collision (4e-5, a different instrument entirely) — a human fixing the map needs to know
+      which.
+    * **Unconfirmed** (``IN_RANGE``, ``NO_PRICE``, or ``comparison`` itself missing). Neither a
+      timing gap nor a fetch that returned nothing is evidence of agreement, and treating either
+      as a pass is exactly the failure ``core.identity`` was written to prevent. ``comparison is
+      None`` gets the same code as the verdicts that mean "couldn't tell" — it *is* that fact,
+      one level earlier: the live fetch behind the comparison never produced one.
+
+    ``comparison is None`` is refused for the same reason ``check_liquidity``'s missing-data
+    branch is: the check runs on a price fetched live, so a failed fetch must not silently read
+    as "checked and agreed" — that would turn the gate off exactly when venue trouble makes it
+    matter most.
+    """
+    if comparison is None:
+        return Refusal(
+            REFUSAL_IDENTITY_UNCONFIRMED,
+            f"could not fetch a price for {symbol} on {venue} to compare against {asset}, "
+            f"so its identity cannot be confirmed",
+        )
+    if comparison.verdict == MATCH:
+        return None
+    if comparison.verdict == DIFFERS:
+        return Refusal(
+            REFUSAL_IDENTITY_MISMATCH,
+            f"{symbol} on {venue} prices at {comparison.ratio:.4g}x what {asset}'s cached "
+            f"close implies — that is a different instrument, not a proxy or a timing gap",
+        )
+    if comparison.verdict == IN_RANGE:
+        return Refusal(
+            REFUSAL_IDENTITY_UNCONFIRMED,
+            f"{symbol} on {venue} sits inside {asset}'s recent trading range but does not "
+            f"match its last close (ratio {comparison.ratio:.4g}) — probably a timing gap, "
+            f"not yet a confirmed identity",
+        )
+    return Refusal(
+        REFUSAL_IDENTITY_UNCONFIRMED,
+        f"no usable price comparison between {symbol} on {venue} and {asset} — the venue "
+        f"mark or the cached close was missing or zero",
+    )
 
 
 def check_geometry(direction: str, entry: float, stop: float, target: float) -> Refusal | None:
