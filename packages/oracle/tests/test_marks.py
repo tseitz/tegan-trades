@@ -108,3 +108,23 @@ def test_one_base_ticker_can_hold_several_markets():
     ])
     assert {m.symbol for m in index[("aster", "EUR")]} == {"EURUSDT", "EUR"}
     assert [m.symbol for m in index[("aster", "BTC")]] == ["BTCUSDT"]
+
+
+# ── one venue down must not blind the other two ─────────────────────────────────────────────
+
+def test_a_failing_venue_contributes_nothing_rather_than_raising():
+    """The check this feeds is evidence *against* a route, never evidence for one, so fewer
+    marks can only mean fewer refusals — never a wrong refusal. A raise here would take the
+    whole queue down over one venue's outage."""
+    def dead():
+        raise ConnectionError("venue down")
+
+    got = marks.fetch_all(readers=(dead, lambda: [marks.Mark("lighter", "BTC", 64000.5)]))
+    assert got == [marks.Mark("lighter", "BTC", 64000.5)]
+
+
+def test_every_venue_down_is_an_empty_reading_not_an_error():
+    def dead():
+        raise TimeoutError
+
+    assert marks.fetch_all(readers=(dead, dead)) == []

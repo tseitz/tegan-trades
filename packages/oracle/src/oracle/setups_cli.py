@@ -30,6 +30,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 from core.canon import Registry, load_registry, resolve_asset
+from core.identity import DIFFERS
 from core.rank import parse_date
 from core.setups import (
     ARRIVAL,
@@ -53,11 +54,13 @@ from execution.venues import ALL_NETWORKS, ALPACA
 from oracle import (
     cache,
     carry,
+    confirm,
     corpus,
     derived,
     exclusions,
     execute,
     instruments,
+    marks as marks_mod,
     listings,
     venue_map,
     venue_routing,
@@ -239,6 +242,12 @@ _PROMPT = ("[a]pprove  [l]ater  [q]uit\n"
 
 _NOTE_TITLE = "# Approved Setups"
 
+# Sessions of our own trading band a venue's mark may sit inside without reading as a fault.
+# Matches ``probe_venue_coverage.RANGE_SESSIONS`` for the same reason it exists there: a venue
+# oracle can run a session behind, and on a volatile name that reads as a collision — `BE`
+# marked 187.4 across three venues against a 166.8 close, its own previous session.
+_CONFIRM_SESSIONS = 5
+
 
 # ── engine assembly (impure: routes assets, reads the price cache) ─────────────────────────
 
@@ -270,6 +279,15 @@ class BuildStats:
     # rather than silently filtered: a queue that quietly halves itself reads as "this is
     # everything", which is the failure `unpriceable` above exists to prevent.
     duplicate_zones: int = 0
+    # Named, not just counted, exactly as the excluded-asset line is. The set is small by
+    # construction and every member is a curation task for a human — "6 assets price the wrong
+    # instrument" is a fact you cannot act on, and `WTI JPY PURR` is one you can.
+    contradicted: tuple[str, ...] = ()
+    # Venue marks available to cross-check guessed routes. Carried so that *zero* can be said
+    # out loud: `marks.fetch_all` swallows a venue outage by design, so an unreachable network
+    # silently turns the identity check into a pass-everything. A gate that stops gating and
+    # says nothing is the failure this file's tallies exist to prevent.
+    marks_read: int = 0
 
     @property
     def assets_unpriced(self) -> int:
@@ -341,9 +359,16 @@ def build_candidates(
         carry.outlooks_for(assets, venue=funding_venue) if funding_venue else {}
     )
 
+    # An independent price per ticker, used only to contradict a guessed route. Fetched here
+    # rather than read from the price cache on purpose: a source that shared our routing would
+    # agree with us about `WTI` being W&T Offshore and confirm the collision instead of catching
+    # it. Empty when no venue answers, which refuses nothing — see ``oracle.confirm``.
+    mark_index = marks_mod.index_marks(marks_mod.fetch_all())
+
     series_cache: dict = {}
     contexts: dict[str, tuple] = {}
     unpriceable: Counter = Counter()
+    contradicted: list[str] = []
     uncached = 0
     no_context = 0
     for asset in assets:
@@ -356,6 +381,19 @@ def build_candidates(
         daily = _load_daily(resolved, table=table, series_cache=series_cache)
         if daily is None:
             uncached += 1
+            continue
+        # Checked here and not only at fetch time, because the six known-bad series are already
+        # on disk: a gate that only stopped future fetches would leave every one of them still
+        # pricing, grading and reaching the queue. `recent` is the band a venue running a
+        # session ahead of us is allowed to sit in without reading as a fault.
+        recent = daily.bars[-_CONFIRM_SESSIONS:]
+        verdict = confirm.check(
+            resolved, close=daily.bars[-1].close, marks=mark_index,
+            low=min(b.low for b in recent), high=max(b.high for b in recent),
+        )
+        if verdict is not None and verdict.verdict == DIFFERS:
+            unpriceable[confirm.CONTRADICTED] += 1
+            contradicted.append(asset)
             continue
         weekly = to_weekly(daily)
         ctx = build_context(daily.bars, weekly.bars, as_of=as_of)
@@ -421,6 +459,8 @@ def build_candidates(
         unpriceable=unpriceable, assets_uncached=uncached, assets_no_context=no_context,
         rejections=rejections, candidate_count=len(candidates),
         duplicate_zones=duplicate_zones,
+        contradicted=tuple(contradicted),
+        marks_read=sum(len(v) for v in mark_index.values()),
     )
     return candidates, stats
 
@@ -442,13 +482,24 @@ def format_unpriced(stats: BuildStats) -> str:
         ("computable", route_mod.COMPUTABLE),
         ("no route", route_mod.NO_ROUTE),
         ("not an instrument", route_mod.NOT_AN_ASSET),
+        # Its own group, and the only one here that describes an asset which *was* priced. The
+        # others never reached a number; this one reached the wrong number and was graded and
+        # offered on it, so a reader who skims must not file it under "no route".
+        ("wrong instrument", {confirm.CONTRADICTED}),
     )
     parts = []
     for label, reasons in groups:
         hit = {r: n for r, n in stats.unpriceable.items() if r in reasons}
-        if hit:
+        if not hit:
+            continue
+        # The contradicted group names its members instead of restating its own label as a
+        # reason. Six tickers fit on the line and each one is a curation task; the count alone
+        # tells a reader something is wrong and nothing about where to go.
+        if reasons == {confirm.CONTRADICTED}:
+            detail = ", ".join(stats.contradicted)
+        else:
             detail = ", ".join(f"{r} {n}" for r, n in sorted(hit.items(), key=lambda kv: -kv[1]))
-            parts.append(f"{label} {sum(hit.values())} ({detail})")
+        parts.append(f"{label} {sum(hit.values())} ({detail})")
     # Anything the groups above don't claim. Printed rather than dropped: a reason added to
     # oracle_map.yaml and not to route.py would otherwise vanish from this line silently, which
     # is exactly how ``event`` and ``derived_ratio`` stayed unnameable in the first place.
@@ -458,6 +509,11 @@ def format_unpriced(stats: BuildStats) -> str:
         parts.append("ungrouped " + ", ".join(f"{r} {n}" for r, n in sorted(rest.items())))
     if stats.assets_uncached:
         parts.append(f"routed but never fetched {stats.assets_uncached}")
+    # Said only when it is true, and then unmissably: with no marks the identity check refused
+    # nothing, and a clean "wrong instrument" line would otherwise be indistinguishable from a
+    # corpus that is actually clean.
+    if not stats.marks_read:
+        parts.append("NO VENUE MARKS — guessed routes went unchecked this run")
     return "unpriced: " + " · ".join(parts) if parts else "unpriced: none"
 
 

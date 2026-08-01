@@ -22,7 +22,7 @@ from core.setups import (
 from core.structure import BULLISH, SWING_HIGH, SWING_LOW, Break, OrderBlock, Swing
 
 from core import routing
-from oracle import exclusions, queue, setups_cli, setups_render
+from oracle import confirm, exclusions, queue, setups_cli, setups_render
 from oracle.queue import build_queue
 from oracle.setups_cli import format_unpriced
 
@@ -1377,3 +1377,53 @@ def test_a_win_on_a_pooled_number_is_reported_as_a_coin_flip():
         hold_days=21)
     assert "COIN FLIP" in line
     assert "mostly pooled" in line
+
+
+# ── the identity gate's line in the tally ───────────────────────────────────────────────────
+
+def test_a_contradicted_route_is_named_not_just_counted():
+    """Six tickers fit on the line and each is a curation task. The count alone says something
+    is wrong and nothing about where to go — the excluded-asset line names its members for the
+    same reason."""
+    stats = setups_cli.BuildStats(
+        assets_total=10, assets_priced=4,
+        unpriceable=Counter({confirm.CONTRADICTED: 3}),
+        assets_uncached=0, assets_no_context=0, rejections=Counter(), candidate_count=0,
+        contradicted=("JPY", "PURR", "WTI"),
+    )
+    line = setups_cli.format_unpriced(stats)
+    assert "wrong instrument 3 (JPY, PURR, WTI)" in line
+
+
+def test_a_contradicted_route_is_not_filed_under_no_route():
+    """It is the one group here describing an asset that *was* priced — it reached a real
+    number and was graded and offered on it. Filing it with the assets that never reached a
+    price would hide the only failure of the four that already did damage."""
+    stats = setups_cli.BuildStats(
+        assets_total=10, assets_priced=4,
+        unpriceable=Counter({confirm.CONTRADICTED: 1}),
+        assets_uncached=0, assets_no_context=0, rejections=Counter(), candidate_count=0,
+        contradicted=("WTI",),
+    )
+    assert "no route" not in setups_cli.format_unpriced(stats)
+
+
+def test_an_unreachable_network_says_the_check_did_not_run():
+    """`marks.fetch_all` swallows a venue outage by design, so with no network the identity
+    check refuses nothing. Silent, that is indistinguishable from a corpus with no wrong
+    instruments in it — the one reading that must never be produced by accident."""
+    stats = setups_cli.BuildStats(
+        assets_total=10, assets_priced=10, unpriceable=Counter(),
+        assets_uncached=0, assets_no_context=0, rejections=Counter(), candidate_count=0,
+        marks_read=0,
+    )
+    assert "NO VENUE MARKS" in setups_cli.format_unpriced(stats)
+
+
+def test_a_healthy_run_does_not_nag_about_marks():
+    stats = setups_cli.BuildStats(
+        assets_total=10, assets_priced=10, unpriceable=Counter(),
+        assets_uncached=0, assets_no_context=0, rejections=Counter(), candidate_count=0,
+        marks_read=1185,
+    )
+    assert "NO VENUE MARKS" not in setups_cli.format_unpriced(stats)

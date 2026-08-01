@@ -103,6 +103,28 @@ def base_of(symbol: str) -> str:
     return upper
 
 
+def fetch_all(*, readers=None) -> list[Mark]:
+    """Every venue's marks, with one venue's outage isolated from the rest.
+
+    **Not cached to disk, unlike ``listings``.** A listing changes when an exchange adds a
+    market; a mark changes every second, and a stale one drifts away from today's close until a
+    volatile name reads as a different instrument — the check would start manufacturing the
+    faults it exists to find. Three requests is cheap enough that freshness is the better trade.
+
+    A venue that fails to answer contributes nothing rather than raising. The check this feeds
+    is evidence *against* a route and never evidence for it, so fewer marks can only mean fewer
+    refusals — never a wrong one. Callers report the count so an empty reading is visible
+    instead of reading as a clean bill of health.
+    """
+    out: list[Mark] = []
+    for reader in readers or (hyperliquid_marks, lighter_marks, aster_marks):
+        try:
+            out.extend(reader())
+        except Exception:  # noqa: BLE001 - one venue down must not blind the other two
+            continue
+    return out
+
+
 def index_marks(marks) -> dict[tuple[str, str], list[Mark]]:
     """(venue, base ticker) -> the markets whose name reduces to it. A list because a venue can
     carry both `EUR` and `EURUSD`, and picking one for the reader would be the guess."""

@@ -14,8 +14,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from core.canon import load_registry
+from core.identity import DIFFERS
 
-from oracle import cache, corpus, listings
+from oracle import cache, confirm, corpus, listings
+from oracle import marks as marks_mod
 from oracle.plan import FetchJob, plan_fetches
 from oracle.route import load_routing_table
 from oracle.series import PriceSeries
@@ -30,6 +32,11 @@ _SOURCES = {"coinbase": coinbase, "kraken": kraken, "yahoo": yahoo}
 # the tradeable thing a transcript meant. Indices/futures/FX must be curated explicitly —
 # bare `GOLD` resolves to an EQUITY (Gold.com, Inc.), which is why type alone isn't enough.
 AUTO_OK_TYPES = {"EQUITY", "ETF"}
+
+# Sessions of the freshly-fetched band a venue's mark may sit inside without reading as a
+# fault. Matches ``setups_cli._CONFIRM_SESSIONS`` — a venue oracle can run a session behind
+# ours, and on a volatile name that reads as a collision.
+_CONFIRM_SESSIONS = 5
 
 
 def _cached_spans(root: Path) -> dict[tuple[str, str], tuple]:
@@ -50,7 +57,7 @@ def _decode(stem: str) -> str:
     return unquote(stem)
 
 
-def _run_job(job: FetchJob, *, root: Path) -> tuple[FetchJob, str, int]:
+def _run_job(job: FetchJob, *, root: Path, marks=None) -> tuple[FetchJob, str, int]:
     """-> (job, status, bar_count). Never raises: one dead symbol must not abort a
     several-hundred-symbol backfill."""
     ref = job.ref
@@ -62,6 +69,18 @@ def _run_job(job: FetchJob, *, root: Path) -> tuple[FetchJob, str, int]:
         bars = _SOURCES[ref.source].fetch_daily(ref.symbol, job.start, job.end)
         if not bars:
             return job, "empty", 0
+        # The type probe above clears `WTI` because W&T Offshore genuinely is an EQUITY — it
+        # asks what kind of thing the symbol is, never whether it is the asset the corpus
+        # meant. Comparing the bars we just pulled against an independent venue's mark is the
+        # question it does not ask, and it runs *before* the merge so a contradicted series
+        # never reaches disk to be graded or drawn on. Nothing to compare against passes.
+        recent = bars[-_CONFIRM_SESSIONS:]
+        verdict = confirm.check(
+            ref, close=bars[-1].close, marks=marks or {},
+            low=min(b.low for b in recent), high=max(b.high for b in recent),
+        )
+        if verdict is not None and verdict.verdict == DIFFERS:
+            return job, f"rejected:wrong_instrument({verdict.ratio:.4g}x)", 0
         cache.merge(PriceSeries(symbol=ref.symbol, source=ref.source, bars=tuple(bars)), root=root)
         return job, "ok", len(bars)
     except Exception as exc:  # noqa: BLE001 - report and continue
@@ -118,10 +137,17 @@ def main(argv: list[str] | None = None) -> int:
                   f"{job.start} .. {job.end}{flag}")
         return 0
 
-    print(f"\nfetching with concurrency={args.concurrency} ...")
+    # Read once for the whole run rather than per job: it is three requests against endpoints
+    # that answer for every market at once, and a per-symbol fetch would turn an identity check
+    # into a rate-limit problem.
+    mark_index = marks_mod.index_marks(marks_mod.fetch_all())
+    print(f"\nfetching with concurrency={args.concurrency} "
+          f"({sum(len(v) for v in mark_index.values())} venue marks for cross-checking) ...")
     results = []
     with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
-        for job, status, n in pool.map(lambda j: _run_job(j, root=cache.DATA_ROOT), jobs):
+        for job, status, n in pool.map(
+            lambda j: _run_job(j, root=cache.DATA_ROOT, marks=mark_index), jobs
+        ):
             results.append((job, status, n))
             if status != "ok":
                 print(f"  {status:<22} {job.ref.asset} ({job.ref.source}:{job.ref.symbol})")
