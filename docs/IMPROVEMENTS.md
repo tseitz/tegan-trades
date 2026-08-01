@@ -34,9 +34,9 @@ depth for §21, failed-break states for §27, stated targets for §18.
 
 | | Entry | Why now | Cost |
 |---|---|---|---|
-| 1 | **§32** — routes that resolve to the wrong instrument | Three of 307 priced assets are confirmably not what they claim, and one of them (`JPY`) is in tonight's queue. The check that found them already exists (§31). | free, network |
-| 2 | **§27 residual** — targets vs the range rule | 68 candidates on a ranging weekly, only 20 target within 2% of the bound the rule names. Read §18 first. | free, local |
-| 3 | **§6f residual** — routed but never fetched | 26 rows that route fine and were never fetched. Some are `needs_validation` guesses that may not resolve. | free, network |
+| 1 | **§32 residual** — curate the six the gate now refuses | They stopped pricing wrong and started not pricing. `WTI` → `CL=F` folds into `OIL`; `JPY` needs §29 first. | free, local |
+| 2 | **§31 residual** — the guard nothing calls | `check_identity` is built and unit-tested; no path supplies it a mark, so a curated typo still places. Plus CI over the curated map. | free, network |
+| 3 | **§27 residual** — targets vs the range rule | 68 candidates on a ranging weekly, only 20 target within 2% of the bound the rule names. Read §18 first. | free, local |
 | 4 | **§4** — the `agreement`/`freshness` overlap | The first re-weight with evidence behind it, and it removes a term rather than adding one. Read §11 first. | free, local |
 
 **Still waiting on the corpus, not on code:** §18 (7 stated targets in 47 rows) · §21's
@@ -519,33 +519,36 @@ and caught three faults in the *curated* half: `RUT` carried IWM with no `scale`
 quoted on the index would have gone out at a tenth of the price; `URANIUM` named two different
 uranium funds across its venues; `xyz:DXY` no longer exists. Regression tests hold all three.
 
-**Residual — it is a probe, not a gate.** Nothing runs it before an order. Per the gate/score
-rule it is a **gate** (a missing fact, not a judgement): wire it into `execution/guards.py`
-ahead of any live placement, and into CI so a curated edit cannot ship unchecked. The threshold
-needs the care this entry already describes — compare against the scaled price where `scale` is
-set, and skip nothing silently.
+**Residual — the guard exists and nothing calls it.** `guards.check_identity` refuses on
+`core.identity`'s verdict and is unit-tested, but no code path supplies it a mark: `execution`
+cannot import `oracle`, so the caller (`desk`/`plan`) has to fetch via `oracle.marks` and pass
+it in. Until then a curated typo still places.
+
+**Residual — no CI check over the curated map.** `--mapped-only` re-validates every hand-typed
+row and nothing runs it, so a bad edit ships. It must compare against the *scaled* price where
+`scale` is set; `core.identity.compare` takes `scale` for exactly this, and the probe
+deliberately does not pass it (a scaled comparison would have printed MATCH for the RUT bug
+this entry was opened by).
 
 ---
 
-## 32. A bare ticker that resolves is not the right instrument · `OPEN`
+## 32. A bare ticker that resolves is not the right instrument · `PARTLY DONE` — 2026-08-01
 
-§31 checks the *venue* side of a mapping. This is the same technique pointed at the *price*
-side: `route()` validates that a `needs_validation` guess resolves to **a** tradeable symbol,
-never that it is **the** one. Three of 307 priced assets are confirmably wrong, and they only
-became visible because a second source was asked the same question.
+The check is a gate now rather than a probe. `oracle/confirm.py` refuses a `needs_validation`
+route a venue contradicts — in `fetch_cli` before the merge, and again in `setups_cli` at
+context build, because the bad series were already cached and nothing re-fetches them. Six
+caught, not the three this entry named: `JPY`, `PURR`, `ROBO`, `RTX`, `STRK`, `WTI`. They
+report under `wrong instrument` in the unpriced tally.
 
-Evidence, measured 2026-07-29 by comparing every venue's mark against our own close
-(`scripts/probe_venue_coverage.py`): `JPY` prices at 36.68 against the yen's 163.7 · `WTI`
-prices at 3.18 — that is W&T Offshore, the E&P company, while `OIL`'s curated `CL=F` route
-correctly gives 81.75 · `PURR` prices at exactly 100x Hyperliquid's. All three are
-`needs_validation`. `JPY` is in the live queue (§29).
+**Residual — the six are unpriced, not fixed.** Each needs a curated `oracle_map` row or a
+decision that it has none. `WTI` most likely routes to `CL=F` and then folds into `OIL` through
+`oracle.instruments`, one instrument under two labels. `JPY` must not be routed at all without
+§29's `invert`, or it creates 13 wrong-direction theses.
 
-**Promote the check, do not patch three tickers.** A route flagged `needs_validation` should
-have to survive the cross-source comparison before it prices anything. The venue mark only
-exists for assets a venue lists, so this hardens the tradeable half of the corpus, not the tail.
-
-**Related, same cause, smaller:** `URANIUM` and `URA` were two canonical labels for one fund.
-Folded by `oracle.instruments` — done, and it needed no `cfg/assets.yaml` edit.
+**Residual — 121 guesses that no venue lists are unchecked**, and pass by design: refusing on
+silence would remove `CAT`, `CVX`, `NKE` and most of the equity corpus to catch nothing. Alpaca
+cannot close it — our close comes from Yahoo by ticker and Alpaca's by the same ticker, so both
+resolve `WTI` to W&T Offshore and agree. A non-circular equity source is the open question.
 
 ---
 
