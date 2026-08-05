@@ -55,13 +55,18 @@ def fetch(ref, *, now: datetime | None = None, since: datetime | None = None,
     """
     now = now or datetime.now(UTC)
     start = since or (now - timedelta(days=INTRADAY_DAYS))
-    symbol = ref.trade_symbol
+    # ``DerivedRef`` — a ratio like ETH/BTC — carries neither, because it is computed from two
+    # other series rather than fetched. There is no hourly chart of a ratio to ask for.
+    symbol = getattr(ref, "trade_symbol", None)
+    source = getattr(ref, "source", None)
+    if symbol is None or source is None:
+        return None
     kwargs = {"get_json": get_json} if get_json is not None else {}
 
     try:
-        if ref.source == coinbase.SOURCE:
+        if source == coinbase.SOURCE:
             bars = coinbase.fetch_intraday(symbol, start, now, **kwargs)
-        elif ref.source == yahoo.SOURCE:
+        elif source == yahoo.SOURCE:
             bars = yahoo.fetch_intraday(symbol, start, now, **kwargs)
         else:
             # Kraken and the derived-ratio refs have no intraday adapter. Not an error — the
@@ -73,7 +78,7 @@ def fetch(ref, *, now: datetime | None = None, since: datetime | None = None,
 
     if not bars:
         return None
-    return IntradaySeries(symbol=symbol, source=ref.source, interval=H1, bars=tuple(bars))
+    return IntradaySeries(symbol=symbol, source=source, interval=H1, bars=tuple(bars))
 
 
 def load_or_fetch(ref, *, root=cache.DATA_ROOT, now: datetime | None = None,
@@ -95,7 +100,11 @@ def load_or_fetch(ref, *, root=cache.DATA_ROOT, now: datetime | None = None,
     the last one just deleted.
     """
     now = now or datetime.now(UTC)
-    cached = cache.load_intraday(ref.source, H1, ref.trade_symbol, root=root)
+    source = getattr(ref, "source", None)
+    symbol = getattr(ref, "trade_symbol", None)
+    if source is None or symbol is None:
+        return None
+    cached = cache.load_intraday(source, H1, symbol, root=root)
     since = None
     if cached is not None and cached.span is not None:
         since = min(cached.span[1] - REFRESH_OVERLAP, now)
@@ -103,7 +112,27 @@ def load_or_fetch(ref, *, root=cache.DATA_ROOT, now: datetime | None = None,
     fresh = fetch(ref, now=now, since=since, get_json=get_json)
     if fresh is not None:
         cache.merge_intraday(fresh, root=root)
-    return cache.load_intraday(ref.source, H1, ref.trade_symbol, root=root)
+    return cache.load_intraday(source, H1, symbol, root=root)
+
+
+def load_cached(ref, *, root=cache.DATA_ROOT) -> IntradaySeries | None:
+    """Whatever H1 is already on disk for ``ref``, without touching the network.
+
+    The rung decision reads this rather than ``load_or_fetch``, and the split is what keeps
+    ``setups`` usable. There are ~300 routable assets and a fetch each is ~300 round trips
+    every run — a minute or more before the first candidate prints, whether the cache is warm
+    or cold, because the cost is per request rather than per candle. The trigger itself only
+    needs bars for assets that actually produced a candidate, which is a few dozen.
+
+    Whether an instrument straddles 12:00 UTC does not change day to day, so reading a stale
+    answer costs nothing; an asset with nothing cached simply takes the daily rung until
+    ``fetch-prices`` warms it.
+    """
+    source = getattr(ref, "source", None)
+    symbol = getattr(ref, "trade_symbol", None)
+    if source is None or symbol is None:
+        return None
+    return cache.load_intraday(source, H1, symbol, root=root)
 
 
 def setup_rung(hourly: IntradaySeries | None) -> tuple[str, IntradaySeries | None]:

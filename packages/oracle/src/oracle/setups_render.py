@@ -20,6 +20,7 @@ import sys
 from dataclasses import dataclass
 from datetime import date
 
+from core import trigger as trigger_mod
 from core.setups import ARRIVAL, Candidate
 
 # Below this many observations, a carry number is shown with its sample count so it cannot be
@@ -229,7 +230,8 @@ def format_candidate(candidate: Candidate, *, rank: int | None = None,
                      total: int | None = None, as_of: date | None = None,
                      color: bool = False, venue_symbol: str | None = None,
                      venue: str | None = None,
-                     zones_in_thesis: int = 1, zone_index: int = 1) -> str:
+                     zones_in_thesis: int = 1, zone_index: int = 1,
+                     trigger=None) -> str:
     """Render one candidate as a price ladder plus four summary lines.
 
     Stop and invalidation stay two distinct labelled values (they answer "where is this trade
@@ -282,7 +284,7 @@ def format_candidate(candidate: Candidate, *, rank: int | None = None,
     return "\n".join(["", _headline(c, rank=rank, total=total, color=color,
                                     venue_symbol=venue_symbol, venue=venue,
                                     zones_in_thesis=zones_in_thesis, zone_index=zone_index), "",
-                      *body, "", *_summary(c, as_of=as_of, color=color)])
+                      *body, "", *_summary(c, as_of=as_of, color=color, trigger=trigger)])
 
 
 def _headline(c: Candidate, *, rank: int | None, total: int | None, color: bool,
@@ -377,8 +379,47 @@ def approach_phrase(c: Candidate) -> str:
     return f"price in zone, {depth:.0%} deep · approach {c.approach:.2f}"
 
 
-def _summary(c: Candidate, *, as_of: date | None, color: bool) -> list[str]:
-    """The four lines under the ladder: age, structure, trend, and who is behind it."""
+# How each trigger state reads, and what it is telling you to do. The four live states are
+# genuinely four different instructions, which is why they are not collapsed into a boolean:
+# ``fired`` is act, ``armed`` is wait at a known price, ``no_trigger`` is wait on the market,
+# and ``no_zone_tag`` is a question nobody has asked yet because price is not there.
+_TRIGGER_STYLE = {
+    trigger_mod.FIRED: ("bold_green", "FIRED"),
+    trigger_mod.ARMED: ("bold_cyan", "ARMED"),
+    trigger_mod.NO_TRIGGER: ("dim", "no confirmation"),
+    trigger_mod.NO_ZONE_TAG: ("dim", "not at the zone"),
+    trigger_mod.UNREADABLE: ("yellow", "unreadable"),
+}
+
+
+def format_trigger(found, *, color: bool = False) -> str:
+    """The H1 verdict for one candidate, as an instruction rather than a status.
+
+    Measured 2026-08-05 against a 49-candidate queue: one row was enterable and six more would
+    have been had price reached their zones. Without this line every row rendered as equally
+    actionable, which is §48's defect showing up in the display rather than in the geometry —
+    the engine rested a limit on all 49 because nothing distinguished them.
+    """
+    style, label = _TRIGGER_STYLE.get(found.state, ("dim", found.state))
+    text = paint(label, style, color=color)
+    if found.state == trigger_mod.FIRED:
+        return f"{text} · enter {found.entry:g} · stop {found.stop:g}"
+    if found.state == trigger_mod.ARMED:
+        # Both numbers are already known; the only thing missing is price coming back to them.
+        # "Don't chase. Use patience."
+        return (f"{text} · wait for {found.entry:g} · stop {found.stop:g}"
+                + paint(" · broke and displaced, no pullback yet", "dim", color=color))
+    if found.state == trigger_mod.NO_TRIGGER:
+        return f"{text}" + paint(" · in the zone, hourly has not confirmed", "dim", color=color)
+    if found.state == trigger_mod.NO_ZONE_TAG:
+        return f"{text}" + paint(" · price has not reached it", "dim", color=color)
+    return f"{text}" + paint(" · no readable H1 structure", "dim", color=color)
+
+
+def _summary(c: Candidate, *, as_of: date | None, color: bool,
+             trigger=None) -> list[str]:
+    """The lines under the ladder: age, structure, trend, who is behind it — and, when it has
+    been evaluated, what the trigger timeframe says."""
     age = _age_days(c.newest_at, as_of)
     age_txt = "" if age is None else f" ({age}d ago)"
     stale = c.freshness <= STALE_FRESHNESS
@@ -395,14 +436,20 @@ def _summary(c: Candidate, *, as_of: date | None, color: bool) -> list[str]:
         " · " + paint("no macro alignment", "yellow", color=color))
 
     def label(text):
-        return paint(_pad(text, 7), "dim", color=color)
-    return [
+        # 8, not 7: "trigger" is itself seven characters and ran straight into its value.
+        return paint(_pad(text, 8), "dim", color=color)
+    lines = [
         f"  {label('called')}{called}{paint(span, 'dim', color=color)}"
         f"{paint(f' · freshness {c.freshness:.2f}', 'dim', color=color)}",
         f"  {label('zone')}{c.zone} · {approach_phrase(c)}",
         f"  {label('trend')}weekly {c.weekly_trend} · daily {c.daily_trend}{unaligned}",
-        f"  {label('who')}{format_views(c)} · agreement {c.agreement}",
     ]
+    # Placed above ``who`` rather than at the end: this is the line that says whether to act,
+    # and burying it under the roster reads as a footnote.
+    if trigger is not None:
+        lines.append(f"  {label('trigger')}{format_trigger(trigger, color=color)}")
+    lines.append(f"  {label('who')}{format_views(c)} · agreement {c.agreement}")
+    return lines
 
 
 def format_routing(decision, *, hold_days: int, color: bool = False) -> str:

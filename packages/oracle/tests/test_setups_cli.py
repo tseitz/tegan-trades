@@ -7,7 +7,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
-from core import routing
+from core import routing, trigger
 from core.canon import Registry
 from core.setups import (
     DAILY,
@@ -20,6 +20,7 @@ from core.setups import (
     View,
 )
 from core.structure import BULLISH, SWING_HIGH, SWING_LOW, Break, OrderBlock, Swing
+from core.trigger import Trigger
 from oracle import confirm, exclusions, queue, setups_cli, setups_render
 from oracle.queue import build_queue
 from oracle.setups_cli import format_unpriced
@@ -1425,3 +1426,57 @@ def test_a_healthy_run_does_not_nag_about_marks():
         marks_read=1185,
     )
     assert "NO VENUE MARKS" not in setups_cli.format_unpriced(stats)
+
+
+# ── the trigger line ────────────────────────────────────────────────────────────────────────
+# Measured 2026-08-05: 1 of 49 candidates was enterable and 6 more would have been if price had
+# reached their zones. The queue could not say that before, so every row read as equally
+# actionable — the §48 defect in the display rather than in the geometry.
+
+def _trig(state, *, entry=None, stop=None):
+    return Trigger(state=state, entry=entry, stop=stop)
+
+
+def test_a_fired_trigger_shows_the_entry_and_stop_to_act_on():
+    text = setups_render.format_candidate(_candidate(), trigger=_trig(
+        trigger.FIRED, entry=104.0, stop=96.0))
+    assert "trigger" in text
+    assert "FIRED" in text
+    assert "104" in text and "96" in text
+
+
+def test_an_armed_trigger_says_what_price_to_wait_for():
+    """What earns ``armed`` its own state: both numbers are already known and the only thing
+    missing is price coming back. *"Don't chase. Use patience."*"""
+    text = setups_render.format_candidate(_candidate(), trigger=_trig(
+        trigger.ARMED, entry=104.0, stop=96.0))
+    assert "ARMED" in text
+    assert "104" in text
+    assert "FIRED" not in text
+
+
+def test_no_trigger_reads_as_the_hourly_withholding_rather_than_as_nothing():
+    """Price is in the zone and the lower timeframe has given nothing — precisely the state the
+    trigger exists to stop us trading through."""
+    text = setups_render.format_candidate(_candidate(), trigger=_trig(trigger.NO_TRIGGER))
+    assert "trigger" in text
+    assert "FIRED" not in text and "ARMED" not in text
+
+
+def test_price_not_yet_at_the_zone_is_an_unasked_question_not_a_refusal():
+    """``no_zone_tag`` rendered like ``no_trigger`` would read as "the hourly refused this",
+    which is a different and stronger claim than "we have not looked yet"."""
+    text = setups_render.format_candidate(_candidate(), trigger=_trig(trigger.NO_ZONE_TAG))
+    assert "not at the zone" in text
+
+
+def test_an_unreadable_instrument_is_marked_rather_than_left_blank():
+    """Never seen on a real queue — measured 0 of 49 — but a blank here would read as "no
+    trigger" for an instrument we cannot judge at all, the one reading that must not happen."""
+    text = setups_render.format_candidate(_candidate(), trigger=_trig(trigger.UNREADABLE))
+    assert "unreadable" in text.lower()
+
+
+def test_a_candidate_with_no_trigger_evaluated_renders_exactly_as_before():
+    """Back-compat: every other render test here passes no trigger and none may grow a line."""
+    assert "trigger" not in setups_render.format_candidate(_candidate())

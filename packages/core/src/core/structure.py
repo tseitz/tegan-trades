@@ -20,7 +20,7 @@ results instead of raising.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 
 # Bars either side that a bar must dominate to count as a swing. 2 is the stated default;
 # widening it finds fewer, more significant swings. Tunable, like ``core.rank``'s weights.
@@ -39,6 +39,29 @@ TREND_DEPTH = 2
 # a direction. Deliberately the junior partner to depth: a floor alone downgrades a wrong
 # verdict to ``RANGING``, only depth makes it right. TUNE once decisions accumulate.
 TREND_NOISE_FLOOR = 0.01
+
+def on_or_before(stamp: date | datetime, when: date | datetime | None) -> bool:
+    """Is ``stamp`` at or before ``when``, whatever clock each is on?
+
+    Every ``as_of`` in this module is a **calendar date** — the question is always "what could
+    a caller have known by the end of that day". Bars, however, are no longer always daily: an
+    H12 or H1 series stamps its bars with a datetime, and Python refuses to compare the two.
+
+    That refusal is a real bug rather than a nuisance, and it surfaced by running the engine
+    rather than by any unit test: the intraday series was only ever built and read in isolation,
+    so nothing compared its stamps against an as-of date until ``build_context`` was handed H12
+    bars for real. Comparing on the date component is right because ``as_of`` means end-of-day —
+    both of a day's H12 buckets happened on or before that day, and the still-forming one has
+    already been dropped by ``to_h12``.
+    """
+    if when is None:
+        return True
+    if isinstance(stamp, datetime) and not isinstance(when, datetime):
+        return stamp.date() <= when
+    if isinstance(when, datetime) and not isinstance(stamp, datetime):
+        return stamp <= when.date()
+    return stamp <= when
+
 
 SWING_HIGH = "high"
 SWING_LOW = "low"
@@ -108,7 +131,7 @@ def confirmed_by(found, when: date) -> tuple[Swing, ...]:
     go through this. Filtering on ``Swing.date`` instead would admit swings that had not yet
     formed their confirming bars.
     """
-    return tuple(swing for swing in found if swing.confirmed_at <= when)
+    return tuple(swing for swing in found if on_or_before(swing.confirmed_at, when))
 
 
 def position_in_range(bottom: float, top: float, price: float) -> float | None:
@@ -201,7 +224,7 @@ def _attempt_failed(bars, swing: Swing, kind: str, as_of: date | None) -> bool:
     """
     exceeded = False
     for bar in bars[swing.index + 1:]:
-        if as_of is not None and bar.date > as_of:
+        if not on_or_before(bar.date, as_of):
             break
         if kind == BULLISH:
             if bar.close > swing.price:
@@ -250,7 +273,7 @@ def breaks(bars, *, as_of: date | None = None, width: int = SWING_WIDTH) -> tupl
 
     result = _scan_breaks(bars, highs, lows, BULLISH) + _scan_breaks(bars, lows, highs, BEARISH)
     if as_of is not None:
-        result = tuple(b for b in result if b.date <= as_of)
+        result = tuple(b for b in result if on_or_before(b.date, as_of))
     return tuple(sorted(result, key=lambda b: (b.index, b.kind)))
 
 
@@ -286,7 +309,7 @@ def _scan_breaks(bars, targets, origins, kind: str) -> tuple[Break, ...]:
 
 def _origin_before(origins, index: int, when: date) -> Swing | None:
     """The latest opposing swing knowable at the break — the low the up-move came from."""
-    eligible = [s for s in origins if s.index < index and s.confirmed_at <= when]
+    eligible = [s for s in origins if s.index < index and on_or_before(s.confirmed_at, when)]
     return eligible[-1] if eligible else None
 
 
@@ -402,7 +425,7 @@ def order_blocks(bars, *, as_of: date | None = None,
         if block is not None:
             found.append(block)
     if as_of is not None:
-        found = [b for b in found if b.confirmed_at <= as_of]
+        found = [b for b in found if on_or_before(b.confirmed_at, as_of)]
     return tuple(found)
 
 

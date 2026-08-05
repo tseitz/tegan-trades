@@ -291,3 +291,59 @@ def test_a_flat_bar_only_disqualifies_the_gap_it_edges():
     bars.insert(2, bar(2, 100.0, 100.0, 100.0, 100.0, 5.0))   # a flat bar far from the gap
     found = trigger.detect(bars, direction="long", zone_tagged=True)
     assert found.state == trigger.FIRED
+
+
+# ── a break that has already failed ─────────────────────────────────────────────────────────
+
+def test_a_trigger_whose_stop_was_taken_after_the_break_is_dead():
+    """*"if price comes down here and takes that out, well, your market structure break has now
+    failed. The trade is wrong."*
+
+    Found by running the queue, not by any unit test here. ``COMP`` on 2026-08-05 reported
+    ``FIRED · enter 16.76 · stop 16.41`` while price sat at 16.38 — it had traded down to 16.27
+    in the 33 hours after the break, straight through the stop. The retrace test asked only
+    whether price had *ever* returned into the gap and never whether the trade had already been
+    invalidated, so a dead setup was being offered as a live entry.
+    """
+    bars = [
+        *long_sequence(),
+        bar(26, 105.0, 105.5, 97.0, 98.0),
+        bar(27, 98.0, 98.5, 95.5, 96.2),      # takes out the 96.0 stop
+        bar(28, 96.2, 97.0, 95.8, 96.5),
+    ]
+    found = trigger.detect(bars, direction="long", zone_tagged=True)
+    assert found.state == trigger.NO_TRIGGER
+
+
+def test_an_armed_setup_is_killed_by_the_same_test():
+    """The gap never filled and price took the stop instead. The setup is not still waiting —
+    the level it was waiting from is gone."""
+    bars = [
+        *long_sequence(pull_back=False),
+        bar(24, 112.0, 112.5, 108.0, 109.0),
+        bar(25, 109.0, 109.5, 95.0, 95.5),    # straight through the 96.0 stop, no gap fill
+    ]
+    found = trigger.detect(bars, direction="long", zone_tagged=True)
+    assert found.state == trigger.NO_TRIGGER
+
+
+def test_a_short_trigger_dies_when_price_runs_above_its_stop():
+    reflected = [
+        B(date=b.date, open=200 - b.open, high=200 - b.low, low=200 - b.high,
+          close=200 - b.close, volume=b.volume)
+        for b in [
+            *long_sequence(),
+            bar(26, 105.0, 105.5, 97.0, 98.0),
+            bar(27, 98.0, 98.5, 95.5, 96.2),
+            bar(28, 96.2, 97.0, 95.8, 96.5),
+        ]
+    ]
+    assert trigger.detect(reflected, direction="short",
+                          zone_tagged=True).state == trigger.NO_TRIGGER
+
+
+def test_a_stop_merely_approached_does_not_kill_the_trigger():
+    """The boundary matters: a wick that comes close is ordinary noise, and killing on it would
+    reintroduce §48's problem — a stop so eager that it fires before the trade has begun."""
+    bars = [*long_sequence(), bar(26, 105.0, 105.5, 96.1, 98.0)]   # low 96.1 vs a 96.0 stop
+    assert trigger.detect(bars, direction="long", zone_tagged=True).state == trigger.FIRED

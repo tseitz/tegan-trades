@@ -25,10 +25,11 @@ from __future__ import annotations
 import argparse
 import sys
 from collections import Counter
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 
+from core import trigger
 from core.canon import Registry, load_registry, resolve_asset
 from core.identity import DIFFERS
 from core.rank import parse_date
@@ -61,6 +62,7 @@ from oracle import (
     execute,
     instruments,
     listings,
+    trigger_feed,
     venue_map,
     venue_routing,
 )
@@ -290,6 +292,10 @@ class BuildStats:
     # silently turns the identity check into a pass-everything. A gate that stops gating and
     # says nothing is the failure this file's tallies exist to prevent.
     marks_read: int = 0
+    # The H1 verdict per candidate key, or empty when the trigger pass was skipped. Carried on
+    # the stats rather than on ``Candidate`` so that a candidate stays exactly what it was —
+    # a zone plus the people behind it — and the timeframe below it stays a separate reading.
+    triggers: dict = field(default_factory=dict)
 
     @property
     def assets_unpriced(self) -> int:
@@ -346,6 +352,7 @@ def build_candidates(
     listings_map,
     config_dir: Path = CONFIG_DIR,
     funding_venue: str | None = carry.DEFAULT_VENUE,
+    triggers_on: bool = True,
 ) -> tuple[tuple[Candidate, ...], BuildStats]:
     """Route every asset the corpus mentions, build one ``Context`` each, gate every row
     against its asset's context, and collapse the outcome stream into candidates."""
@@ -369,6 +376,8 @@ def build_candidates(
 
     series_cache: dict = {}
     contexts: dict[str, tuple] = {}
+    hourlies: dict[str, object] = {}
+    refs: dict[str, object] = {}
     unpriceable: Counter = Counter()
     contradicted: list[str] = []
     uncached = 0
@@ -398,7 +407,21 @@ def build_candidates(
             contradicted.append(asset)
             continue
         weekly = to_weekly(daily)
-        ctx = build_context(daily.bars, weekly.bars, as_of=as_of)
+        # Which timeframe supplies this asset's zones is measured, not assigned: an instrument
+        # trading on both sides of 12:00 UTC gets H12, everything else keeps the daily.
+        #
+        # **Cache only, no network.** ~300 assets route, and a fetch each is ~300 round trips
+        # before the first candidate prints. The straddle answer is stable per instrument, so a
+        # stale read costs nothing, and the trigger pass below fetches fresh bars for the few
+        # dozen assets that actually produced a candidate. ``fetch-prices`` warms the rest.
+        hourly = trigger_feed.load_cached(resolved) if triggers_on else None
+        if hourly is not None:
+            hourlies[asset] = hourly
+        refs[asset] = resolved
+        rung, rung_series = trigger_feed.setup_rung(hourly)
+        setup_bars = daily.bars if rung_series is None else rung_series.bars
+        ctx = build_context(setup_bars, weekly.bars, as_of=as_of,
+                            setup_timeframe=rung)
         if ctx is None:
             no_context += 1
             continue
@@ -456,6 +479,27 @@ def build_candidates(
     # draw pick the daily zone and discard the weekly the precedence rule says outranks it.
     kept, duplicate_zones = queue_mod.one_per_asset(collapse(outcomes, aliases=aliases))
     candidates = tuple(kept)          # collapse's return type; callers index and unpack it
+
+    # The trigger pass runs over candidates rather than assets: it is a handful of rows against
+    # a few hundred, and the hourly bars are already in hand from the loop above.
+    #
+    # ``is_inside_zone`` supplies step 1 rather than a second notion of "has price arrived".
+    # The queue already answers that question and two answers to it would drift.
+    triggers = {}
+    for candidate in candidates:
+        # Fresh bars here, unlike the rung decision above: an entry signal computed on
+        # yesterday's hourly is worse than none, and this is a few dozen fetches rather than
+        # a few hundred. ``load_or_fetch`` asks only for the tail it is missing.
+        hourly = (trigger_feed.load_or_fetch(refs[candidate.asset])
+                  if triggers_on and candidate.asset in refs else None)
+        if hourly is None:
+            hourly = hourlies.get(candidate.asset)
+        if hourly is None:
+            continue
+        triggers[candidate.key] = trigger.detect(
+            hourly.bars, direction=candidate.direction,
+            zone_tagged=is_inside_zone(candidate),
+        )
     stats = BuildStats(
         assets_total=len(assets), assets_priced=len(contexts),
         unpriceable=unpriceable, assets_uncached=uncached, assets_no_context=no_context,
@@ -463,6 +507,7 @@ def build_candidates(
         duplicate_zones=duplicate_zones,
         contradicted=tuple(contradicted),
         marks_read=sum(len(v) for v in mark_index.values()),
+        triggers=triggers,
     )
     return candidates, stats
 
@@ -754,7 +799,8 @@ def routing_plan(queue) -> tuple[venue_routing.Router, tuple[str, ...]]:
 
 def triage(queue, *, decisions_path, vault_path, input_fn=input, out=print,
            as_of: date | None = None, color: bool | None = None,
-           mirror_path=None, exclusions_path=None, desk=None, router=None) -> dict[str, int]:
+           mirror_path=None, exclusions_path=None, desk=None, router=None,
+           triggers=None) -> dict[str, int]:
     """Present each candidate in queue order; approve -> vault note (if given) + sidecar,
     all decisions -> sidecar. Quit stops immediately without consuming further input.
 
@@ -824,7 +870,8 @@ def triage(queue, *, decisions_path, vault_path, input_fn=input, out=print,
         out(format_candidate(c, rank=i, total=total, as_of=as_of, color=color,
                              venue=venue,
                              venue_symbol=getattr(listing, "symbol", None),
-                             zones_in_thesis=zones, zone_index=index))
+                             zones_in_thesis=zones, zone_index=index,
+                             trigger=(triggers or {}).get(c.key)))
         # A fifth summary line rather than a headline field: it is four facts (venue, cost,
         # margin, what is unpriced) and the headline is already carrying five.
         out(format_routing(routed, hold_days=CARRY_HOLD_DAYS, color=color))
@@ -1014,6 +1061,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
                         help="venue whose funding prices the carry (default: %(default)s)")
     parser.add_argument("--no-funding", action="store_true",
                         help="ignore the funding log; carry is not computed or displayed")
+    parser.add_argument("--no-triggers", action="store_true",
+                        help="skip the H1 trigger; zones stay on the daily and no entry "
+                             "confirmation is shown or waited for")
     parser.add_argument("--list", action="store_true",
                         help="print the queue and exit, no prompting")
     # Execution is opt-in per run and has no config-file switch that could turn it on.
@@ -1065,6 +1115,7 @@ def main(argv: list[str] | None = None) -> int:
     candidates, stats = build_candidates(
         rows, registry, as_of=as_of, listings_map=listings_map,
         funding_venue=None if args.no_funding else args.funding_venue,
+        triggers_on=not args.no_triggers,
     )
 
     print(f"{stats.assets_total} assets -> {stats.assets_priced} priced, "
@@ -1141,7 +1192,8 @@ def main(argv: list[str] | None = None) -> int:
         for i, row in enumerate(queue.rows, start=1):
             zones, index = pairing[i - 1]
             print(format_candidate(row.candidate, rank=i, total=len(queue), as_of=as_of,
-                                   color=color, zones_in_thesis=zones, zone_index=index))
+                                   color=color, zones_in_thesis=zones, zone_index=index,
+                                   trigger=stats.triggers.get(row.candidate.key)))
         return 0
 
     # Resolved before the first prompt: a vault that turns out to be unreachable must fail
@@ -1184,7 +1236,8 @@ def main(argv: list[str] | None = None) -> int:
 
     counts = triage(  # pragma: no cover - interactive
         queue, decisions_path=decisions_path, vault_path=vault_note, as_of=as_of,
-        mirror_path=mirror_path, exclusions_path=args.exclusions, desk=desk, router=router)
+        mirror_path=mirror_path, exclusions_path=args.exclusions, desk=desk, router=router,
+        triggers=stats.triggers)
     print("\n" + format_counts(counts))
     return 0
 

@@ -235,3 +235,14 @@ def test_history_older_than_the_window_is_not_refetched_but_is_kept(tmp_path):
     again = trigger_feed.load_or_fetch(Ref(), root=tmp_path, now=NOW + timedelta(hours=1),
                                        get_json=lambda url, params: [])
     assert len(again.bars) >= len(first.bars)
+
+
+def test_a_derived_ratio_ref_has_no_hourly_chart_and_says_so():
+    """``DerivedRef`` — ETH/BTC and friends — is computed from two other series rather than
+    fetched, so it carries neither ``source`` nor ``trade_symbol``. Reaching for them raised
+    and took the whole queue build down with it; there is simply no hourly chart of a ratio."""
+    class DerivedRef:
+        asset = "ETHBTC"
+
+    assert trigger_feed.fetch(DerivedRef(), now=NOW) is None
+    assert trigger_feed.load_or_fetch(DerivedRef(), now=NOW) is None

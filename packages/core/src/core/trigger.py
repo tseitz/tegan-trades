@@ -126,6 +126,12 @@ def detect(bars, *, direction: str, zone_tagged: bool,
     if stop is None:
         return Trigger(state=NO_TRIGGER, structure_break=latest, gap=gap, as_of=_last(bars))
 
+    if _stop_taken(bars, latest, stop, wanted):
+        # The break has already failed, so there is nothing here to enter. Reported as
+        # NO_TRIGGER rather than as a state of its own: a dead setup is not a thing to act on,
+        # and ``detect`` only ever considers the most recent break in the bias direction.
+        return Trigger(state=NO_TRIGGER, structure_break=latest, gap=gap, as_of=_last(bars))
+
     state = FIRED if _retraced_into(bars, gap, wanted) else ARMED
     return Trigger(state=state, entry=entry, stop=stop, gap=gap,
                    structure_break=latest, as_of=_last(bars))
@@ -223,5 +229,25 @@ def _retraced_into(bars, gap: Gap, kind: str) -> bool:
         if kind == BULLISH and bar.low <= gap.top:
             return True
         if kind != BULLISH and bar.high >= gap.bottom:
+            return True
+    return False
+
+
+def _stop_taken(bars, structure_break: Break, stop: float, kind: str) -> bool:
+    """Has price traded through the stop since the break?
+
+    *"if price comes down here and takes that out, well, your market structure break has now
+    failed. The trade is wrong."* Without this, ``_retraced_into`` answers only whether price
+    ever returned to the gap and never whether the trade had already been invalidated — so a
+    setup stopped out days ago still reads as a live entry. ``COMP`` did exactly that on
+    2026-08-05: FIRED at 16.76 with a 16.41 stop, having traded to 16.27 the day before.
+
+    Strict inequality, so a wick that merely reaches the level is not a failure. The whole
+    point of the trigger is to stop treating ordinary noise as invalidation.
+    """
+    for bar in bars[structure_break.index + 1:]:
+        if kind == BULLISH and bar.low < stop:
+            return True
+        if kind != BULLISH and bar.high > stop:
             return True
     return False

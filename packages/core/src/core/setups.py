@@ -59,6 +59,7 @@ from core.structure import (
     UPTREND_FAILED_BREAKOUT,
     OrderBlock,
     invalidated_on,
+    on_or_before,
     order_blocks,
     trend_state,
 )
@@ -812,7 +813,7 @@ def build_context(setup, weekly, *, as_of: date,
     is the same look-ahead discipline ``oracle.resample`` is built on, and understating a target
     is the safe direction to be wrong in.
     """
-    upto = tuple(bar for bar in setup if bar.date <= as_of)
+    upto = tuple(bar for bar in setup if on_or_before(bar.date, as_of))
     if not upto:
         return None
 
@@ -832,7 +833,7 @@ def build_context(setup, weekly, *, as_of: date,
 
 def _zones_from(bars, *, timeframe: str, as_of: date, width: int) -> tuple[Zone, ...]:
     """Live blocks from one bar series, each validated and measured against that same series."""
-    upto = tuple(bar for bar in bars if bar.date <= as_of)
+    upto = tuple(bar for bar in bars if on_or_before(bar.date, as_of))
     if not upto:
         return ()
     return tuple(
