@@ -36,16 +36,25 @@ from oracle.sources import coinbase, yahoo
 # nothing in the trigger looks further back than a few days.
 INTRADAY_DAYS = 60
 
+# How far back past the newest cached bar a refresh reaches. One bar would do for the forming-bar
+# correction alone; a few hours also absorbs a source backfilling a gap it served as null earlier,
+# which Yahoo does around holidays. Cheap either way — the cost of a request is per call, not per
+# candle returned.
+REFRESH_OVERLAP = timedelta(hours=6)
 
-def fetch(ref, *, now: datetime | None = None,
+
+def fetch(ref, *, now: datetime | None = None, since: datetime | None = None,
           get_json=None) -> IntradaySeries | None:
     """H1 bars for ``ref.trade_symbol``, or None when its source serves no intraday.
+
+    ``since`` narrows the request to what a warm cache is missing; it defaults to the full
+    ``INTRADAY_DAYS`` window.
 
     Failure is None rather than an exception: a candidate whose trigger cannot be fetched is
     refused by the gate, and one unreachable symbol must not abort a whole queue build.
     """
     now = now or datetime.now(UTC)
-    start = now - timedelta(days=INTRADAY_DAYS)
+    start = since or (now - timedelta(days=INTRADAY_DAYS))
     symbol = ref.trade_symbol
     kwargs = {"get_json": get_json} if get_json is not None else {}
 
@@ -74,8 +83,24 @@ def load_or_fetch(ref, *, root=cache.DATA_ROOT, now: datetime | None = None,
     Merge rather than overwrite, for a sharper reason than the daily cache has: the newest bar
     of any live fetch is still forming, so its close and volume are provisional and every run
     refetches a truer version of the same stamp.
+
+    **Only the missing tail is requested.** 298 series are cached — 76 Coinbase and 222 Yahoo —
+    and asking each for a full 60 days on every queue build is ~680 requests, which Yahoo
+    rate-limits long before it finishes. The request deliberately *overlaps* the newest cached
+    bar rather than starting after it: that bar was still forming when it was written, so
+    re-asking is how the settled version arrives, and ``merge_intraday`` prefers incoming on a
+    stamp collision.
+
+    Nothing is trimmed. Dropping bars older than the window would have every run re-fetch what
+    the last one just deleted.
     """
-    fresh = fetch(ref, now=now, get_json=get_json)
+    now = now or datetime.now(UTC)
+    cached = cache.load_intraday(ref.source, H1, ref.trade_symbol, root=root)
+    since = None
+    if cached is not None and cached.span is not None:
+        since = min(cached.span[1] - REFRESH_OVERLAP, now)
+
+    fresh = fetch(ref, now=now, since=since, get_json=get_json)
     if fresh is not None:
         cache.merge_intraday(fresh, root=root)
     return cache.load_intraday(ref.source, H1, ref.trade_symbol, root=root)

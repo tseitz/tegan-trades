@@ -168,3 +168,70 @@ def test_a_session_bound_instrument_gets_the_daily_and_no_bars():
 def test_no_hourly_at_all_falls_back_to_the_daily():
     """Unknown degrades to the rung that always exists — never to no rung."""
     assert trigger_feed.setup_rung(None) == (DAILY, None)
+
+
+# ── incremental refresh ─────────────────────────────────────────────────────────────────────
+# 298 series are cached (76 Coinbase, 222 Yahoo). Re-fetching 60 days for each on every queue
+# build is ~680 requests and Yahoo will rate-limit long before it finishes.
+
+def test_a_warm_cache_only_asks_for_what_it_is_missing(tmp_path):
+    asked = []
+
+    def fake_get(url, params):
+        asked.append(params)
+        return _rows(30)
+
+    trigger_feed.load_or_fetch(Ref(), root=tmp_path, now=NOW, get_json=fake_get)
+    asked.clear()
+
+    later = NOW + timedelta(hours=6)
+    trigger_feed.load_or_fetch(Ref(), root=tmp_path, now=later, get_json=fake_get)
+    assert asked, "a warm cache must still refresh the tail"
+    # The span, not the start date. A start that merely moved with ``now`` would satisfy any
+    # comparison against the first run while still asking for the full 60 days every time.
+    span = later - datetime.fromisoformat(asked[0]["start"])
+    assert span < timedelta(days=7), f"re-asked for {span} of history the cache already held"
+
+
+def test_the_refresh_overlaps_the_last_cached_bar(tmp_path):
+    """Deliberate overlap rather than a seam. The newest cached bar was still forming when it
+    was written, so its close and volume are provisional; re-asking for it is how the truer
+    version arrives, and ``merge_intraday`` already prefers incoming on a stamp collision."""
+    def fake_get(url, params):
+        return _rows(30)
+
+    trigger_feed.load_or_fetch(Ref(), root=tmp_path, now=NOW, get_json=fake_get)
+    cached = cache.load_intraday("coinbase", H1, "BTC-USD", root=tmp_path)
+    last = cached.span[1]
+
+    asked = []
+
+    def spy(url, params):
+        asked.append(params)
+        return []
+
+    trigger_feed.load_or_fetch(Ref(), root=tmp_path, now=NOW + timedelta(hours=6), get_json=spy)
+    assert datetime.fromisoformat(asked[0]["start"]) <= last
+
+
+def test_a_cold_cache_asks_for_the_whole_window(tmp_path):
+    asked = []
+
+    def fake_get(url, params):
+        asked.append(params)
+        return []
+
+    trigger_feed.load_or_fetch(Ref(), root=tmp_path, now=NOW, get_json=fake_get)
+    span = NOW - datetime.fromisoformat(asked[0]["start"])
+    assert span >= timedelta(days=trigger_feed.INTRADAY_DAYS - 1)
+
+
+def test_history_older_than_the_window_is_not_refetched_but_is_kept(tmp_path):
+    """Trimming the cache would make every run re-fetch what it just deleted."""
+    def fake_get(url, params):
+        return _rows(200)
+
+    first = trigger_feed.load_or_fetch(Ref(), root=tmp_path, now=NOW, get_json=fake_get)
+    again = trigger_feed.load_or_fetch(Ref(), root=tmp_path, now=NOW + timedelta(hours=1),
+                                       get_json=lambda url, params: [])
+    assert len(again.bars) >= len(first.bars)
