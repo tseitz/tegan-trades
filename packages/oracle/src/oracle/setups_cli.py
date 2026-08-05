@@ -600,7 +600,8 @@ def drop_decided(candidates, decided: dict[str, dict]) -> list[Candidate]:
 
 def decision_record(candidate: Candidate, decision: str, *, decided_at: str,
                     reason: str | None = None, note: str | None = None,
-                    queue: QueuePosition | None = None) -> dict:
+                    queue: QueuePosition | None = None,
+                    trigger=None) -> dict:
     """A JSON-serializable decision, keyed on the candidate's content-addressed zone.
 
     ``inside_zone`` and ``agreement`` are the state a later run compares against to decide
@@ -671,6 +672,23 @@ def decision_record(candidate: Candidate, decision: str, *, decided_at: str,
         # existing rows must NOT be backfilled, for the same reason §4(a) refuses it.
         "funding_annual": candidate.funding_annual,
         "carry_reward_risk": candidate.carry_reward_risk,
+        # What the trigger timeframe said, and the two levels it would have used instead of the
+        # zone's — §51. ``probe_trigger_replay`` could reconstruct only 5 usable rows from 142
+        # decisions, because H1 is held for 60 days and the sample cannot be grown backwards;
+        # recording the verdict as it is taken is the only way the zone geometry and the trigger
+        # geometry ever accumulate side by side on the same rows.
+        #
+        # None means *not evaluated* — ``--no-triggers``, an unroutable source, or nothing
+        # cached — and is deliberately distinct from ``no_trigger``, which is the hourly
+        # actively withholding. Same distinction ``check_depth`` draws between an unmeasured
+        # market and a dead one, and the reason the carry fields are None rather than 0.0.
+        #
+        # Additive, so per §4(d) ``score_version`` does NOT move, and the existing 142 rows must
+        # NOT be backfilled: a re-run computes today's trigger against today's bars, which is
+        # not what the person was looking at.
+        "trigger_state": getattr(trigger, "state", None),
+        "trigger_entry": getattr(trigger, "entry", None),
+        "trigger_stop": getattr(trigger, "stop", None),
         "inside_zone": is_inside_zone(candidate),
         "agreement": candidate.agreement,
         "newest_at": candidate.newest_at,
@@ -890,7 +908,7 @@ def triage(queue, *, decisions_path, vault_path, input_fn=input, out=print,
         append_decision(
             decisions_path,
             decision_record(c, decision, decided_at=decided_at, reason=reason, note=note,
-                            queue=queue.position(i)),
+                            queue=queue.position(i), trigger=(triggers or {}).get(c.key)),
             mirror=mirror_path, warn=out)
         counts[decision] += 1
 

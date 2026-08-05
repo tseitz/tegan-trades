@@ -912,20 +912,3 @@ bridge the move. Keep the bars; reject a gap whose displacement candle carried u
 series' median hourly volume. Leaves 401 of 496 equity gaps with 1 closure artifact, and is
 inert on crypto (0-2%) where there is no session. A volume floor, not a UTC clock window —
 `scripts/probe_intraday_gaps.py`.
-
-
-## 51. Record the trigger state on every decision · new 2026-08-05
-
-`probe_trigger_replay` cannot settle whether the H1 trigger fixes §48's geometry, and it cannot
-be made to: H1 is held for 60 days and the 142 recorded decisions span eleven, so the replay
-yields **5 rows with both levels**. On those five the trigger's stop is *tighter* (1.17 vs 2.02
-median daily ranges) — the direction §48 warns about — but around a current entry rather than a
-stale one, and five is not a sample.
-
-**Add `trigger_state`, `trigger_entry` and `trigger_stop` to the decision record**, so the two
-geometries accumulate side by side on live rows. Then re-run `probe_replay`'s same-bar test
-against both once enough have resolved. Until that exists, every claim about whether the trigger
-helps is an argument rather than a measurement.
-
-Cheap — the values are already computed and sitting in `BuildStats.triggers` at the moment a
-decision is written.

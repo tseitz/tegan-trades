@@ -1480,3 +1480,53 @@ def test_an_unreadable_instrument_is_marked_rather_than_left_blank():
 def test_a_candidate_with_no_trigger_evaluated_renders_exactly_as_before():
     """Back-compat: every other render test here passes no trigger and none may grow a line."""
     assert "trigger" not in setups_render.format_candidate(_candidate())
+
+
+# ── the trigger on the decision record (§51) ────────────────────────────────────────────────
+# Additive, exactly as §21's carry fields and §19(d)'s second R:R were: no ``score_version``
+# bump, and the 142 existing rows are NOT backfilled. A re-run would compute today's trigger
+# against today's bars, which is not what the person was looking at — the trap §4 spells out.
+
+def test_the_decision_records_what_the_trigger_said():
+    """The whole point of §51. ``probe_trigger_replay`` could only reconstruct 5 usable rows
+    from 142 decisions, because H1 is held for 60 days and cannot be grown backwards. Recording
+    the verdict as it is taken is the only way the two geometries ever accumulate side by side.
+    """
+    record = setups_cli.decision_record(
+        _candidate(), "approve", decided_at="2026-08-05T12:00:00+00:00",
+        trigger=Trigger(state=trigger.FIRED, entry=104.0, stop=96.0))
+    assert record["trigger_state"] == trigger.FIRED
+    assert record["trigger_entry"] == 104.0
+    assert record["trigger_stop"] == 96.0
+
+
+def test_a_state_with_no_levels_records_the_state_and_no_levels():
+    """``no_trigger`` and ``no_zone_tag`` are real, minable verdicts — they say the trade was
+    offered and the hourly withheld it — but they carry no entry or stop to record."""
+    record = setups_cli.decision_record(
+        _candidate(), "later", decided_at="2026-08-05T12:00:00+00:00",
+        trigger=Trigger(state=trigger.NO_ZONE_TAG))
+    assert record["trigger_state"] == trigger.NO_ZONE_TAG
+    assert record["trigger_entry"] is None and record["trigger_stop"] is None
+
+
+def test_an_unevaluated_trigger_is_none_not_a_state():
+    """Unmeasured is not a verdict. ``--no-triggers``, an unroutable source, or no cached hourly
+    all produce this, and a mining pass has to tell them from "the hourly said no" — which is
+    the same distinction ``check_depth`` draws and the reason funding is None rather than 0.0.
+    """
+    record = setups_cli.decision_record(
+        _candidate(), "approve", decided_at="2026-08-05T12:00:00+00:00")
+    assert record["trigger_state"] is None
+    assert record["trigger_entry"] is None and record["trigger_stop"] is None
+
+
+def test_the_trigger_fields_do_not_bump_the_score_version():
+    """Additive fields never re-partition the sidecar. ``core.setups._score`` is untouched by
+    any of this, and a bump would strand the cohort §51 is trying to grow."""
+    before = setups_cli.decision_record(
+        _candidate(), "approve", decided_at="2026-08-05T12:00:00+00:00")
+    after = setups_cli.decision_record(
+        _candidate(), "approve", decided_at="2026-08-05T12:00:00+00:00",
+        trigger=Trigger(state=trigger.FIRED, entry=104.0, stop=96.0))
+    assert before["score_version"] == after["score_version"]
