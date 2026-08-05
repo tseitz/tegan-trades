@@ -890,3 +890,20 @@ it predates the participation cap by 22 minutes and would be capped to 0.15% ris
 
 **Do not go shopping for data first** — checked 2026-08-04, verdict and evidence in
 `_Structure.md`. §27's target residual is the third leg of the same geometry problem.
+
+## 50. Decide what an equity intraday fetch is allowed to include · new 2026-08-04
+
+Measured 2026-08-04 on real AAPL hourly bars: Alpaca SIP runs 08:00-23:00 UTC, so an equity day
+resamples to **two** H12 buckets, not one — a four-hour pre-market bucket carrying 1.2% of the
+day's volume (926k shares vs 74.4M, an 80x gap) and the session bucket. Yahoo's hourly is
+regular-session-only and gives one. Numbers and the pin: `test_resample.py
+::test_an_extended_hours_feed_splits_an_equity_day_into_two_uneven_buckets`.
+
+So "an equity is basically a daily on H12" is a property of the **feed**, not of equities, and
+§49 assumed it without qualification. A pre-market bucket is a real bucket — `to_h12` reports it,
+correctly — but it is four thin hours wearing the same shape as a twelve-hour setup candle, and
+the H12 zone drawn on it is not a zone anyone would trade.
+
+**Decide at the fetch/assembly layer, not in the resample**: filter to regular session, or take
+the feed as it comes and let §49's participation gate kill the thin bucket. Blocks wiring
+equities into the trigger; crypto is unaffected (24/7, no session).
