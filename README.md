@@ -36,21 +36,40 @@ of available commands, and `docs/ARCHITECTURE.md` groups them in pipeline order 
 ## The nightly job
 
 `scripts/nightly.sh` runs the whole cycle: `verify-roster` → `ingest-roster` → `ingest-x` →
-`distill-roster` → `fetch-prices` → `setups --list`. Scheduled by launchd at **06:15 local**.
+`distill-roster` → `fetch-prices` → `setups --list`. Awake, it takes 8–16 minutes.
 
-**It does not wake the Mac.** launchd runs a missed `StartCalendarInterval` job when the
-machine next wakes, and coalesces several missed days into one run — so on a laptop that sleeps
-this is really "the first wake after 06:15". That is fine: `ingest-x` resumes from the last
-captured day rather than assuming yesterday, so a gap is collected on the next run (up to 7
-days automatically; beyond that it warns rather than skipping silently).
+**It runs when you open the laptop, not at a set time.** launchd starts the script every 120s;
+the script's gate decides in ~50ms whether to go and exits if not. It runs once a day, no
+earlier than **06:15 local**, when the machine is genuinely awake — lid open, or on AC power —
+and not under 30% battery. Open the lid after 06:15 and the queue is ready within the quarter
+hour.
 
-**And on battery with the lid shut it crawls rather than runs.** Measured 2026-07-27: launchd
-fired the missed job at 06:30 during a DarkWake, then the machine surfaced for ~2-second slices
-every ~15 minutes until the lid opened at 09:38 — `ingest-roster` took 2h28m of wall clock for
-a few minutes of work. The plist wraps the script in `caffeinate -s -i -m`, but the limits are
-macOS policy, not configuration: `-s` is honoured **only on AC power**, and a closed lid is not
-"idle sleep" so `-i` does not cover it. Plugged in → minutes, at 06:15. Lid open on battery →
-likewise. **Lid closed on battery → slow, and no setting changes that.** Leave it plugged in.
+Waiting to be opened is the trade, made on purpose: **nothing here wakes the Mac, so a day the
+laptop never opens is a day the cycle does not run.** No data is lost when that happens —
+`ingest-x` resumes from the last captured day rather than assuming yesterday, so a gap is
+collected on the next run (up to 7 days automatically; beyond that it warns rather than
+skipping silently).
+
+Why it is not simply scheduled for 06:15: launchd fires a missed `StartCalendarInterval` during
+*DarkWake*, a maintenance wake with the lid shut, and on battery macOS puts the machine back to
+sleep — the job is not killed, it is frozen, thawing seconds at a time until you open the lid.
+Measured twice (2026-07-27, 2026-08-01): a run that started at 06:16 reported
+`ingest-roster (10354s)` and finished at 09:39 — that step takes about five minutes awake —
+while `distill-roster`, which happened to begin after the lid opened, took 149s. `caffeinate` cannot
+fix it — `-s` is honoured **only on AC power** and a closed lid is not "idle sleep", so `-i`
+does not cover it either. It can keep a machine awake; it cannot wake a sleeping one.
+
+Ask why it has not gone yet with `cat data/nightly.gate` — one line, rewritten every poll:
+
+```text
+2026-08-01 06:18  deferred: lid closed on battery — macOS sleeps through the run
+```
+
+Override the timing gate with `scripts/nightly.sh --force` (or `NIGHTLY_FORCE=1`) — it skips the
+hour, lid, battery and once-a-day checks, but **not `data/nightly.pause`**, which stops spending
+and so has to mean it. A forced run does not count as the day's run, so testing one by hand
+leaves the automatic one still to come. Tune with `NIGHTLY_EARLIEST=0615` and
+`NIGHTLY_MIN_BATTERY=30`.
 
 **What it costs.** Roughly **$0.25/night of real money** (xAI, the `ingest-x` step — the only
 command in the repo billed in actual dollars) plus the day's distillation against the Max

@@ -159,6 +159,10 @@ Sentinel **files** rather than flags, because the thing you want to stop runs wh
 at the keyboard, and a file left lying around explains its own silence. `launchctl bootout`
 leaves nothing behind — and a job that silently stopped looks exactly like a quiet market.
 
+For the opposite question — it is *not* stopped, so why hasn't it run? — `cat data/nightly.gate`.
+The job waits for the laptop to be open and awake rather than for a clock, so "nothing happened"
+is usually a deferral with a reason, not a failure. See the README.
+
 **Pausing loses nothing.** `ingest-x` resumes from the last captured day, so a paused week is
 picked up when you resume, within its 7-day auto-lookback. Past that it warns rather than
 silently skipping.

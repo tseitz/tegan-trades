@@ -13,27 +13,26 @@
     launchctl bootout gui/$(id -u)/com.tseitz.tegan-trades.nightly
 
   Why launchd rather than cron or a Claude session: this must not depend on a terminal or an
-  agent being open, and on a laptop that sleeps, launchd runs a missed StartCalendarInterval
-  job on wake — cron simply skips it. `claude -p` needs the GUI session's keychain for its
-  subscription auth, which is why this is a LaunchAgent (gui/) and not a LaunchDaemon.
+  agent being open, and launchd runs a missed interval on wake — cron simply skips it.
+  `claude -p` needs the GUI session's keychain for its subscription auth, which is why this is
+  a LaunchAgent (gui/) and not a LaunchDaemon.
 
-  06:15 local: after the US close and the overnight session, before the morning. Late enough
-  that a sleeping laptop has usually woken; if it hasn't, launchd fires on wake instead.
+  **This polls; it does not schedule.** Every 120s launchd starts the script, which decides in
+  ~50ms whether conditions are right and exits if not. All the policy — earliest hour, once a
+  day, lid, battery — lives in the script's gate, where it can be read and changed in one
+  place. See the gate comment in scripts/nightly.sh for why, and for the measurement that
+  forced it.
 
-  `caffeinate` wraps the script so the run is not spread across three hours of sleep. Observed
-  2026-07-27: launchd fired the missed 06:15 job at 06:30 during a DarkWake, the lid stayed
-  shut on battery, and the job crawled through ~2-second darkwake slices until the lid opened
-  at 09:38 — finishing at 09:50. Wall clock said `ingest-roster (8881s)`; actual work was a
-  few minutes.
+  The short version: a `StartCalendarInterval` at 06:15 fires during DarkWake with the lid
+  shut, and on battery the job then freezes and thaws seconds at a time until you open the lid
+  — hours of wall clock for minutes of work, twice observed (2026-07-27, 2026-08-01). Nothing
+  here wakes the machine on purpose: **a day the laptop never opens is a day the cycle does
+  not run.** Deliberate — waking a sleeping laptop on battery to fetch transcripts is a worse
+  trade than skipping the day.
 
-  What the flags can and cannot do, because the difference matters here:
-    -s  prevent system sleep — **only honoured on AC power** (see caffeinate(8))
-    -i  prevent idle sleep — honoured on battery, but a *closed lid* is not idle sleep
-    -m  prevent disk idle sleep
-  So: plugged in, the run completes in a few minutes at 06:15. Lid open on battery, likewise.
-  **Lid closed on battery, macOS sleeps regardless and the run still crawls** — that is a
-  platform policy, not a setting we are missing. Leaving it plugged in overnight is the whole
-  fix. The flags cost nothing when they cannot be honoured.
+  `caffeinate` moved into the script, below the gate. It can stop a machine falling asleep
+  mid-run but cannot wake a sleeping one, and wrapping a 50ms poll would poke power management
+  720 times a day for nothing.
 -->
 <plist version="1.0">
 <dict>
@@ -42,10 +41,6 @@
 
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/bin/caffeinate</string>
-    <string>-s</string>
-    <string>-i</string>
-    <string>-m</string>
     <string>/bin/bash</string>
     <string>/Users/tseitz/code/projects/tegan-trades/scripts/nightly.sh</string>
   </array>
@@ -53,11 +48,10 @@
   <key>WorkingDirectory</key>
   <string>/Users/tseitz/code/projects/tegan-trades</string>
 
-  <key>StartCalendarInterval</key>
-  <dict>
-    <key>Hour</key><integer>6</integer>
-    <key>Minute</key><integer>15</integer>
-  </dict>
+  <!-- The gate is a few `ioreg`/`pmset` reads, so a 2-minute poll costs well under a minute of
+       CPU across a whole day. Slower would mean sitting down and waiting for the queue. -->
+  <key>StartInterval</key>
+  <integer>120</integer>
 
   <!-- The script writes its own dated log; these catch anything that escapes it, including a
        failure to start at all — which is the case the script by definition cannot record. -->

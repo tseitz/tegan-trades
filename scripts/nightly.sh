@@ -29,11 +29,53 @@ cd "$REPO" || exit 1
 # not being found would look like an LLM failure rather than a PATH one.
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
-STAMP="$(date +%Y%m%d-%H%M)"
-LOG_DIR="$REPO/data/logs/nightly"
-LOG="$LOG_DIR/$STAMP.log"
-SPEND="$LOG_DIR/spend.json"
-mkdir -p "$LOG_DIR"
+# ── when this is allowed to run ──────────────────────────────────────────────────
+#
+# **The trigger is "the laptop is genuinely awake", not a clock time.** launchd pokes this
+# script every couple of minutes and the gate below decides; open the lid and the next tick
+# runs it. Nothing is scheduled to wake the machine, so a day the laptop never opens is a day
+# the cycle does not run. That is the intended trade.
+#
+# It replaced a 06:15 `StartCalendarInterval`, which fired during *DarkWake* — a maintenance
+# wake with the lid shut — and on battery macOS went straight back to sleep. The job was not
+# killed, it was frozen, thawing for a few seconds per wake. Measured 2026-08-01: the 06:15 run
+# limped from 06:16 to 09:26 in 2-45 second slices and reported `ingest-roster (10354s)` for
+# about four minutes of actual work, while `distill-roster`, which happened to start after the
+# lid opened, took 149s. Same pipeline, same night — the only variable was consciousness.
+#
+# `caffeinate` cannot fix this and never could: `-s` is honoured **only on AC power**, and a
+# closed lid is not "idle sleep" so `-i` does not cover it either (caffeinate(8)). It can stop
+# a machine falling asleep mid-run; it cannot wake a sleeping one. So it moved from the plist
+# to below the gate — wrapping a poll that exits in 50ms just pokes power management 720 times
+# a day for nothing.
+PAUSE_FILE="$REPO/data/nightly.pause"
+NO_X_FILE="$REPO/data/nightly.no-x"
+GATE_FILE="$REPO/data/nightly.gate"
+STAMP_FILE="$REPO/data/nightly.last-run"
+
+# Earliest start, local HHMM: after the US close and the overnight session, before the morning
+# you would actually read the queue. Opening the lid at 05:00 should not spend the day's run on
+# a corpus that has not finished moving.
+NIGHTLY_EARLIEST="${NIGHTLY_EARLIEST:-0615}"
+# On battery, below this, defer. An awake run is 8-16 minutes (509s/604s/956s across the last
+# three, data/logs/nightly/), so this is a "do not start a job on a dying laptop" floor rather
+# than a budget.
+NIGHTLY_MIN_BATTERY="${NIGHTLY_MIN_BATTERY:-30}"
+
+mkdir -p "$REPO/data"
+
+# Tested against "1" rather than for non-emptiness, so NIGHTLY_FORCE=0 means what it reads as.
+FORCE=0
+[ "${1:-}" = "--force" ] && FORCE=1
+[ "${NIGHTLY_FORCE:-0}" = "1" ] && FORCE=1
+
+# One line, overwritten every poll. A file rather than a log line because this runs all day:
+# appending would bury the night that mattered under 700 lines of "not yet", and printing
+# nothing would leave no way to answer "why hasn't it gone?". `cat data/nightly.gate`.
+defer() {
+  printf '%s  deferred: %s\n' "$(date '+%Y-%m-%d %H:%M')" "$1" > "$GATE_FILE"
+  exit 0
+}
 
 # ── stop switches ────────────────────────────────────────────────────────────────
 #
@@ -47,13 +89,52 @@ mkdir -p "$LOG_DIR"
 # are not at the keyboard. `touch data/nightly.pause` from anywhere kills the next run, and the
 # file's existence is its own reminder that you did it — a launchctl bootout leaves nothing
 # behind to explain the silence, and silence is indistinguishable from a quiet market.
-PAUSE_FILE="$REPO/data/nightly.pause"
-NO_X_FILE="$REPO/data/nightly.no-x"
+# **`--force` does not override this one.** The rest of the gate is about timing, and forcing
+# past it is a reasonable thing to want; pause is about spending, and the run it stops sends
+# real money to xAI. A switch called "stop everything" that a convenience flag walks through is
+# worse than no switch. Remove the file if you meant it.
+[ -f "$PAUSE_FILE" ] && defer "paused — remove $PAUSE_FILE to resume"
 
-if [ -f "$PAUSE_FILE" ]; then
-  echo "paused — $PAUSE_FILE exists. Remove it to resume." | tee -a "$LOG"
-  exit 0
+if [ "$FORCE" -eq 0 ]; then
+  # Base 10 forced: `date +%H%M` zero-pads, and 0615 is not a valid octal literal.
+  [ "$((10#$(date +%H%M)))" -lt "$((10#$NIGHTLY_EARLIEST))" ] && defer "before $NIGHTLY_EARLIEST"
+
+  # Written at start, not at finish, so a poll landing mid-run cannot launch a second one.
+  [ "$(cat "$STAMP_FILE" 2>/dev/null)" = "$(date +%F)" ] && defer "already ran today"
+
+  # Absent on a machine with no lid, where the empty string correctly fails the "Yes" test.
+  LID="$(ioreg -r -k AppleClamshellState -d 4 2>/dev/null \
+    | sed -n 's/.*"AppleClamshellState" = \(.*\)/\1/p' | head -1)"
+  BATT_PCT="$(pmset -g batt 2>/dev/null | grep -oE '[0-9]+%' | head -1 | tr -d '%')"
+
+  # On AC we run regardless of the lid — that is clamshell-on-a-desk, and `caffeinate -s` is
+  # honoured there, so the run will actually finish.
+  if ! pmset -g batt 2>/dev/null | grep -q "'AC Power'"; then
+    [ "$LID" = "Yes" ] && defer "lid closed on battery — macOS sleeps through the run"
+    [ -n "$BATT_PCT" ] && [ "$BATT_PCT" -lt "$NIGHTLY_MIN_BATTERY" ] \
+      && defer "battery ${BATT_PCT}% below ${NIGHTLY_MIN_BATTERY}%"
+  fi
 fi
+
+# Gate passed. Hold the machine awake for the duration — re-exec rather than wrap in the plist
+# so the 50ms polls stay out of power management entirely. `/bin/bash "$0"` rather than `"$0"`
+# so this does not silently depend on the exec bit surviving a checkout.
+if [ -z "${NIGHTLY_CAFFEINATED:-}" ]; then
+  export NIGHTLY_CAFFEINATED=1
+  exec /usr/bin/caffeinate -s -i -m /bin/bash "$0" "$@"
+fi
+
+# Not stamped under `--force`, so running one by hand does not silently eat the day's automatic
+# run — the next poll would otherwise say "already ran today" and the night would be skipped by
+# the act of testing it.
+[ "$FORCE" -eq 0 ] && date +%F > "$STAMP_FILE"
+rm -f "$GATE_FILE"
+
+STAMP="$(date +%Y%m%d-%H%M)"
+LOG_DIR="$REPO/data/logs/nightly"
+LOG="$LOG_DIR/$STAMP.log"
+SPEND="$LOG_DIR/spend.json"
+mkdir -p "$LOG_DIR"
 
 # Monthly ceiling on real money. Only ingest-x spends dollars; everything else bills against
 # the Max subscription. Default is deliberately loose relative to the ~$7/mo the 11-handle
