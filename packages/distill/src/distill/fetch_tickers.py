@@ -2,6 +2,7 @@
 (hits api.coingecko.com); resolve-time never touches the network. Free API, no key."""
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
@@ -49,8 +50,31 @@ def write_snapshot(snapshot: dict, path=DEFAULT_OUT) -> Path:
     return path
 
 
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parsed before anything is fetched, which is the whole point.
+
+    This ``main`` took an ``argv`` and ignored it: the first statement was a live CoinGecko
+    call and the second overwrote ``cfg/tickers.json``, a tracked source of truth. So
+    ``fetch-tickers --help`` spent a request and restaged 1,071 changed ranks instead of
+    printing help — found by sweeping ``--help`` across every console script to check they
+    still imported. The signature was the trap: it looked like every other CLI here, so
+    nothing suggested the argument was decorative.
+    """
+    parser = argparse.ArgumentParser(
+        description="Refresh cfg/tickers.json from CoinGecko (network; free, no key).")
+    parser.add_argument("--out", type=Path, default=DEFAULT_OUT,
+                        help="where to write (default: %(default)s)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="fetch and report, but write nothing")
+    return parser.parse_args(argv)
+
+
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover - thin network glue
+    args = parse_args(argv)
     snapshot = build_snapshot(fetch_rows())
-    path = write_snapshot(snapshot)
+    if args.dry_run:
+        print(f"would write {len(snapshot)} tickers -> {args.out}")
+        return 0
+    path = write_snapshot(snapshot, path=args.out)
     print(f"wrote {len(snapshot)} tickers -> {path}")
     return 0

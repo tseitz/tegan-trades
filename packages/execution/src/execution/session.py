@@ -331,6 +331,22 @@ def describe(plan: OrderPlan, account: Account | None = None,
         f"   notional ${plan.notional:,.2f} ({plan.leverage:.2f}x)",
     ]
 
+    # **On an instrument that stops trading overnight, that risk figure is an intent.** A stop
+    # is a market order once triggered, so a gapped open fills it at the open and not at the
+    # stop, and everything past it is loss the budget never authorised. ``core.gaps`` measures
+    # how often: 2.36% of sessions gap adversely past a 4.53% stop — a 39% chance of at least
+    # one over a 21-session hold — with a 46x spread across assets. ``venue_routing`` already
+    # prices that into which venue wins; the person approving the order was the last one not
+    # told. Said in words rather than modelled here on purpose: sizing off gap-adjusted risk is
+    # a real decision and should not be reached for before this cheap one has been tried.
+    #
+    # Equities only. Perps fund continuously and do not gap, and a caveat on every order is the
+    # warning nobody reads.
+    if plan.depth is not None:
+        lines.append(
+            "    that stop is an intent, not a bound — a gapped open fills it at the open"
+        )
+
     # Only when a ceiling actually bound. A cut order is the one case where the numbers above
     # understate what is going on — the risk line will read 0.15% where 1% was configured, and
     # without this that looks like a bug rather than an answer. The cause is named because

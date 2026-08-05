@@ -232,3 +232,25 @@ def test_perps_get_no_market_line():
     """``HyperliquidBroker.depth`` is None by construction — ``check_liquidity`` answers this
     live and better there, and a blank shares-per-day line would imply a measurement failure."""
     assert "sh/day" not in describe(_build())
+
+
+# ── the stop is an intent, not a bound ──────────────────────────────────────────────────────
+
+def test_an_equity_preview_says_the_risk_figure_is_an_intent():
+    """A stop is a market order once triggered, so on a gapped open it fills at the open and
+    not at the stop. The preview read "risk $X (1.00% of $Y)" as though that were a ceiling.
+
+    ``core.gaps`` measures the size of the lie: 2.36% of sessions gap adversely past a 4.53%
+    stop, which is a 39% chance of at least one over a 21-session hold, and the per-asset spread
+    is 46x. The router already prices that; the person approving the order was the last one not
+    told.
+    """
+    text = describe(_build(depth=INTL))
+    assert "intent" in text
+
+
+def test_a_perp_preview_does_not_claim_the_stop_can_gap():
+    """Perps do not gap — they fund continuously and trade continuously, which is the whole
+    axis ``core.gaps`` and ``core.funding`` exist to make comparable. Saying it here would be
+    the warning-on-everything failure the market line above is careful to avoid."""
+    assert "intent" not in describe(_build())

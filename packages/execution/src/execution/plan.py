@@ -107,6 +107,19 @@ class OrderPlan:
         return self.notional / self.equity if self.equity else 0.0
 
 
+# **A resting bracket is live at the open, and a gapped open is not the trade that was
+# approved.** A marketable limit fills at the open, not at the limit — so the entry moves toward
+# a stop that does not move with it, and the planned distance collapses. Observed 2026-07-29:
+# `VRT` closed 269.56 and opened 244.33 (-9.4%); an entry planned at 266.52 filled at 243.33
+# against a stop 9.5% away that was now 0.9% away, and the position round-tripped flat in **49
+# seconds** (`client_order_id 5936e2345d35`). The gap consumed 91% of the stop distance.
+#
+# Nothing here can prevent that, and it is not a defect in `build`: the order is already resting
+# when the open happens, so the comparison has to be made *at* the open by something scheduled,
+# not at placement by something pure. `core.gaps` measures how often this is in play — 2.36% of
+# sessions adversely, 39% over a 21-session hold — and `execution.session` now says in the
+# preview that the stop is an intent rather than a bound.
+
 def build(
     candidate,
     *,

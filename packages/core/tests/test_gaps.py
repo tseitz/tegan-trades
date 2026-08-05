@@ -168,8 +168,8 @@ def test_cost_over_a_hold_scales_with_the_days_held():
 
 
 def test_at_least_one_gap_compounds_over_the_hold_rather_than_multiplying():
-    # Reproduces §35's headline, and pins the two-sided/one-sided distinction that produces it.
-    # §35's 3.5% counts gaps past the stop in EITHER direction; only the adverse half can hurt
+    # Pins the two-sided/one-sided distinction behind the headline. The earlier hand
+    # measurement's 3.5% counted gaps in EITHER direction; only the adverse half can hurt
     # a given position, and 1-(1-0.0175)^21 = 0.31 is where its 31% comes from. ``rate`` here is
     # already one-sided because ``adverse_excess`` filtered it, so 3.5% would compound to 53%.
     cost = GapCost(asset="X", sessions=2000, past_stop=35, excess_per_session=0.0,

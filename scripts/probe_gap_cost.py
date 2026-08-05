@@ -19,7 +19,8 @@ knowing.
 either direction; only the adverse half hurts a given position. One-sided that is 2.36%, and the
 chance of at least one adverse gap across a 21-session hold is **39%**. Quote which one you mean.
 
-**§35's pooled claim reproduces; its per-asset figures do not.** §35 reported `USAR` at 34% of
+**The earlier hand measurement's pooled claim reproduces; its per-asset figures do not.**
+It reported `USAR` at 34% of
 sessions and `XLE` at 2.4%; at the same 4.53% stop they measure **9.16%** and **0.40%**. Its
 ordering was right and its magnitudes were not — the same failure mode `probe_book_depth.py`
 records for venue slippage. This is why the numbers live in a probe now.

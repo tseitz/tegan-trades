@@ -6,7 +6,7 @@ gaps. Priced in the same unit — *fraction of notional over the hold* — they 
 ranked against each other. Until this module existed the router compared a priced venue
 (Hyperliquid, funding) against a free one (Alpaca, nothing) and always picked the free one.
 
-**A stop is an intent, not a bound** (§35). Once triggered it is a market order, so on a gapped
+**A stop is an intent, not a bound.** Once triggered it is a market order, so on a gapped
 open it fills at the open and not at the stop. Everything past the stop is loss the risk budget
 never authorised, and that excess is what this module measures.
 
@@ -21,11 +21,11 @@ the one-sided rate is 2.36% and the chance of at least one adverse gap over a 21
 that stop on 18.6% of sessions, ``SBSW``/``SGML`` 16.0%, ``RKLB`` 11.6%, against ``XLE``'s 0.40%
 and ``WMB``/``GLNG``'s zero. A pooled number is nearly useless at that spread.
 
-Note for anyone reconciling this against §35, which first measured the effect: its *pooled* claim
-(3.5%) reproduces within sampling noise on a different asset mix, but its two per-asset figures —
-``USAR`` 34%, ``XLE`` 2.4% — **do not**; measured at the same stop they are 9.16% and 0.40%. The
-ordering it reported was right and the magnitudes were not, which is the same failure mode
-``probe_book_depth.py`` warns about for venue slippage. Trust the probe, not the prose.
+An earlier hand measurement of the same effect got the pooled claim right (3.5%, within sampling
+noise on a different asset mix) and two per-asset figures wrong: it reported ``USAR`` 34% and
+``XLE`` 2.4% where the same stop gives 9.16% and 0.40%. Its *ordering* was right and its
+magnitudes were not — the failure mode ``probe_book_depth.py`` warns about for venue slippage.
+Trust the probe, not the prose.
 
 **The rate is violently sensitive to stop distance**, which is why it is a parameter and not a
 per-asset constant: ``USAR`` goes from 2.29% one-sided at a 4.53% stop to 35.88% at a 1.0% stop.
@@ -57,7 +57,7 @@ SIDES = ("long", "short")
 # Pseudo-observations of the pooled rate that every per-asset estimate carries. An asset with
 # exactly this many sessions is weighted half its own number and half the pool.
 #
-# 250 because that is the per-asset sample behind §35's measurement (2,500 sessions across ten
+# 250 because that is the per-asset sample behind the earlier measurement (2,500 sessions, ten
 # assets) — the point at which we were willing to quote a per-asset rate at all. It is a
 # statement about when this data becomes trustworthy, not a tuning knob: raising it would make
 # the router ignore the differences between assets that are the whole reason it routes, and

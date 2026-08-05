@@ -44,7 +44,7 @@ measurement (13 rows carry funding, 4 usable pairs) · §27's option 2 (`daily_t
 but the failed-break state it names has n=1).
 
 **By theme:** corpus supply §3 · §6 · §6b · §6d · §6f · §6h · §9 · §14 — durability §4b · §24 —
-venue and execution §22 · §25 · §30 · §33 · §35 · §36 · §39 · §40 · §43 — routing §29 · §31 · §32 · §44 —
+venue and execution §22 · §25 · §30 · §33 · §36 · §39 · §40 · §43 — routing §29 · §31 · §32 · §44 —
 scoring §1 · §2 · §8 · §12 · §15 · §19 · §48.
 
 ---
@@ -400,18 +400,16 @@ written to prevent.
 
 ---
 
-## 24. `data/funding/` is not regenerable ore, and the tree says it is · `OPEN`
+## 24. Mirror the funding log the way decisions are mirrored · `OPEN`
 
-Same class as §4b. `docs/ARCHITECTURE.md` describes everything under `data/` as regenerable;
-that is true of `data/prices/` and false here. Both venues serve bounded history, so a gap older
-than that window is **permanently unrecoverable**, and Lighter has no usable history at all
-(§22) — its column exists only for nights the logger actually ran.
+`data/funding/` is a record, not a cache — both venues serve bounded history, so a night the
+logger missed is permanently unrecoverable, and Lighter has no usable history at all (§22).
+Why, in full: `oracle.funding_store`'s docstring. `docs/ARCHITECTURE.md` no longer claims
+otherwise.
 
-Milder than the decision sidecars: this is measurement, not judgement, and most can be re-pulled
-within the venues' windows. But a machine asleep for a month costs a month of Lighter coverage
-outright. **Decide whether it wants the vault mirror `oracle/decisions.py` already implements.**
-
----
+**Decide whether it wants the vault mirror `oracle/decisions.py` already implements.** Milder
+than the decision sidecars — this is measurement, not judgement, and most is re-pullable inside
+the venues' windows — but a machine asleep for a month costs a month of Lighter coverage outright.
 
 ## 25. Route each order to the venue that is actually cheapest · `PARTLY DONE` — 2026-07-30
 
@@ -578,34 +576,8 @@ be settled either, not just the guard. The `cloid` buys both.
 sent with the market shut is `accepted`, so the 06:15 nightly needs no scheduler.
 
 **This entry used to claim a gap "costs a spread rather than a stop". That was wrong** — see
-§39, which VRT proved live. Holding-side gaps are §35 and no guard reaches those.
-
----
-
-## 35. On equities a stop is an intent, not a bound · `OPEN` — new 2026-07-29
-
-A stop is a market order once triggered, so on a gapped open it fills at the open and not at
-the stop. Realised loss then exceeds `risk_pct` by whatever the gap was, and **nothing in the
-repo says so** — `describe()` prints "risk $X (1.00% of equity)" as though it were a bound.
-
-Measured over 2,500 sessions across ten of the queue's own equities (2026-07-29): 3.5% of
-sessions gap past the median 4.53% stop; over a 21-day `CARRY_HOLD_DAYS` hold that is a **31%
-chance of at least one adverse gap wider than the stop**. It is not a tail. The rate is very
-uneven — `USAR` gaps past it on 34% of sessions, `XLE` on 2.4% — so a per-asset number is
-worth more than the pooled one.
-
-**Cheapest honest fix is wording, not machinery**: have the confirmation preview say the
-number is the intent on a continuous tape. Anything more is a real modelling decision — sizing
-off gap-adjusted risk, or a per-asset gap premium — and should not be reached for first.
-
-**The router (§25) now reaches for it — it is the whole Alpaca cost column.** The per-asset rate
-is not estimable from the cached window: 19 of 28 approved assets hold under 250 sessions
-(BE/GLNG/WMB: 98), because `oracle/plan.py` scopes each fetch to the asset's earliest thesis
-mention. Shrink toward the pooled rate by sample size and fetch gap history as a *separate* job;
-reasoning and measurement live in `core/gaps.py`.
-
-**Do not "fix" this with a stop-limit.** A limit on the stop leg is what makes a gap
-un-exitable rather than merely expensive; `alpaca_wire` omits it deliberately.
+§39, which VRT proved live. Holding-side gaps are measured in `core.gaps` and no guard
+reaches those.
 
 ---
 
@@ -639,30 +611,19 @@ the confirmation prompt. Until then thinness is visible only *after* approval.
 
 ---
 
-## 39. A gapped open does not cost a spread — it deletes the trade · `OPEN` — new 2026-07-29
+## 39. Refuse a fill when the open has eaten the stop · `OPEN` — new 2026-07-29
 
-`VRT` closed 269.56 and opened 244.33, a -9.4% gap. The limit entry at 266.52 filled instantly
-at 243.33 — correct behaviour for a marketable limit, and what §33 used to file under "costs a
-spread". It does not. The gap moves the **entry** toward a stop that does not move with it: a
-stop planned 9.5% away sat 0.9% away, and the position round-tripped in **49 seconds**
-(2026-07-29, `client_order_id 5936e2345d35`).
+A resting bracket is live at the open, so a gapped open silently converts the approved trade
+into a different one. Evidence and mechanism: `execution/plan.py`, above `build`.
 
-The trade that opens after a gap is not the trade that was approved. Its R:R is not the
-approved R:R, and its risk is not `risk_pct` — here the realised loss was a fraction of the
-budget only because the stop was adjacent, not because anything protected it.
+**Read the prior close at placement, then re-check at the open and refuse when the gap has
+consumed a set fraction of the planned stop distance.** Needs a scheduler — a GTC bracket cannot
+do this itself — so it is a pre-open reconcile step, not a guard inside `plan.build`.
 
-**Compare the opening print to the plan before the entry can fill, and refuse when the gap has
-eaten a set fraction of the planned stop distance.** A resting GTC bracket cannot do this — it
-is live at the open. So this is a pre-open reconcile step, not a guard inside `plan.build`:
-read the prior close at placement, and at the open re-check before allowing the fill. Needs a
-scheduler, which is why §33 was right that *placement* does not.
-
-The threshold is the open question. `VRT` consumed 91% of its stop distance; a rule near 50%
-would have refused it and is inert on an ordinary open. Measure before picking — `book
---reconcile` (§40) now records each entry's realised fill price, so the plan-versus-open
-comparison has a source that accumulates instead of needing a hand query per order.
-
----
+The threshold is the open question. `VRT` consumed 91% of its stop; a rule near 50% would have
+refused it and is inert on an ordinary open. Measure before picking — `book --reconcile` records
+each entry's realised fill, so the plan-versus-open comparison accumulates instead of needing a
+hand query per order.
 
 ## 40. Nothing sums — sizing is per-trade and the account is not · `PARTLY DONE`
 
@@ -801,23 +762,6 @@ Fix is a length check per dex that skips and *names* the mismatched dex, rather 
 truncating silently or raising and losing the other dexs. `fetch-funding` already reports
 unreachable venues this way (`nightly.sh` greps `^  ! (hyperliquid|lighter|aster)`); this needs
 the same treatment for a venue that answered but answered raggedly.
-
----
-
-## 46. `fetch-tickers` takes an `argv` it never reads, and writes on any invocation · `OPEN` — new 2026-08-04
-
-`main(argv: list[str] | None = None)` in `distill/fetch_tickers.py` accepts an argument list and
-then ignores it — the first statement is a live CoinGecko fetch, the second overwrites
-`cfg/tickers.json`. So `fetch-tickers --help` does not print help; it spends a network call and
-rewrites a committed source of truth. Found by running `--help` across every console script to
-check they still imported: that sweep silently restaged 1,071 changed ranks.
-
-The signature is the trap. It looks like every other CLI here, so nothing suggests the argument
-is decorative, and `--dry-run`/`--out` read as supported when neither exists.
-
-Worth checking the other 19 console scripts for the same shape before assuming it is one command.
-Fix is an `argparse` that at minimum honours `--help` without touching the network, and ideally
-`--out` so a refresh can be inspected before it lands on the tracked file.
 
 ---
 
