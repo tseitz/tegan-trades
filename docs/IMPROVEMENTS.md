@@ -34,7 +34,7 @@ depth for §21, failed-break states for §27, stated targets for §18.
 
 | | Entry | Why now | Cost |
 |---|---|---|---|
-| 1 | **§48** — the entry and the target are on two different clocks | Ahead of the others because it is the one that spends money: a stop a session away, a target weeks away, 69% of stops on the fill bar. Read with §27 and §35. | free, local |
+| 1 | **§49** — build the H1 trigger under an H12 setup | The fix for §48, decided and specified rather than guessed. Primitives all exist; the prerequisite is the participation gate, not the bars. Read §48 first for the measurement. | free, network |
 | 2 | **§32 residual** — curate the six the gate now refuses | They stopped pricing wrong and started not pricing. `WTI` → `CL=F` folds into `OIL`; `JPY` needs §29 first. | free, local |
 | 3 | **§31 residual** — the guard nothing calls | `check_identity` is built and unit-tested; no path supplies it a mark, so a curated typo still places. Plus CI over the curated map. | free, network |
 | 4 | **§27 residual** — targets vs the range rule | 68 candidates on a ranging weekly, only 20 target within 2% of the bound the rule names. Read §18 first. Now has §48's geometry behind it. | free, local |
@@ -46,7 +46,7 @@ but the failed-break state it names has n=1).
 
 **By theme:** corpus supply §3 · §6 · §6b · §6d · §6f · §6h · §9 · §14 — durability §4b · §24 —
 venue and execution §22 · §25 · §30 · §33 · §35 · §36 · §39 · §40 · §43 — routing §29 · §31 · §32 · §44 —
-scoring §1 · §2 · §8 · §12 · §15 · §19 · §48.
+scoring §1 · §2 · §8 · §12 · §15 · §19 · §48 · §49.
 
 ---
 
@@ -96,9 +96,11 @@ Unresolved in the spec: the missing third "thing" (ep 1), how the dealing range 
 *update the spec*, and may only need to cover what's left. Note it is not a `distill-roster`
 run: that prompt is built for trade theses and correctly returns EMPTY on methodology videos.
 
-**The fourth unknown is a corpus gap, not a retrieval miss.** "15m entry trigger — failed
-breakdown, reclaim" retrieves nothing useful, and §3 calls it the whole of slice 2's layer 3.
-Needs a different source or Tegan's own definition; blocks slice 2 either way.
+**The fourth unknown was not a corpus gap — it was the query.** "15m entry trigger — failed
+breakdown, reclaim" retrieves nothing; asking what the entry trigger *is* returns phase 3 of the
+course in full, at cosine 0.79-0.81. The mechanic, the reversal/continuation stop split, and the
+timeframe hierarchy are now written into `Trading/_Structure.md` with citations. Slice 2's layer
+3 is unblocked and specified; §49 owns building it.
 
 ---
 
@@ -618,18 +620,19 @@ is `min(multiplier, 2)` and caps as `CAP_VENUE_LEVERAGE`, so nothing is written 
 `multiplier: 1` with `max_margin_multiplier: 4` configured, so the divergence is one settlement
 away and currently invisible — both fields read 24,971.52.
 
-**Residual — no equity liveness signal in the queue.** `oracle.liveness` derives health from the
-funding log and equities have no funding. `execution.participation` supplies the missing
-measurement but only at sizing time, so the queue still cannot tell a thin market from a liquid
-one until a candidate is approved. Surfacing `Depth` in the render is the remaining half and is
-cheap — the fetch exists and is cached per session.
+**Residual — no equity liveness signal, and half of it is now closed.** `oracle.liveness` derives
+health from the funding log and equities have no funding; `execution.participation` is the
+equity equivalent. **`session.describe` now prints the market on every equity order** — sessions,
+shares/day, trades/day, and this order's share of one — rather than only when the participation
+ceiling bound, which had made a market trading 175 times a day render identically to one trading
+44,000 whenever neither tripped the 1% cap.
 
-**`oracle.liveness` still has no equity equivalent, but it is no longer the only signal.** It
-derives health from the funding log, and equities have no funding. `execution.participation`
-now supplies the missing measurement — median volume and trade count per session — but only at
-the point of sizing, so the queue still cannot tell a thin market from a liquid one until a
-candidate is approved. Surfacing `Depth` in the queue render is the remaining half, and it is
-cheap: the fetch already exists and is cached per session.
+**Still open: the queue cannot show it, and the blocker is layering, not effort.** `setups --list`
+lives in `oracle`, `AlpacaBroker.depth` in `execution`, and the pipeline runs oracle → execution
+— so the queue reading depth is a backwards dependency, the same shape as §4b's triage sidecar.
+Decide it the same way: a small duplicate reader in `oracle`, a shared workspace member, or let
+the queue stay blind and rely on the execution preview. Until then thinness is visible only
+*after* approval.
 
 ---
 
@@ -851,3 +854,35 @@ names, which is §27's open residual and needs §18 read first.
 
 Replay and the traps: `scripts/probe_replay.py`. Do **not** read its win rate or expectancy —
 90 of 134 rows are unresolved and the censoring runs entirely one way.
+
+---
+
+## 49. Build the H1 entry trigger under an H12 setup · `DECIDED` — new 2026-08-04
+
+§48 measured the defect; TraderMayne's phase 3 names it. We rest a limit in the zone with nothing
+waited for (a reversal entry) and pad the stop tight off that zone (a continuation stop) — the
+pairing he calls "death by a thousand cuts". **Decided: add the trigger.** Never enter on zone
+touch; enter the pullback into the FVG left by a displacement-backed structure break on H1.
+Mechanic, citations, the timeframe argument and the rejected alternative: `Trading/_Structure.md`
+§ the entry trigger.
+
+**Weekly → H12 → H1**, H12 resampled from H1 so one fetch supplies both rungs. The resample must
+drop empty buckets; that rule alone gets equities, crypto and futures right without branching.
+
+**Smaller than it looks.** No new primitives — `core.structure.breaks` and
+`core.imbalance.fair_value_gaps` already gate on displacement and use `.date` only as an
+orderable token, so three widened annotations put them on intraday bars. **No `date`→`datetime`
+refactor** while the intraday series stays separate from the daily `PriceSeries`. Execution is
+unchanged: step 4 enters *at* the FVG, so detection stays batch and the order stays a resting
+bracket.
+
+**The prerequisite is the participation gate, not the bars.** `INTL` — 77% of the book — returns
+hourly bars of 1-21 trades, several a single print; structure is undetectable and no vendor fixes
+it. **Decided 2026-08-04: a candidate whose trigger cannot be computed is not offered** —
+"no H1 structure to read" is a missing fact, and the gates-vs-scores rule gates those. Thinness
+short of that is a score and is now shown on every equity order (§36), so the line can be read
+off accumulated orders rather than picked. `INTL` itself is only in the book because it is paper;
+it predates the participation cap by 22 minutes and would be capped to 0.15% risk today.
+
+**Do not go shopping for data first** — checked 2026-08-04, verdict and evidence in
+`_Structure.md`. §27's target residual is the third leg of the same geometry problem.

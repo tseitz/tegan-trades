@@ -340,15 +340,31 @@ def describe(plan: OrderPlan, account: Account | None = None,
             f"    ! capped from {plan.capped_from:g} to {plan.size:g} — "
             f"{cap_explanation(plan)}"
         )
-        # Only participation has a second layer worth printing: "how small is this market"
-        # is the question after "why is this small", and it is the only one of the four whose
-        # answer is not already on screen.
-        if plan.cap_reason == CAP_PARTICIPATION and plan.depth is not None:
-            d = plan.depth
-            lines.append(
-                f"      {d.median_volume:,.0f} sh/day over {d.sessions} sessions, "
-                f"{d.median_trades:,.0f} trades/day, ~${d.dollars_per_trade:,.0f} per trade"
-            )
+
+    # **Printed on every equity order, not only when the participation ceiling bound** — the
+    # remaining half of `docs/IMPROVEMENTS.md` §36. It used to appear only under a cap, so a
+    # market thin enough to shrink the order showed its numbers and a market merely thin showed
+    # nothing: 175 trades/day and 26,862 trades/day rendered identically as long as neither
+    # tripped the 1% ceiling. The ceiling answers "should this order shrink"; this line answers
+    # "what am I about to stand in", and only the first of those needs a threshold.
+    #
+    # Deliberately unmarked rather than a warning. The numbers separate INTL from SBSW by 150x
+    # on their own, whereas a `!` on every equity is the failure `oracle.execute` names for the
+    # old Alpaca liquidity line — a warning that cannot distinguish teaches you to skip it.
+    # ``None`` on perps by construction (``HyperliquidBroker.depth``), where ``check_liquidity``
+    # answers the same question live and better.
+    if plan.depth is not None:
+        d = plan.depth
+        # The order as a share of a typical session — the one figure here that is about *this*
+        # order rather than the market, and the continuum the ceiling is a threshold on. Shown
+        # so the line that is chosen later (§49) can be read off accumulated orders rather than
+        # picked: 6.6% and 0.04% are the two the sizing measurement found.
+        share = plan.size / d.median_volume if d.median_volume else None
+        lines.append(
+            f"    market {d.median_volume:,.0f} sh/day over {d.sessions} sessions, "
+            f"{d.median_trades:,.0f} trades/day, ~${d.dollars_per_trade:,.0f} per trade"
+            + (f" — this order is {share:.2%} of one" if share is not None else "")
+        )
 
     # The total that nothing computed (`docs/IMPROVEMENTS.md` §40). Sizing is per-trade, so
     # eight approvals in one sitting each looked like 1% and together wanted 123.6% of the

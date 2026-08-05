@@ -198,6 +198,37 @@ def test_the_preview_explains_a_cap_it_applied():
 
 
 def test_the_preview_stays_quiet_when_nothing_was_capped():
-    """A line that prints on every order is a line nobody reads."""
+    """A *warning* that prints on every order is a warning nobody reads.
+
+    Narrowed from "a line that prints on every order" — see the test below, which requires the
+    market line on every equity order. The distinction is whether the line carries a number
+    that separates one market from another: `! capped` on a market that was not capped says
+    nothing, whereas `175 trades/day` against `44,222 trades/day` is the whole answer.
+    """
     assert "capped" not in describe(_build(depth=FXI, max_participation=0.01))
     assert "capped" not in describe(_build())
+
+
+def test_the_preview_shows_the_market_even_when_no_cap_bound():
+    """The thin market that does not trip the ceiling is the one worth seeing (§36, §49).
+
+    FXI clears 1% by four orders of magnitude, so nothing caps and — before this — nothing
+    printed. It then read identically to INTL, which trades 175 times a day. The whole point of
+    the line is to distinguish markets the ceiling treats the same.
+    """
+    text = describe(_build(depth=FXI, max_participation=0.01))
+    assert "capped" not in text
+    assert "24,211,596 sh/day" in text
+    assert "44,222 trades/day" in text
+
+
+def test_the_market_line_names_this_order_s_share_of_a_session():
+    """The continuum the ceiling is a threshold on, so the threshold can be read off orders
+    rather than picked. 1,639 shares of a 24,707-share session is 6.63%."""
+    assert "6.63% of one" in describe(_build(depth=INTL))
+
+
+def test_perps_get_no_market_line():
+    """``HyperliquidBroker.depth`` is None by construction — ``check_liquidity`` answers this
+    live and better there, and a blank shares-per-day line would imply a measurement failure."""
+    assert "sh/day" not in describe(_build())
