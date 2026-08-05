@@ -46,9 +46,13 @@ Always from the repo root:
 uv sync                                # one venv, one lock, all seven packages
 uv run setups                          # any of the 20 console scripts
 uv run brain "where is my roster on ETH" --no-llm
-uv run pytest -q -m "not integration"  # whole workspace; excludes live-network tests
+./scripts/check.sh                     # THE GATE — ruff + the suite pre-commit runs. ~14s.
 uv run pytest packages/brain -q        # scope by path, not by --package
 ```
+
+`scripts/check.sh` is the only thing that reproduces the commit gate. Running
+`pytest -m "not integration"` by hand collects the `needs_ore` tests too — they pass on a
+populated `data/` and fail on a fresh clone, so the command that looks equivalent is not.
 
 `uv run --package <name> pytest` scopes the *environment*, not collection — it still collects everything. Use a path to narrow a test run.
 

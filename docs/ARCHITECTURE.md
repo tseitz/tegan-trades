@@ -60,17 +60,22 @@ flowchart TB
 
     subgraph orc["oracle — prices"]
         RT["🟢 route.py<br/>curated → majority-domain → refuse"]
-        SRC["🟡 fetch-prices<br/>coinbase · kraken · yahoo"]
+        SRC["🟡 fetch-prices<br/>coinbase · kraken · yahoo<br/>daily, then hourly per instrument"]
+        H12["🟢 resample.to_h12<br/>H1 → H12, empty buckets dropped"]
     end
     PR[(data/prices/<br/>daily OHLC cache)]
+    IN[(data/prices/intraday/<br/>H1 OHLCV + volume)]
 
     subgraph corepkg["core — pure logic, zero I/O, always 🟢"]
         GR[grade · score · rank · stability]
         STc[structure · dealing_range<br/>imbalance · levels]
+        TG[trigger.py — the H1 entry<br/>break → displacement → FVG]
         SU[setups.py — the manifesto's gates]
         CN[canon.py — read-time resolve]
     end
 
+    SRC --> IN --> H12
+    IN --> TG
     WL --> YT --> TR
     TR --> DE --> TH
     TR --> BE --> ST
@@ -107,6 +112,22 @@ flowchart TB
     class YT,SRC network
     class BC,RT,GR,STc,SU,CN,RPT,SETUPS,RET,RET2 free
 ```
+
+## Timeframes — which bars answer which question
+
+Weekly sets the bias, the rung below it holds the zones, and H1 is where the entry is confirmed.
+Which rung an instrument gets is **measured, not assigned by asset class**: `resample.straddles_the_split`
+asks whether the thinner half of the UTC day carries at least 25% of the activity.
+
+| Rung | Job | Crypto · FX · futures · `^VIX` | Equities · session-bound indices |
+|---|---|---|---|
+| bias | direction | weekly | weekly |
+| setup | where the zone is | **H12** (resampled from H1) | **daily** (already cached) |
+| trigger | when to enter | H1 | H1 |
+
+`^GSPC` is an index that behaves like an equity and `^VIX` is one that does not, which is why no
+class label works — the asset-class table this replaced was wrong three times. Details and the
+measurements: `oracle/resample.py`, `core/trigger.py`, `scripts/probe_intraday_gaps.py`.
 
 ## Command cost table
 
@@ -173,14 +194,14 @@ silently skipping.
 
 The cap is a **trailing** check: spend is recorded after a run, so the run that crosses the
 line completes and the *next* one is skipped. Overshoot is bounded by one run, ~$0.25.
-| `fetch-prices` | 🟡 | Free public APIs. Cached to `data/prices/`. |
+| `fetch-prices` | 🟡 | Free public APIs. Cached to `data/prices/`. **Two passes**: daily for every routed leg, then hourly for each *tradeable* instrument (~300 extra requests, deduped so a proxied asset warms `DIA` once rather than `^DJI` too). `--no-intraday` skips the second. |
 | `score-roster` | 🟢 | Reads ore, writes a report. Never mutates `data/theses/`. |
-| `setups` | 🟢 | Pure cross-reference over cached prices + theses. |
+| `setups` | 🟢 | Cross-reference over cached prices + theses. Reads the hourly cache to pick each asset's setup rung, then refreshes hourly bars for **candidates only** — a few dozen requests, not ~300. `--no-triggers` skips both. |
 | `distill-canon` | 🟢 | Explicitly deterministic, no LLM (says so in its docstring). |
 | `distill-triage` | 🟢 | Explicitly deterministic, no LLM. |
 | `distill-migrate-ids` | 🟢 | Local rewrite. |
 | `fetch-tickers` | 🟡 | CoinGecko snapshot, free tier. |
-| `pytest -q -m "not integration"` | 🟢 | 694 tests, whole workspace, ~1.4s. Every LLM path is injected/mocked. |
+| `./scripts/check.sh` | 🟢 | The gate: ruff + the suite the pre-commit hook runs. ~14s. The only command that reproduces it — `pytest -m "not integration"` alone also collects `needs_ore`. Every LLM path is injected/mocked. |
 | `pytest -q` | 🟡 | Adds 7 live-network `integration` tests; the 2 YouTube ones need the Webshare proxy. |
 
 ### 💸 `ingest-x` is a different kind of cost
