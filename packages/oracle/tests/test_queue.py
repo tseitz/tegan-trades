@@ -6,7 +6,8 @@ from datetime import date
 from itertools import pairwise
 
 import pytest
-from core.setups import DAILY, STRUCTURAL, TIER_MAJOR, WEEKLY, Candidate, View
+from core.exits import EXTREME
+from core.setups import DAILY, TIER_MAJOR, WEEKLY, Candidate, View
 from core.structure import BULLISH, SWING_HIGH, SWING_LOW, Break, OrderBlock, Swing
 from oracle import queue
 
@@ -33,7 +34,7 @@ def _candidate(score: float, asset: str = "BTC") -> Candidate:
         asset=asset, direction="long", block=_block(),
         entry=110.0, entry_top=110.0, entry_bottom=100.0,
         stop=100.0, invalidation=90.0,
-        target=140.0, target_source=STRUCTURAL,
+        target=140.0, target_source=EXTREME,
         reward_risk=3.0, reward_risk_from_price=3.5, approach=1.0, price=105.0,
         weekly_trend="uptrend", daily_trend="uptrend", zone="discount",
         zone_timeframe=DAILY, tier=TIER_MAJOR,

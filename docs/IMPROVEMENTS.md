@@ -801,3 +801,28 @@ sample grows from here — re-run the same-bar test against both geometries once
 Two trigger residuals, both deliberately unset rather than guessed: a fired trigger never
 expires (measure fill-lag first), and a candidate whose trigger cannot be computed is refused
 rather than falling back to an H12 trigger under a weekly setup.
+
+Targets moved under `core/exits.py` on 2026-08-05 and should be much nearer now — re-run
+`probe_replay.py` and re-measure the 6.7 before doing anything else here, since half of what
+this entry describes may already be gone.
+
+---
+
+## 49. Exit levels are structural edges, not liquidity pools · `OPEN` — new 2026-08-05
+
+`core/exits.py` ships the target as the nearest thing price must negotiate, which removed the
+unreachable targets (31 of 49 → 0, `scripts/probe_target_reachability.py`). What it uses for
+"a level" is still crude: one order-block edge, one post-break extreme, one range boundary.
+
+The roster's own vocabulary is finer and is worth adopting — TraderMayne, `EfpLqyt2yEw`:
+targets are **equal highs and equal lows**, meaning two or more swing points at roughly one
+price with time and space between them, and they split into *internal* range liquidity (take
+partials) and *external* (the target). Ask `brain_search` for the episode before building.
+
+Build a `core/liquidity.py` that clusters confirmed swings into pools with a tolerance and a
+separation rule, classify each against the dealing range, and drive both target and ladder off
+pools rather than raw edges. Tune the tolerance with a probe — 14 raw swings sat between entry
+and target at the median before truncation, so clustering is the whole difficulty.
+
+Then decide whether an authored target should rejoin the ladder as a rung. It is dropped
+outright today, which is right for the *target* and possibly wasteful for the runners.

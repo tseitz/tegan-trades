@@ -622,6 +622,15 @@ def decision_record(candidate: Candidate, decision: str, *, decided_at: str,
         "stop": candidate.stop,
         "target": candidate.target,
         "target_source": candidate.target_source,
+        # What was above the target when this was judged. Recorded because "should the target
+        # have been the second rung" is the first question to ask of a filled trade, and the
+        # ladder is derived from a structure that has moved on by the time anyone asks it.
+        # A ``target_source`` of ``structural`` marks a row from before targets had to respect
+        # what stood in the way; those have no ladder and are not comparable to these.
+        "ladder": [
+            {"price": level.price, "kind": level.kind, "reward_risk": level.reward_risk}
+            for level in candidate.ladder
+        ],
         # Both are inputs the correlation needs and neither was recoverable after the fact.
         # ``reward_risk`` is a weighted term in ``_score`` *and* the headline number in the
         # queue, so its weight was the one thing decisions could not be mined against;

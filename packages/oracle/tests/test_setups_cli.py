@@ -9,10 +9,10 @@ from pathlib import Path
 import pytest
 from core import routing, trigger
 from core.canon import Registry
+from core.exits import EXTREME, OPPOSING, RANGE_BOUND, ExitLevel
 from core.setups import (
     DAILY,
     SCORE_VERSION,
-    STRUCTURAL,
     TIER_LARGE,
     TIER_MAJOR,
     WEEKLY,
@@ -49,7 +49,7 @@ def _candidate(**overrides) -> Candidate:
         "asset": "BTC", "direction": "long", "block": block,
         "entry": 110.0, "entry_top": 110.0, "entry_bottom": 100.0,
         "stop": 100.0, "invalidation": 90.0,
-        "target": 140.0, "target_source": STRUCTURAL,
+        "target": 140.0, "target_source": EXTREME,
         "reward_risk": 3.0, "reward_risk_from_price": 3.5, "approach": 1.0, "price": 105.0,
         "weekly_trend": "uptrend", "daily_trend": "uptrend", "zone": "discount",
         "zone_timeframe": DAILY,
@@ -123,6 +123,24 @@ def test_decision_record_carries_the_zone_timeframe():
     record = setups_cli.decision_record(_candidate(zone_timeframe=WEEKLY), setups_cli.APPROVED,
                                         decided_at="2026-07-26T00:00:00+00:00")
     assert record["zone_timeframe"] == WEEKLY
+
+
+def test_decision_record_carries_the_ladder_that_was_on_screen():
+    """"Should the target have been the second rung" is the first question to ask of a filled
+    trade, and the ladder is derived from a structure that has moved on by the time anyone asks
+    — so it has to be recorded rather than recomputed."""
+    candidate = _candidate(ladder=(ExitLevel(price=150.0, kind=OPPOSING, reward_risk=4.0),))
+    record = setups_cli.decision_record(candidate, setups_cli.APPROVED,
+                                        decided_at="2026-08-05T00:00:00+00:00")
+    assert record["ladder"] == [{"price": 150.0, "kind": OPPOSING, "reward_risk": 4.0}]
+
+
+def test_a_decision_on_a_candidate_with_no_ladder_records_an_empty_one():
+    """Empty, not absent: a missing key would be indistinguishable from a row written before
+    ladders existed, and those two say opposite things about whether anything was above."""
+    record = setups_cli.decision_record(_candidate(), setups_cli.APPROVED,
+                                        decided_at="2026-08-05T00:00:00+00:00")
+    assert record["ladder"] == []
 
 
 def test_the_queue_labels_which_timeframe_a_zone_came_from():
@@ -344,9 +362,30 @@ def test_format_candidate_collapses_stop_and_invalidation_onto_one_rung_when_equ
 
 def test_format_candidate_always_shows_target_source():
     stated = setups_cli.format_candidate(_candidate(target_source="stated"))
-    structural = setups_cli.format_candidate(_candidate(target_source=STRUCTURAL))
+    structural = setups_cli.format_candidate(_candidate(target_source=EXTREME))
     assert "stated" in stated
-    assert STRUCTURAL in structural
+    assert EXTREME in structural
+
+
+def test_the_ladder_is_drawn_above_the_target_with_its_own_ratios():
+    """The runners are what price meets *after* the target, so they sit beyond it and are
+    labelled apart from it — the reward-to-risk in the headline is quoted on the target alone
+    and must not read as though it were earned at the top of the ladder."""
+    text = setups_cli.format_candidate(_candidate(ladder=(
+        ExitLevel(price=150.0, kind=OPPOSING, reward_risk=4.0),
+        ExitLevel(price=180.0, kind=RANGE_BOUND, reward_risk=7.0),
+    )))
+    rungs = [ln for ln in text.splitlines() if "target" in ln or "runner" in ln]
+    assert [ln.split()[0] for ln in rungs] == ["180", "150", "140"]
+    assert "runner" in rungs[0] and RANGE_BOUND in rungs[0] and "7.00R" in rungs[0]
+    assert "target" in rungs[2]
+
+
+def test_a_candidate_with_no_ladder_renders_exactly_as_it_did():
+    """The ladder is additive: a target with nothing above it is the common case and must not
+    grow an empty rung."""
+    text = setups_cli.format_candidate(_candidate())
+    assert "runner" not in text
 
 
 def test_format_candidate_shows_freshness_so_an_old_view_reads_as_one():

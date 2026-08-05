@@ -45,6 +45,7 @@ from hashlib import sha256
 
 from core.dealing_range import DealingRange
 from core.dealing_range import dealing_range as resolve_dealing_range
+from core.exits import STRUCTURAL_KINDS, ExitLevel, exit_levels
 from core.funding import FundingOutlook, carry_adjusted_rr
 from core.imbalance import atr
 from core.levels import read_target
@@ -63,9 +64,6 @@ from core.structure import (
     order_blocks,
     trend_state,
 )
-
-# Target source, alongside core.levels.STATED.
-STRUCTURAL = "structural"
 
 # Which bar series a zone's structure was read from.
 #
@@ -479,7 +477,10 @@ class Setup:
     stop: float
     invalidation: float   # the origin swing: where the zone itself dies
     target: float
-    target_source: str    # STATED | NEAREST | STRUCTURAL
+    # OPPOSING | EXTREME | RANGE_BOUND | STATED | NEAREST — see ``core.exits``. The first two
+    # structural kinds did not exist before targets were made to respect what stands in the
+    # way, so a decision recorded with ``structural`` predates that and is not comparable.
+    target_source: str
     reward_risk: float
     # The same ratio measured from **where price is now** rather than from entry, and the one
     # ``_score`` actually uses. §19(d): with a structural target — the post-break extreme — the
@@ -507,6 +508,10 @@ class Setup:
     zone_timeframe: str   # WEEKLY | DAILY — which series ``block`` was read from
     tier: str
     score: float
+    # Every exit level *beyond* ``target``, nearest first — the runners. ``target`` is
+    # ``core.exits``' first level and is kept as its own field rather than read back off the
+    # head of this tuple, so the gated, printed number stays one unmissable thing.
+    ladder: tuple[ExitLevel, ...] = ()
     # ── carry: what holding this costs. Reported, never scored — see CARRY_HOLD_DAYS. ──
     # All four are None together when ``Context.funding`` was absent.
     funding_annual: float | None = None      # the median rate used, as a fraction per year
@@ -558,6 +563,8 @@ class Candidate:
     views: tuple[View, ...]
     thesis_ids: tuple[str, ...]
     score: float
+    # The representative's runners — see ``Setup.ladder``.
+    ladder: tuple[ExitLevel, ...] = ()
     # Other corpus labels for this same instrument, folded in by ``collapse``. Carried rather
     # than dropped because the label is what ``cfg/exclusions.yaml`` and the decision key are
     # written in: a spelling absorbed silently takes any standing "I don't trade this" with it.
@@ -652,9 +659,13 @@ def collapse(
     the **nearest** win, on the grounds that if they can't agree how far price goes, the
     smallest claim is the one to hold them to.
 
-    Taking the nearest outright was tried first and measured: structural targets are usually
-    closer than stated ones, so on live ETH data 7 accepted readings (3 stated, 4 inferred) all
-    lost to structure, and the "listen to them" half of the design never fired once.
+    Both stages read differently now that ``core.exits`` picks each member's target, and the
+    change is worth being explicit about: an authored target reaches this function *only* when
+    it was already nearer than every structural level on its own row. So the first stage can no
+    longer prefer a further number — it prefers a named one among rows whose targets are all
+    the nearest their structure allowed. The measurement that used to justify the second stage
+    (7 live ETH readings all losing to structure, because structural targets were the closer
+    ones) described the old precedence and no longer applies at this layer.
 
     Agreement is recomputed from the collapsed group, which is the whole point — six people on
     one zone is one strong candidate, not six weak ones.
@@ -681,7 +692,7 @@ def collapse(
     candidates = []
     for (asset, *_), members in groups.items():
         folded = tuple(sorted({s.asset for s in members} - {asset}))
-        authored = [s for s in members if s.target_source != STRUCTURAL]
+        authored = [s for s in members if s.target_source not in STRUCTURAL_KINDS]
         rep = min(authored or members, key=lambda s: abs(s.target - s.entry))
 
         # Latest statement per person, newest first. Keeping only the latest means a person who
@@ -708,7 +719,7 @@ def collapse(
             asset=asset, aliases=folded, direction=rep.direction, block=rep.block,
             entry=rep.entry, entry_top=rep.entry_top, entry_bottom=rep.entry_bottom,
             stop=rep.stop, invalidation=rep.invalidation,
-            target=rep.target, target_source=rep.target_source,
+            target=rep.target, target_source=rep.target_source, ladder=rep.ladder,
             reward_risk=rep.reward_risk,
             reward_risk_from_price=rep.reward_risk_from_price, approach=rep.approach,
             price=rep.price,
@@ -990,22 +1001,35 @@ def cross_reference(
     stop = _padded_stop(block, atr=context.atr, multiple=stop_pad_atr, sign=sign)
     risk = abs(entry - stop)
 
-    # ── target: theirs if reasonable, else structure ──
+    # ── target: the nearest level price actually has to negotiate ──
+    #
+    # ``_reasonable`` still filters the author's number — behind the entry, already reached,
+    # or further than the instrument plausibly travels — but it no longer *decides*. What
+    # decides is ``core.exits``: the author's target is one candidate among the structural
+    # ones and only survives when it is the nearest of them. Everything past the nearest
+    # becomes the ladder, so a target that used to be printed alone is now visibly a runner.
     stated = read_target(row, published_close)
-    target, target_source = None, ""
-    if not stated.abstained and _reasonable(
+    # Propagated with the reading's own source rather than flattened to STATED — a NEAREST
+    # target is inferred, and relabelling it clean would destroy the provenance that makes
+    # "did inferred targets do as well as clean ones" answerable.
+    authored = stated.target if (not stated.abstained and _reasonable(
         stated.target, entry=entry, risk=risk, sign=sign,
         price_now=context.price, atr_now=context.atr,
         min_reward_risk=min_reward_risk, max_target_atr=max_target_atr,
-    ):
-        # Propagate the reading's own source rather than flattening to STATED — a NEAREST
-        # target is inferred, and relabelling it clean would destroy the provenance that
-        # makes "did inferred targets do as well as clean ones" answerable.
-        target, target_source = stated.target, stated.source
-    elif zone.structural_target is not None and (zone.structural_target - entry) * sign > 0:
-        target, target_source = zone.structural_target, STRUCTURAL
-    if target is None:
+    )) else None
+    # Every live zone on the asset, not just this candidate's: a weekly bearish block is an
+    # obstruction to an H12 long even though the two are separate candidates. Same-side blocks
+    # are filtered inside ``exit_levels``.
+    levels = exit_levels(
+        entry=entry, stop=stop, sign=sign, zones=context.zones,
+        dealing_range=context.dealing_range,
+        structural_target=zone.structural_target,
+        authored=authored, authored_source=stated.source,
+    )
+    if not levels:
         return refuse("no_target")
+    target, target_source = levels[0].price, levels[0].kind
+    ladder = levels[1:]
 
     reward_risk = abs(target - entry) / risk
     # A trade risking more than it stands to make is not a setup, whichever source supplied the
@@ -1065,7 +1089,7 @@ def cross_reference(
         timeframe=timeframe, published_at=published.isoformat(), block=block,
         entry=entry, entry_top=block.top, entry_bottom=block.bottom,
         stop=stop, invalidation=block.invalidation,
-        target=target, target_source=target_source,
+        target=target, target_source=target_source, ladder=ladder,
         reward_risk=reward_risk, reward_risk_from_price=reward_risk_from_price,
         approach=approach, price=context.price,
         freshness=freshness, trend_alignment=trend_alignment,

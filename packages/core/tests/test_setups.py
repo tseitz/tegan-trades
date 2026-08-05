@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from core.dealing_range import DealingRange
+from core.exits import EXTREME, OPPOSING, RANGE_BOUND
 from core.funding import FundingOutlook
 from core.levels import NEAREST, STATED
 from core.setups import (
@@ -15,7 +16,6 @@ from core.setups import (
     PROXIMITY_SPAN,
     RR_HALF,
     STOP_PAD_ATR,
-    STRUCTURAL,
     TIER_LARGE,
     TIER_MAJOR,
     TIER_NONCRYPTO,
@@ -398,12 +398,53 @@ def test_an_undated_view_is_refused_rather_than_assumed_fresh():
 
 
 # ── target resolution ───────────────────────────────────────────────────────
+#
+# ``_ctx()`` puts entry at 110, the structural extreme at 140 and the range top at 200, so the
+# nearest thing structure offers a long is 30 away. An authored number is believed only when it
+# beats that — see ``core.exits``.
 
-def test_a_reasonable_stated_target_is_preferred_over_the_structural_one():
-    """'If the person has a target, listen to that.'"""
-    setup = cross_reference(_row(key_levels=[150.0]), _ctx(), published_close=100.0)
-    assert setup.target == 150.0
+
+def _far_ctx(**overrides):
+    """A context whose structure sits *beyond* any target under test, so ``_reasonable``'s own
+    verdict is what decides. Needed because the nearest-wins rule otherwise masks it: a stated
+    number that structure undercuts is dropped whether or not it was plausible, which would
+    leave the plausibility tests passing for the wrong reason."""
+    base = {"dealing_range": _range(high=500.0),
+            "zones": (Zone(block=_block(), structural_target=400.0),)}
+    base.update(overrides)
+    return _ctx(**base)
+
+
+def test_a_stated_target_nearer_than_structure_is_believed():
+    """'If the person has a target, listen to that' — but only when it is the first thing price
+    meets. 130 is 20 from entry against structure's 30, so it leads."""
+    setup = cross_reference(_row(key_levels=[130.0]), _ctx(), published_close=100.0)
+    assert setup.target == 130.0
     assert setup.target_source == STATED
+
+
+def test_a_stated_target_beyond_the_nearest_structural_level_is_dropped():
+    """The LINK case in miniature: a stated 150 against an extreme at 140. The engine used to
+    print 150 and never mention 140; now 140 is the target and 150 is gone entirely, because a
+    number nobody has to trade through is not a level."""
+    setup = cross_reference(_row(key_levels=[150.0]), _ctx(), published_close=100.0)
+    assert setup.target == 140.0
+    assert setup.target_source == EXTREME
+    assert 150.0 not in [level.price for level in setup.ladder]
+
+
+def test_overhead_supply_caps_the_target_and_the_rest_becomes_the_ladder():
+    """The LINK defect end to end. A long whose zone ran to 140 with a live *bearish* block at
+    130 was targeting straight through supply the engine had already found; now 130 is the
+    target and 140/200 are runners the trade can be held for once it pays."""
+    overhead = Zone(block=_block(BEARISH, top=145.0, bottom=130.0, invalidation=160.0),
+                    structural_target=None)
+    ctx = _ctx(zones=(*_ctx().zones, overhead))
+    setup = cross_reference(_row(), ctx, published_close=100.0)
+    assert setup.target == 130.0
+    assert setup.target_source == OPPOSING
+    assert [level.price for level in setup.ladder] == [140.0, 200.0]
+    assert [level.kind for level in setup.ladder] == [EXTREME, RANGE_BOUND]
 
 
 def test_an_abstained_reading_falls_back_to_the_structural_target():
@@ -411,14 +452,14 @@ def test_an_abstained_reading_falls_back_to_the_structural_target():
     whether they call it that way or not.'"""
     setup = cross_reference(_row(key_levels=[]), _ctx(), published_close=100.0)
     assert setup.target == 140.0
-    assert setup.target_source == STRUCTURAL
+    assert setup.target_source == EXTREME
 
 
 def test_an_inferred_nearest_target_is_used_and_labelled_as_such():
     """Several levels beyond entry resolve to the nearest rather than abstaining, and the
     source records that it was inferred so it stays separable from a clean read."""
-    setup = cross_reference(_row(key_levels=[150.0, 160.0]), _ctx(), published_close=100.0)
-    assert setup.target == 150.0
+    setup = cross_reference(_row(key_levels=[130.0, 160.0]), _ctx(), published_close=100.0)
+    assert setup.target == 130.0
     assert setup.target_source == NEAREST
 
 
@@ -426,7 +467,7 @@ def test_a_stated_target_below_entry_is_unreasonable():
     """Stated at 105 it was above the publish price of 100, but the zone's near edge is 110 —
     so by the time there's an entry, the 'target' is behind it."""
     setup = cross_reference(_row(key_levels=[105.0]), _ctx(), published_close=100.0)
-    assert setup.target_source == STRUCTURAL
+    assert setup.target_source == EXTREME
 
 
 def test_a_stated_target_price_has_already_reached_is_unreasonable():
@@ -439,7 +480,7 @@ def test_a_stated_target_price_has_already_reached_is_unreasonable():
     floor and would once have been believed. It is not a target any more; it is history."""
     setup = cross_reference(_row(key_levels=[125.0]), _ctx(price=130.0), published_close=100.0)
     assert setup.target == 140.0
-    assert setup.target_source == STRUCTURAL
+    assert setup.target_source == EXTREME
 
 
 def test_a_short_target_price_has_already_reached_is_unreasonable():
@@ -454,7 +495,7 @@ def test_a_short_target_price_has_already_reached_is_unreasonable():
     setup = cross_reference(_row(direction="short", key_levels=[160.0]), ctx,
                             published_close=185.0)
     assert setup.target == 140.0
-    assert setup.target_source == STRUCTURAL
+    assert setup.target_source == EXTREME
 
 
 def test_a_stated_target_still_ahead_of_price_is_untouched():
@@ -462,23 +503,25 @@ def test_a_stated_target_still_ahead_of_price_is_untouched():
     well into the zone, and a stated 150 is still ahead of it — 'if they call something, we
     listen' has to keep firing for the ordinary case, or the fix would quietly delete the
     stated leg of target selection instead of cleaning it."""
-    setup = cross_reference(_row(key_levels=[150.0]), _ctx(price=130.0), published_close=100.0)
-    assert setup.target == 150.0
+    setup = cross_reference(_row(key_levels=[135.0]), _ctx(price=130.0), published_close=100.0)
+    assert setup.target == 135.0
     assert setup.target_source == STATED
 
 
 def test_a_stated_target_with_reward_risk_below_one_is_unreasonable():
-    # entry 110, stop 100 -> risk 10. A target at 115 is only 5 of reward.
+    # entry 110, stop 95 (the far edge padded by one ATR) -> risk 15. A target at 115 is 5 of
+    # reward. It is nearer than structure's 140, so only the R:R floor can reject it.
     setup = cross_reference(_row(key_levels=[115.0]), _ctx(), published_close=100.0)
-    assert setup.target_source == STRUCTURAL
+    assert setup.target_source == EXTREME
 
 
 def test_an_implausibly_distant_stated_target_is_unreasonable():
     """ATR is 5, so anything beyond 100 past the entry is further than this instrument travels.
-    A call for 500 is not a target, it's a vibe."""
-    setup = cross_reference(_row(key_levels=[500.0]), _ctx(), published_close=100.0)
-    assert setup.target == 140.0
-    assert setup.target_source == STRUCTURAL
+    A call for 500 is not a target, it's a vibe. Structure is pushed out to 400 so the ceiling
+    is what rejects it rather than the nearest-wins rule."""
+    setup = cross_reference(_row(key_levels=[500.0]), _far_ctx(), published_close=100.0)
+    assert setup.target == 400.0
+    assert setup.target_source == EXTREME
 
 
 def test_the_distance_ceiling_scales_with_volatility_not_with_the_structural_target():
@@ -486,16 +529,17 @@ def test_the_distance_ceiling_scales_with_volatility_not_with_the_structural_tar
     because a recent break leaves a tiny structural distance. A target 190 beyond entry is
     implausible on ATR 5 and entirely ordinary on ATR 50 — the structural target is identical
     in both cases, so it cannot be the yardstick."""
-    quiet = cross_reference(_row(key_levels=[300.0]), _ctx(atr=5.0), published_close=100.0)
-    volatile = cross_reference(_row(key_levels=[300.0]), _ctx(atr=50.0), published_close=100.0)
-    assert quiet.target_source == STRUCTURAL
+    quiet = cross_reference(_row(key_levels=[300.0]), _far_ctx(atr=5.0), published_close=100.0)
+    volatile = cross_reference(_row(key_levels=[300.0]), _far_ctx(atr=50.0),
+                               published_close=100.0)
+    assert quiet.target_source == EXTREME
     assert volatile.target == 300.0 and volatile.target_source == STATED
 
 
 def test_an_unknown_atr_skips_the_distance_check_rather_than_failing_it():
     """Inability to judge must not read as a verdict — the rule imbalance.is_displacement
     follows too."""
-    setup = cross_reference(_row(key_levels=[300.0]), _ctx(atr=None), published_close=100.0)
+    setup = cross_reference(_row(key_levels=[300.0]), _far_ctx(atr=None), published_close=100.0)
     assert setup.target == 300.0
 
 
@@ -618,16 +662,31 @@ def test_the_reward_risk_floor_is_configurable():
     assert setup.reward_risk == pytest.approx(5 / 15)   # reward 5 over a padded risk of 15
 
 
-def test_no_target_from_either_source_is_refused():
+def test_no_target_from_any_source_is_refused():
+    """Nothing beyond entry anywhere: no post-break extreme, nothing stated, and a range whose
+    high the zone already sits above.
+
+    That last part is what it takes to reach this refusal now, and it is a real configuration
+    rather than a contrivance: the range is bounded by the most recent confirmed swings, and an
+    order block can perfectly well have formed above the newest swing high. Price at 105 in a
+    102-109 range is still a discount, so the long is permitted; its entry at 110 simply has no
+    external liquidity left above it."""
     no_structure = (Zone(block=_block(), structural_target=None),)
-    outcome = cross_reference(_row(), _ctx(zones=no_structure), published_close=100.0)
+    outcome = cross_reference(
+        _row(), _ctx(zones=no_structure, dealing_range=_range(low=102.0, high=109.0)),
+        published_close=100.0,
+    )
     assert _reason(outcome) == "no_target"
 
 
-def test_a_structural_target_behind_entry_is_not_used():
+def test_a_structural_target_behind_entry_falls_through_to_the_range_boundary():
+    """A zone whose break never ran leaves the extreme behind the entry. That kills *that*
+    level, not the trade: the range high above is still external liquidity, and targeting it is
+    what the roster means by 'targets come from the high time frame'."""
     behind = (Zone(block=_block(), structural_target=105.0),)
-    outcome = cross_reference(_row(), _ctx(zones=behind), published_close=100.0)
-    assert _reason(outcome) == "no_target"
+    setup = cross_reference(_row(), _ctx(zones=behind), published_close=100.0)
+    assert setup.target == 200.0
+    assert setup.target_source == RANGE_BOUND
 
 
 # ── tiering ─────────────────────────────────────────────────────────────────
@@ -933,22 +992,23 @@ def test_the_nearest_target_wins_among_disagreeing_views():
     assert candidate.target == 130.0
 
 
-def test_a_stated_target_beats_a_structural_one_even_when_further_away():
-    """'If they call something, we listen.' Nearest-outright was tried and measured: structural
-    targets are usually closer, so on live ETH data 7 accepted readings all lost to structure
-    and the listen-to-them half of the design never fired."""
-    ctx = _ctx()   # structural target 140, which is nearer to entry 110 than 150 is
-    authored = cross_reference(_row(id="t1", key_levels=[150.0]), ctx, published_close=100.0)
+def test_a_named_target_represents_the_group_over_an_unnamed_one():
+    """'If they call something, we listen.' The preference survives, but it can no longer pull
+    the group's target *further out*: by the time a row reaches ``collapse``, ``core.exits`` has
+    already dropped any authored number that structure undercut. Here 130 beats the extreme at
+    140 on its own row, so the named target is also the nearer one."""
+    ctx = _ctx()
+    authored = cross_reference(_row(id="t1", key_levels=[130.0]), ctx, published_close=100.0)
     structural = cross_reference(_row(id="t2", key_levels=[]), ctx, published_close=100.0)
-    assert structural.target_source == STRUCTURAL
+    assert structural.target_source == EXTREME
     candidate = collapse([authored, structural])[0]
-    assert candidate.target == 150.0
+    assert candidate.target == 130.0
     assert candidate.target_source == STATED
 
 
 def test_structure_is_still_used_when_nobody_stated_a_target():
     candidate = collapse(_setups_for(["Mayne", "Cred"]))[0]
-    assert candidate.target_source == STRUCTURAL
+    assert candidate.target_source == EXTREME
 
 
 def test_separate_zones_stay_separate():
@@ -1079,8 +1139,12 @@ def test_every_zone_level_refusal_the_engine_emits_is_classified_as_one():
         _reason(cross_reference(
             _row(), _ctx(zones=(Zone(block=_block(top=110.0, bottom=110.0),
                                      structural_target=140.0),)), published_close=100.0)),
+        # no_target now needs the range boundary out of reach too — it is a target source in
+        # its own right, so a zone with no post-break extreme is no longer automatically dead.
+        # See test_no_target_from_any_source_is_refused for why the range is 102-109.
         _reason(cross_reference(
-            _row(), _ctx(zones=(Zone(block=_block(), structural_target=None),)),
+            _row(), _ctx(zones=(Zone(block=_block(), structural_target=None),),
+                         dealing_range=_range(low=102.0, high=109.0)),
             published_close=100.0)),
         _reason(cross_reference(
             _row(), _ctx(zones=(Zone(block=_block(), structural_target=115.0),)),
