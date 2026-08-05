@@ -151,6 +151,65 @@ def test_coinbase_intraday_returns_intraday_bars_from_a_real_payload():
 
 # ── Yahoo ───────────────────────────────────────────────────────────────────
 
+def test_yahoo_intraday_keeps_the_timestamp_it_currently_throws_away():
+    """``parse_chart`` calls ``.date()`` on a full UNIX timestamp — fine for daily bars, fatal
+    for hourly ones, where it would collapse a whole session onto a single bar."""
+    payload = {"chart": {"result": [{
+        "timestamp": [1754038800, 1754042400],          # 09:00 and 10:00 UTC
+        "indicators": {"quote": [{"open": [100.0, 101.0], "high": [102.0, 103.0],
+                                  "low": [99.0, 100.5], "close": [101.0, 102.5],
+                                  "volume": [5000, 7000]}]},
+    }]}}
+    bars = yahoo.parse_intraday_chart(payload)
+    assert [b.date for b in bars] == [datetime(2025, 8, 1, 9, tzinfo=UTC),
+                                      datetime(2025, 8, 1, 10, tzinfo=UTC)]
+    assert [b.volume for b in bars] == [5000.0, 7000.0]
+
+
+def test_yahoo_intraday_asks_for_extended_hours():
+    """Measured 2026-08-05: ``includePrePost=false`` returns AAPL only 13:00-19:00 UTC, and
+    ``true`` returns 08:00-23:00. Regular-session-only is the assembly that makes 56% of fair
+    value gaps artifacts of the overnight closure — see ``scripts/probe_intraday_gaps.py``. The
+    thin pre/post bars are load-bearing precisely because they bridge that gap."""
+    seen = {}
+
+    def fake_get(url, params):
+        seen.update(params)
+        return
+
+    yahoo.fetch_intraday("AAPL", datetime(2025, 8, 1, tzinfo=UTC),
+                         datetime(2025, 8, 20, tzinfo=UTC), get_json=fake_get)
+    assert seen["includePrePost"] == "true"
+    assert seen["interval"] == "1h"
+
+
+def test_yahoo_intraday_tolerates_a_missing_volume_series():
+    """Yahoo serves ``^GSPC`` and ``^DJI`` with no volume at all. Unmeasured is not zero —
+    ``straddles_the_split`` depends on telling those apart."""
+    payload = {"chart": {"result": [{
+        "timestamp": [1754038800],
+        "indicators": {"quote": [{"open": [100.0], "high": [102.0],
+                                  "low": [99.0], "close": [101.0]}]},
+    }]}}
+    assert yahoo.parse_intraday_chart(payload)[0].volume is None
+
+
+def test_yahoo_intraday_skips_null_padded_rows():
+    """Yahoo pads closed periods with null OHLC rather than omitting the timestamp — the same
+    trap ``parse_chart`` already guards, and more common on an hourly grid."""
+    payload = {"chart": {"result": [{
+        "timestamp": [1754038800, 1754042400],
+        "indicators": {"quote": [{"open": [100.0, None], "high": [102.0, None],
+                                  "low": [99.0, None], "close": [101.0, None],
+                                  "volume": [5000, None]}]},
+    }]}}
+    assert len(yahoo.parse_intraday_chart(payload)) == 1
+
+
+def test_yahoo_intraday_unknown_symbol_returns_empty():
+    assert yahoo.parse_intraday_chart(_fixture("yahoo_unknown_symbol")) == []
+
+
 def test_yahoo_parses_chart_into_bars():
     bars = yahoo.parse_chart(_fixture("yahoo_tsla_daily"))
     assert bars

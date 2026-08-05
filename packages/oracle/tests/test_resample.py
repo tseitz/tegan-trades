@@ -424,12 +424,25 @@ def test_the_thinner_half_is_the_one_tested():
 
 
 def test_a_source_reporting_no_volume_falls_back_to_counting_bars():
-    """Yahoo serves ``^GSPC`` and ``^DJI`` with no volume at all. Counting bars answers the same
-    question there: a session-bound index has no morning bars to count. Measured 0.0% for both."""
+    """Counting bars answers the same question: a session-bound instrument has no bars on one
+    side to count."""
     assert straddles_the_split(_spread(1.0, 1.0, volume=False)) is True     # bars both sides
-    gspc = IntradaySeries(symbol="^GSPC", source="yahoo", interval=H1, bars=tuple(
+    session_only = IntradaySeries(symbol="X", source="yahoo", interval=H1, bars=tuple(
         _h1(f"2026-08-03T{h:02d}:00:00+00:00", 100.0, volume=None) for h in range(13, 21)))
-    assert straddles_the_split(gspc) is False
+    assert straddles_the_split(session_only) is False
+
+
+def test_a_volume_field_of_all_zeros_is_no_information_not_a_dead_market():
+    """The case that bit. Yahoo reports ``^VIX`` with a volume series present and **0.0 on every
+    bar** — so the "is volume absent" check passes, every weight is zero, and the instrument
+    that trades 07:00-20:00 UTC squarely across the split was being sent to the daily rung.
+
+    Not an index-wide rule either: ``^GSPC`` reports real volume (111bn over 60 days, measured)
+    and is correctly session-bound on its own numbers. Only the data can say.
+    """
+    vix = IntradaySeries(symbol="^VIX", source="yahoo", interval=H1, bars=tuple(
+        _h1(f"2026-08-03T{h:02d}:00:00+00:00", 20.0, volume=0.0) for h in range(7, 21)))
+    assert straddles_the_split(vix) is True
 
 
 def test_an_empty_series_does_not_straddle():
@@ -437,5 +450,9 @@ def test_an_empty_series_does_not_straddle():
     assert straddles_the_split(_hourly()) is False
 
 
-def test_a_measured_zero_does_not_straddle():
-    assert straddles_the_split(_spread(0.0, 0.0)) is False
+def test_a_uniform_zero_falls_back_to_bars_rather_than_refusing():
+    """Deliberate, and a change from the first cut of this rule. A market reporting zero volume
+    everywhere is telling us nothing about *where* it trades, so the bar positions are the only
+    evidence left — and an instrument with bars either side of the split straddles it. Whether
+    it is worth trading at all is the trigger's gate to answer, not this function's."""
+    assert straddles_the_split(_spread(0.0, 0.0)) is True

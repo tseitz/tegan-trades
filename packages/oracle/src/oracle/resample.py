@@ -153,16 +153,23 @@ def _bucket_volume(bucket) -> float | None:
 
 
 def _weights(bars) -> list[float]:
-    """Dollar volume per bar, or a flat 1.0 each when the source reports no volume at all.
+    """Dollar volume per bar, or a flat 1.0 each when volume carries no information.
 
-    Indices are the volume-less case — Yahoo serves ``^GSPC`` and ``^DJI`` with none — and
-    counting bars answers the same question for them: a session-bound index has no morning bars
-    to count, which is exactly the 0.0% both of them measure. Dollar volume rather than share
-    volume so the two halves stay comparable across instruments, matching what
-    ``execution.participation`` already medians for the equivalent daily question.
+    Three cases, and the third is the one that bites. A source may omit volume entirely
+    (``None``), report it truthfully, **or report a literal 0.0 on every single bar** — which is
+    what Yahoo does for ``^VIX``. The last is a volume *field* with no volume *data* in it, and
+    reading it as a dead market sends an instrument that trades 07:00-20:00 UTC, squarely across
+    the split, to the daily rung. Note this is not true of every index: ``^GSPC`` reports real
+    volume and is correctly session-bound on its own numbers, so "index" is no guide here either.
+
+    Counting bars answers the same question wherever the numbers do not: a session-bound
+    instrument has no bars on one side to count. Dollar volume rather than share volume where
+    the data exists, so the halves stay comparable across instruments — matching what
+    ``execution.participation`` medians for the equivalent daily question.
     """
-    if any(bar.volume is not None for bar in bars):
-        return [(bar.volume or 0.0) * bar.close for bar in bars]
+    weights = [(bar.volume or 0.0) * bar.close for bar in bars]
+    if sum(weights) > 0:
+        return weights
     return [1.0] * len(bars)
 
 
