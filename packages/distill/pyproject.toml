@@ -34,4 +34,11 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-markers = ["integration: hits the network; run explicitly"]
+markers = [
+    "integration: hits the network; run explicitly",
+    # Needs a populated `data/` — machine-generated ore that is gitignored and never
+    # committed, so these pass locally and cannot pass anywhere else. Deliberately NOT
+    # folded into `integration`: that marker promises a network call, and a reader
+    # deciding whether to run these needs to know it is a missing *file* that stops them.
+    "needs_ore: reads cached ore from data/; run where the corpus exists",
+]

@@ -807,3 +807,21 @@ is decorative, and `--dry-run`/`--out` read as supported when neither exists.
 Worth checking the other 19 console scripts for the same shape before assuming it is one command.
 Fix is an `argparse` that at minimum honours `--help` without touching the network, and ideally
 `--out` so a refresh can be inspected before it lands on the tracked file.
+
+---
+
+## 47. The circuit breaker cannot bound its own overshoot · `OPEN` — new 2026-08-04
+
+`brain/sweep.py` submits every transcript to the pool before the breaker can be consulted:
+`extract_all` builds the full `futures` list, then evaluates `consecutive_failures` in the
+`as_completed` consumer. Workers only check `abort` on entry, so the number of calls that slip
+through after the cap is hit is however many the pool starts before the main thread catches up —
+a scheduling race, not a bound. Measured at `max_workers=1`: 6 on a laptop, 7 on a CI runner.
+
+It does stop, and the §-docstring's 466-call incident cannot recur. But the guard's bound is
+whatever the machine does, and at the default concurrency the overshoot is larger and untested.
+
+Fix is to check `abort` in the submit loop, or submit in chunks of `max_workers`, so overshoot is
+bounded by concurrency rather than by timing. `test_circuit_breaker_aborts_after_consecutive_failures`
+was loosened to a majority-aborted assertion because the precise one encoded this laptop's speed;
+tighten it back once the bound is real.

@@ -181,6 +181,11 @@ def test_a_single_asset_cohort_reports_no_pool_rather_than_full_confidence():
     assert not cost.borrowed
 
 
+# ``build`` reads the price cache and the funding log out of ``data/``, so these two say
+# nothing about the code when that ore is absent — they fail on an empty cohort rather
+# than on the behaviour they describe. Marked, not deleted: the regression each one pins
+# is real and was live.
+@pytest.mark.needs_ore
 def test_the_cohort_is_the_whole_universe_not_the_assets_asked_for():
     """Regression for a live bug: ``triage`` built the router from ``queue.candidates`` — the
     *limited* sample — so a small sitting left one Alpaca-listed asset in the cohort, the
@@ -195,6 +200,7 @@ def test_the_cohort_is_the_whole_universe_not_the_assets_asked_for():
     assert cost.borrowed, "72 sessions leans on the pool, and the queue has to be told"
 
 
+@pytest.mark.needs_ore
 def test_asking_about_nothing_still_yields_a_usable_cohort():
     empty = venue_routing.build(set())
     assert len(empty.cohort) > 1

@@ -8,9 +8,10 @@
 #      to someone else, or to me after a reinstall.
 #   2. It catches the commit that went in behind `--no-verify`.
 #
-# Integration tests are excluded here as everywhere: they hit YouTube live and need residential
-# proxy credentials, so in CI they would fail for an environmental reason and train everyone to
-# ignore a red run.
+# Two exclusions, for the same reason and not the same cause: `integration` hits YouTube live and
+# needs residential proxy credentials; `needs_ore` reads the gitignored `data/` corpus, which no
+# clean checkout has. Either would fail here for an environmental reason, and a run that is red
+# for reasons nobody can fix is a run everybody learns to ignore.
 #
 # Nothing below interpolates event data into a shell command. The only `${{ }}` is `github.ref`
 # in the concurrency key, which is a branch name matched against the `push` filter above and is
@@ -50,4 +51,4 @@ jobs:
 
       - run: uv run ruff check .
 
-      - run: uv run pytest -q -m "not integration"
+      - run: uv run pytest -q -m "not integration and not needs_ore"

@@ -26,11 +26,11 @@ repos:
         types_or: [python, pyi]
 
       - id: pytest
-        name: pytest (excluding integration)
-        # `pass_filenames: false` because the suite is not per-file — and integration is excluded
-        # for the same reason it is excluded everywhere else: those two tests hit YouTube live and
-        # fail without proxy credentials, which is environmental, not a regression.
-        entry: uv run pytest -q -m "not integration"
+        name: pytest (excluding integration + needs_ore)
+        # `pass_filenames: false` because the suite is not per-file. `integration` needs the network
+        # and `needs_ore` needs a populated `data/`; both are environmental, not regressions. Matched
+        # to CI on purpose — a hook that passes what CI then fails is worse than no hook.
+        entry: uv run pytest -q -m "not integration and not needs_ore"
         language: system
         pass_filenames: false
         types: [python]

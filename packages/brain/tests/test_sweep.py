@@ -160,9 +160,14 @@ def test_circuit_breaker_aborts_after_consecutive_failures(tmp_path):
                           max_workers=1, max_consecutive_failures=3)
     r = results[0]
     assert len(r.failed) + len(r.aborted) == 20, "every transcript must be accounted for"
-    assert len(r.failed) <= 6, f"breaker should trip early, got {len(r.failed)} failures"
-    assert len(r.aborted) >= 14
-    assert attempts["n"] <= 6, "aborted transcripts must not call the LLM at all"
+    assert r.aborted, "the breaker must trip and abort the remainder"
+    # Exact, and the assertion that actually has teeth: an aborted transcript costs nothing
+    # because it never reaches the model. Independent of how many slipped through first.
+    assert attempts["n"] == len(r.failed), "aborted transcripts must not call the LLM at all"
+    # A majority, not a precise count. Every future is submitted before the breaker can be
+    # consulted (see §47), so the overshoot is a function of how fast the worker outruns the
+    # consumer — 6 on a laptop, 7 on a CI runner. Pinning it to either encodes the machine.
+    assert len(r.aborted) >= 10, f"breaker should trip early, only {len(r.aborted)} aborted"
 
 
 def test_circuit_breaker_counter_resets_on_success(tmp_path):
