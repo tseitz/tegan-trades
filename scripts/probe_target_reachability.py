@@ -33,12 +33,19 @@ The cost is real and was paid deliberately: the live queue went 47 → 44 candid
 sits under 1 R from entry — they did not get worse, they stopped being quoted against a level
 price had no clear run to.
 
+Section 3 puts that in §48's units: median target 4.0 daily ranges against the 7.1 that
+``probe_replay.py`` still reports, p90 8.9 against 21.4. **Not the same rows** — this is
+today's queue and those are recorded decisions — so it indicates rather than proves. The stop
+side moved too (median 1.9 → 2.4) and nothing in this change touched stops, which is the
+clearest evidence that the two populations differ and neither number should be quoted alone.
+
 Run: ``uv run python scripts/probe_target_reachability.py``
 """
 from __future__ import annotations
 
 from collections import Counter
 from datetime import UTC, datetime
+from statistics import median
 
 from core.canon import load_registry
 from core.exits import STRUCTURAL_KINDS
@@ -52,6 +59,11 @@ from oracle.setups_cli import CONFIG_DIR, _load_daily, build_candidates
 # How far from entry an opposing block must sit to count as an obstruction rather than as the
 # far side of the entry's own congestion. In risk units, so it scales with the zone.
 MATERIAL_R = 1.0
+
+# The yardstick for section 3, taken from ``probe_replay.py`` rather than re-chosen so the two
+# probes' distance numbers can be read against each other.
+RANGE_LOOKBACK = 14
+MIN_RANGE_BARS = 5
 
 
 def obstructions(candidate, zones, *, material_r: float = MATERIAL_R) -> list:
@@ -82,6 +94,44 @@ def waypoints(candidate, bars, as_of) -> list[float]:
     found = confirmed_by(swings(bars), as_of)
     levels = sorted({round(s.price, 6) for s in found if s.kind == kind and lo < s.price < hi})
     return levels if long_side else levels[::-1]
+
+
+def _geometry(candidates, contexts) -> None:
+    """Stop and target distance in units of the instrument's own daily range.
+
+    The same statistic as ``probe_replay.py`` section 5, computed on **today's queue** rather
+    than on recorded decisions — and that distinction is the whole reason this lives here.
+    ``probe_replay`` reads ``decisions.jsonl``, every row of which was written by whatever
+    engine was running at the time, so it cannot see a change to target selection until new
+    decisions accumulate. Running it to check this change measures the old one.
+
+    Same denominator as there (median high-low of the last ``RANGE_LOOKBACK`` bars, median so
+    one gap cannot set the scale) so the two numbers are directly comparable.
+    """
+    stops, targets = [], []
+    for candidate in candidates:
+        found = contexts.get(candidate.asset)
+        if found is None:
+            continue
+        _ctx, daily = found
+        prior = daily.bars[-RANGE_LOOKBACK:]
+        if len(prior) < MIN_RANGE_BARS:
+            continue
+        scale = median(bar.high - bar.low for bar in prior)
+        if not scale:
+            continue
+        stops.append(abs(candidate.entry - candidate.stop) / scale)
+        targets.append(abs(candidate.target - candidate.entry) / scale)
+
+    if not targets:
+        return
+    print("\n── geometry: how far are the two levels, in daily ranges? ──")
+    print(f"  comparable with probe_replay.py section 5, which reads recorded decisions and so"
+          f"\n  still reports the pre-{'exits'} numbers until new rows accumulate.")
+    for name, values in (("stop  ", stops), ("target", targets)):
+        values.sort()
+        p10, mid, p90 = (values[int(len(values) * q)] for q in (0.10, 0.50, 0.90))
+        print(f"  {name}  distance  p10 {p10:5.1f}  median {mid:5.1f}  p90 {p90:5.1f}")
 
 
 def main() -> int:
@@ -139,6 +189,8 @@ def main() -> int:
         print("\n── waypoints: swing levels between entry and target ──")
         print(f"median {way_counts[len(way_counts) // 2]}, max {max(way_counts)}, "
               f"{none_at_all} of {scored} have none (target is the first level price meets)")
+
+    _geometry(candidates, contexts)
 
     authored = [c for c in candidates if c.target_source not in STRUCTURAL_KINDS]
     print(f"\n── overshoot: {len(authored)} authored targets vs the structural one ──")

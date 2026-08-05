@@ -802,9 +802,15 @@ Two trigger residuals, both deliberately unset rather than guessed: a fired trig
 expires (measure fill-lag first), and a candidate whose trigger cannot be computed is refused
 rather than falling back to an H12 trigger under a weekly setup.
 
-Targets moved under `core/exits.py` on 2026-08-05 and should be much nearer now — re-run
-`probe_replay.py` and re-measure the 6.7 before doing anything else here, since half of what
-this entry describes may already be gone.
+**The target half is largely addressed** (`core/exits.py`, 2026-08-05): median target distance
+4.0 daily ranges against the 7.1 above, p90 8.9 against 21.4. Different populations — today's
+queue, not these rows — so treat it as strong indication, not proof.
+
+**The stop half is untouched and is what is left of this entry.** Nothing about the 67%
+same-bar rate changed; the entry is still a resting limit into a zone, which is the mechanism
+that selects for it. Note `probe_replay.py` cannot confirm any of this — it reads recorded
+decisions, so it reports whatever engine wrote them until new rows accumulate. Section 3 of
+`probe_target_reachability.py` is the same statistic on the live queue.
 
 ---
 
