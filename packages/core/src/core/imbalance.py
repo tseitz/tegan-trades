@@ -24,7 +24,7 @@ knowledge they couldn't have had yet.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 
 # Direction vocabulary is owned by core.structure and re-exported here rather than redefined,
 # so the two modules can never drift into disagreeing about what "bullish" is.
@@ -98,7 +98,7 @@ class Gap:
     kind: str          # BULLISH | BEARISH
     top: float
     bottom: float
-    date: date
+    date: date | datetime
     index: int
     middle_index: int
 

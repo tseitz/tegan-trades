@@ -7,6 +7,7 @@ that reaches disk is graded, drawn on and offered exactly like a correct one.
 from __future__ import annotations
 
 from datetime import date
+from types import SimpleNamespace
 
 from oracle import cache, fetch_cli
 from oracle.marks import Mark, index_marks
@@ -102,3 +103,29 @@ def test_a_curated_route_is_cached_without_being_second_guessed(monkeypatch, tmp
     )
 
     assert status == "ok"
+
+
+# ── the hourly warming pass ─────────────────────────────────────────────────────────────────
+
+def test_a_proxied_asset_warms_one_hourly_series_not_two():
+    """``plan_fetches`` yields two daily jobs for ``DJI`` — the priced leg ``^DJI`` and the
+    traded leg ``DIA`` — and both resolve to the same ``trade_symbol``. Fetching both would
+    double the pass and cache an hourly chart of an index no order can reach."""
+    priced = OracleRef(asset="DJI", source="yahoo", symbol="^DJI", tradeable="DIA")
+    traded = OracleRef(asset="DJI", source="yahoo", symbol="DIA")
+    targets = fetch_cli.intraday_targets([
+        SimpleNamespace(ref=priced), SimpleNamespace(ref=traded)])
+    assert len(targets) == 1
+    assert targets[0].trade_symbol == "DIA"
+
+
+def test_distinct_instruments_are_all_warmed():
+    jobs = [SimpleNamespace(ref=OracleRef(asset=a, source="coinbase", symbol=f"{a}-USD"))
+            for a in ("BTC", "ETH", "SOL")]
+    assert len(fetch_cli.intraday_targets(jobs)) == 3
+
+
+def test_a_ref_with_no_intraday_identity_is_skipped_rather_than_crashing():
+    """``DerivedRef`` — a ratio computed from two other series — carries neither field, and
+    there is no hourly chart of a ratio to warm."""
+    assert fetch_cli.intraday_targets([SimpleNamespace(ref=SimpleNamespace(asset="ETHBTC"))]) == []

@@ -63,6 +63,11 @@ def on_or_before(stamp: date | datetime, when: date | datetime | None) -> bool:
     return stamp <= when
 
 
+# A bar's own stamp, so it is whatever clock that series is on: a ``date`` on the daily and
+# weekly series, a ``datetime`` on H12 and H1. Contrast every ``as_of`` below, which stays a
+# ``date`` deliberately — "what could a caller have known by the end of that day" is a calendar
+# question whatever the bars are, and ``on_or_before`` is what reconciles the two.
+
 SWING_HIGH = "high"
 SWING_LOW = "low"
 
@@ -84,10 +89,10 @@ class Swing:
     the BOS and order-block passes can walk the bars between a swing and a later break
     without re-searching by date.
     """
-    date: date
+    date: date | datetime
     price: float
     kind: str          # SWING_HIGH | SWING_LOW
-    confirmed_at: date
+    confirmed_at: date | datetime
     index: int
 
 
@@ -253,7 +258,7 @@ class Break:
     level: float       # the swing price that was closed through
     swing: Swing       # the swing that was broken
     origin: Swing | None
-    date: date
+    date: date | datetime
     index: int
 
 
@@ -332,9 +337,9 @@ class OrderBlock:
     kind: str          # BULLISH | BEARISH
     top: float         # the full candle, high to low — not the body, not a half
     bottom: float
-    date: date         # the order-block candle
+    date: date | datetime         # the order-block candle
     index: int
-    confirmed_at: date  # when the break made it knowable
+    confirmed_at: date | datetime  # when the break made it knowable
     bos: Break
     invalidation: float | None
 
@@ -476,7 +481,7 @@ def _invalidation_for(bos: Break, *, top: float, bottom: float) -> float | None:
             else max(bos.origin.price, top))
 
 
-def invalidated_on(block: OrderBlock, bars) -> date | None:
+def invalidated_on(block: OrderBlock, bars) -> date | datetime | None:
     """The date the block died, or None if it is still live in ``bars``.
 
     Death is a **close** beyond the invalidation level — the swing the move originated from.

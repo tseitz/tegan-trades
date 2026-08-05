@@ -16,7 +16,7 @@ redefined, so the two modules can never drift into disagreeing about what "bulli
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 
 from core.structure import (
     SWING_HIGH,
@@ -54,7 +54,7 @@ class DealingRange:
     high: float
     low_swing: Swing
     high_swing: Swing
-    confirmed_at: date
+    confirmed_at: date | datetime
 
     @property
     def equilibrium(self) -> float:

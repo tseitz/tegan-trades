@@ -16,7 +16,7 @@ from pathlib import Path
 from core.canon import load_registry
 from core.identity import DIFFERS
 
-from oracle import cache, confirm, corpus, listings
+from oracle import cache, confirm, corpus, listings, trigger_feed
 from oracle import marks as marks_mod
 from oracle.plan import FetchJob, plan_fetches
 from oracle.route import load_routing_table
@@ -87,6 +87,46 @@ def _run_job(job: FetchJob, *, root: Path, marks=None) -> tuple[FetchJob, str, i
         return job, f"error:{type(exc).__name__}", 0
 
 
+def intraday_targets(jobs) -> list:
+    """The refs whose hourly bars are worth holding, one per instrument an order can reach.
+
+    Deduped on ``(source, trade_symbol)`` because a proxied asset plans two daily jobs — the
+    priced leg (``^DJI``) and the traded leg (``DIA``) — and both resolve to the same
+    ``trade_symbol``. The zone, the stop and the trigger are all quoted on that one, and
+    ``score-roster`` (the only consumer of the priced leg) grades on daily closes and has no
+    use for an hourly bar. So a proxied asset warms one hourly series, not two.
+    """
+    seen = {}
+    for job in jobs:
+        ref = job.ref
+        symbol = getattr(ref, "trade_symbol", None)
+        source = getattr(ref, "source", None)
+        if symbol is None or source is None:
+            continue
+        seen.setdefault((source, symbol), ref)
+    return list(seen.values())
+
+
+def _warm_intraday(refs, *, root: Path, concurrency: int) -> tuple[int, int]:
+    """-> (symbols cached, bars written). Never raises, exactly like ``_run_job``.
+
+    ``setups`` reads this cache rather than filling it: choosing the setup rung for ~300 assets
+    at queue time would be ~300 round trips before the first candidate printed. An asset with
+    nothing here takes the daily rung, which is correct but loses H12 on anything that trades
+    around the clock — so the nightly warming this is what makes the rung right.
+    """
+    def one(ref):
+        try:
+            series = trigger_feed.load_or_fetch(ref, root=root)
+        except Exception:  # noqa: BLE001 - one dead symbol must not abort the pass
+            return 0
+        return 0 if series is None else len(series.bars)
+
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        counts = list(pool.map(one, refs))
+    return sum(1 for n in counts if n), sum(counts)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Backfill the price cache for the corpus.")
     parser.add_argument("--dry-run", action="store_true",
@@ -95,6 +135,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="refetch which symbols each exchange carries")
     parser.add_argument("--concurrency", type=int, default=6)
     parser.add_argument("--only", help="fetch a single canonical asset (debugging)")
+    parser.add_argument("--no-intraday", action="store_true",
+                        help="skip the hourly pass; `setups` then falls back to daily zones "
+                             "for everything and shows no entry trigger")
     args = parser.parse_args(argv)
 
     registry = load_registry(CONFIG_DIR)
@@ -151,6 +194,13 @@ def main(argv: list[str] | None = None) -> int:
             results.append((job, status, n))
             if status != "ok":
                 print(f"  {status:<22} {job.ref.asset} ({job.ref.source}:{job.ref.symbol})")
+
+    if not args.no_intraday:
+        targets = intraday_targets(jobs)
+        print(f"\nwarming {len(targets)} hourly series for the entry trigger ...")
+        symbols, bars = _warm_intraday(
+            targets, root=cache.DATA_ROOT, concurrency=args.concurrency)
+        print(f"  {symbols}/{len(targets)} symbols, {bars} hourly bars")
 
     ok = [r for r in results if r[1] == "ok"]
     print(f"\ncached {len(ok)}/{len(jobs)} symbols, {sum(n for _, _, n in ok)} bars")
