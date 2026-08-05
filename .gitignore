@@ -25,3 +25,5 @@ worktrees/
 
 # Personal sandbox/permission overrides (machine-specific paths, e.g. ~/vault)
 .claude/settings.local.json
+# Working plans — ephemeral, not deliverables.
+.claude/plans/
