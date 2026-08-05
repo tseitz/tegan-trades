@@ -28,6 +28,19 @@ from oracle.series import Bar, PriceSeries
 # carves into the same twelve-hour periods regardless of which source served it.
 H12_SPLIT_HOUR = 12
 
+# What share of a day's activity the *thinner* half must carry for H12 to be a real extra rung
+# rather than a thin artifact beside a real bar. Parity between the halves is 50%, so this is
+# "at least half of parity" — the same shape as ``core.trigger.PARTICIPATION_FLOOR``.
+#
+# Measured 2026-08-05 over 13 continuous instruments and 66 routable equities: everything that
+# trades around the clock lands between 31.4% (CL=F) and 50.6% (FX), and everything session-bound
+# between 0.0% (^GSPC, ^DJI) and 22.3% (KORU, a 3x South Korea ETF whose pre-market tracks the
+# Korean session). The floor sits high in that gap rather than in the middle of it *on purpose*:
+# calling a session-bound instrument continuous draws a zone on a thin morning bucket, which is
+# the §50 defect, while calling a continuous one session-bound merely costs a rung of resolution
+# the spec already tolerates. The errors are not symmetric, so neither is the placement.
+BALANCED_HALF_FLOOR = 0.25
+
 
 def to_weekly(series: PriceSeries, *, include_partial: bool = False) -> PriceSeries:
     """Aggregate ``series.bars`` into ISO-week (Mon-Sun) bars.
@@ -137,3 +150,46 @@ def _bucket_volume(bucket) -> float | None:
     """
     measured = [bar.volume for bar in bucket if bar.volume is not None]
     return sum(measured) if measured else None
+
+
+def _weights(bars) -> list[float]:
+    """Dollar volume per bar, or a flat 1.0 each when the source reports no volume at all.
+
+    Indices are the volume-less case — Yahoo serves ``^GSPC`` and ``^DJI`` with none — and
+    counting bars answers the same question for them: a session-bound index has no morning bars
+    to count, which is exactly the 0.0% both of them measure. Dollar volume rather than share
+    volume so the two halves stay comparable across instruments, matching what
+    ``execution.participation`` already medians for the equivalent daily question.
+    """
+    if any(bar.volume is not None for bar in bars):
+        return [(bar.volume or 0.0) * bar.close for bar in bars]
+    return [1.0] * len(bars)
+
+
+def straddles_the_split(series: IntradaySeries, *,
+                        floor: float = BALANCED_HALF_FLOOR) -> bool:
+    """Does this instrument trade on both sides of 12:00 UTC enough for H12 to mean anything?
+
+    **This is the setup-rung decision, and it is computed rather than assigned.** The spec's
+    asset-class table was wrong three times — US equities, ``^VIX``'s stated reason, ``^GSPC``
+    — and every correction replaced a class label with a measurable property. This is that
+    property. ``^GSPC`` is an index that behaves like an equity; ``^VIX`` is an index that does
+    not; no label spanning both is true.
+
+    False for an empty or unmeasurable series: unknown degrades to the daily bar, which always
+    exists, is already cached, and is the rung equities take anyway.
+    """
+    bars = series.bars
+    if not bars:
+        return False
+    weights = _weights(bars)
+    total = sum(weights)
+    if not total:
+        return False
+    morning = sum(
+        weight for bar, weight in zip(bars, weights, strict=True)
+        if bar.date.astimezone(UTC).hour < H12_SPLIT_HOUR
+    )
+    share = morning / total
+    # The *thinner* half is the one tested — nothing says the dead half must be the morning.
+    return min(share, 1.0 - share) >= floor

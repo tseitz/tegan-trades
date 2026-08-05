@@ -79,9 +79,15 @@ STRUCTURAL = "structural"
 # are different setups with different risk, and each is judged and offered on its own.
 DAILY = "daily"
 WEEKLY = "weekly"
+# The setup rung for an instrument that trades on both sides of 12:00 UTC — crypto, FX, futures,
+# ``^VIX``. Never carried alongside ``DAILY`` for one asset: "the H12 *is* the daily, two H12
+# candles are one daily candle", so running both would be a 2x step carrying no new information.
+# Which one an instrument gets is measured, not assigned — ``oracle.resample.straddles_the_split``.
+H12 = "h12"
 # Weekly first: "the macro is much stronger" already lets the weekly trend veto a direction in
-# ``cross_reference``, and the same precedence orders the queue. See ``collapse``.
-ZONE_TIMEFRAMES = (WEEKLY, DAILY)
+# ``cross_reference``, and the same precedence orders the queue. See ``collapse``. ``H12`` sits
+# last as the finest rung; it and ``DAILY`` never compete, since no asset carries both.
+ZONE_TIMEFRAMES = (WEEKLY, DAILY, H12)
 
 # Refusals that describe a *zone* rather than the thesis that pointed at it.
 #
@@ -780,13 +786,20 @@ def tier_for(rank: int | None, *, domain: str = "crypto") -> str:
     return TIER_SMALL
 
 
-def build_context(daily, weekly, *, as_of: date,
+def build_context(setup, weekly, *, as_of: date,
+                  setup_timeframe: str = DAILY,
                   width: int = SWING_WIDTH) -> Context | None:
     """Compute structure for one asset. None when the asset has no price at ``as_of``.
 
-    ``daily`` and ``weekly`` are bar sequences — pass ``series.bars`` and
+    ``setup`` and ``weekly`` are bar sequences — pass ``series.bars`` and
     ``resample.to_weekly(series).bars``. The dealing range is taken from **weekly**, since the
     manifesto bounds it on the macro timeframe.
+
+    ``setup`` is the rung below the weekly, and which timeframe that is depends on the
+    instrument: the daily for equities and session-bound indices, H12 for anything trading on
+    both sides of 12:00 UTC (§50). It defaults to ``DAILY`` so every caller predating the H12
+    rung keeps its meaning. Nothing here measures which is appropriate — that is
+    ``oracle.resample.straddles_the_split``, because it needs bars this module never sees.
 
     **Order blocks are read from both series and kept side by side**, tagged by the one they
     came from. See ``DAILY``/``WEEKLY`` for why daily alone was not enough. Each series
@@ -799,7 +812,7 @@ def build_context(daily, weekly, *, as_of: date,
     is the same look-ahead discipline ``oracle.resample`` is built on, and understating a target
     is the safe direction to be wrong in.
     """
-    upto = tuple(bar for bar in daily if bar.date <= as_of)
+    upto = tuple(bar for bar in setup if bar.date <= as_of)
     if not upto:
         return None
 
@@ -807,11 +820,11 @@ def build_context(daily, weekly, *, as_of: date,
         as_of=as_of,
         price=upto[-1].close,
         weekly_trend=trend_state(weekly, as_of=as_of, width=width),
-        daily_trend=trend_state(daily, as_of=as_of, width=width),
+        daily_trend=trend_state(setup, as_of=as_of, width=width),
         dealing_range=resolve_dealing_range(weekly, as_of=as_of, width=width),
         zones=(
             _zones_from(weekly, timeframe=WEEKLY, as_of=as_of, width=width)
-            + _zones_from(daily, timeframe=DAILY, as_of=as_of, width=width)
+            + _zones_from(setup, timeframe=setup_timeframe, as_of=as_of, width=width)
         ),
         atr=atr(upto, len(upto) - 1),
     )

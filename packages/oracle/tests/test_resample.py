@@ -3,7 +3,7 @@ from datetime import UTC, date, datetime, timedelta, timezone
 import pytest
 from core import structure
 from oracle.intraday import H1, H12, IntradayBar, IntradaySeries
-from oracle.resample import to_h12, to_weekly
+from oracle.resample import BALANCED_HALF_FLOOR, straddles_the_split, to_h12, to_weekly
 from oracle.series import Bar, PriceSeries
 
 
@@ -372,3 +372,70 @@ def test_resampled_bars_still_flow_through_core():
     found = structure.swings(h12.bars, width=2)
     assert found
     assert all(isinstance(s.date, datetime) for s in found)
+
+
+# ── which timeframe is the setup rung ────────────────────────────────────────
+# H12 is only a real extra rung where the instrument trades on both sides of the split. Where it
+# does not, the morning bucket is a thin artifact and the daily bar is the honest answer (§50).
+
+def _spread(morning: float, evening: float, *, volume=True) -> IntradaySeries:
+    """One day: ``morning`` and ``evening`` units of volume either side of 12:00 UTC."""
+    bars = (
+        _h1("2026-08-03T08:00:00+00:00", 100.0, volume=morning if volume else None),
+        _h1("2026-08-03T16:00:00+00:00", 100.0, volume=evening if volume else None),
+    )
+    return IntradaySeries(symbol="X", source="s", interval=H1, bars=bars)
+
+
+def test_a_market_that_never_closes_straddles():
+    """Measured 2026-08-05: crypto runs 32.7%-46.9% of dollar volume in the morning half
+    (BTC 32.7, ETH 34.5, AVAX 46.9), FX 50.6%, gold 38.0%, crude 31.4%."""
+    assert straddles_the_split(_spread(32.7, 67.3)) is True
+    assert straddles_the_split(_spread(50.6, 49.4)) is True
+    assert straddles_the_split(_spread(31.4, 68.6)) is True     # CL=F, the thinnest that does
+
+
+def test_a_session_bound_instrument_does_not_straddle():
+    """66 routable equities: median 1.4% in the morning half. ``KORU`` is the extreme at 22.3%
+    — a 3x South Korea ETF whose pre-market tracks the Korean session — and it still must take
+    the daily, because it can only be *traded* in US hours."""
+    assert straddles_the_split(_spread(1.4, 98.6)) is False
+    assert straddles_the_split(_spread(22.3, 77.7)) is False    # KORU, the extreme that does not
+
+
+def test_the_floor_sits_high_in_the_gap_on_purpose():
+    """The measured gap is 22.3% to 31.4%, and the floor is not in the middle of it.
+
+    The two errors are not symmetric. Calling a session-bound instrument continuous gives it a
+    thin morning zone — the §50 defect, drawn on 1.2% of a day's volume. Calling a continuous
+    instrument session-bound merely costs a rung of resolution, which the spec already tolerates
+    (*"daily chart analysis entering on the 1 hour, totally okay"*). So the floor is placed to
+    make the first error unlikely rather than to split the difference.
+    """
+    assert BALANCED_HALF_FLOOR == 0.25
+    assert straddles_the_split(_spread(24.9, 75.1)) is False
+    assert straddles_the_split(_spread(25.1, 74.9)) is True
+
+
+def test_the_thinner_half_is_the_one_tested():
+    """Symmetric by construction — an evening-starved instrument is as unbalanced as a
+    morning-starved one, and nothing says the dead half must be the morning."""
+    assert straddles_the_split(_spread(95.0, 5.0)) is False
+
+
+def test_a_source_reporting_no_volume_falls_back_to_counting_bars():
+    """Yahoo serves ``^GSPC`` and ``^DJI`` with no volume at all. Counting bars answers the same
+    question there: a session-bound index has no morning bars to count. Measured 0.0% for both."""
+    assert straddles_the_split(_spread(1.0, 1.0, volume=False)) is True     # bars both sides
+    gspc = IntradaySeries(symbol="^GSPC", source="yahoo", interval=H1, bars=tuple(
+        _h1(f"2026-08-03T{h:02d}:00:00+00:00", 100.0, volume=None) for h in range(13, 21)))
+    assert straddles_the_split(gspc) is False
+
+
+def test_an_empty_series_does_not_straddle():
+    """Unknown degrades to the daily — the rung that always exists and is already cached."""
+    assert straddles_the_split(_hourly()) is False
+
+
+def test_a_measured_zero_does_not_straddle():
+    assert straddles_the_split(_spread(0.0, 0.0)) is False

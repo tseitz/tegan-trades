@@ -1,5 +1,5 @@
-from dataclasses import FrozenInstanceError
-from datetime import date
+from dataclasses import FrozenInstanceError, replace
+from datetime import date, timedelta
 from hashlib import sha256
 from types import SimpleNamespace
 
@@ -10,6 +10,7 @@ from core.levels import NEAREST, STATED
 from core.setups import (
     ARRIVAL,
     DAILY,
+    H12,
     MIN_REWARD_RISK,
     PROXIMITY_SPAN,
     RR_HALF,
@@ -22,6 +23,7 @@ from core.setups import (
     TIER_UNRANKED,
     WEEKLY,
     ZONE_LEVEL_REASONS,
+    ZONE_TIMEFRAMES,
     Candidate,
     Context,
     HalfLife,
@@ -30,6 +32,7 @@ from core.setups import (
     View,
     Zone,
     approach_to,
+    build_context,
     collapse,
     cross_reference,
     freshness_signal,
@@ -1231,3 +1234,60 @@ def test_a_thesis_is_ranked_by_its_best_zone_not_by_its_weekly_one():
         "the thesis containing the best-scoring zone must lead, even though that zone is the "
         f"daily one: {[(c.asset, c.zone_timeframe, round(c.score, 3)) for c in candidates]}"
     )
+
+
+# ── the setup rung is a parameter, not always the daily ─────────────────────────────────────
+# Crypto takes weekly + H12; equities and session-bound indices take weekly + daily (§50). An
+# asset gets one or the other, never both — "the H12 *is* the daily, two H12 candles are one
+# daily candle", so running both would be a 2x step carrying no new information.
+
+def _bos_bars():
+    """Bars that produce a live bullish order block: a down-leg, then a break above its high."""
+    pairs = [(102, 98), (101, 97), (100, 96), (99, 95), (98, 94), (97, 93), (96, 92),
+             (95, 91), (99, 93), (104, 97), (112, 103), (114, 108), (113, 106)]
+    out = []
+    for i, (high, low) in enumerate(pairs):
+        mid = (high + low) / 2
+        out.append(SimpleNamespace(date=date(2025, 1, 1) + timedelta(days=i),
+                                   open=mid, high=float(high), low=float(low), close=mid))
+    return out
+
+
+def test_zones_are_tagged_with_the_setup_timeframe_they_came_from():
+    bars = _bos_bars()
+    ctx = build_context(bars, bars, as_of=bars[-1].date, setup_timeframe=H12)
+    assert ctx is not None
+    tags = {z.timeframe for z in ctx.zones}
+    assert DAILY not in tags, "the setup rung was H12; nothing may still call itself daily"
+    assert tags <= {WEEKLY, H12}
+
+
+def test_the_setup_timeframe_defaults_to_daily():
+    """Back-compat is load-bearing here exactly as it is for ``cross_reference``: every caller
+    that predates the H12 rung, and every fixture built by hand, keeps its meaning untouched."""
+    bars = _bos_bars()
+    ctx = build_context(bars, bars, as_of=bars[-1].date)
+    assert H12 not in {z.timeframe for z in ctx.zones}
+
+
+def test_an_h12_zone_gets_a_different_candidate_key_than_a_daily_one():
+    """A real consequence worth pinning rather than discovering in production.
+
+    ``Candidate.key`` omits the timeframe only when it is ``DAILY`` — see its docstring, which
+    keeps that asymmetry precisely so decisions already on disk are not orphaned. Moving crypto
+    onto H12 therefore changes every crypto key. That is *correct*, since an H12 zone is a
+    different setup from a daily one with its own block and its own stop, but it is not free:
+    existing crypto approve/reject decisions stop matching, and reconciliation compares keys.
+    """
+    setup = cross_reference(_row(), _tf_ctx(), published_close=100.0)
+    assert setup.zone_timeframe == DAILY
+    as_daily = collapse([setup])[0]
+    as_h12 = collapse([replace(setup, zone_timeframe=H12)])[0]
+    assert as_daily.key != as_h12.key
+
+
+def test_h12_is_a_known_zone_timeframe_so_the_queue_can_order_it():
+    """``collapse`` sorts on ``ZONE_TIMEFRAMES.index`` and sends unknown values to the end, which
+    would quietly bury every crypto candidate beneath every equity one."""
+    assert H12 in ZONE_TIMEFRAMES
+    assert ZONE_TIMEFRAMES.index(WEEKLY) == 0
