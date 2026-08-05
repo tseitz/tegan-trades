@@ -4,7 +4,8 @@ No test here touches the network — fixtures were captured live once (see
 `tests/fixtures/`) so the parsers stay pinned to the shapes the APIs actually return.
 """
 import json
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -54,6 +55,98 @@ def test_coinbase_paginates_in_max_candle_chunks():
 
 def test_coinbase_symbol_for_builds_usd_pair():
     assert coinbase.symbol_for("BTC") == "BTC-USD"
+
+
+def test_coinbase_intraday_parse_keeps_the_volume_the_daily_parse_throws_away():
+    """Column 5 is real and has always been arriving — ``parse_candles`` drops it because
+    ``oracle.series.Bar`` has nowhere to put it. The trigger's gate needs it, so the intraday
+    parse keeps it. Asserted against the recorded daily fixture, since the payload shape is
+    identical across granularities and this is the only fixture captured from the live API."""
+    bars = coinbase.parse_intraday_candles(_fixture("coinbase_btc_daily"))
+    by_stamp = {b.date: b for b in bars}
+    aug5 = by_stamp[datetime(2024, 8, 5, tzinfo=UTC)]
+    assert aug5.close == pytest.approx(54029.12)
+    # The yen-carry crash day: 59,125 BTC against an 8-21k baseline either side of it. Reading
+    # any neighbouring column would land inside that baseline and look entirely plausible.
+    assert aug5.volume == pytest.approx(59125.78926672)
+    assert aug5.volume > 2.5 * max(b.volume for b in bars if b.date != aug5.date)
+
+
+def test_coinbase_intraday_stamps_are_utc_aware_datetimes_not_dates():
+    """Two candles inside one day must stay distinct — truncating to a date, as the daily
+    parse does, would collapse all 24 of them onto one bar."""
+    payload = [[1754006400, 99.0, 101.0, 100.0, 100.5, 7.0],
+               [1754010000, 100.0, 102.0, 100.5, 101.5, 8.0]]
+    bars = coinbase.parse_intraday_candles(payload)
+    assert len(bars) == 2
+    assert bars[0].date == datetime(2025, 8, 1, 0, tzinfo=UTC)
+    assert bars[1].date == datetime(2025, 8, 1, 1, tzinfo=UTC)
+    assert all(b.date.tzinfo is not None for b in bars)
+
+
+def test_coinbase_intraday_parse_tolerates_a_missing_volume_column():
+    """Unmeasured is not zero — a short row must not be read as a market that never traded."""
+    assert coinbase.parse_intraday_candles([[1754006400, 99.0, 101.0, 100.0, 100.5]])[0].volume is None
+
+
+def test_coinbase_intraday_paginates_in_hours_not_days():
+    """The 300-candle cap is counted in *candles*, so at hourly granularity one request covers
+    12.5 days, not 300. Reusing the daily step would ask for 7,200 candles and get a silently
+    truncated window back — the same failure ``fetch_daily`` chunks to avoid."""
+    seen = []
+
+    def fake_get(url, params):
+        seen.append((params["start"], params["end"], params["granularity"]))
+        return []
+
+    start = datetime(2025, 8, 1, tzinfo=UTC)
+    coinbase.fetch_intraday("BTC-USD", start, start + timedelta(days=50), get_json=fake_get)
+    assert len(seen) >= 4, f"expected >=4 chunks for 50 days of hourly, got {len(seen)}"
+    assert {g for _, _, g in seen} == {coinbase.GRANULARITY_HOURLY}
+    assert seen == sorted(seen)
+
+
+def test_coinbase_intraday_windows_tile_without_gaps_or_overlap():
+    """A gap loses an hour outright; an overlap is harmless but means paying for candles
+    twice against a rate limit that is the binding constraint on a backfill."""
+    seen = []
+
+    def fake_get(url, params):
+        seen.append((datetime.fromisoformat(params["start"]), datetime.fromisoformat(params["end"])))
+        return []
+
+    start = datetime(2025, 8, 1, tzinfo=UTC)
+    end = start + timedelta(days=30)
+    coinbase.fetch_intraday("BTC-USD", start, end, get_json=fake_get)
+    assert seen[0][0] == start
+    assert seen[-1][1] == end
+    for (_, prev_end), (next_start, _) in pairwise(seen):
+        assert next_start - prev_end == timedelta(hours=1)
+
+
+def test_coinbase_intraday_granularity_is_a_parameter_for_the_15m_trigger():
+    """M15 is the stated ideal trigger timeframe; H1 is where we start. The step must follow
+    the granularity, or a 15-minute fetch would tile in hourly strides and lose 3 of every 4
+    candles it asked for."""
+    seen = []
+
+    def fake_get(url, params):
+        seen.append((datetime.fromisoformat(params["start"]), datetime.fromisoformat(params["end"])))
+        return []
+
+    start = datetime(2025, 8, 1, tzinfo=UTC)
+    coinbase.fetch_intraday("BTC-USD", start, start + timedelta(days=30),
+                            granularity=900, get_json=fake_get)
+    assert seen[0][1] - seen[0][0] == timedelta(minutes=15) * (coinbase.MAX_CANDLES - 1)
+
+
+def test_coinbase_intraday_returns_intraday_bars_from_a_real_payload():
+    payload = [[1754006400, 99.0, 101.0, 100.0, 100.5, 7.0]]
+    bars = coinbase.fetch_intraday(
+        "BTC-USD", datetime(2025, 8, 1, tzinfo=UTC), datetime(2025, 8, 1, 1, tzinfo=UTC),
+        get_json=lambda url, params: payload,
+    )
+    assert bars[0].volume == pytest.approx(7.0)
 
 
 # ── Yahoo ───────────────────────────────────────────────────────────────────
