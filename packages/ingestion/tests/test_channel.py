@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from ingestion.channel import (
@@ -175,7 +175,7 @@ def test_ingest_channel_real_end_to_end(tmp_path):
     from ingestion.store import load
 
     target = ChannelTarget("Cowen", "@benjaminjcowen", max_videos=1, max_age_days=3650)
-    result = ingest_channel(target, root=tmp_path, today=date.today())
+    result = ingest_channel(target, root=tmp_path, today=datetime.now(UTC).date())
 
     # Either the one video ingested, or it lacked captions/date — but never crashed.
     handled = result.ingested + result.skipped + result.stale + [v for v, _ in result.failed]

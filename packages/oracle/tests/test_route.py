@@ -11,12 +11,12 @@ from oracle.route import (
 
 
 def _table(**kw):
-    base = dict(
-        curated={},
-        coinbase_symbols=frozenset({"BTC", "ETH", "SOL", "SPX", "META", "IP", "HYPE"}),
-        kraken_symbols=frozenset({"XMR", "TRX", "BTC"}),
-        domain_consensus={},
-    )
+    base = {
+        "curated": {},
+        "coinbase_symbols": frozenset({"BTC", "ETH", "SOL", "SPX", "META", "IP", "HYPE"}),
+        "kraken_symbols": frozenset({"XMR", "TRX", "BTC"}),
+        "domain_consensus": {},
+    }
     base.update(kw)
     return RoutingTable(**base)
 

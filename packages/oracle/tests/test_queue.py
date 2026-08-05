@@ -3,6 +3,7 @@ from __future__ import annotations
 import random
 from dataclasses import replace
 from datetime import date
+from itertools import pairwise
 
 import pytest
 from core.setups import DAILY, STRUCTURAL, TIER_MAJOR, WEEKLY, Candidate, View
@@ -226,7 +227,7 @@ def test_every_stratum_contributes_exactly_one_candidate():
     tail = sorted((row.candidate.score for row in q.rows if row.band == queue.BAND_TAIL),
                   reverse=True)
     # 95 candidates below the head, 20 strata, so consecutive picks stay about a stratum apart.
-    gaps = [round(a - b, 10) for a, b in zip(tail, tail[1:])]
+    gaps = [round(a - b, 10) for a, b in pairwise(tail)]
     assert all(gap > 0 for gap in gaps)
     assert max(gaps) <= 2 * 95 / 20 / 100
 

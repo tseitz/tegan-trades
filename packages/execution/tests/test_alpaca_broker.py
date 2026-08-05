@@ -250,7 +250,8 @@ def test_no_keys_means_no_requests():
     calls = []
     class T:
         def __call__(self, method, path, body=None, params=None):
-            calls.append(path); return
+            calls.append(path)
+            return
     assert AlpacaBroker(CREDS, transport=T()).live_keys(set()) == set()
     assert calls == []
 

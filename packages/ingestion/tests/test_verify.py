@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from ingestion import verify
@@ -16,8 +16,8 @@ from ingestion.verify import (
 
 
 def _probe(**kw):
-    base = dict(person="P", channel="@c", recorded_access="ok",
-                tabs={"videos": 5}, newest_title="a video", error="")
+    base = {"person": "P", "channel": "@c", "recorded_access": "ok",
+                "tabs": {"videos": 5}, "newest_title": "a video", "error": ""}
     base.update(kw)
     return ChannelProbe(**base)
 
@@ -35,7 +35,7 @@ def test_a_channel_recorded_ok_but_unreachable_is_broken():
 def test_a_channel_recorded_dormant_with_a_recent_video_has_revived():
     """@TraderSZ. The research was right about the uploads tab — newest is 2023-10-01 — and
     wrong about the channel: he moved to livestreams. Only the marker was suppressing him."""
-    recent = (date.today() - timedelta(days=5)).isoformat()
+    recent = (datetime.now(UTC).date() - timedelta(days=5)).isoformat()
     p = _probe(recorded_access="dormant", tabs={"videos": 5, "streams": 5},
                newest_title="Bitcoin for Ledges", newest_at=recent)
     assert p.verdict == REVIVED

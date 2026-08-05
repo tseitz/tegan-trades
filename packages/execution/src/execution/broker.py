@@ -269,7 +269,12 @@ class HyperliquidBroker:
                     "/info", {"type": "metaAndAssetCtxs", "dex": dex}
                 )
                 names = [a["name"] for a in (meta or {}).get("universe") or []]
-                self._contexts[dex] = dict(zip(names, ctxs or []))
+                # strict: `universe` and `assetCtxs` are parallel arrays and the pairing is
+                # purely positional, so unequal lengths make *every* index suspect, not just
+                # the tail that plain zip would drop. Raising here lands in the refusal below,
+                # which is the right answer in the package that sizes orders — a silently
+                # truncated map would instead hand back confident numbers for the head.
+                self._contexts[dex] = dict(zip(names, ctxs or [], strict=True))
             ctx = self._contexts[dex].get(coin)
             if ctx is None:
                 return None

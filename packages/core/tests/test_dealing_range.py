@@ -1,6 +1,8 @@
+from dataclasses import FrozenInstanceError
 from datetime import date, timedelta
 from types import SimpleNamespace
 
+import pytest
 from core.dealing_range import (
     DISCOUNT,
     EQUILIBRIUM,
@@ -157,8 +159,5 @@ def test_an_inverted_range_yields_none():
 
 def test_dealing_range_is_frozen():
     dr = dealing_range(RANGE_BARS)
-    try:
+    with pytest.raises(FrozenInstanceError):
         dr.low = 0.0
-    except Exception:
-        return
-    raise AssertionError("DealingRange must be immutable")

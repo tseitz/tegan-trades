@@ -1,3 +1,4 @@
+from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
 
 import pytest
@@ -156,5 +157,5 @@ def test_summarize_single_observation_has_no_spread():
 
 
 def test_funding_rate_is_immutable():
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         _rate(1e-05).rate = 2e-05  # type: ignore[misc]

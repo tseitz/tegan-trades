@@ -157,8 +157,7 @@ def test_restoring_the_same_day_replaces_rather_than_duplicates(tmp_path):
     document, and a late post added to a day must land in that day's file."""
     first = [XPost("Tradermayne", "1", "https://x.com/Tradermayne/status/1",
                    "2026-07-24", "one", "")]
-    both = first + [XPost("Tradermayne", "2", "https://x.com/Tradermayne/status/2",
-                          "2026-07-24", "two", "")]
+    both = [*first, XPost("Tradermayne", "2", "https://x.com/Tradermayne/status/2", "2026-07-24", "two", "")]
     x_roster.store_posts(first, WATCHLIST, root=tmp_path)
     x_roster.store_posts(both, WATCHLIST, root=tmp_path)
     docs = list((tmp_path / "x").glob("*.txt"))

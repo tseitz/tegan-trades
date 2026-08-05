@@ -771,3 +771,39 @@ depth and spread and let the curator decide, as `probe_venue_coverage.py` does f
 
 Would give §41 (`YM` against DIA for the Dow) a basis rather than a judgement call. Needs §32
 first: ranking expressions is meaningless until each candidate is confirmed to be the asset.
+
+---
+
+## 45. A short `assetCtxs` silently shortens the mark sweep · `OPEN` — new 2026-08-04
+
+Hyperliquid returns `universe` and `assetCtxs` as parallel arrays paired purely by index.
+`oracle/marks.py` and `oracle/sources/hyperliquid.py` zip them with `strict=False`, so a short
+`assetCtxs` drops the tail of the universe and the run reports a smaller number rather than an
+error — indistinguishable from a dex that genuinely lists fewer markets. `execution/broker.py`
+uses `strict=True` for the same pairing, because refusing one order is cheap; refusing a whole
+sweep is not, which is why the two disagree on purpose.
+
+Never observed — this is an unguarded contract, not a known defect. Cost of being wrong is
+prices silently missing for the tail of a dex's universe, which grades and routes as "no data".
+
+Fix is a length check per dex that skips and *names* the mismatched dex, rather than either
+truncating silently or raising and losing the other dexs. `fetch-funding` already reports
+unreachable venues this way (`nightly.sh` greps `^  ! (hyperliquid|lighter|aster)`); this needs
+the same treatment for a venue that answered but answered raggedly.
+
+---
+
+## 46. `fetch-tickers` takes an `argv` it never reads, and writes on any invocation · `OPEN` — new 2026-08-04
+
+`main(argv: list[str] | None = None)` in `distill/fetch_tickers.py` accepts an argument list and
+then ignores it — the first statement is a live CoinGecko fetch, the second overwrites
+`cfg/tickers.json`. So `fetch-tickers --help` does not print help; it spends a network call and
+rewrites a committed source of truth. Found by running `--help` across every console script to
+check they still imported: that sweep silently restaged 1,071 changed ranks.
+
+The signature is the trap. It looks like every other CLI here, so nothing suggests the argument
+is decorative, and `--dry-run`/`--out` read as supported when neither exists.
+
+Worth checking the other 19 console scripts for the same shape before assuming it is one command.
+Fix is an `argparse` that at minimum honours `--help` without touching the network, and ideally
+`--out` so a refresh can be inspected before it lands on the tracked file.

@@ -64,31 +64,31 @@ def _range(low=80.0, high=200.0):
 
 
 def _ctx(**overrides):
-    base = dict(
-        as_of=AS_OF, price=105.0, weekly_trend=UPTREND, daily_trend=UPTREND,
-        dealing_range=_range(),
-        zones=(Zone(block=_block(), structural_target=140.0),),
-        atr=5.0,
-    )
+    base = {
+        "as_of": AS_OF, "price": 105.0, "weekly_trend": UPTREND, "daily_trend": UPTREND,
+        "dealing_range": _range(),
+        "zones": (Zone(block=_block(), structural_target=140.0),),
+        "atr": 5.0,
+    }
     base.update(overrides)
     return Context(**base)
 
 
 def _short_ctx(**overrides):
-    base = dict(
-        as_of=AS_OF, price=175.0, weekly_trend=DOWNTREND, daily_trend=DOWNTREND,
-        dealing_range=_range(),
-        zones=(Zone(block=_block(BEARISH, top=180.0, bottom=170.0, invalidation=190.0),
+    base = {
+        "as_of": AS_OF, "price": 175.0, "weekly_trend": DOWNTREND, "daily_trend": DOWNTREND,
+        "dealing_range": _range(),
+        "zones": (Zone(block=_block(BEARISH, top=180.0, bottom=170.0, invalidation=190.0),
                     structural_target=140.0),),
-        atr=5.0,
-    )
+        "atr": 5.0,
+    }
     base.update(overrides)
     return Context(**base)
 
 
 def _row(**overrides):
-    base = dict(id="t1", asset="NVDA", person="TraderMayne", direction="long",
-                timeframe="swing", published_at=PUBLISHED, key_levels=[])
+    base = {"id": "t1", "asset": "NVDA", "person": "TraderMayne", "direction": "long",
+                "timeframe": "swing", "published_at": PUBLISHED, "key_levels": []}
     base.update(overrides)
     return SimpleNamespace(**base)
 

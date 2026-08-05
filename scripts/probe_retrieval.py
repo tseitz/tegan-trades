@@ -85,7 +85,7 @@ def main() -> None:
         print(f"{short:<52} {top1:>6.3f} {top5:>6.3f} {p50:>6.3f} {sep:>6.3f}  {quality}")
         print(f"{'':<52} {'':>6} {'':>6} p99={p99:.3f}")
 
-        for h, lab in zip(hits, labels):
+        for h, lab in zip(hits, labels, strict=True):
             tag = "!!" if lab == "CHATTER" else ("  " if lab == "teach" else " ?")
             text = " ".join(h.text.split())[:150]
             print(f"    {tag} {h.score:.3f} {h.person[:22]:<22} {h.published_at} {text}")

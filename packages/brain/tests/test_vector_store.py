@@ -241,7 +241,7 @@ class TestUnknownAssetsAreNotSilentlyExcluded:
 
     def test_a_chunk_with_no_assets_survives_an_asset_filter(self, tmp_path):
         conn = connect(tmp_path / "index.db")
-        tagged, untagged, other = self._seed(conn)
+        tagged, untagged, _other = self._seed(conn)
 
         hits = search(conn, _unit_vector(1.0), k=10, assets=["BTC"])
 

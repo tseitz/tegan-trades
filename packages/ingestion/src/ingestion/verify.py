@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from ingestion.channel import _TABS, hydrate, list_tab
 
@@ -45,7 +45,7 @@ REVIVAL_WINDOW_DAYS = 180
 
 
 def _revival_cutoff(*, today: date | None = None) -> str:
-    return ((today or date.today()) - timedelta(days=REVIVAL_WINDOW_DAYS)).isoformat()
+    return ((today or datetime.now(UTC).date()) - timedelta(days=REVIVAL_WINDOW_DAYS)).isoformat()
 
 # Access values that assert we can ingest this channel now.
 _CLAIMS_USABLE = frozenset({"ok"})

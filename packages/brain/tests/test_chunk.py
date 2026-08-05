@@ -1,6 +1,8 @@
 """Tests for transcript chunking with overlapping windows and sentence boundaries."""
 from __future__ import annotations
 
+from itertools import pairwise
+
 import pytest
 from brain.chunk import CHUNK_OVERLAP, CHUNK_SIZE, chunk_transcript
 
@@ -232,22 +234,13 @@ class TestContentAddressedIds:
 
     def test_same_text_same_ref_same_id(self):
         """Same text in same transcript should have same id (content-addressed)."""
-        text_a = "test content here"
-        text_b = "test content here"
-
-        result_a = chunk_transcript(text_a + " " + "x" * 1000, "ref/123", overlap=0)
-        result_b = chunk_transcript(text_b + " " + "x" * 1000, "ref/123", overlap=0)
-
-        # The first chunks have same content, should have same id
-        # Actually they might be different chunks due to different surrounding text
-        # Let me be more careful: directly chunk the same text
         text = "test content " + "x" * CHUNK_SIZE
         result1 = chunk_transcript(text, "ref/123")
         result2 = chunk_transcript(text, "ref/123")
 
         # All corresponding chunks should have identical ids
         assert len(result1) == len(result2)
-        for c1, c2 in zip(result1, result2):
+        for c1, c2 in zip(result1, result2, strict=True):
             assert c1.id == c2.id
 
     def test_different_text_different_id(self):
@@ -354,7 +347,7 @@ class TestChunkId:
         result2 = chunk_transcript(text, "ref/123")
 
         # Corresponding chunks should have same ids
-        for c1, c2 in zip(result1, result2):
+        for c1, c2 in zip(result1, result2, strict=True):
             assert c1.id == c2.id
 
 
@@ -471,7 +464,7 @@ def _properties(text, chunks, size):
             errs.append(f"offset invariant broken at index {c.index}")
         if len(c.text) > size:
             errs.append(f"chunk {c.index} exceeds size ({len(c.text)} > {size})")
-    for a, b in zip(chunks, chunks[1:]):
+    for a, b in pairwise(chunks):
         if b.index != a.index + 1:
             errs.append(f"index gap {a.index} -> {b.index}")
         if b.start <= a.start:

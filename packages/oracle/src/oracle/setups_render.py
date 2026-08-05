@@ -167,7 +167,7 @@ def _levels(c: Candidate) -> list[_Level]:
         if key in merged:
             prior = merged[key]
             merged[key] = _Level(
-                price=prior.price, labels=prior.labels + (label,),
+                price=prior.price, labels=(*prior.labels, label),
                 pct=prior.pct, note=prior.note or note,
                 is_price=prior.is_price or is_price,
             )
@@ -394,7 +394,8 @@ def _summary(c: Candidate, *, as_of: date | None, color: bool) -> list[str]:
     unaligned = "" if c.trend_alignment else (
         " · " + paint("no macro alignment", "yellow", color=color))
 
-    label = lambda text: paint(_pad(text, 7), "dim", color=color)
+    def label(text):
+        return paint(_pad(text, 7), "dim", color=color)
     return [
         f"  {label('called')}{called}{paint(span, 'dim', color=color)}"
         f"{paint(f' · freshness {c.freshness:.2f}', 'dim', color=color)}",

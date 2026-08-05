@@ -64,7 +64,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from core.canon import load_registry
@@ -325,7 +325,7 @@ def report(checks: list[Check], *, verdicts: set[str], unmapped_only: bool) -> N
     for c in checks:
         if c.verdict != MATCH or c.venue.split(":")[0] in venue_map.venues_for(c.asset):
             continue
-        (gaps if c.venue in _HL_PREFERENCE + (lighter.VENUE, aster.VENUE)
+        (gaps if c.venue in (*_HL_PREFERENCE, lighter.VENUE, aster.VENUE)
          else builder_only).add(f"{c.asset}/{c.venue}")
     print(f"{len(gaps)} confirmed (asset, venue) pairs the map does not reach: "
           f"{' '.join(sorted(gaps)) or 'none'}")
@@ -349,7 +349,7 @@ def main(argv=None) -> int:
     venues = sorted({m.venue for m in marks})
     print(f"marks: {len(marks)} markets across {len(venues)} venues — {', '.join(venues)}")
 
-    closes = cached_closes(as_of=date.today())
+    closes = cached_closes(as_of=datetime.now(UTC).date())
     print(f"closes: {len(closes)} corpus assets with a cached close under "
           f"{MAX_CLOSE_AGE_DAYS} days old\n")
 

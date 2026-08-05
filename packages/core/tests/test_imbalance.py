@@ -17,8 +17,8 @@ from core.imbalance import (
 START = date(2025, 1, 1)
 
 
-def _bar(offset: int, o: float, h: float, l: float, c: float):
-    return SimpleNamespace(date=START + timedelta(days=offset), open=o, high=h, low=l, close=c)
+def _bar(offset: int, o: float, h: float, lo: float, c: float):
+    return SimpleNamespace(date=START + timedelta(days=offset), open=o, high=h, low=lo, close=c)
 
 
 # Three flat bars: true range 2 on each (high-low=2, and the prev-close legs never exceed
@@ -31,7 +31,8 @@ def _flat_history():
 # ── bullish / bearish gaps ──────────────────────────────────────────────────
 
 def test_bullish_gap_has_correct_top_bottom_and_is_dated_at_candle_three():
-    bars = _flat_history() + [
+    bars = [
+        *_flat_history(),
         _bar(3, 105, 116, 104, 115),   # c2: displacement candle, body=10
         _bar(4, 120, 125, 105, 122),   # c3: low(105) > c1.high(101) -> bullish gap
     ]
@@ -47,7 +48,8 @@ def test_bullish_gap_has_correct_top_bottom_and_is_dated_at_candle_three():
 
 
 def test_bearish_gap_has_correct_top_bottom_and_is_dated_at_candle_three():
-    bars = _flat_history() + [
+    bars = [
+        *_flat_history(),
         _bar(3, 115, 116, 104, 105),   # c2: displacement candle, body=10
         _bar(4, 90, 95, 88, 92),       # c3: high(95) < c1.low(99) -> bearish gap
     ]
@@ -65,7 +67,8 @@ def test_bearish_gap_has_correct_top_bottom_and_is_dated_at_candle_three():
 def test_overlapping_candles_produce_no_gap():
     """c1.high >= c3.low (and the mirror for lows) means there's no untraded void at all —
     displacement or not, this must never register as a gap."""
-    bars = _flat_history() + [
+    bars = [
+        *_flat_history(),
         _bar(3, 105, 116, 104, 115),
         _bar(4, 105, 108, 100, 106),    # low(100) overlaps c1.high(101)
     ]
@@ -82,8 +85,8 @@ def test_displacement_filter_gates_an_otherwise_identical_price_gap():
     large_body_c2 = _bar(3, 105, 116, 104, 115)     # body = 10
     c3 = _bar(4, 120, 125, 105, 122)                # low(105) > c1.high(101), same in both
 
-    rejected = fair_value_gaps(_flat_history() + [small_body_c2, c3], lookback=3)
-    accepted = fair_value_gaps(_flat_history() + [large_body_c2, c3], lookback=3)
+    rejected = fair_value_gaps([*_flat_history(), small_body_c2, c3], lookback=3)
+    accepted = fair_value_gaps([*_flat_history(), large_body_c2, c3], lookback=3)
 
     assert rejected == ()
     assert len(accepted) == 1
@@ -97,7 +100,7 @@ def test_displacement_measures_atr_one_bar_before_the_candle_it_gates():
     here has a body of 10 but a huge true range (35, via a big prev-close gap on its high) —
     large enough that folding it into its own ATR window would inflate the threshold past
     its own body, flipping the verdict from displacement to not-displacement."""
-    bars = _flat_history() + [_bar(3, 105, 135, 104, 115)]  # body=10, true range=35
+    bars = [*_flat_history(), _bar(3, 105, 135, 104, 115)]  # body=10, true range=35
 
     threshold_correct = 1.5 * atr(bars, 2, lookback=3)   # excludes c2's own range
     threshold_buggy = 1.5 * atr(bars, 3, lookback=3)      # would include c2's own range
@@ -115,10 +118,7 @@ def test_atr_and_displacement_and_gaps_all_refuse_insufficient_history():
     default 14-bar lookback and only 5 bars total: nothing here has enough history to judge
     'unusually large', so nothing should be reported — not even a false negative dressed up
     as a real answer."""
-    bars = _flat_history() + [
-        _bar(3, 105, 116, 104, 115),
-        _bar(4, 120, 125, 105, 122),
-    ]
+    bars = [*_flat_history(), _bar(3, 105, 116, 104, 115), _bar(4, 120, 125, 105, 122)]
     assert ATR_LOOKBACK == 14
     assert atr(bars, 2) is None
     assert is_displacement(bars, 3) is False

@@ -242,8 +242,8 @@ def test_fetch_transcript_proxied_block_retries_without_abort(monkeypatch):
     # and specifically NOT the abort signal:
     try:
         yt.fetch_transcript("v", retries=2, sleep=lambda _s: None)
-    except TranscriptBlocked:
-        raise AssertionError("proxied block should not raise TranscriptBlocked")
+    except TranscriptBlocked as exc:
+        raise AssertionError("proxied block should not raise TranscriptBlocked") from exc
     except RequestBlocked:
         pass
 

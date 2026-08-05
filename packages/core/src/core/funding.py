@@ -125,10 +125,7 @@ def carry_adjusted_rr(
     net_reward = reward - carry
     net_risk = risk + carry
 
-    if net_risk <= 0:
-        ratio = None
-    else:
-        ratio = net_reward / net_risk
+    ratio = None if net_risk <= 0 else net_reward / net_risk
 
     return CarryAdjustedRR(
         nominal=reward / risk,

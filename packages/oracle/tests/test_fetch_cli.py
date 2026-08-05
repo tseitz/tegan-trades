@@ -40,7 +40,7 @@ def test_a_contradicted_series_never_reaches_disk(monkeypatch, tmp_path):
     merged = []
     _patch(monkeypatch, close=3.51, merged=merged)
 
-    job, status, n = fetch_cli._run_job(
+    _job_out, status, n = fetch_cli._run_job(
         _job("WTI"), root=tmp_path, marks=index_marks([Mark("lighter", "WTI", 87.40)]),
     )
 

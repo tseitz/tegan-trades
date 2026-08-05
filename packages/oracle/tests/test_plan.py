@@ -5,12 +5,12 @@ from oracle.route import OracleRef, RoutingTable, Unpriceable
 
 
 def _table(**kw):
-    base = dict(
-        curated={},
-        coinbase_symbols=frozenset({"BTC", "ETH"}),
-        kraken_symbols=frozenset({"XMR"}),
-        domain_consensus={"BTC": "crypto", "ETH": "crypto", "XMR": "crypto", "TSLA": "stock"},
-    )
+    base = {
+        "curated": {},
+        "coinbase_symbols": frozenset({"BTC", "ETH"}),
+        "kraken_symbols": frozenset({"XMR"}),
+        "domain_consensus": {"BTC": "crypto", "ETH": "crypto", "XMR": "crypto", "TSLA": "stock"},
+    }
     base.update(kw)
     return RoutingTable(**base)
 
@@ -194,7 +194,7 @@ def test_the_traded_leg_is_not_itself_marked_tradeable():
     `trade_symbol` on a fetch job resolves DIA -> DIA -> ... reading as a proxy chain."""
     table = _table(curated={"DJI": {"source": "yahoo", "symbol": "^DJI", "tradeable": "DIA"}})
     jobs, _ = plan_fetches(_rows(("DJI", "2026-02-17")), table, today=TODAY, pad_days=0)
-    traded = [j for j in _asset_jobs(jobs) if j.ref.symbol == "DIA"][0]
+    traded = next(j for j in _asset_jobs(jobs) if j.ref.symbol == "DIA")
     assert traded.ref.tradeable is None
     assert traded.ref.needs_validation is False   # curated, so never probed
 

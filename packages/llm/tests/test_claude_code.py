@@ -23,7 +23,8 @@ def _client(run):
 
 def test_create_returns_tool_use_shaped_message(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    run = lambda *a, **k: _FakeProc(stdout=ENVELOPE_OK)
+    def run(*a, **k):
+        return _FakeProc(stdout=ENVELOPE_OK)
     client = _client(run)
     message = client.messages.create(
         model="claude-sonnet-5", max_tokens=8192, system="sys",
@@ -68,7 +69,8 @@ def test_create_passes_model_system_and_stdin(monkeypatch):
 
 def test_create_raises_on_nonzero_exit(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    run = lambda *a, **k: _FakeProc(returncode=1, stderr="boom")
+    def run(*a, **k):
+        return _FakeProc(returncode=1, stderr="boom")
     with pytest.raises(ClaudeCodeCallFailed):
         _client(run).messages.create(model="m", max_tokens=1, system="s", tools=[],
                                      tool_choice={}, messages=[{"role": "user", "content": "u"}])
@@ -80,9 +82,10 @@ def test_nonzero_exit_error_includes_stdout_when_stderr_is_empty(monkeypatch):
     real error as JSON on STDOUT and this path only captured stderr. Both streams
     must survive into the exception or a cap/auth failure is undiagnosable."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    run = lambda *a, **k: _FakeProc(
-        returncode=1, stderr="",
-        stdout='{"is_error": true, "result": "Claude usage limit reached"}')
+    def run(*a, **k):
+        return _FakeProc(
+            returncode=1, stderr="",
+            stdout='{"is_error": true, "result": "Claude usage limit reached"}')
     with pytest.raises(ClaudeCodeCallFailed, match="Claude usage limit reached"):
         _client(run).messages.create(model="m", max_tokens=1, system="s", tools=[],
                                      tool_choice={}, messages=[{"role": "user", "content": "u"}])
@@ -90,7 +93,8 @@ def test_nonzero_exit_error_includes_stdout_when_stderr_is_empty(monkeypatch):
 
 def test_nonzero_exit_error_keeps_stderr_too(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    run = lambda *a, **k: _FakeProc(returncode=1, stderr="boom", stdout="envelope text")
+    def run(*a, **k):
+        return _FakeProc(returncode=1, stderr="boom", stdout="envelope text")
     with pytest.raises(ClaudeCodeCallFailed) as excinfo:
         _client(run).messages.create(model="m", max_tokens=1, system="s", tools=[],
                                      tool_choice={}, messages=[{"role": "user", "content": "u"}])
@@ -111,7 +115,8 @@ def test_create_raises_on_timeout(monkeypatch):
 
 def test_create_raises_when_is_error_true(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    run = lambda *a, **k: _FakeProc(stdout='{"is_error": true, "result": "auth failed"}')
+    def run(*a, **k):
+        return _FakeProc(stdout='{"is_error": true, "result": "auth failed"}')
     with pytest.raises(ClaudeCodeCallFailed):
         _client(run).messages.create(model="m", max_tokens=1, system="s", tools=[],
                                      tool_choice={}, messages=[{"role": "user", "content": "u"}])
@@ -119,7 +124,8 @@ def test_create_raises_when_is_error_true(monkeypatch):
 
 def test_create_raises_when_no_structured_output(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    run = lambda *a, **k: _FakeProc(stdout='{"is_error": false}')
+    def run(*a, **k):
+        return _FakeProc(stdout='{"is_error": false}')
     with pytest.raises(ClaudeCodeCallFailed):
         _client(run).messages.create(model="m", max_tokens=1, system="s", tools=[],
                                      tool_choice={}, messages=[{"role": "user", "content": "u"}])
@@ -127,7 +133,8 @@ def test_create_raises_when_no_structured_output(monkeypatch):
 
 def test_create_reports_usage_equivalent_cost_to_stderr(monkeypatch, capsys):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    run = lambda *a, **k: _FakeProc(stdout=ENVELOPE_OK)
+    def run(*a, **k):
+        return _FakeProc(stdout=ENVELOPE_OK)
     _client(run).messages.create(model="m", max_tokens=1, system="s", tools=[],
                                  tool_choice={}, messages=[{"role": "user", "content": "u"}])
     assert "0.12" in capsys.readouterr().err

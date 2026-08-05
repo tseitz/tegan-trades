@@ -62,7 +62,10 @@ def hyperliquid_marks(*, post_json=http.post_json) -> list[Mark]:
             continue
         universe = (payload[0] or {}).get("universe") or []
         venue = f"{hyperliquid.VENUE}:{dex}" if dex else hyperliquid.VENUE
-        for asset, ctx in zip(universe, payload[1] or []):
+        # Explicit per the docstring above. ``execution.broker`` zips the same two arrays with
+        # strict=True — refusing one order is cheap, refusing every dex is not. §45 covers the
+        # cost of that choice: the truncation is currently indistinguishable from a small dex.
+        for asset, ctx in zip(universe, payload[1] or [], strict=False):
             name = (asset or {}).get("name")
             if not name or (asset or {}).get("isDelisted"):
                 continue

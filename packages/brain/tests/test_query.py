@@ -176,13 +176,13 @@ def test_cli_resolves_the_asset_from_the_question():
 
 def test_cli_no_llm_skips_synthesis_entirely():
     client = _FakeClient({"answer": "should not be called"})
-    code, out = _run(["where is my roster on ETH", "--no-llm"], client=client)
+    _code, out = _run(["where is my roster on ETH", "--no-llm"], client=client)
     assert client.calls == 0
     assert "should not be called" not in out
 
 
 def test_cli_explicit_asset_overrides_the_parsed_one():
-    code, out = _run(["some vague question", "--asset", "ETH", "--no-llm"])
+    _code, out = _run(["some vague question", "--asset", "ETH", "--no-llm"])
     assert "ETH" in out
 
 
@@ -201,7 +201,7 @@ def test_cli_still_prints_the_structured_answer_when_synthesis_fails():
 
 
 def test_cli_passes_person_and_since_filters_through():
-    code, out = _run(["roster on ETH", "--person", "Pierre", "--no-llm"])
+    _code, out = _run(["roster on ETH", "--person", "Pierre", "--no-llm"])
     assert "Pierre" in out
     assert "Benjamin Cowen" not in out
 

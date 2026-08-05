@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date
+from datetime import UTC, datetime
 from pathlib import Path
 
 from brain.question import parse_assets
@@ -124,5 +124,5 @@ def main(
             out("(synthesis unavailable — structured answer below)\n")
 
     out(format_view(view, synthesis=synthesis, question=args.question,
-                    today=date.today()))
+                    today=datetime.now(UTC).date()))
     return 0

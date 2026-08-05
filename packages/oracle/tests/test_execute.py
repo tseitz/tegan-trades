@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 import pytest
 from execution import desk as desk_module
@@ -273,7 +274,7 @@ class DeskFactory:
 
 
 class _FakeVenueSession:
-    markets: dict = {}
+    markets: ClassVar[dict] = {}
 
     def __init__(self, config):
         self.config = config

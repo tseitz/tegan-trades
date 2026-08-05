@@ -1,6 +1,8 @@
+from dataclasses import FrozenInstanceError
 from datetime import date, timedelta
 from types import SimpleNamespace
 
+import pytest
 from core.structure import (
     BEARISH,
     BULLISH,
@@ -144,11 +146,8 @@ def test_empty_input():
 
 def test_swing_is_frozen():
     swing = Swing(date=START, price=1.0, kind="high", confirmed_at=START, index=0)
-    try:
+    with pytest.raises(FrozenInstanceError):
         swing.price = 2.0
-    except Exception:
-        return
-    raise AssertionError("Swing must be immutable")
 
 
 # ── position_in_range ───────────────────────────────────────────────────────
@@ -311,7 +310,7 @@ def test_a_break_is_close_based_not_wick_based():
 def test_the_break_carries_the_swing_low_it_originated_from():
     """That origin is the invalidation level and therefore the stop, so a break without it
     cannot produce a tradeable candidate."""
-    bos = [b for b in breaks(BULL_BOS) if b.kind == BULLISH][0]
+    bos = next(b for b in breaks(BULL_BOS) if b.kind == BULLISH)
     assert bos.origin is not None
     assert bos.origin.price == 9
     assert bos.origin.date == date(2025, 1, 7)
@@ -324,7 +323,7 @@ def test_breaks_respect_as_of():
 # ── order blocks ────────────────────────────────────────────────────────────
 
 def _bull_ob():
-    return [o for o in order_blocks(BULL_BOS) if o.kind == BULLISH][0]
+    return next(o for o in order_blocks(BULL_BOS) if o.kind == BULLISH)
 
 
 def test_order_block_is_the_last_down_candle_before_the_breaking_move():
@@ -377,7 +376,7 @@ WICK_BELOW_ORIGIN = _candles([
 
 
 def _wicked_ob():
-    return [o for o in order_blocks(WICK_BELOW_ORIGIN) if o.kind == BULLISH][0]
+    return next(o for o in order_blocks(WICK_BELOW_ORIGIN) if o.kind == BULLISH)
 
 
 def test_the_fixture_really_does_put_the_origin_swing_inside_the_block():
@@ -465,7 +464,7 @@ def test_order_block_dies_when_price_closes_below_the_origin_low():
     extended = BULL_BOS + _candles(
         [(17, 18, 12, 13), (13, 14, 8, 8.5)], start=START + timedelta(days=10)
     )
-    ob = [o for o in order_blocks(extended) if o.kind == BULLISH][0]
+    ob = next(o for o in order_blocks(extended) if o.kind == BULLISH)
     assert invalidated_on(ob, extended) == date(2025, 1, 12)
 
 
@@ -493,7 +492,7 @@ def test_detects_a_bearish_break_and_its_order_block():
     bos = [b for b in breaks(bear) if b.kind == BEARISH]
     assert len(bos) == 1
     assert bos[0].level == 9
-    ob = [o for o in order_blocks(bear) if o.kind == BEARISH][0]
+    ob = next(o for o in order_blocks(bear) if o.kind == BEARISH)
     assert ob.date == date(2025, 1, 8)   # index 7, the last green candle before the drop
     assert ob.top == 15.8
     assert ob.bottom == 14

@@ -381,7 +381,7 @@ def pearson(xs: list[float], ys: list[float]) -> float:
     """Plain correlation. Enough to answer "are these two terms measuring one thing"."""
     n = len(xs)
     mx, my = sum(xs) / n, sum(ys) / n
-    cov = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    cov = sum((x - mx) * (y - my) for x, y in zip(xs, ys, strict=True))
     vx = sum((x - mx) ** 2 for x in xs) ** 0.5
     vy = sum((y - my) ** 2 for y in ys) ** 0.5
     return cov / (vx * vy) if vx and vy else float("nan")

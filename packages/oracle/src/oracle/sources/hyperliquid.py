@@ -40,7 +40,9 @@ def parse_asset_ctxs(payload, *, dex: str = "", observed_at: datetime) -> list[F
     universe = (meta or {}).get("universe") or []
 
     rates: list[FundingRate] = []
-    for asset, ctx in zip(universe, ctxs or []):
+    # strict=False to match the docstring above: a partial sweep is worth more than none, and
+    # a short ``ctxs`` shows up as a lower reported count rather than as an exception.
+    for asset, ctx in zip(universe, ctxs or [], strict=False):
         name = (asset or {}).get("name")
         if not name or (asset or {}).get("isDelisted"):
             continue

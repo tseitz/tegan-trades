@@ -48,7 +48,7 @@ def test_thesis_id_ignores_whitespace_and_case_churn():
 
 
 def test_thesis_id_changes_when_the_call_changes():
-    base = dict(asset="BTC", direction="long", timeframe="position", summary="accumulate")
+    base = {"asset": "BTC", "direction": "long", "timeframe": "position", "summary": "accumulate"}
     ident = build_thesis(_extracted(**base), source=SOURCE, model="m", extracted_at="x").id
     for field, value in [("asset", "ETH"), ("direction", "short"),
                          ("timeframe", "swing"), ("summary", "sell")]:

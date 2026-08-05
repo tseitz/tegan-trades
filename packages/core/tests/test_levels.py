@@ -1,5 +1,7 @@
+from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
 
+import pytest
 from core.levels import (
     NEAREST,
     NO_LEVELS,
@@ -116,11 +118,8 @@ def test_a_level_exactly_at_the_reference_price_is_not_a_target():
 
 def test_reading_is_immutable():
     reading = TargetReading(target=1.0, source=STATED)
-    try:
+    with pytest.raises(FrozenInstanceError):
         reading.target = 2.0
-    except Exception:
-        return
-    raise AssertionError("TargetReading must be immutable")
 
 
 def test_abstained_is_derived_from_the_target_not_stored_separately():

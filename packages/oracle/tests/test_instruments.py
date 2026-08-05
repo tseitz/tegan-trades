@@ -5,12 +5,12 @@ STOCKS = dict.fromkeys(("RUT", "IWM", "DJI", "DIA", "EUR", "EURUSD", "SPY", "QQQ
 
 
 def _table(**kw):
-    base = dict(
-        curated={},
-        coinbase_symbols=frozenset({"BTC", "ETH"}),
-        kraken_symbols=frozenset(),
-        domain_consensus=STOCKS | {"BTC": "crypto", "ETH": "crypto"},
-    )
+    base = {
+        "curated": {},
+        "coinbase_symbols": frozenset({"BTC", "ETH"}),
+        "kraken_symbols": frozenset(),
+        "domain_consensus": STOCKS | {"BTC": "crypto", "ETH": "crypto"},
+    }
     base.update(kw)
     return RoutingTable(**base)
 

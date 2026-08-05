@@ -1,3 +1,4 @@
+from dataclasses import FrozenInstanceError
 from datetime import date
 from hashlib import sha256
 from types import SimpleNamespace
@@ -84,24 +85,24 @@ def _range(low=80.0, high=200.0):
 def _ctx(**overrides):
     """A context in which a long is fully permitted: weekly and daily both up, price at 105
     which is discount in an 80-200 range, and one live bullish zone at 100-110."""
-    base = dict(
-        as_of=AS_OF,
-        price=105.0,
-        weekly_trend=UPTREND,
-        daily_trend=UPTREND,
-        dealing_range=_range(),
-        zones=(Zone(block=_block(), structural_target=140.0),),
-        atr=5.0,   # so the plausibility ceiling sits at 20 x 5 = 100 beyond entry
-    )
+    base = {
+        "as_of": AS_OF,
+        "price": 105.0,
+        "weekly_trend": UPTREND,
+        "daily_trend": UPTREND,
+        "dealing_range": _range(),
+        "zones": (Zone(block=_block(), structural_target=140.0),),
+        "atr": 5.0,   # so the plausibility ceiling sits at 20 x 5 = 100 beyond entry
+    }
     base.update(overrides)
     return Context(**base)
 
 
 def _row(**overrides):
-    base = dict(
-        id="t1", asset="BTC", person="TraderMayne", direction="long",
-        timeframe="swing", published_at=PUBLISHED, key_levels=[],
-    )
+    base = {
+        "id": "t1", "asset": "BTC", "person": "TraderMayne", "direction": "long",
+        "timeframe": "swing", "published_at": PUBLISHED, "key_levels": [],
+    }
     base.update(overrides)
     return SimpleNamespace(**base)
 
@@ -514,11 +515,11 @@ def test_a_candidate_below_the_reward_risk_floor_is_refused():
 def _short_ctx(**overrides):
     """The mirror of ``_ctx``: weekly and daily both down, price 180 in the premium half, and
     one live bearish zone at 180-190 whose near edge is therefore its *bottom*."""
-    base = dict(
-        weekly_trend=DOWNTREND, daily_trend=DOWNTREND, price=180.0,
-        zones=(Zone(block=_block(BEARISH, top=190.0, bottom=180.0, invalidation=200.0),
+    base = {
+        "weekly_trend": DOWNTREND, "daily_trend": DOWNTREND, "price": 180.0,
+        "zones": (Zone(block=_block(BEARISH, top=190.0, bottom=180.0, invalidation=200.0),
                     structural_target=150.0),),
-    )
+    }
     base.update(overrides)
     return _ctx(**base)
 
@@ -959,9 +960,7 @@ def test_separate_zones_stay_separate():
 
 
 def test_collapse_ignores_rejections_so_the_raw_stream_can_be_passed_through():
-    mixed = _setups_for(["Mayne"]) + [
-        cross_reference(_row(published_at=None), _ctx(), published_close=100.0)
-    ]
+    mixed = [*_setups_for(["Mayne"]), cross_reference(_row(published_at=None), _ctx(), published_close=100.0)]
     candidates = collapse(mixed)
     assert len(candidates) == 1
 
@@ -1008,12 +1007,12 @@ def _tf_ctx(**overrides):
     GOOGL shape that motivated all of this: a tight daily block sitting on top of price while
     the weekly block price is actually drawn to sits well below it.
     """
-    base = dict(zones=(
+    base = {"zones": (
         Zone(block=_block(top=95.0, bottom=75.0, invalidation=70.0, confirmed_day=7),
              structural_target=140.0, timeframe=WEEKLY),
         Zone(block=_block(top=110.0, bottom=100.0, confirmed_day=6),
              structural_target=140.0, timeframe=DAILY),
-    ))
+    )}
     base.update(overrides)
     return _ctx(**base)
 
@@ -1162,11 +1161,8 @@ def test_outcomes_are_immutable():
     setup = cross_reference(_row(), _ctx(), published_close=100.0)
     rejected = cross_reference(_row(published_at=None), _ctx(), published_close=100.0)
     for outcome in (setup, rejected):
-        try:
+        with pytest.raises(FrozenInstanceError):
             outcome.asset = "ETH"
-        except Exception:
-            continue
-        raise AssertionError(f"{type(outcome).__name__} must be immutable")
 
 
 def test_a_rejection_still_identifies_the_thesis():

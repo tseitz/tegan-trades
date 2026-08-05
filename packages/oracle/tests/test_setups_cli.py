@@ -44,19 +44,19 @@ def _block(*, top=110.0, bottom=100.0, invalidation=90.0, day=5, confirmed_day=6
 
 def _candidate(**overrides) -> Candidate:
     block = overrides.pop("block", None) or _block()
-    base = dict(
-        asset="BTC", direction="long", block=block,
-        entry=110.0, entry_top=110.0, entry_bottom=100.0,
-        stop=100.0, invalidation=90.0,
-        target=140.0, target_source=STRUCTURAL,
-        reward_risk=3.0, reward_risk_from_price=3.5, approach=1.0, price=105.0,
-        weekly_trend="uptrend", daily_trend="uptrend", zone="discount",
-        zone_timeframe=DAILY,
-        tier=TIER_MAJOR,
-        freshness=1.0, trend_alignment=1.0,
-        views=(View(person="Mayne", published_at="2026-07-20"),), thesis_ids=("t1",),
-        score=0.5,
-    )
+    base = {
+        "asset": "BTC", "direction": "long", "block": block,
+        "entry": 110.0, "entry_top": 110.0, "entry_bottom": 100.0,
+        "stop": 100.0, "invalidation": 90.0,
+        "target": 140.0, "target_source": STRUCTURAL,
+        "reward_risk": 3.0, "reward_risk_from_price": 3.5, "approach": 1.0, "price": 105.0,
+        "weekly_trend": "uptrend", "daily_trend": "uptrend", "zone": "discount",
+        "zone_timeframe": DAILY,
+        "tier": TIER_MAJOR,
+        "freshness": 1.0, "trend_alignment": 1.0,
+        "views": (View(person="Mayne", published_at="2026-07-20"),), "thesis_ids": ("t1",),
+        "score": 0.5,
+    }
     base.update(overrides)
     return Candidate(**base)
 
@@ -783,7 +783,7 @@ def test_triage_quit_stops_immediately_without_consuming_further_input(tmp_path)
         try:
             return next(answers)
         except StopIteration:  # pragma: no cover - failure path
-            raise AssertionError("quit must stop before consuming further input")
+            raise AssertionError("quit must stop before consuming further input") from None
 
     counts = setups_cli.triage(
         _queue([c1, c2]), decisions_path=tmp_path / "decisions.jsonl", vault_path=None,
@@ -796,9 +796,9 @@ def test_triage_quit_stops_immediately_without_consuming_further_input(tmp_path)
 # ── the unpriced tally reports groups, not one number ────────────────────────
 
 def _stats(**overrides) -> setups_cli.BuildStats:
-    base = dict(assets_total=0, assets_priced=0, unpriceable=Counter(),
-                assets_uncached=0, assets_no_context=0, rejections=Counter(),
-                candidate_count=0)
+    base = {"assets_total": 0, "assets_priced": 0, "unpriceable": Counter(),
+                "assets_uncached": 0, "assets_no_context": 0, "rejections": Counter(),
+                "candidate_count": 0}
     base.update(overrides)
     return setups_cli.BuildStats(**base)
 
@@ -886,7 +886,7 @@ def test_approval_writes_a_dated_section_to_the_vault_note(tmp_path):
     assert body.startswith("# Approved Setups")
     # the dated heading, not the bare one
     assert "## " in body and "· ZEC long" in body
-    heading = [l for l in body.splitlines() if l.startswith("## ")][0]
+    heading = next(line for line in body.splitlines() if line.startswith("## "))
     assert heading.split(" · ")[0].removeprefix("## ").count("-") == 2  # YYYY-MM-DD
 
 
@@ -1218,7 +1218,7 @@ def test_routing_line_separates_unlisted_from_gated():
 
 
 def test_routing_line_survives_being_rendered_in_colour():
-    args = dict(hold_days=21)
+    args = {"hold_days": 21}
     plain = setups_render.format_routing(
         _decide(routing.quote("alpaca", "X", gap=0.0, crossing=0.0),
                 routing.quote("hyperliquid", "X", carry=0.02, crossing=0.0)),

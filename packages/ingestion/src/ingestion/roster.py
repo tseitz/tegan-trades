@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import yaml
@@ -213,7 +213,7 @@ def ingest_channel(
     save_video=None,
     dead: dict[str, dict] | None = None,
 ) -> ChannelResult:
-    today = today or date.today()
+    today = today or datetime.now(UTC).date()
     resolve = resolve or channel_mod.resolve_recent
     hydrate = hydrate or channel_mod.hydrate
     fetch_transcript = fetch_transcript or _fetch_transcript

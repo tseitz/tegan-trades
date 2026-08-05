@@ -57,13 +57,7 @@ def format_passages(hits, *, query: str | None = None) -> str:
         lines += [f"Q: {query}", ""]
 
     if not hits:
-        return "\n".join(lines + [
-            "No passages retrieved.",
-            "",
-            "The index covers the whole corpus, so this means the corpus genuinely does",
-            "not cover it — not that extraction is lagging. Answer from what is here or",
-            "say it isn't covered; do not fill the gap from outside knowledge.",
-        ])
+        return "\n".join([*lines, "No passages retrieved.", "", "The index covers the whole corpus, so this means the corpus genuinely does", "not cover it — not that extraction is lagging. Answer from what is here or", "say it isn't covered; do not fill the gap from outside knowledge."])
 
     lines.append(f"{len(hits)} passage(s), ranked by cosine similarity.")
     lines.append(f"{_INDENT}Scores are not comparable across queries — only against "
@@ -100,12 +94,7 @@ def format_view(view: RosterView, *, synthesis=None, question: str | None = None
         lines += [f"Q: {question}", ""]
 
     if not view.folded:
-        return "\n".join(lines + [
-            f"No current stance on {asset} in the corpus.",
-            "",
-            "Either nobody on the roster has covered it, or those transcripts have not",
-            "been through `brain-extract` yet.",
-        ])
+        return "\n".join([*lines, f"No current stance on {asset} in the corpus.", "", "Either nobody on the roster has covered it, or those transcripts have not", "been through `brain-extract` yet."])
 
     split = view.split
     counts = " · ".join(f"{lean} {split.counts[lean]}" for lean in LEANS)

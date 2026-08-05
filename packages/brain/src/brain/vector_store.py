@@ -166,7 +166,9 @@ def search(
     if not rows:
         return []
 
-    ids, refs, persons, published_ats, texts, blobs = zip(*rows)
+    # strict: every row has the six columns the SELECT names, so a ragged transpose is
+    # impossible unless the schema and this query have drifted apart — which is worth raising on.
+    ids, refs, persons, published_ats, texts, blobs = zip(*rows, strict=True)
     matrix = np.stack([np.frombuffer(blob, dtype=np.float32) for blob in blobs])
     # Every stored vector (and the query vector) is already L2-normalized by
     # brain.embed, so this dot product IS cosine similarity — no renormalizing.

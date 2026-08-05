@@ -1153,6 +1153,4 @@ def _reasonable(target, *, entry: float, risk: float, sign: int, price_now: floa
         return False
     if abs(target - entry) / risk < min_reward_risk:
         return False
-    if atr_now and abs(target - entry) > max_target_atr * atr_now:
-        return False
-    return True
+    return not (atr_now and abs(target - entry) > max_target_atr * atr_now)

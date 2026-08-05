@@ -409,7 +409,7 @@ def within_sitting(path: Path) -> None:
     print("    '?' marks an interval spanning 0.5. Expect several: this is the honest n.\n")
 
     print(f"  {'term':>16}  {'same-sitting AUC':>{CELL_WIDTH}}  {'pooled (invalid)':>{CELL_WIDTH}}")
-    reported = [("score", "score", lambda r: r["score"])] + list(TERMS)
+    reported = [("score", "score", lambda r: r["score"]), *list(TERMS)]
     for name, field, get in reported:
         groups = groups_for(field, get)
         sub = [r for r in decided if field in r]

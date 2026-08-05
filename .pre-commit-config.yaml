@@ -1,0 +1,52 @@
+# Git hooks, run by prek (`uv tool install prek`), which reads pre-commit's format and config.
+#
+# Install both hook types once, after a fresh clone:
+#
+#     prek install
+#
+# **The ruff and pytest hooks are `local` + `language: system` deliberately.** The idiomatic form
+# pins a mirror repo — `astral-sh/ruff-pre-commit` at its own `rev` — which would make the hook's
+# ruff a *second* source of truth against the one in `uv.lock`. The two would drift on the first
+# bump of either, and the hook would start disagreeing with what `uv run ruff check` says at the
+# terminal, which is the worst possible failure for a gate: it is wrong precisely when you are
+# trusting it. Calling the locked binary means there is one version and it is the one in the lock.
+#
+# Split across two stages because the cost is split. ruff is 0.03s and belongs on every commit;
+# the suite is ~14s, which is fine per push and is exactly the sort of wait that teaches you to
+# type `--no-verify` if it lands on every commit. A gate you routinely bypass is not a gate.
+default_install_hook_types: [pre-commit, pre-push]
+
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff
+        entry: uv run ruff check --force-exclude
+        language: system
+        types_or: [python, pyi]
+
+      - id: pytest
+        name: pytest (excluding integration)
+        # `pass_filenames: false` because the suite is not per-file — and integration is excluded
+        # for the same reason it is excluded everywhere else: those two tests hit YouTube live and
+        # fail without proxy credentials, which is environmental, not a regression.
+        entry: uv run pytest -q -m "not integration"
+        language: system
+        pass_filenames: false
+        types: [python]
+        stages: [pre-push]
+
+  # The one remote hook worth the dependency, and the reason is specific rather than hygienic:
+  # this repo is public, and `packages/execution` is the only thing here that holds a signing key
+  # — the one that can move real money. `.env` is gitignored and `.env.example` is the only env
+  # file tracked, so nothing is wrong today; this exists for the day a key gets pasted somewhere
+  # that is not `.env`. There is no competing source of truth for these, so pinning a rev is fine.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: detect-private-key
+      - id: check-merge-conflict
+      # `data/` is gitignored ore and never committed, so this is aimed at the accident where
+      # something large escapes that rule rather than at routine output.
+      - id: check-added-large-files
+        args: [--maxkb=1024]

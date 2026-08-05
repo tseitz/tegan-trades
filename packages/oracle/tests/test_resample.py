@@ -47,7 +47,7 @@ def test_ohlc_aggregates_open_close_high_low_correctly():
     )
     # Trailing bar in the next week so the first week is complete.
     series = PriceSeries(symbol="X-USD", source="coinbase",
-                          bars=bars + (_flat_bar("2025-01-13", 9.5),))
+                          bars=(*bars, _flat_bar("2025-01-13", 9.5)))
 
     weekly = to_weekly(series, include_partial=False)
 

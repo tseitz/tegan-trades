@@ -69,7 +69,9 @@ def resolve_recent(channel: str, max_videos: int, *, _list_entries=None) -> list
     for tab in _TABS:
         try:
             stubs = list_tab(channel, tab, max_videos, _entries=_list_entries)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - a missing tab and a network fault look
+            # alike here and both mean "no stubs from this tab"; narrowing would have to
+            # enumerate yt-dlp's error surface to gain nothing. Reported, not swallowed.
             # tab may not exist (e.g. no /streams) — but could also be a real
             # config/network error, so surface it rather than failing silently.
             print(f"[resolve_recent] {channel}/{tab} failed: {exc!r}", file=sys.stderr)

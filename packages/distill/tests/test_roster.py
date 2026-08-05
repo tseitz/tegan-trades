@@ -98,6 +98,7 @@ def test_distill_all_runs_concurrently(tmp_path):
 
 def test_format_summary_has_totals(tmp_path):
     r = DistillResult(person="Cowen")
-    r.distilled.append("a"); r.empty.append("b")
+    r.distilled.append("a")
+    r.empty.append("b")
     out = format_summary([r])
     assert "Cowen" in out and "TOTAL" in out

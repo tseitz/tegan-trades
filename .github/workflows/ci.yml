@@ -1,0 +1,51 @@
+# **A backstop, not a gate.** Work here goes straight to `main` with no pull request, so nothing
+# Actions does can block anything — by the time this runs the commit has landed. It earns its
+# place on two things a local hook cannot check:
+#
+#   1. `uv sync --locked` fails if `uv.lock` has drifted from the seven `pyproject.toml` files.
+#      Locally `uv run` quietly re-resolves and carries on, so a stale lock is invisible at the
+#      terminal and only surfaces on a machine that has no `.venv` yet — which is to say, later,
+#      to someone else, or to me after a reinstall.
+#   2. It catches the commit that went in behind `--no-verify`.
+#
+# Integration tests are excluded here as everywhere: they hit YouTube live and need residential
+# proxy credentials, so in CI they would fail for an environmental reason and train everyone to
+# ignore a red run.
+#
+# Nothing below interpolates event data into a shell command. The only `${{ }}` is `github.ref`
+# in the concurrency key, which is a branch name matched against the `push` filter above and is
+# never passed to `run:` — the workflow-injection shape to avoid is untrusted text (issue titles,
+# commit messages) reaching a shell, and there is none here.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A second push while the first run is still going makes the first irrelevant, not worth finishing.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only. This workflow only ever checks out and runs tests; it publishes nothing.
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+
+      # `--locked` rather than plain `sync`: the point is to fail on a stale lock, and plain
+      # `sync` would quietly fix one and report success.
+      - run: uv sync --locked
+
+      - run: uv run ruff check .
+
+      - run: uv run pytest -q -m "not integration"
