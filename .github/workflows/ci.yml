@@ -36,9 +36,11 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v9
+      # Pinned to an exact version, not `@v9`: astral-sh/setup-uv stopped publishing floating
+      # major tags after v7.6, so `@v9` does not resolve and the job fails before it starts.
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
 
