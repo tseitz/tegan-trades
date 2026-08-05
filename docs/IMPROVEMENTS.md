@@ -627,12 +627,16 @@ shares/day, trades/day, and this order's share of one — rather than only when 
 ceiling bound, which had made a market trading 175 times a day render identically to one trading
 44,000 whenever neither tripped the 1% cap.
 
-**Still open: the queue cannot show it, and the blocker is layering, not effort.** `setups --list`
-lives in `oracle`, `AlpacaBroker.depth` in `execution`, and the pipeline runs oracle → execution
-— so the queue reading depth is a backwards dependency, the same shape as §4b's triage sidecar.
-Decide it the same way: a small duplicate reader in `oracle`, a shared workspace member, or let
-the queue stay blind and rely on the execution preview. Until then thinness is visible only
-*after* approval.
+**Still open: the queue cannot show it, and the blocker is a live broker, not layering.** An
+earlier version of this entry called it a backwards dependency the shape of §4b. It is not —
+`oracle` already declares `execution` and `setups_cli` already imports from it. The cost is that
+`AlpacaBroker.depth` needs an *open broker*: Alpaca credentials would become required to list
+setups, and the nightly's `setups` step would gain a live-venue dependency it does not have, so
+an expired key would stop the queue being built at all.
+
+So the choice is about when the call is paid, not about who may import whom: fetch for the top N
+only, have the nightly cache depth to `data/` and read the cache at queue time, or leave it at
+the confirmation prompt. Until then thinness is visible only *after* approval.
 
 ---
 
