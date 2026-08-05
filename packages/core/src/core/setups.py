@@ -798,7 +798,7 @@ def build_context(setup, weekly, *, as_of: date,
 
     ``setup`` is the rung below the weekly, and which timeframe that is depends on the
     instrument: the daily for equities and session-bound indices, H12 for anything trading on
-    both sides of 12:00 UTC (§50). It defaults to ``DAILY`` so every caller predating the H12
+    both sides of 12:00 UTC. It defaults to ``DAILY`` so every caller predating the H12
     rung keeps its meaning. Nothing here measures which is appropriate — that is
     ``oracle.resample.straddles_the_split``, because it needs bars this module never sees.
 

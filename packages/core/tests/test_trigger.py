@@ -165,7 +165,7 @@ def test_a_break_without_displacement_does_not_fire():
 
 
 def test_a_starved_displacement_candle_does_not_fire():
-    """§50: *"displacement on pre-market volume is not the institutional participation the
+    """*"displacement on pre-market volume is not the institutional participation the
     concept is about."* Same bars, same geometry, 2% of the volume."""
     found = trigger.detect(long_sequence(displacement_volume=20.0),
                            direction="long", zone_tagged=True)

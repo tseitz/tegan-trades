@@ -210,7 +210,7 @@ def test_the_preview_stays_quiet_when_nothing_was_capped():
 
 
 def test_the_preview_shows_the_market_even_when_no_cap_bound():
-    """The thin market that does not trip the ceiling is the one worth seeing (§36, §49).
+    """The thin market that does not trip the ceiling is the one worth seeing (§36).
 
     FXI clears 1% by four orders of magnitude, so nothing caps and — before this — nothing
     printed. It then read identically to INTL, which trades 175 times a day. The whole point of

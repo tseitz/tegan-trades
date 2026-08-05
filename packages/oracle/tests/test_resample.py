@@ -345,7 +345,7 @@ def test_an_extended_hours_feed_splits_an_equity_day_into_two_uneven_buckets():
     This is why "an equity is basically a daily on H12" is a property of the *feed*, not of
     equities. The resample must not paper over it: a 4-hour pre-market bucket is a real bucket
     and gets reported as one. Deciding whether it should ever have been fetched belongs to
-    whatever assembles the series — see docs/IMPROVEMENTS.md §50.
+    whatever assembles the series — see ``scripts/probe_intraday_gaps.py``.
     """
     premarket = [(8, 171_657), (9, 48_144), (10, 229_886), (11, 476_046)]
     session = [(12, 401_378), (13, 8_968_458), (14, 9_171_572), (15, 9_202_381),
@@ -376,7 +376,7 @@ def test_resampled_bars_still_flow_through_core():
 
 # ── which timeframe is the setup rung ────────────────────────────────────────
 # H12 is only a real extra rung where the instrument trades on both sides of the split. Where it
-# does not, the morning bucket is a thin artifact and the daily bar is the honest answer (§50).
+# does not, the morning bucket is a thin artifact and the daily bar is the honest answer.
 
 def _spread(morning: float, evening: float, *, volume=True) -> IntradaySeries:
     """One day: ``morning`` and ``evening`` units of volume either side of 12:00 UTC."""
@@ -407,7 +407,7 @@ def test_the_floor_sits_high_in_the_gap_on_purpose():
     """The measured gap is 22.3% to 31.4%, and the floor is not in the middle of it.
 
     The two errors are not symmetric. Calling a session-bound instrument continuous gives it a
-    thin morning zone — the §50 defect, drawn on 1.2% of a day's volume. Calling a continuous
+    thin morning zone drawn on 1.2% of a day's volume. Calling a continuous
     instrument session-bound merely costs a rung of resolution, which the spec already tolerates
     (*"daily chart analysis entering on the 1 hour, totally okay"*). So the floor is placed to
     make the first error unlikely rather than to split the difference.

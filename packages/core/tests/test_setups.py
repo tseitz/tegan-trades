@@ -1237,7 +1237,7 @@ def test_a_thesis_is_ranked_by_its_best_zone_not_by_its_weekly_one():
 
 
 # ── the setup rung is a parameter, not always the daily ─────────────────────────────────────
-# Crypto takes weekly + H12; equities and session-bound indices take weekly + daily (§50). An
+# Crypto takes weekly + H12; equities and session-bound indices take weekly + daily. An
 # asset gets one or the other, never both — "the H12 *is* the daily, two H12 candles are one
 # daily candle", so running both would be a 2x step carrying no new information.
 

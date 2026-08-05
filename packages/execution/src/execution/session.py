@@ -357,7 +357,7 @@ def describe(plan: OrderPlan, account: Account | None = None,
         d = plan.depth
         # The order as a share of a typical session — the one figure here that is about *this*
         # order rather than the market, and the continuum the ceiling is a threshold on. Shown
-        # so the line that is chosen later (§49) can be read off accumulated orders rather than
+        # so the line that is chosen later can be read off accumulated orders rather than
         # picked: 6.6% and 0.04% are the two the sizing measurement found.
         share = plan.size / d.median_volume if d.median_volume else None
         lines.append(

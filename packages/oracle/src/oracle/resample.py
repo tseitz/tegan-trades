@@ -37,7 +37,7 @@ H12_SPLIT_HOUR = 12
 # between 0.0% (^GSPC, ^DJI) and 22.3% (KORU, a 3x South Korea ETF whose pre-market tracks the
 # Korean session). The floor sits high in that gap rather than in the middle of it *on purpose*:
 # calling a session-bound instrument continuous draws a zone on a thin morning bucket, which is
-# the §50 defect, while calling a continuous one session-bound merely costs a rung of resolution
+# the pre-market-bucket defect, while calling a continuous one session-bound merely costs a rung
 # the spec already tolerates. The errors are not symmetric, so neither is the placement.
 BALANCED_HALF_FLOOR = 0.25
 
@@ -85,7 +85,7 @@ def to_h12(series: IntradaySeries, *, include_partial: bool = False) -> Intraday
     that problem and are actively harmed by this: an extended-hours feed runs 08:00-23:00 UTC,
     so a stock's day lands in two buckets and the morning one is four thin pre-market hours
     wearing the shape of a twelve-hour setup candle. Equities take the daily bar for that rung
-    instead — see docs/IMPROVEMENTS.md §50. Nothing here rejects an equity series, because the
+    instead — see ``scripts/probe_intraday_gaps.py``. Nothing here rejects an equity series, as
     resample's job is to report what it was handed; the choice belongs to the caller.
 
     **Why this is resampled and never fetched.** Coinbase's granularity ladder steps 3600 ->

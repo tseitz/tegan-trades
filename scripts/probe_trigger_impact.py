@@ -26,7 +26,7 @@ MEASURED 2026-08-05 against a 49-candidate queue:
 is the trigger working as intended rather than a fault: the queue is mostly *watch*, not *act*,
 and it had no way to say so before.
 
-**The readability gate is inert, and that is the finding.** §49 decided that a candidate whose
+**The readability gate is inert, and that is the finding.** The plan decided that a candidate whose
 trigger cannot be computed is not offered — but nothing on a real queue is ever in that state.
 Every routable instrument clears the bar-count, volume and swing checks; even ``INTL``, the
 worked example, has all three. What actually keeps ``INTL`` from being offered is the

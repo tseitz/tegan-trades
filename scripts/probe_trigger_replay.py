@@ -2,7 +2,7 @@
 
 ``probe_replay`` found the defect: **69% of stops are reached on the very bar that filled the
 entry**, median stop 1.9 daily ranges against a median target of 6.7. The engine entered like a
-reversal — a resting limit, nothing waited for — and stopped like a continuation. §49's answer
+reversal — a resting limit, nothing waited for — and stopped like a continuation. The answer
 was the trigger. This asks whether that answer works, on the same 142 decisions.
 
 Two things are compared for every row, at the moment it was decided and with no look-ahead:

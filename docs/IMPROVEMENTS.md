@@ -34,11 +34,10 @@ depth for §21, failed-break states for §27, stated targets for §18.
 
 | | Entry | Why now | Cost |
 |---|---|---|---|
-| 1 | **§49** — build the H1 trigger under an H12 setup | The fix for §48, decided and specified rather than guessed. Primitives all exist; the prerequisite is the participation gate, not the bars. Read §48 first for the measurement. | free, network |
-| 2 | **§32 residual** — curate the six the gate now refuses | They stopped pricing wrong and started not pricing. `WTI` → `CL=F` folds into `OIL`; `JPY` needs §29 first. | free, local |
-| 3 | **§31 residual** — the guard nothing calls | `check_identity` is built and unit-tested; no path supplies it a mark, so a curated typo still places. Plus CI over the curated map. | free, network |
-| 4 | **§27 residual** — targets vs the range rule | 68 candidates on a ranging weekly, only 20 target within 2% of the bound the rule names. Read §18 first. Now has §48's geometry behind it. | free, local |
-| 5 | **§4** — the `agreement`/`freshness` overlap | The first re-weight with evidence behind it, and it removes a term rather than adding one. Read §11 first. | free, local |
+| 1 | **§32 residual** — curate the six the gate now refuses | They stopped pricing wrong and started not pricing. `WTI` → `CL=F` folds into `OIL`; `JPY` needs §29 first. | free, local |
+| 2 | **§31 residual** — the guard nothing calls | `check_identity` is built and unit-tested; no path supplies it a mark, so a curated typo still places. Plus CI over the curated map. | free, network |
+| 3 | **§27 residual** — targets vs the range rule | 68 candidates on a ranging weekly, only 20 target within 2% of the bound the rule names. Read §18 first. Now has §48's geometry behind it. | free, local |
+| 4 | **§4** — the `agreement`/`freshness` overlap | The first re-weight with evidence behind it, and it removes a term rather than adding one. Read §11 first. | free, local |
 
 **Still waiting on the corpus, not on code:** §18 (7 stated targets in 47 rows) · §21's
 measurement (13 rows carry funding, 4 usable pairs) · §27's option 2 (`daily_trend` varies now,
@@ -46,7 +45,7 @@ but the failed-break state it names has n=1).
 
 **By theme:** corpus supply §3 · §6 · §6b · §6d · §6f · §6h · §9 · §14 — durability §4b · §24 —
 venue and execution §22 · §25 · §30 · §33 · §35 · §36 · §39 · §40 · §43 — routing §29 · §31 · §32 · §44 —
-scoring §1 · §2 · §8 · §12 · §15 · §19 · §48 · §49.
+scoring §1 · §2 · §8 · §12 · §15 · §19 · §48.
 
 ---
 
@@ -100,7 +99,7 @@ run: that prompt is built for trade theses and correctly returns EMPTY on method
 breakdown, reclaim" retrieves nothing; asking what the entry trigger *is* returns phase 3 of the
 course in full, at cosine 0.79-0.81. The mechanic, the reversal/continuation stop split, and the
 timeframe hierarchy are now written into `Trading/_Structure.md` with citations. Slice 2's layer
-3 is unblocked and specified; §49 owns building it.
+3 shipped 2026-08-05 as `core.trigger`.
 
 ---
 
@@ -842,73 +841,19 @@ tighten it back once the bound is real.
 
 ## 48. The entry and the target are on two different clocks · `OPEN` — new 2026-08-04
 
-Replaying all 137 recorded candidates against cached daily bars: the median stop sits **1.9**
-of the instrument's own daily ranges from entry, the median target **6.7** (p90 21.4). A stop
-is reachable in a session and a target is weeks out, so the two levels do not describe one
-trade. **69% of stops were reached on the very bar that filled the entry** — not a small-stop
-artifact, a selection effect: the bar that trades down to a resting limit is by construction
-moving hard against it, and usually keeps going.
+Replaying 137 recorded candidates: median stop **1.9** of the instrument's own daily ranges from
+entry, median target **6.7** (p90 21.4), and **69% of stops reached on the bar that filled the
+entry**. Not a small-stop artifact — the bar that trades down to a resting limit is by
+construction moving hard against it. Independently: **40% never fill at all**.
+`scripts/probe_replay.py`; do not read its win rate, 90 of 134 rows are censored one way.
 
-Also settled, and independent of the above: **40% of candidates never fill at all.**
+The H1 trigger shipped 2026-08-05 and **does not settle this**. It makes the engine far more
+selective (5 of 142 would have been offered) but its stop is *tighter* — 1.17 vs 2.02 daily
+ranges on the 5 comparable rows, the direction this entry warns about. Coherent tightness
+around a current entry may beat incoherent width around a stale one; n=5 cannot say.
+`scripts/probe_trigger_replay.py`. Decisions now carry `trigger_state`/`_entry`/`_stop`, so the
+sample grows from here — re-run the same-bar test against both geometries once it has.
 
-Decide which level is wrong before tuning either. Three shapes, and they are not equivalent —
-widen the stop (§35 says a stop is an intent, not a bound, so this buys less than it looks);
-enter on strength rather than into the move; or take the near target the range rule already
-names, which is §27's open residual and needs §18 read first.
-
-Replay and the traps: `scripts/probe_replay.py`. Do **not** read its win rate or expectancy —
-90 of 134 rows are unresolved and the censoring runs entirely one way.
-
----
-
-## 49. Build the H1 entry trigger under an H12 setup · `DECIDED` — new 2026-08-04
-
-§48 measured the defect; TraderMayne's phase 3 names it. We rest a limit in the zone with nothing
-waited for (a reversal entry) and pad the stop tight off that zone (a continuation stop) — the
-pairing he calls "death by a thousand cuts". **Decided: add the trigger.** Never enter on zone
-touch; enter the pullback into the FVG left by a displacement-backed structure break on H1.
-Mechanic, citations, the timeframe argument and the rejected alternative: `Trading/_Structure.md`
-§ the entry trigger.
-
-**Weekly → H12 → H1**, H12 resampled from H1 so one fetch supplies both rungs. The resample must
-drop empty buckets; that rule alone gets equities, crypto and futures right without branching.
-
-**Smaller than it looks.** No new primitives — `core.structure.breaks` and
-`core.imbalance.fair_value_gaps` already gate on displacement and use `.date` only as an
-orderable token, so three widened annotations put them on intraday bars. **No `date`→`datetime`
-refactor** while the intraday series stays separate from the daily `PriceSeries`. Execution is
-unchanged: step 4 enters *at* the FVG, so detection stays batch and the order stays a resting
-bracket.
-
-**The prerequisite is the participation gate, not the bars.** `INTL` — 77% of the book — returns
-hourly bars of 1-21 trades, several a single print; structure is undetectable and no vendor fixes
-it. **Decided 2026-08-04: a candidate whose trigger cannot be computed is not offered** —
-"no H1 structure to read" is a missing fact, and the gates-vs-scores rule gates those. Thinness
-short of that is a score and is now shown on every equity order (§36), so the line can be read
-off accumulated orders rather than picked. `INTL` itself is only in the book because it is paper;
-it predates the participation cap by 22 minutes and would be capped to 0.15% risk today.
-
-**Do not go shopping for data first** — checked 2026-08-04, verdict and evidence in
-`_Structure.md`. §27's target residual is the third leg of the same geometry problem.
-
-## 50. Equities take daily for the setup rung, not H12 · `DECIDED` — new 2026-08-04
-
-§49 assumed H12 suits every asset class. It does not. Measured 2026-08-04 on real AAPL hourly
-bars: Alpaca SIP runs 08:00-23:00 UTC, so an equity day resamples to **two** H12 buckets — a
-four-hour pre-market bucket carrying 1.2% of the day's volume (926k shares vs 74.4M) and the
-session. An H12 zone drawn on the first is not a zone anyone would trade. Pin:
-`test_resample.py::test_an_extended_hours_feed_splits_an_equity_day_into_two_uneven_buckets`.
-
-**Decided: equities go weekly → daily → H1; crypto goes weekly → H12 → H1.** H12 exists to gain
-resolution on markets that never close, which is not a problem equities have. The daily bars are
-already fetched and cached, so this removes work rather than adding it, and `to_h12` stays
-crypto-only where its assumptions hold.
-
-**The H1 trigger keeps every bar and filters gaps instead.** `_Structure.md` says trim
-equities to regular hours — right about the concern, wrong about the lever. Trimming bars fixes
-displacement-on-pre-market-volume and *causes* closure gaps: 56% of FVGs on a trimmed series
-span the overnight hole against 10% on the feed as served, because thin pre/post-market prints
-bridge the move. Keep the bars; reject a gap whose displacement candle carried under 50% of the
-series' median hourly volume. Leaves 401 of 496 equity gaps with 1 closure artifact, and is
-inert on crypto (0-2%) where there is no session. A volume floor, not a UTC clock window —
-`scripts/probe_intraday_gaps.py`.
+Two trigger residuals, both deliberately unset rather than guessed: a fired trigger never
+expires (measure fill-lag first), and a candidate whose trigger cannot be computed is refused
+rather than falling back to an H12 trigger under a weekly setup.
