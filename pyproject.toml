@@ -27,6 +27,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "ruff>=0.16.1",
 ]
 
 [tool.uv]
@@ -44,6 +45,31 @@ execution = { workspace = true }
 ingestion = { workspace = true }
 llm = { workspace = true }
 oracle = { workspace = true }
+
+[tool.ruff]
+# One config at the root, like the lockfile: members inherit it, so a rule cannot mean one thing
+# in `core` and another in `oracle`.
+target-version = "py312"
+
+[tool.ruff.lint]
+# **Selected explicitly rather than inherited.** ruff's default set is not stable across
+# releases — on this repo 0.16's defaults report 177 findings where the older `E4,E7,E9,F` core
+# reports 23. Taking the default would mean a version bump silently changing what "clean" means,
+# which is the same drift argument that put every package on one lockfile.
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "C4", "DTZ", "RET", "SIM", "BLE", "RUF"]
+
+# `E501` is deliberately absent. The line limit is not enforced because the comments here carry
+# the reasoning and 52 of them run long on purpose; a rule that would be suppressed 52 times is
+# not a rule. `ruff format` is likewise not adopted — 209 of 249 files would be rewritten, and
+# that diff would bury `git blame` on the explanations.
+ignore = [
+    # Flags `–` and `−` in prose as confusable with `-`. They are neither typos nor smuggled
+    # homoglyphs, they are how this repo writes; the rule is aimed at a threat model (a lookalike
+    # character hiding in an identifier) that comments and docstrings do not have.
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 
 [tool.pytest.ini_options]
 # Root-level run: `uv run pytest` collects every package's suite in one pass. Each member
