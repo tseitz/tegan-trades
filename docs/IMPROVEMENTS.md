@@ -904,8 +904,11 @@ resolution on markets that never close, which is not a problem equities have. Th
 already fetched and cached, so this removes work rather than adding it, and `to_h12` stays
 crypto-only where its assumptions hold.
 
-**Do not filter the equity H1 feed to the regular session** — measured, and it is the opposite
-of the intuition: 56% of FVGs on a session-filtered series span the overnight closure against
-10% on the feed as served, because thin pre/post-market bars *bridge* the overnight move and
-stop a three-candle void forming. Numbers, mechanism and the residual:
+**The H1 trigger keeps every bar and filters gaps instead.** `_Structure.md` says trim
+equities to regular hours — right about the concern, wrong about the lever. Trimming bars fixes
+displacement-on-pre-market-volume and *causes* closure gaps: 56% of FVGs on a trimmed series
+span the overnight hole against 10% on the feed as served, because thin pre/post-market prints
+bridge the move. Keep the bars; reject a gap whose displacement candle carried under 50% of the
+series' median hourly volume. Leaves 401 of 496 equity gaps with 1 closure artifact, and is
+inert on crypto (0-2%) where there is no session. A volume floor, not a UTC clock window —
 `scripts/probe_intraday_gaps.py`.

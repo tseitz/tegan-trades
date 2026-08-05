@@ -1,39 +1,47 @@
-"""Does a market closure masquerade as a fair value gap on an equity hourly series?
+"""What makes a fair value gap on an hourly series spurious — and which fix is right.
 
 `core.imbalance.fair_value_gaps` reads three *consecutive* bars positionally. It has no notion
-of elapsed time, so a hole in the series is invisible to it: bar N at Friday's close and bar
-N+1 at Monday's open look exactly like two adjacent hours. Whatever repricing happened while
-the market was shut is attributed to a single candle, that candle's body is large enough to
-clear the displacement threshold, and the void behind it is labelled an imbalance.
+of elapsed time or of how much traded, so two different things reach it wearing one label.
 
-That is not a distinction without a difference. A displacement FVG is cut by aggressive
-one-sided flow — someone lifting every offer — and the thesis for trading it is that unfilled
-orders sit in the void. In a closure gap nothing traded at all; the void is empty because the
-venue was shut. Gap-fill is a real equity phenomenon, so these are not noise — but they are a
-*different* phenomenon with different statistics, and right now both arrive under one label.
+**Failure A — the closure gap.** A hole in the series is invisible: Friday 20:00 and Monday
+13:00 look like adjacent hours. Whatever repriced while the venue was shut lands in one candle,
+that body clears the displacement threshold, and the void behind it is called an imbalance. A
+displacement candle that displaced nothing. (Gap-fill is a real phenomenon, so these are not
+noise — but they are a *different* phenomenon with different statistics.)
 
-MEASURED 2026-08-04 — AAPL, NVDA, META, HOOD, SBSW, FXI; 180 calendar days; Alpaca SIP:
+**Failure B — the starved displacement candle.** `_Structure.md` names this one: "displacement
+on pre-market volume is not the institutional participation the concept is about." A 140k-share
+candle can clear an ATR threshold that a 9M-share session sets.
 
-                                     bars     FVGs   spanning a closure
-    extended feed, as served        11,677     496      49  (10%)
-    filtered to regular session      5,904     230     128  (56%)
+They pull in opposite directions, which is why measuring only one gives the wrong answer.
+Trimming pre-market bars fixes B and causes A; keeping them fixes A and causes B.
 
-**Filtering to the regular session more than doubles the artifact rate.** The extended feed
-runs 08:00-23:00 UTC and its thin pre/post-market bars *bridge* the overnight move: price
-walks there continuously, so no three-candle void forms. Cutting those bars out leaves a
-17-hour jump from 20:00 to 13:00, and the first session bar absorbs the entire overnight
-repricing into one large body — a textbook displacement candle that displaced nothing.
+MEASURED 2026-08-04 — AAPL, NVDA, META, HOOD, SBSW, FXI; 180 days; Alpaca SIP:
 
-So: **take the equity hourly feed as served and do not filter it to the session.** The
-intuition that pre-market bars are junk to be trimmed is exactly backwards for this purpose.
-They are worth little as structure and a great deal as connective tissue.
+                                  bars     FVGs    closure gap    starved c2
+    extended feed, as served    11,677      496     49  (10%)     94  (19%)
+    trimmed to regular session   5,904      230    128  (56%)      0   (0%)
 
-The residual 10% is not evenly spread — it is concentrated in names with no meaningful US
-pre-market: SBSW 22/80 and FXI 19/68, against 1-3 of ~90 for AAPL, NVDA, META and HOOD. The
-bridge only exists where someone is trading, which is the same thinness the participation gate
-already judges. A discontinuity check on the three candles behind a gap would close the rest;
-this probe exists to say whether that is worth building, and on these numbers it is a second
-order fix behind assembling the series correctly.
+**Neither assembly is the answer; the filter belongs on gaps, not on bars.** Keep every bar —
+thin pre/post-market prints are worth little as structure and a great deal as connective tissue,
+because they bridge the overnight move so no void forms — then reject any gap whose displacement
+candle was not real participation. That leaves **401 of 496 gaps, with 1 closure artifact left**,
+because the two failures overlap almost entirely: 48 of the 49 closure gaps also had a starved
+candle. A holed series and a dead pre-market are the same illiquidity seen twice.
+
+**Test participation by volume, not by the clock.** A 13:00-20:00 UTC window is US-equity
+trivia and says nothing about a market that never closes. A floor on the displacement candle's
+volume against the series median says the same thing in the terms the concern is actually
+about, and the numbers agree:
+
+    c2 volume floor    rejects (of 496)    agrees with the session clock
+        10% of median         23                    86%
+        25% of median         57                    93%
+        50% of median         74                    95%
+
+and on crypto, where there is no session to be outside of, a 50% floor is inert — 0-2% of gaps
+across BTC, ETH, SOL, LINK and AVAX over 120 days. It binds where the concern is real and
+nowhere else, which is what a general rule should do and what an hour window cannot.
 
 Run: `uv run python scripts/probe_intraday_gaps.py` (needs Alpaca credentials in `.env`).
 """
@@ -55,6 +63,10 @@ LOOKBACK_DAYS = 180
 # summer close. This window is what the probe argues *against* filtering to.
 SESSION_FIRST_HOUR = 13
 SESSION_LAST_HOUR = 20
+
+# Fractions of the series' median hourly volume to test a displacement candle against,
+# as a clock-free stand-in for "was this session participation".
+VOLUME_FLOORS = (0.10, 0.25, 0.50)
 
 
 def fetch_hourly(broker: AlpacaBroker, symbol: str, start: str) -> list[dict]:
@@ -90,47 +102,88 @@ def to_series(rows, symbol: str) -> IntradaySeries:
     )
 
 
-def gaps_spanning_a_closure(series: IntradaySeries) -> tuple[int, int]:
-    """(total gaps, how many were cut across a hole in the series)."""
+def classify(series: IntradaySeries) -> dict:
+    """Every FVG in ``series``, split by the two ways one can be spurious.
+
+    They are independent failures and they pull in opposite directions, which is the whole
+    point of measuring both: a closure gap is an artifact of *removing* extended bars, and a
+    thin displacement candle is an artifact of *keeping* them.
+    """
     gaps = imbalance.fair_value_gaps(series.bars)
-    position = {bar.date: i for i, bar in enumerate(series.bars)}
-    spanning = 0
+    volumes = sorted(b.volume for b in series.bars if b.volume is not None)
+    median = volumes[len(volumes) // 2] if volumes else 0.0
+
+    spanning = thin_middle = both = 0
+    quiet = dict.fromkeys(VOLUME_FLOORS, 0)
+    agree = dict.fromkeys(VOLUME_FLOORS, 0)
     for gap in gaps:
-        end = position[gap.date]                    # a gap is dated at its third candle
-        window = series.bars[end - 2:end + 1]
-        if any(b.date - a.date > timedelta(hours=1) for a, b in pairwise(window)):
-            spanning += 1
-    return len(gaps), spanning
+        window = series.bars[gap.index - 2:gap.index + 1]
+        crosses = any(b.date - a.date > timedelta(hours=1) for a, b in pairwise(window))
+        middle = series.bars[gap.middle_index]
+        extended = not (SESSION_FIRST_HOUR <= middle.date.hour <= SESSION_LAST_HOUR)
+        spanning += crosses
+        thin_middle += extended
+        both += crosses and extended
+        for floor in VOLUME_FLOORS:
+            starved = (middle.volume or 0.0) < floor * median
+            quiet[floor] += starved
+            agree[floor] += starved == extended
+    return {"bars": len(series.bars), "gaps": len(gaps), "spanning": spanning,
+            "thin": thin_middle, "both": both, "median": median,
+            "quiet": quiet, "agree": agree}
+
+
+def session_only(rows):
+    return [r for r in rows if SESSION_FIRST_HOUR <= int(r["t"][11:13]) <= SESSION_LAST_HOUR]
 
 
 def main() -> int:
     broker = AlpacaBroker(alpaca_credentials(), network="paper")
     start = (datetime.now(UTC) - timedelta(days=LOOKBACK_DAYS)).date().isoformat()
 
-    totals = {"extended": [0, 0, 0], "session": [0, 0, 0]}
-    print(f"{'symbol':7} {'assembly':>10} {'bars':>6} {'FVGs':>5} {'spanning':>9}")
+    keys = ("bars", "gaps", "spanning", "thin", "both")
+    totals = {"extended": dict.fromkeys(keys, 0), "session": dict.fromkeys(keys, 0)}
+    sweep = {"quiet": dict.fromkeys(VOLUME_FLOORS, 0), "agree": dict.fromkeys(VOLUME_FLOORS, 0)}
+
+    print(f"{'symbol':7} {'assembly':>9} {'bars':>6} {'FVGs':>5} {'closure':>8} {'thin c2':>8}")
     for symbol in SYMBOLS:
         rows = fetch_hourly(broker, symbol, start)
         if not rows:
             print(f"{symbol:7} no data returned")
             continue
-        session_rows = [
-            r for r in rows
-            if SESSION_FIRST_HOUR <= int(r["t"][11:13]) <= SESSION_LAST_HOUR
-        ]
-        for label, subset in (("extended", rows), ("session", session_rows)):
-            series = to_series(subset, symbol)
-            total, spanning = gaps_spanning_a_closure(series)
-            totals[label] = [
-                a + b for a, b in zip(totals[label], (len(series.bars), total, spanning), strict=True)
-            ]
-            print(f"{symbol:7} {label:>10} {len(series.bars):6} {total:5} {spanning:9}")
+        for label, subset in (("extended", rows), ("session", session_only(rows))):
+            stats = classify(to_series(subset, symbol))
+            for k in keys:
+                totals[label][k] += stats[k]
+            if label == "extended":
+                for floor in VOLUME_FLOORS:
+                    sweep["quiet"][floor] += stats["quiet"][floor]
+                    sweep["agree"][floor] += stats["agree"][floor]
+            print(f"{symbol:7} {label:>9} {stats['bars']:6} {stats['gaps']:5} "
+                  f"{stats['spanning']:8} {stats['thin']:8}")
 
     print()
     for label in ("extended", "session"):
-        bars, total, spanning = totals[label]
-        share = f"{spanning / total:.0%}" if total else "n/a"
-        print(f"TOTAL {label:9} bars={bars:6} FVGs={total:4} spanning={spanning:4} ({share})")
+        t = totals[label]
+        total = t["gaps"] or 1
+        print(f"TOTAL {label:9} bars={t['bars']:6} FVGs={t['gaps']:4}  "
+              f"closure={t['spanning']:4} ({t['spanning'] / total:.0%})  "
+              f"thin c2={t['thin']:4} ({t['thin'] / total:.0%})")
+
+    # The assembly neither the spec nor this probe's first pass considered: keep every bar so
+    # the overnight move stays bridged, then discard any gap whose displacement candle was not
+    # session participation. A filter on gaps, not on bars.
+    t = totals["extended"]
+    survivors = t["gaps"] - t["spanning"] - t["thin"] + t["both"]
+    print(f"\nbridged (all bars, session-only displacement): {survivors} of {t['gaps']} gaps "
+          f"survive; {t['spanning'] - t['both']} closure gaps remain")
+
+    # Can a volume floor replace the clock? An hour window is US-equity-specific and means
+    # nothing to crypto; "did this candle carry real participation" is the actual concern.
+    print(f"\nvolume floor vs the session clock, over {t['gaps']} extended-feed gaps:")
+    for floor in VOLUME_FLOORS:
+        print(f"  c2 volume < {floor:.0%} of median: rejects {sweep['quiet'][floor]:4}  "
+              f"agrees with the clock on {sweep['agree'][floor] / (t['gaps'] or 1):.0%} of gaps")
     return 0
 
 
