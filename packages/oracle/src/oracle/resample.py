@@ -66,7 +66,14 @@ def _h12_bucket(stamp: datetime) -> datetime:
 
 
 def to_h12(series: IntradaySeries, *, include_partial: bool = False) -> IntradaySeries:
-    """Aggregate hourly bars into twelve-hour bars — the setup timeframe.
+    """Aggregate hourly bars into twelve-hour bars — the setup timeframe, **for crypto only**.
+
+    H12 exists to gain a rung of resolution on markets that never close. Equities do not have
+    that problem and are actively harmed by this: an extended-hours feed runs 08:00-23:00 UTC,
+    so a stock's day lands in two buckets and the morning one is four thin pre-market hours
+    wearing the shape of a twelve-hour setup candle. Equities take the daily bar for that rung
+    instead — see docs/IMPROVEMENTS.md §50. Nothing here rejects an equity series, because the
+    resample's job is to report what it was handed; the choice belongs to the caller.
 
     **Why this is resampled and never fetched.** Coinbase's granularity ladder steps 3600 ->
     21600 -> 86400, and no venue we route to serves a native twelve-hour candle. There is no

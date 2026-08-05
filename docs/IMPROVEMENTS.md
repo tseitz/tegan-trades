@@ -891,19 +891,21 @@ it predates the participation cap by 22 minutes and would be capped to 0.15% ris
 **Do not go shopping for data first** — checked 2026-08-04, verdict and evidence in
 `_Structure.md`. §27's target residual is the third leg of the same geometry problem.
 
-## 50. Decide what an equity intraday fetch is allowed to include · new 2026-08-04
+## 50. Equities take daily for the setup rung, not H12 · `DECIDED` — new 2026-08-04
 
-Measured 2026-08-04 on real AAPL hourly bars: Alpaca SIP runs 08:00-23:00 UTC, so an equity day
-resamples to **two** H12 buckets, not one — a four-hour pre-market bucket carrying 1.2% of the
-day's volume (926k shares vs 74.4M, an 80x gap) and the session bucket. Yahoo's hourly is
-regular-session-only and gives one. Numbers and the pin: `test_resample.py
-::test_an_extended_hours_feed_splits_an_equity_day_into_two_uneven_buckets`.
+§49 assumed H12 suits every asset class. It does not. Measured 2026-08-04 on real AAPL hourly
+bars: Alpaca SIP runs 08:00-23:00 UTC, so an equity day resamples to **two** H12 buckets — a
+four-hour pre-market bucket carrying 1.2% of the day's volume (926k shares vs 74.4M) and the
+session. An H12 zone drawn on the first is not a zone anyone would trade. Pin:
+`test_resample.py::test_an_extended_hours_feed_splits_an_equity_day_into_two_uneven_buckets`.
 
-So "an equity is basically a daily on H12" is a property of the **feed**, not of equities, and
-§49 assumed it without qualification. A pre-market bucket is a real bucket — `to_h12` reports it,
-correctly — but it is four thin hours wearing the same shape as a twelve-hour setup candle, and
-the H12 zone drawn on it is not a zone anyone would trade.
+**Decided: equities go weekly → daily → H1; crypto goes weekly → H12 → H1.** H12 exists to gain
+resolution on markets that never close, which is not a problem equities have. The daily bars are
+already fetched and cached, so this removes work rather than adding it, and `to_h12` stays
+crypto-only where its assumptions hold.
 
-**Decide at the fetch/assembly layer, not in the resample**: filter to regular session, or take
-the feed as it comes and let §49's participation gate kill the thin bucket. Blocks wiring
-equities into the trigger; crypto is unaffected (24/7, no session).
+**Do not filter the equity H1 feed to the regular session** — measured, and it is the opposite
+of the intuition: 56% of FVGs on a session-filtered series span the overnight closure against
+10% on the feed as served, because thin pre/post-market bars *bridge* the overnight move and
+stop a three-candle void forming. Numbers, mechanism and the residual:
+`scripts/probe_intraday_gaps.py`.
