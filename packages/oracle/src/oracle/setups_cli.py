@@ -376,7 +376,6 @@ def build_candidates(
 
     series_cache: dict = {}
     contexts: dict[str, tuple] = {}
-    hourlies: dict[str, object] = {}
     refs: dict[str, object] = {}
     unpriceable: Counter = Counter()
     contradicted: list[str] = []
@@ -415,8 +414,6 @@ def build_candidates(
         # stale read costs nothing, and the trigger pass below fetches fresh bars for the few
         # dozen assets that actually produced a candidate. ``fetch-prices`` warms the rest.
         hourly = trigger_feed.load_cached(resolved) if triggers_on else None
-        if hourly is not None:
-            hourlies[asset] = hourly
         refs[asset] = resolved
         rung, rung_series = trigger_feed.setup_rung(hourly)
         setup_bars = daily.bars if rung_series is None else rung_series.bars
@@ -492,8 +489,6 @@ def build_candidates(
         # a few hundred. ``load_or_fetch`` asks only for the tail it is missing.
         hourly = (trigger_feed.load_or_fetch(refs[candidate.asset])
                   if triggers_on and candidate.asset in refs else None)
-        if hourly is None:
-            hourly = hourlies.get(candidate.asset)
         if hourly is None:
             continue
         triggers[candidate.key] = trigger.detect(

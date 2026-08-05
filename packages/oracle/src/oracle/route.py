@@ -237,9 +237,46 @@ def load_routing_table(
     *,
     listings: Mapping[str, Iterable[str]],
 ) -> RoutingTable:
+    """Assemble a routing table from its three inputs.
+
+    **Prefer ``the_routing_table()`` below unless you genuinely need to vary an input.** Passing
+    a stubbed ``domain_rows`` or ``listings`` does not fail — it silently refuses most of the
+    corpus as ``conflict``, which reads as an engine fault rather than as a mis-built table.
+    That has cost three debugging rounds in probes; the helper exists so there is one correct
+    way to say "the real one".
+    """
     return RoutingTable(
         curated=load_curated(config_dir),
         coinbase_symbols=frozenset(listings.get("coinbase", ())),
         kraken_symbols=frozenset(listings.get("kraken", ())),
         domain_consensus=build_domain_consensus(domain_rows),
+    )
+
+
+def the_routing_table(config_dir=None, *, rows=None, listings_map=None) -> RoutingTable:
+    """The table the pipeline actually routes with, built from the real corpus and listings.
+
+    Every CLI and probe needs this same four-step preamble — read the registry, iterate the
+    corpus, load the listings, assemble. Nine call sites repeated it, and the ones that took a
+    shortcut got a table that refuses ~90% of assets as ``conflict``: routing cannot tell a
+    corpus with no domain consensus from a corpus that genuinely disagrees, so a stubbed input
+    produces a confident wrong answer instead of an error.
+
+    Arguments exist only for callers that already hold a piece — passing ``rows`` when the
+    corpus is loaded anyway saves re-reading 666 files — and default to fetching it.
+    """
+    # Imported here rather than at module scope: ``corpus`` reads ``core.canon`` and ``cache``,
+    # and ``route`` is imported by both. A module-level import would close that loop.
+    from core.canon import load_registry
+
+    from oracle import cache, corpus
+    from oracle import listings as listings_mod
+
+    config_dir = config_dir or Path(__file__).resolve().parents[4] / "cfg"
+    if rows is None:
+        rows = list(corpus.iter_rows(load_registry(config_dir)))
+    if listings_map is None:
+        listings_map = listings_mod.load_or_fetch(cache.DATA_ROOT / "_listings.json")
+    return load_routing_table(
+        config_dir, [(r.asset, r.domain) for r in rows], listings=listings_map,
     )

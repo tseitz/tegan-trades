@@ -53,7 +53,7 @@ from datetime import UTC, datetime
 from core import trigger
 from core.canon import load_registry
 from oracle import cache, corpus, listings, trigger_feed
-from oracle.route import Unpriceable, load_routing_table, route
+from oracle.route import Unpriceable, route, the_routing_table
 from oracle.setups_cli import CONFIG_DIR, build_candidates, is_inside_zone
 
 
@@ -67,12 +67,7 @@ def main() -> int:
     )
     print(f"{stats.candidate_count} candidates in today's queue\n")
 
-    # Built exactly as ``build_candidates`` builds it. A table without the corpus's own domain
-    # consensus refuses 90% of the queue as "conflict", which looks like an engine failure and
-    # is really just a stubbed probe.
-    table = load_routing_table(
-        CONFIG_DIR, [(r.asset, r.domain) for r in rows], listings=listings_map,
-    )
+    table = the_routing_table(CONFIG_DIR, rows=rows, listings_map=listings_map)
 
     verdicts: Counter = Counter()
     ungated: Counter = Counter()

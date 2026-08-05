@@ -1,5 +1,5 @@
 from dataclasses import FrozenInstanceError
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -17,6 +17,7 @@ from core.structure import (
     breaks,
     confirmed_by,
     invalidated_on,
+    on_or_before,
     order_blocks,
     position_in_range,
     swings,
@@ -499,3 +500,48 @@ def test_detects_a_bearish_break_and_its_order_block():
     assert ob.invalidation == 16         # the origin swing high
     assert ob.depth_at(14) == 0.0        # approached from below
     assert ob.depth_at(15.8) == 1.0
+
+
+# ── as-of comparisons across two clocks ─────────────────────────────────────────────────────
+# Exists because this crashed the queue rather than because it looked risky. Every ``as_of``
+# here is a calendar date; bars stopped always being daily the moment H12 and H1 series reached
+# ``build_context``, and Python refuses to compare a datetime against a date.
+
+def test_a_daily_stamp_compares_against_an_as_of_date():
+    assert on_or_before(date(2026, 8, 3), date(2026, 8, 4)) is True
+    assert on_or_before(date(2026, 8, 5), date(2026, 8, 4)) is False
+    assert on_or_before(date(2026, 8, 4), date(2026, 8, 4)) is True
+
+
+def test_an_intraday_stamp_compares_on_its_date_component():
+    """``as_of`` means end-of-day, so every bar stamped that day is on-or-before it — including
+    an H12 bucket opened at 12:00. The still-forming one has already been dropped by
+    ``to_h12``, so this cannot admit a bar the caller could not have seen."""
+    noon = datetime(2026, 8, 4, 12, tzinfo=UTC)
+    assert on_or_before(noon, date(2026, 8, 4)) is True
+    assert on_or_before(noon, date(2026, 8, 3)) is False
+    assert on_or_before(datetime(2026, 8, 4, 23, tzinfo=UTC), date(2026, 8, 4)) is True
+
+
+def test_a_date_stamp_compares_against_a_datetime_as_of():
+    """The mirror case. Nothing performs an intraday as-of query today, but the helper is the
+    single place both directions meet and a one-sided guard would be a trap for whoever adds
+    the first one."""
+    assert on_or_before(date(2026, 8, 4), datetime(2026, 8, 4, 9, tzinfo=UTC)) is True
+    assert on_or_before(date(2026, 8, 5), datetime(2026, 8, 4, 9, tzinfo=UTC)) is False
+
+
+def test_no_as_of_admits_everything():
+    """``as_of=None`` means "no cutoff" throughout this module, so the helper must not treat a
+    missing bound as a failed comparison — every caller passes it straight through."""
+    assert on_or_before(date(2026, 8, 4), None) is True
+    assert on_or_before(datetime(2026, 8, 4, 12, tzinfo=UTC), None) is True
+
+
+def test_two_intraday_stamps_compare_directly_and_keep_their_time():
+    """Not reduced to dates when both sides carry a clock — that would make 09:00 and 23:00 on
+    one day indistinguishable, which is the whole thing an intraday series is for."""
+    nine = datetime(2026, 8, 4, 9, tzinfo=UTC)
+    eleven = datetime(2026, 8, 4, 23, tzinfo=UTC)
+    assert on_or_before(nine, eleven) is True
+    assert on_or_before(eleven, nine) is False

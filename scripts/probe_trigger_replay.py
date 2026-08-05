@@ -70,9 +70,8 @@ from pathlib import Path
 from statistics import median
 
 from core import trigger
-from core.canon import load_registry
-from oracle import cache, corpus, listings, trigger_feed
-from oracle.route import Unpriceable, load_routing_table, route
+from oracle import trigger_feed
+from oracle.route import Unpriceable, route, the_routing_table
 from oracle.setups_cli import CONFIG_DIR
 from probe_replay import (
     MIN_RANGE_BARS,
@@ -118,15 +117,7 @@ def hourly_as_of(ref, decided: datetime, load_cached=trigger_feed.load_cached):
 def main() -> int:
     rows = load_rows(DECISIONS)
     load_series = build_series_loader()
-    # Built from the corpus's own domain consensus and the real listings, exactly as
-    # ``build_candidates`` builds it. A stubbed table refuses ~90% of assets as "conflict",
-    # which reads as an engine failure and is only ever a broken probe.
-    registry = load_registry(CONFIG_DIR)
-    corpus_rows = list(corpus.iter_rows(registry))
-    listings_map = listings.load_or_fetch(cache.DATA_ROOT / "_listings.json")
-    table = load_routing_table(
-        CONFIG_DIR, [(r.asset, r.domain) for r in corpus_rows], listings=listings_map,
-    )
+    table = the_routing_table(CONFIG_DIR)
 
     states: Counter = Counter()
     recorded_stops: list[float] = []

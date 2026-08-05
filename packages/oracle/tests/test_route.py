@@ -1,4 +1,7 @@
+from types import SimpleNamespace
+
 import pytest
+from oracle import route as route_mod
 from oracle.route import (
     CONFLICT,
     DerivedRef,
@@ -275,3 +278,30 @@ def test_an_uncurated_asset_has_no_tradeable_override():
     is the same guess that routes GOLD to Gold.com, Inc."""
     table = _table(domain_consensus={"HOOD": "stock"})
     assert route("HOOD", table).trade_symbol == "HOOD"
+
+
+# ── the one correct way to build the table ──────────────────────────────────────────────────
+
+def test_the_routing_table_helper_carries_all_three_inputs(tmp_path):
+    """The failure this exists to stop is silent, not loud. A table missing its domain consensus
+    still routes — it just refuses most of the corpus as ``conflict``, which reads as an engine
+    fault. Three probes were debugged past that before the helper existed, so the test asserts
+    the inputs actually arrive rather than that the call returns something.
+    """
+    (tmp_path / "oracle_map.yaml").write_text("assets:\n  BTC: {source: coinbase, symbol: BTC-USD}\n")
+    rows = [SimpleNamespace(asset="ETH", domain="crypto"),
+            SimpleNamespace(asset="ETH", domain="crypto")]
+    table = route_mod.the_routing_table(
+        tmp_path, rows=rows, listings_map={"coinbase": ["ETH-USD"], "kraken": []})
+    assert table.curated                      # cfg reached it
+    assert table.domain_consensus == {"ETH": "crypto"}   # corpus rows reached it
+    assert "ETH-USD" in table.coinbase_symbols          # listings reached it
+
+
+def test_a_table_without_domain_consensus_refuses_rather_than_erroring(tmp_path):
+    """Why the helper is worth having: this is what a stubbed input produces, and nothing about
+    it looks like a mistake at the call site."""
+    (tmp_path / "oracle_map.yaml").write_text("assets: {}\n")
+    stubbed = route_mod.load_routing_table(
+        tmp_path, [], listings={"coinbase": [], "kraken": []})
+    assert isinstance(route_mod.route("ETH", stubbed), route_mod.Unpriceable)
