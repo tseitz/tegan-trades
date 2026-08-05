@@ -43,12 +43,34 @@ and on crypto, where there is no session to be outside of, a 50% floor is inert 
 across BTC, ETH, SOL, LINK and AVAX over 120 days. It binds where the concern is real and
 nowhere else, which is what a general rule should do and what an hour window cannot.
 
+**The trailing window that median is taken over barely matters, above about three days.**
+
+    trailing window     rejects (of 496)    agrees with the session clock
+        14 bars               81                      97%
+        24 bars               61                      93%
+        48 bars               70                      94%
+        80 bars               71                      95%
+       160 bars               71                      95%
+       336 bars               73                      95%
+      whole series            73                      95%
+
+14 and 24 bars swing between 81 and 61 rejections; from 48 up the answer is flat at 70-73. An
+equity day is 16 extended bars, so anything under two days is phase-sensitive — where in the
+session the candle falls decides what it is compared against. 14's 97% is the best agreement
+on the table and it sits at the least stable point on the curve, which is a good reason not to
+take it. **`PARTICIPATION_WINDOW = 80`** — mid-plateau, a trading week of equity bars, ~3.3 days
+of crypto — chosen because the plateau makes the choice insensitive, not because 80 is special.
+
+The median is taken over bars *strictly before* the displacement candle, mirroring
+`imbalance.atr`: a candle inside the window it is judged against inflates its own threshold.
+
 Run: `uv run python scripts/probe_intraday_gaps.py` (needs Alpaca credentials in `.env`).
 """
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
+from statistics import median
 
 from core import imbalance
 from execution.alpaca_broker import DATA_URL, AlpacaBroker
@@ -67,6 +89,10 @@ SESSION_LAST_HOUR = 20
 # Fractions of the series' median hourly volume to test a displacement candle against,
 # as a clock-free stand-in for "was this session participation".
 VOLUME_FLOORS = (0.10, 0.25, 0.50)
+
+# Trailing windows to take that median over, in bars. Sub-2-day windows are phase-sensitive
+# on a 16-bar equity day; the answer flattens from ~48 up. See the module docstring.
+MEDIAN_WINDOWS = (14, 24, 48, 80, 160, 336, None)   # None = whole series
 
 
 def fetch_hourly(broker: AlpacaBroker, symbol: str, start: str) -> list[dict]:
@@ -133,6 +159,27 @@ def classify(series: IntradaySeries) -> dict:
             "quiet": quiet, "agree": agree}
 
 
+def window_sweep(series: IntradaySeries, floor: float = 0.50) -> dict:
+    """How many gaps a participation floor rejects, per trailing-window length.
+
+    The median is taken over bars **strictly before** the displacement candle, mirroring
+    `imbalance.atr`'s reasoning: a candle included in the window it is judged against inflates
+    its own threshold, so the filter partly cancels itself out.
+    """
+    volumes = [b.volume for b in series.bars if b.volume is not None]
+    out = {w: [0, 0] for w in MEDIAN_WINDOWS}          # rejected, agrees-with-clock
+    for gap in imbalance.fair_value_gaps(series.bars):
+        middle = series.bars[gap.middle_index]
+        extended = not (SESSION_FIRST_HOUR <= middle.date.hour <= SESSION_LAST_HOUR)
+        for window in MEDIAN_WINDOWS:
+            lo = 0 if window is None else max(0, gap.middle_index - window)
+            history = volumes[lo:gap.middle_index]
+            starved = (middle.volume or 0.0) < floor * (median(history) if history else 0.0)
+            out[window][0] += starved
+            out[window][1] += starved == extended
+    return out
+
+
 def session_only(rows):
     return [r for r in rows if SESSION_FIRST_HOUR <= int(r["t"][11:13]) <= SESSION_LAST_HOUR]
 
@@ -144,6 +191,7 @@ def main() -> int:
     keys = ("bars", "gaps", "spanning", "thin", "both")
     totals = {"extended": dict.fromkeys(keys, 0), "session": dict.fromkeys(keys, 0)}
     sweep = {"quiet": dict.fromkeys(VOLUME_FLOORS, 0), "agree": dict.fromkeys(VOLUME_FLOORS, 0)}
+    windows = {w: [0, 0] for w in MEDIAN_WINDOWS}
 
     print(f"{'symbol':7} {'assembly':>9} {'bars':>6} {'FVGs':>5} {'closure':>8} {'thin c2':>8}")
     for symbol in SYMBOLS:
@@ -159,6 +207,9 @@ def main() -> int:
                 for floor in VOLUME_FLOORS:
                     sweep["quiet"][floor] += stats["quiet"][floor]
                     sweep["agree"][floor] += stats["agree"][floor]
+                for window, (rejected, agreed) in window_sweep(to_series(subset, symbol)).items():
+                    windows[window][0] += rejected
+                    windows[window][1] += agreed
             print(f"{symbol:7} {label:>9} {stats['bars']:6} {stats['gaps']:5} "
                   f"{stats['spanning']:8} {stats['thin']:8}")
 
@@ -184,6 +235,11 @@ def main() -> int:
     for floor in VOLUME_FLOORS:
         print(f"  c2 volume < {floor:.0%} of median: rejects {sweep['quiet'][floor]:4}  "
               f"agrees with the clock on {sweep['agree'][floor] / (t['gaps'] or 1):.0%} of gaps")
+
+    print("\ntrailing window for that median, at a 50% floor:")
+    for window, (rejected, agreed) in windows.items():
+        label = "whole series" if window is None else f"{window} bars"
+        print(f"  {label:>12}: rejects {rejected:4}  agrees {agreed / (t['gaps'] or 1):.0%}")
     return 0
 
 
