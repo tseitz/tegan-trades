@@ -3,8 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import pytest
-
+from execution import session as session_module
 from execution import store
 from execution.account import Account
 from execution.config import Config
@@ -12,10 +11,8 @@ from execution.guards import Refusal
 from execution.liquidity import Liquidity
 from execution.plan import Market, OrderPlan
 from execution.portfolio import Book, combine
-from execution import session as session_module
 from execution.session import Session, describe, describe_book
 from execution.wire import Placement
-
 
 # ── fakes ───────────────────────────────────────────────────────────────────────────────────
 
@@ -80,7 +77,7 @@ class FakeBroker:
 
     def cancel(self, order_id: str):
         self.cancelled.append(order_id)
-        return None
+        return
 
     def liquidity(self, coin):
         return Liquidity(coin=coin, day_volume=50_000_000.0, open_interest=100_000_000.0,

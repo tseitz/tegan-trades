@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import pytest
-
 from execution import desk as desk_module
 from execution import venues
 from execution.account import Account
@@ -17,7 +16,6 @@ from execution.desk import (
     config_for,
     network_for,
 )
-
 
 # ── fakes ───────────────────────────────────────────────────────────────────────────────────
 

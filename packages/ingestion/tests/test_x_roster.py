@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from datetime import date
 
-import pytest
-
 from ingestion import x_roster
 from ingestion.x_search import XPost
 

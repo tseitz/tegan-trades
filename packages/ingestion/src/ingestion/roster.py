@@ -6,7 +6,6 @@ from datetime import date
 from pathlib import Path
 
 import yaml
-
 from youtube_transcript_api import (
     AgeRestricted,
     NoTranscriptFound,

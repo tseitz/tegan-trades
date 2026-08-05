@@ -8,7 +8,6 @@ from datetime import date
 from pathlib import Path
 
 import pytest
-
 from oracle.sources import coinbase, kraken, yahoo
 
 FIXTURES = Path(__file__).parent / "fixtures"

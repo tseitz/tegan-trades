@@ -26,9 +26,10 @@ def test_fetch_real_transcript_smoke():
 
 
 def test_ingest_video_persists_given_text_and_metadata(tmp_path):
-    from ingestion.youtube import ingest_video
-    from ingestion.store import load, path_for
     import json
+
+    from ingestion.store import load, path_for
+    from ingestion.youtube import ingest_video
 
     meta = {"title": "T", "published_at": "2026-07-01", "person": "Someone"}
     vid = ingest_video("abc12345678", meta, text="hello", root=tmp_path)
@@ -61,9 +62,10 @@ def _fake_meta(video_id):
 
 
 def test_ingest_url_round_trip(tmp_path, monkeypatch):
+    import json
+
     import ingestion.youtube as yt
     from ingestion.store import load, path_for
-    import json
 
     monkeypatch.setattr(yt, "fetch_transcript", lambda vid: f"fetched:{vid}")
     url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
@@ -82,9 +84,10 @@ def test_ingest_url_round_trip(tmp_path, monkeypatch):
 def test_ingest_url_hydrates_metadata(tmp_path, monkeypatch):
     """Regression: ingest() used to persist bare {"url": url}, producing a record with no
     published_at. That later crashed the triage ranker and left the thesis person 'unknown'."""
+    import json
+
     import ingestion.youtube as yt
     from ingestion.store import path_for
-    import json
 
     monkeypatch.setattr(yt, "fetch_transcript", lambda vid: f"fetched:{vid}")
     yt.ingest("https://www.youtube.com/watch?v=dQw4w9WgXcQ", person="Heavy Metal Verse",
@@ -100,9 +103,10 @@ def test_ingest_url_hydrates_metadata(tmp_path, monkeypatch):
 
 
 def test_ingest_url_defaults_person_when_unspecified(tmp_path, monkeypatch):
+    import json
+
     import ingestion.youtube as yt
     from ingestion.store import path_for
-    import json
 
     monkeypatch.setattr(yt, "fetch_transcript", lambda vid: f"fetched:{vid}")
     yt.ingest("https://www.youtube.com/watch?v=dQw4w9WgXcQ", root=tmp_path, _hydrate=_fake_meta)
@@ -223,8 +227,8 @@ def test_fetch_transcript_proxied_block_retries_without_abort(monkeypatch):
     # With a proxy (rotating IPs), a RequestBlocked on one IP must NOT become a
     # run-aborting TranscriptBlocked — retry a fresh IP, then fail that video only.
     import ingestion.youtube as yt
-    from youtube_transcript_api import RequestBlocked
     from ingestion.youtube import TranscriptBlocked
+    from youtube_transcript_api import RequestBlocked
     monkeypatch.setenv("WEBSHARE_PROXY_USERNAME", "u")
     monkeypatch.setenv("WEBSHARE_PROXY_PASSWORD", "p")
 
@@ -252,7 +256,6 @@ def test_proxy_config_rejects_credentials_containing_the_connection_string(monke
     DIRECT fetch, and YouTube blocks your own IP — the exact failure the proxy exists to
     prevent. Fail loudly instead."""
     import pytest as _pytest
-
     from ingestion.youtube import ProxyCredentialError, _proxy_config
 
     monkeypatch.setenv("WEBSHARE_PROXY_USERNAME", "abcd1234")

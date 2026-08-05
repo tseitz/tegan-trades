@@ -21,6 +21,7 @@ import argparse
 from datetime import UTC, datetime, timedelta
 
 from core.funding import FundingRate, summarize
+
 from oracle import funding_store, http, venue_map
 from oracle.http import FetchError
 from oracle.sources import aster, hyperliquid, lighter

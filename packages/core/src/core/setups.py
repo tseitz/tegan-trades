@@ -45,9 +45,9 @@ from hashlib import sha256
 
 from core.dealing_range import DealingRange
 from core.dealing_range import dealing_range as resolve_dealing_range
-from core.imbalance import atr
-from core.levels import STATED, read_target
 from core.funding import FundingOutlook, carry_adjusted_rr
+from core.imbalance import atr
+from core.levels import read_target
 from core.rank import agreement_signal, parse_date
 from core.structure import (
     BEARISH,

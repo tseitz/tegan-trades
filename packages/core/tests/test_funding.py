@@ -1,12 +1,11 @@
 from datetime import UTC, datetime
 
 import pytest
-
 from core.funding import (
     FundingRate,
     annualized,
-    carry_cost,
     carry_adjusted_rr,
+    carry_cost,
     summarize,
 )
 

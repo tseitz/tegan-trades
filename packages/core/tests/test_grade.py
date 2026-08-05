@@ -2,7 +2,6 @@ from datetime import date
 from types import SimpleNamespace
 
 import pytest
-
 from core.grade import (
     DEFAULT_HORIZONS,
     FLAT_BAND,

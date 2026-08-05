@@ -7,7 +7,6 @@ A fixed notional would silently risk 10x more on the wider zone.
 from __future__ import annotations
 
 import pytest
-
 from execution.sizing import (
     CAP_BUDGET,
     CAP_CONCENTRATION,

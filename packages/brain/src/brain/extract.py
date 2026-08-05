@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from core.stance import DroppedStance, Stance, build_stance, parse_stances
 from core.thesis import Source
@@ -40,7 +40,7 @@ def _tool_schema() -> dict:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _tool_input(message) -> dict:

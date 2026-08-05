@@ -70,7 +70,13 @@ from pathlib import Path
 from core.canon import load_registry
 from core.identity import DIFFERS, IN_RANGE, MATCH, NO_PRICE, compare
 from oracle import cache, corpus, listings, venue_map
-from oracle.marks import Mark, aster_marks, hyperliquid_marks, index_marks, lighter_marks
+from oracle.marks import (
+    Mark,
+    aster_marks,
+    hyperliquid_marks,
+    index_marks,
+    lighter_marks,
+)
 from oracle.route import OracleRef, load_routing_table, route
 from oracle.sources import aster, lighter
 

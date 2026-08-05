@@ -1,11 +1,10 @@
 import json
 import time
 
-from core.stance import DroppedStance, Provenance, Stance
-from core.thesis import Source
-
 from brain.extract import StanceResult
 from brain.sweep import ExtractResult, extract_all, format_summary
+from core.stance import DroppedStance, Provenance, Stance
+from core.thesis import Source
 
 
 def _write_transcript(root, vid, person, text="body"):

@@ -77,7 +77,7 @@ def _find_sentence_boundary(text: str, end_pos: int, lookback: int) -> int | Non
         if search_text[i] == "\n":
             # Newline is a boundary; return position after it
             return search_start + i + 1
-        elif i < len(search_text) - 1:
+        if i < len(search_text) - 1:
             # Check for '. ', '! ', '? '
             if search_text[i] in ".!?" and search_text[i + 1] == " ":
                 return search_start + i + 2

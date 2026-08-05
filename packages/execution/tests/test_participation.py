@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
-
 from execution import guards
 from execution.participation import (
     REFUSAL_NO_DEPTH,
@@ -20,7 +19,6 @@ from execution.participation import (
 )
 from execution.plan import SHARE_GRID, Market, build
 from execution.session import describe
-
 
 # 30-session medians, Alpaca SIP, to 2026-07-28.
 INTL = Depth(sessions=30, median_volume=24_707.0, median_trades=175.0,

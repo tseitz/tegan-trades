@@ -6,7 +6,6 @@ Placing an actual order needs a key and a funded account, so that lives behind
 from __future__ import annotations
 
 import pytest
-
 from execution.broker import (
     MAINNET,
     NETWORKS,
@@ -21,7 +20,6 @@ from execution.broker import (
     perp_markets,
     spot_collateral,
 )
-
 
 # ── HIP-3 namespaces ────────────────────────────────────────────────────────────────────────
 

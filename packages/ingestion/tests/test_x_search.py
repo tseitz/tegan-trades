@@ -3,10 +3,8 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from ingestion import x_search
 from ingestion.x_search import SearchNotRun, XPost
-
 
 # ── fixtures shaped like the real API, taken from the 2026-07-26 spike ──────────
 
@@ -182,7 +180,7 @@ def test_drops_are_counted_rather_than_silently_swallowed():
     good = _post_json(post_id="1")
     resp = _response(
         text=json.dumps([good, _post_json(post_id="2"), _post_json(handle="nobody", post_id="3")]),
-        annotations=[_annotation(good["url"]), _annotation(f"https://x.com/nobody/status/3")],
+        annotations=[_annotation(good["url"]), _annotation("https://x.com/nobody/status/3")],
     )
     result = x_search.harvest(resp, allowed=ALLOWED)
     assert len(result.posts) == 1

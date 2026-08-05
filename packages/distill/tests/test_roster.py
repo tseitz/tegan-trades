@@ -1,6 +1,7 @@
 import json
+
 from core.thesis import Extraction, Source, Thesis
-from distill.roster import distill_all, format_summary, DistillResult
+from distill.roster import DistillResult, distill_all, format_summary
 
 
 def _write_transcript(root, vid, person, text="body"):

@@ -1,7 +1,6 @@
 from datetime import date
 
 import pytest
-
 from oracle.resample import to_weekly
 from oracle.series import Bar, PriceSeries
 

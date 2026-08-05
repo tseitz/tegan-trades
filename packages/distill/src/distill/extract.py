@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
-from pydantic import TypeAdapter, ValidationError
+from datetime import UTC, datetime
 
 from core.thesis import ExtractedThesis, Source, Thesis, ThesisExtraction, build_thesis
+from pydantic import TypeAdapter, ValidationError
+
 from distill.prompt import build_prompt
 
 # Validates one thesis at a time. ``ThesisExtraction.model_validate`` validates the whole
@@ -34,7 +34,7 @@ def _tool_schema() -> dict:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _tool_input(message) -> dict:
@@ -64,6 +64,7 @@ def extract_theses(
     """
     if client is None:  # pragma: no cover - constructs the real subscription-backed client
         from llm.claude_code import ClaudeCodeClient
+
         from distill.schema import FLAT_THESIS_SCHEMA
         client = ClaudeCodeClient(json_schema=FLAT_THESIS_SCHEMA)
     extracted_at = extracted_at or _now()

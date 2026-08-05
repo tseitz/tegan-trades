@@ -6,9 +6,7 @@ Cases are the real ones. `scripts/probe_venue_coverage.py` found the collisions 
 from __future__ import annotations
 
 import pytest
-
 from core import identity
-
 
 # ── the same instrument ─────────────────────────────────────────────────────────────────────
 

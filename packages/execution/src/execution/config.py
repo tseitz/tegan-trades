@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
-
 from core.env import load_env
 
 from execution import budget, guards, participation, portfolio, venues

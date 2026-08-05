@@ -1,10 +1,8 @@
 from dataclasses import dataclass
 
-import pytest
-
 from brain.retrieve import fold_stances, retrieve, summarize_split
 from core.canon import Registry
-from core.stance import build_stance, ExtractedStance
+from core.stance import ExtractedStance, build_stance
 from core.thesis import Source
 
 REGISTRY = Registry(
@@ -284,4 +282,4 @@ def test_retrieve_works_without_a_vector_leg_at_all():
 def test_retrieve_is_pure_and_does_not_mutate_the_input_corpus():
     before = [s.model_copy(deep=True) for s in CORPUS]
     retrieve(stances=CORPUS, registry=REGISTRY, asset="ETH", search_fn=_search_fn([]))
-    assert CORPUS == before
+    assert before == CORPUS

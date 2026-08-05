@@ -1,5 +1,4 @@
 import pytest
-
 from brain.question import parse_assets
 from core.canon import Registry
 

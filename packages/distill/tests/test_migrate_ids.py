@@ -1,7 +1,6 @@
 import json
 
 from core.thesis import thesis_id
-
 from distill.migrate_ids import migrate, remap_document
 
 

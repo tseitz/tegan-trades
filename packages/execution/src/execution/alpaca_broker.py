@@ -19,9 +19,10 @@ Four venue facts that shape it, each of which is silent when wrong:
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Callable
+from typing import Any
 
 import requests
 
@@ -32,10 +33,12 @@ from execution.book import (
     Position,
     RestingOrder,
     filled_at_by_symbol,
-    is_live as order_is_live,   # aliased: this class has an ``is_live`` of its own,
-    parse_positions,             # and it answers a different question (the network, not an order)
+    parse_positions,  # and it answers a different question (the network, not an order)
     parse_resting,
     parse_state,
+)
+from execution.book import (
+    is_live as order_is_live,  # aliased: this class has an ``is_live`` of its own,
 )
 from execution.liquidity import Liquidity
 from execution.participation import Depth, depth_from_bars

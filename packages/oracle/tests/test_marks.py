@@ -10,7 +10,6 @@ from __future__ import annotations
 from oracle import marks
 from oracle.sources import aster, hyperliquid, lighter
 
-
 # ── hyperliquid: core book plus HIP-3 builders ──────────────────────────────────────────────
 
 def _hl(payloads):

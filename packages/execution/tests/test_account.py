@@ -8,7 +8,6 @@ docstring in ``execution.account`` for the numbers.
 from __future__ import annotations
 
 import pytest
-
 from execution.account import Account, parse_account
 
 # The paper account as it stood at 2026-07-29T13:40Z, trimmed to the fields that are read.

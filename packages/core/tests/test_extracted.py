@@ -1,7 +1,6 @@
 import pytest
+from core.thesis import MacroLeanThesis, ThesisExtraction, TradeThesis
 from pydantic import ValidationError
-
-from core.thesis import ThesisExtraction, TradeThesis, MacroLeanThesis
 
 TRADE = {
     "thesis_type": "trade", "domain": "crypto", "asset": "ETH",

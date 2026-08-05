@@ -12,9 +12,7 @@ from execution.liquidity import Liquidity
 from execution.plan import Market, OrderPlan
 from execution.session import Session
 from execution.wire import Placement
-
 from oracle import execute
-
 
 # ── fakes ───────────────────────────────────────────────────────────────────────────────────
 

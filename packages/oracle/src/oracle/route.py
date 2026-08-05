@@ -27,7 +27,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
-
 from core.canon import BASKET, MACRO
 
 # Unpriceable reasons — enumerated so coverage reports can break down honestly.

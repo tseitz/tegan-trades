@@ -9,10 +9,8 @@ reverse-engineered to reproduce them. If this test ever fails, re-read a book be
 from __future__ import annotations
 
 import pytest
-from hyperliquid.utils.signing import float_to_wire
-
 from execution.rounding import round_price, round_size
-
+from hyperliquid.utils.signing import float_to_wire
 
 # ── size ────────────────────────────────────────────────────────────────────────────────────
 

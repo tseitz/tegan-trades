@@ -8,11 +8,9 @@ import json
 
 import numpy as np
 import pytest
-
-from core.canon import Registry
-
 from brain.index_cli import DEFAULT_BATCH, index_all, main
 from brain.vector_store import connect, count, search
+from core.canon import Registry
 
 
 class _FakeEmbedder:

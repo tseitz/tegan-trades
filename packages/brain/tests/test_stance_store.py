@@ -1,9 +1,14 @@
 import json
 
+from brain.stance_store import (
+    DATA_ROOT,
+    exists,
+    load_stances,
+    save_stances,
+    stance_path,
+)
 from core.stance import Provenance, Stance
 from core.thesis import Source
-
-from brain.stance_store import DATA_ROOT, exists, load_stances, save_stances, stance_path
 
 
 def _stance(i: int) -> Stance:

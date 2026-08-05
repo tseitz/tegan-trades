@@ -1,7 +1,6 @@
 from datetime import date
 
 import pytest
-
 from oracle import cache
 from oracle.series import Bar, PriceSeries
 

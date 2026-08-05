@@ -4,13 +4,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
-
 from execution import guards, portfolio
 from execution.liquidity import Liquidity
 from execution.plan import SHARE_GRID, Market, OrderPlan, build
 from execution.portfolio import Book, combine
 from execution.sizing import CAP_PORTFOLIO, CAP_VENUE_LEVERAGE
-
 
 # ── stubs ───────────────────────────────────────────────────────────────────────────────────
 # The candidate is read structurally (see ``plan``'s docstring), so this stands in for

@@ -9,9 +9,16 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
 from brain.chunk import Chunk
-from brain.vector_store import DB_PATH, SearchHit, clear, connect, count, search, upsert_chunks
+from brain.vector_store import (
+    DB_PATH,
+    SearchHit,
+    clear,
+    connect,
+    count,
+    search,
+    upsert_chunks,
+)
 
 
 def _chunk(ref: str, idx: int, text: str) -> Chunk:
@@ -28,7 +35,7 @@ class TestDbPathResolution:
     def test_db_path_points_at_data_brain_index_db(self):
         assert DB_PATH.name == "index.db"
         assert DB_PATH.parent.name == "brain"
-        assert DB_PATH == Path(__file__).resolve().parents[3] / "data" / "brain" / "index.db"
+        assert Path(__file__).resolve().parents[3] / "data" / "brain" / "index.db" == DB_PATH
 
 
 class TestConnectCreatesSchema:

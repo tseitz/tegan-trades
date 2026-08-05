@@ -1,11 +1,10 @@
 from dataclasses import dataclass
 
 import pytest
-
+from brain import query_cli
 from brain.report import format_view
 from brain.retrieve import retrieve
 from brain.synthesize import Synthesis, SynthesisFailed, synthesize
-from brain import query_cli
 from core.canon import Registry
 from core.stance import ExtractedStance, build_stance
 from core.thesis import Source

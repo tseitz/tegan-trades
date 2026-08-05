@@ -1,7 +1,6 @@
 import shutil
 
 import pytest
-
 from core.thesis import Source, Thesis
 from distill.extract import extract_theses
 

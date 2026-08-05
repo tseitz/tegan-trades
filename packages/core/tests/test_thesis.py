@@ -1,5 +1,11 @@
 from core.thesis import (
-    MacroLeanThesis, TradeThesis, Source, Thesis, build_thesis, thesis_id, SCHEMA_VERSION,
+    SCHEMA_VERSION,
+    MacroLeanThesis,
+    Source,
+    Thesis,
+    TradeThesis,
+    build_thesis,
+    thesis_id,
 )
 
 SOURCE = Source(

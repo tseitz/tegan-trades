@@ -1,4 +1,3 @@
-from datetime import date
 import ingestion.cli as cli
 from ingestion.roster import ChannelResult
 

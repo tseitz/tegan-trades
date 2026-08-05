@@ -1,8 +1,7 @@
 from oracle.instruments import alias_map
 from oracle.route import RoutingTable
 
-STOCKS = {a: "stock" for a in
-          ("RUT", "IWM", "DJI", "DIA", "EUR", "EURUSD", "SPY", "QQQ", "AAPL")}
+STOCKS = dict.fromkeys(("RUT", "IWM", "DJI", "DIA", "EUR", "EURUSD", "SPY", "QQQ", "AAPL"), "stock")
 
 
 def _table(**kw):
@@ -125,7 +124,7 @@ def _live():
         curated=curated,
         coinbase_symbols=frozenset(),
         kraken_symbols=frozenset(),
-        domain_consensus={t: "stock" for t in bare},
+        domain_consensus=dict.fromkeys(bare, "stock"),
     )
     return sorted(set(curated) | bare), table, venue_map
 

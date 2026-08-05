@@ -2,9 +2,6 @@ import textwrap
 from datetime import date
 
 import pytest
-
-from youtube_transcript_api import TranscriptsDisabled
-
 from ingestion import deadletters
 from ingestion.channel import VideoMeta, VideoStub
 from ingestion.roster import (
@@ -19,7 +16,7 @@ from ingestion.roster import (
     unreachable_active,
 )
 from ingestion.youtube import TranscriptBlocked
-
+from youtube_transcript_api import TranscriptsDisabled
 
 WATCHLIST = textwrap.dedent("""
     people:

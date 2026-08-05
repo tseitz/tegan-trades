@@ -6,7 +6,6 @@ what is left, and one that barely fits at all is refused rather than sent as a t
 from __future__ import annotations
 
 import pytest
-
 from execution.budget import (
     MIN_BUDGET_FILL,
     REFUSAL_NO_HEADROOM,

@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import pytest
-
 from execution import portfolio
 from execution.portfolio import MAX_PORTFOLIO_RISK, combine, remaining, size_ceiling
-
 
 # ── combining equity across venues ───────────────────────────────────────────────────────────
 
@@ -203,7 +201,7 @@ def test_five_full_size_positions_is_the_same_statement_as_a_twenty_percent_conc
     """
     concentration, risk_pct = 0.20, 0.01
     positions_at_1x = 1 / concentration
-    assert MAX_PORTFOLIO_RISK == pytest.approx(positions_at_1x * risk_pct)
+    assert pytest.approx(positions_at_1x * risk_pct) == MAX_PORTFOLIO_RISK
 
 
 # ── Book: the state as one object ────────────────────────────────────────────────────────────

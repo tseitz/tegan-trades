@@ -5,10 +5,8 @@ from dataclasses import replace
 from datetime import date
 
 import pytest
-
 from core.setups import DAILY, STRUCTURAL, TIER_MAJOR, WEEKLY, Candidate, View
 from core.structure import BULLISH, SWING_HIGH, SWING_LOW, Break, OrderBlock, Swing
-
 from oracle import queue
 
 

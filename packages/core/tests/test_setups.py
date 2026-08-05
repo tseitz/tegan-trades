@@ -3,7 +3,6 @@ from hashlib import sha256
 from types import SimpleNamespace
 
 import pytest
-
 from core.dealing_range import DealingRange
 from core.funding import FundingOutlook
 from core.levels import NEAREST, STATED
@@ -15,13 +14,13 @@ from core.setups import (
     RR_HALF,
     STOP_PAD_ATR,
     STRUCTURAL,
-    WEEKLY,
-    ZONE_LEVEL_REASONS,
     TIER_LARGE,
     TIER_MAJOR,
     TIER_NONCRYPTO,
     TIER_SMALL,
     TIER_UNRANKED,
+    WEEKLY,
+    ZONE_LEVEL_REASONS,
     Candidate,
     Context,
     HalfLife,
@@ -1138,7 +1137,7 @@ def test_a_daily_candidates_decision_key_is_unchanged_by_the_weekly_addition():
     candidate = collapse([cross_reference(_row(), _tf_ctx(), published_close=100.0)])[0]
     legacy = sha256(
         f"{candidate.asset}\x1f{candidate.direction}\x1f{candidate.block.date.isoformat()}"
-        f"\x1f{candidate.block.top}\x1f{candidate.block.bottom}".encode("utf-8")
+        f"\x1f{candidate.block.top}\x1f{candidate.block.bottom}".encode()
     ).hexdigest()[:12]
     assert candidate.key == legacy
 

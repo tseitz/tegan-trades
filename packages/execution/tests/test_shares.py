@@ -11,9 +11,7 @@ only ever sends brackets, so every equity size must be a whole number of shares.
 from __future__ import annotations
 
 import pytest
-
 from execution.shares import round_share_price, round_shares
-
 
 # ── size ────────────────────────────────────────────────────────────────────────────────────
 

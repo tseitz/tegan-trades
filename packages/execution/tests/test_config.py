@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import pytest
-
 from execution import config
 from execution.broker import MAINNET, TESTNET
-
 
 # ── defaults ────────────────────────────────────────────────────────────────────────────────
 

@@ -14,7 +14,6 @@ Free — pure local retrieval, no LLM, no network. Takes ~30s on 18k chunks.
 from __future__ import annotations
 
 import numpy as np
-
 from brain import vector_store as v
 from brain.embed import FastEmbedder
 

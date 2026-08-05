@@ -1,7 +1,6 @@
 from datetime import date, timedelta
 
 import pytest
-
 from oracle.series import MAX_CARRY_DAYS, Bar, PriceSeries
 
 

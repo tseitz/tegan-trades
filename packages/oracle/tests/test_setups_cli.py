@@ -7,21 +7,19 @@ from datetime import date
 from pathlib import Path
 
 import pytest
-
+from core import routing
 from core.canon import Registry
 from core.setups import (
     DAILY,
     SCORE_VERSION,
     STRUCTURAL,
-    WEEKLY,
     TIER_LARGE,
     TIER_MAJOR,
+    WEEKLY,
     Candidate,
     View,
 )
 from core.structure import BULLISH, SWING_HIGH, SWING_LOW, Break, OrderBlock, Swing
-
-from core import routing
 from oracle import confirm, exclusions, queue, setups_cli, setups_render
 from oracle.queue import build_queue
 from oracle.setups_cli import format_unpriced

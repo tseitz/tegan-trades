@@ -11,7 +11,6 @@ import sys
 
 import numpy as np
 import pytest
-
 from brain.embed import DEFAULT_MODEL, EMBED_DIM, FastEmbedder
 
 

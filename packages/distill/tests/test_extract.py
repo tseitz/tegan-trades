@@ -1,6 +1,6 @@
 import pytest
 from core.thesis import Source, Thesis
-from distill.extract import extract_theses, ExtractionFailed
+from distill.extract import ExtractionFailed, extract_theses
 
 SOURCE = Source(person="P", platform="youtube", url="u",
                 published_at="2025-01-01", transcript_ref="youtube/vid00000001")

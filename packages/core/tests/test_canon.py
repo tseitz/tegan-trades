@@ -2,7 +2,6 @@ import json
 from types import SimpleNamespace
 
 import pytest
-
 from core.canon import (
     BASKET,
     Registry,

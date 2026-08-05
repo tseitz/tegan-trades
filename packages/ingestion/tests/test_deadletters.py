@@ -2,7 +2,6 @@ import json
 from datetime import date
 
 import pytest
-
 from ingestion import deadletters
 from ingestion.deadletters import (
     NO_CAPTIONS,

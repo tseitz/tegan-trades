@@ -69,5 +69,5 @@ def alias_map(
         if len(labels) < 2:
             continue
         survivor, *folded = sorted(labels, key=lambda a: (-len(venues_for(a)), a))
-        aliases.update({label: survivor for label in folded})
+        aliases.update(dict.fromkeys(folded, survivor))
     return aliases

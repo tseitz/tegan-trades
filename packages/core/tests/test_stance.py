@@ -1,6 +1,4 @@
 import pytest
-from pydantic import ValidationError
-
 from core.canon import Registry, resolve
 from core.stance import (
     ExtractedStance,
@@ -10,6 +8,7 @@ from core.stance import (
     stance_id,
 )
 from core.thesis import Source
+from pydantic import ValidationError
 
 SOURCE = Source(
     person="Benjamin Cowen",

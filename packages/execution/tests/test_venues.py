@@ -7,14 +7,12 @@ called ``live`` — and being wrong means a real brokerage order treated as a re
 from __future__ import annotations
 
 import pytest
-
 from execution import config as config_module
 from execution import venues
 from execution.alpaca_broker import LIVE, PAPER, AlpacaBroker, AlpacaCredentials
 from execution.broker import MAINNET, TESTNET
 from execution.config import Config
 from execution.session import open_broker
-
 
 # ── the table ───────────────────────────────────────────────────────────────────────────────
 
@@ -159,7 +157,7 @@ def test_all_networks_spans_every_venue():
     """The CLI's ``--network`` choices come from here. Built from the table rather than
     written out, because a venue added without its networks appearing in the flag is a venue
     only reachable by editing cfg/execution.yaml by hand."""
-    assert venues.ALL_NETWORKS == {TESTNET, MAINNET, PAPER, LIVE}
+    assert {TESTNET, MAINNET, PAPER, LIVE} == venues.ALL_NETWORKS
 
 
 def test_all_networks_is_the_union_not_the_rehearsals():

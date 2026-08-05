@@ -1,5 +1,4 @@
 import pytest
-
 from brain.extract import ExtractionFailed, extract_stances
 from core.thesis import Source
 

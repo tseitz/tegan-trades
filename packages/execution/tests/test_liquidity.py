@@ -7,10 +7,8 @@ one is enormous and visible, so the tests use the actual observations.
 from __future__ import annotations
 
 import pytest
-
 from execution import guards
 from execution.liquidity import Liquidity, parse_book, parse_context
-
 
 # ── measured profiles ───────────────────────────────────────────────────────────────────────
 

@@ -1,5 +1,6 @@
 import json
-from ingestion.store import TranscriptRecord, save, load, exists, path_for
+
+from ingestion.store import TranscriptRecord, exists, load, path_for, save
 
 
 def test_save_and_load_roundtrip(tmp_path):

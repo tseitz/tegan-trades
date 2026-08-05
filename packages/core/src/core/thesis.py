@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from hashlib import sha256
-from typing import Annotated, Literal, Union
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -60,7 +60,7 @@ class MacroLeanThesis(_Extracted):
 # Discriminated union: thesis_type selects the model, so trade-only invariants
 # are enforced by the type system, not runtime branching.
 ExtractedThesis = Annotated[
-    Union[TradeThesis, MacroLeanThesis],
+    TradeThesis | MacroLeanThesis,
     Field(discriminator="thesis_type"),
 ]
 

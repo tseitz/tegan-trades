@@ -173,7 +173,9 @@ def ingest(
     Hydration failure raises rather than falling back to a stub: a dateless record silently
     poisons ranking, so no record is better than a partial one.
     """
-    from ingestion.channel import hydrate  # local import keeps yt_dlp off the fetch-only path
+    from ingestion.channel import (
+        hydrate,  # local import keeps yt_dlp off the fetch-only path
+    )
 
     video_id = extract_video_id(url)
     meta = (_hydrate or hydrate)(video_id)

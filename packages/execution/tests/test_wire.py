@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import pytest
-from hyperliquid.utils.signing import float_to_wire
-
 from execution.plan import OrderPlan
 from execution.wire import (
     TAKE_PROFIT_IS_MARKET,
@@ -11,6 +9,7 @@ from execution.wire import (
     parse_placement,
     stop_limit_price,
 )
+from hyperliquid.utils.signing import float_to_wire
 
 LONG = OrderPlan(
     asset="ETH", coin="ETH", direction="long", size=0.6666,

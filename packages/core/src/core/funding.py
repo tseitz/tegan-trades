@@ -175,7 +175,7 @@ class FundingOutlook:
     n: int = 0
 
     @classmethod
-    def from_stats(cls, venue: str, stats: FundingStats) -> "FundingOutlook | None":
+    def from_stats(cls, venue: str, stats: FundingStats) -> FundingOutlook | None:
         """None when there is nothing to price with — the caller then skips the adjustment
         rather than costing a trade at an invented zero."""
         if not stats.n or stats.median is None or stats.p90 is None:

@@ -1,5 +1,4 @@
 import pytest
-
 from core.stability import kendall_tau, rank_stability
 
 

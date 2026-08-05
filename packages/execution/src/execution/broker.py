@@ -28,7 +28,8 @@ from hyperliquid.utils import constants
 from hyperliquid.utils.signing import OrderRequest
 
 from execution.account import Account
-from execution.book import OrderState, Position, RestingOrder, is_live as order_is_live
+from execution.book import OrderState, Position, RestingOrder
+from execution.book import is_live as order_is_live
 from execution.liquidity import Liquidity, parse_book, parse_context
 from execution.participation import Depth
 from execution.plan import Market, OrderPlan
@@ -335,7 +336,7 @@ class HyperliquidBroker:
         the venue only by an oid nothing here indexes. ``None`` is exactly right for that: not
         a status, but "no answer available", which every reader already handles.
         """
-        return {key: None for key in keys}
+        return dict.fromkeys(keys)
 
     def live_keys(self, keys) -> set[str]:
         """Every key, unchanged — this venue cannot yet answer the question.

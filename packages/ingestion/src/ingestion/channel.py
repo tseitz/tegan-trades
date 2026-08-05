@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 from yt_dlp import YoutubeDL
 
@@ -105,7 +105,7 @@ def _published_at(info: dict) -> str | None:
     if ts is None:
         ts = info.get("release_timestamp")
     if ts is not None:
-        return datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
+        return datetime.fromtimestamp(ts, tz=UTC).date().isoformat()
     return None
 
 

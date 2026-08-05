@@ -7,11 +7,8 @@ orders of magnitude, and these are the orders of magnitude observed on this repo
 """
 from __future__ import annotations
 
-import pytest
-
 from core.identity import DIFFERS, IN_RANGE, MATCH, NO_PRICE, Comparison
 from execution import guards
-
 
 # ── the passing case ────────────────────────────────────────────────────────────────────────
 

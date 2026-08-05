@@ -18,7 +18,7 @@ from collections import Counter
 from datetime import UTC, datetime
 
 from core.canon import load_registry
-from core.setups import ARRIVAL, BULLISH, _DIRECTION_FAMILY
+from core.setups import _DIRECTION_FAMILY, ARRIVAL, BULLISH
 from oracle import cache, corpus, listings
 from oracle.setups_cli import CONFIG_DIR, build_candidates
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from brain.extract import DEFAULT_MODEL
 from brain.sweep import (
@@ -13,7 +13,7 @@ from brain.sweep import (
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def extract_main(argv: list[str] | None = None) -> int:

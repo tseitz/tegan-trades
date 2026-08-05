@@ -1,5 +1,4 @@
 import pytest
-
 from core.grade import Grade, Pending, Ungradeable
 from core.score import (
     MIN_SAMPLE,

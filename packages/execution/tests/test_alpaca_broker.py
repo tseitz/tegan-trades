@@ -6,7 +6,6 @@ injecting a transport, which is the same seam ``oracle``'s source adapters use f
 from __future__ import annotations
 
 import pytest
-
 from execution.alpaca_broker import (
     DATA_URL,
     LIVE,
@@ -251,7 +250,7 @@ def test_no_keys_means_no_requests():
     calls = []
     class T:
         def __call__(self, method, path, body=None, params=None):
-            calls.append(path); return None
+            calls.append(path); return
     assert AlpacaBroker(CREDS, transport=T()).live_keys(set()) == set()
     assert calls == []
 

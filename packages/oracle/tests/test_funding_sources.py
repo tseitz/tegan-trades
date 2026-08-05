@@ -2,7 +2,6 @@
 from datetime import UTC, datetime
 
 import pytest
-
 from oracle.sources import aster, hyperliquid, lighter
 
 AT = datetime(2026, 7, 27, 20, 36, tzinfo=UTC)

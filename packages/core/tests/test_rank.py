@@ -1,7 +1,6 @@
 from types import SimpleNamespace
 
 import pytest
-
 from core.rank import (
     DEFAULT_WEIGHTS,
     RankWeights,

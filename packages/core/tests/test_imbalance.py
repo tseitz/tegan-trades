@@ -3,7 +3,6 @@ from datetime import date, timedelta
 from types import SimpleNamespace
 
 import pytest
-
 from core.imbalance import (
     ATR_LOOKBACK,
     BEARISH,

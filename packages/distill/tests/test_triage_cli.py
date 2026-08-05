@@ -1,7 +1,6 @@
 import json
 
 from core.canon import Registry
-
 from distill.triage_cli import (
     append_note,
     collapse_restatements,

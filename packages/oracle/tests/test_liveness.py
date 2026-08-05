@@ -8,7 +8,6 @@ Every test below that expects ``False`` is guarding some version of that mistake
 from datetime import UTC, datetime, timedelta
 
 from core.funding import FundingRate
-
 from oracle import funding_store, liveness
 
 NOW = datetime(2026, 7, 27, 20, 0, tzinfo=UTC)

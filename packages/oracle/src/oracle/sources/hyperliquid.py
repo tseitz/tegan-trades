@@ -19,6 +19,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from core.funding import FundingRate
+
 from oracle import http
 
 BASE = "https://api.hyperliquid.xyz/info"

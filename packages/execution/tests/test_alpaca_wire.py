@@ -10,11 +10,10 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
-
 from execution.alpaca_wire import (
+    ACCEPTED_STATUSES,
     ORDER_CLASS,
     TIME_IN_FORCE,
-    ACCEPTED_STATUSES,
     bracket_order,
     parse_order,
 )

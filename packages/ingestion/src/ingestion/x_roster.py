@@ -20,7 +20,12 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from ingestion.store import DATA_ROOT, TranscriptRecord, save
-from ingestion.x_search import XPost, group_by_author_day, render_document, source_id_for
+from ingestion.x_search import (
+    XPost,
+    group_by_author_day,
+    render_document,
+    source_id_for,
+)
 
 PLATFORM = "x"
 

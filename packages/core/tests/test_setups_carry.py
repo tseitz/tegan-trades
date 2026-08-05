@@ -9,7 +9,6 @@ from datetime import date
 from types import SimpleNamespace
 
 import pytest
-
 from core.dealing_range import DealingRange
 from core.funding import FundingOutlook
 from core.setups import (

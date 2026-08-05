@@ -2,8 +2,7 @@
 from __future__ import annotations
 
 import pytest
-
-from brain.chunk import CHUNK_OVERLAP, CHUNK_SIZE, Chunk, chunk_transcript
+from brain.chunk import CHUNK_OVERLAP, CHUNK_SIZE, chunk_transcript
 
 
 class TestEmptyAndWhitespace:
@@ -419,7 +418,7 @@ class TestCustomSizeAndOverlap:
                 actual_overlap = current_end - next_start
                 # Should roughly match requested overlap
                 # (exact match only if no sentence boundaries)
-                assert 0 < actual_overlap
+                assert actual_overlap > 0
 
 
 class TestEdgeCases:

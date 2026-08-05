@@ -9,7 +9,14 @@ from dataclasses import dataclass, replace
 from datetime import date, timedelta
 
 from oracle.benchmarks import benchmark_refs
-from oracle.route import DERIVED, DerivedRef, OracleRef, RoutingTable, Unpriceable, route
+from oracle.route import (
+    DERIVED,
+    DerivedRef,
+    OracleRef,
+    RoutingTable,
+    Unpriceable,
+    route,
+)
 
 # Entry price is the close on the publish date. When that lands on a weekend or holiday
 # the series must already hold the preceding bar, so windows open a little early.

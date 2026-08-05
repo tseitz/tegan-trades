@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from distill.extract import DEFAULT_MODEL, extract_theses
 from distill.roster import (
-    DEFAULT_MAX_WORKERS, TRANSCRIPTS_ROOT, distill_all, format_summary, _source_from_sidecar,
+    DEFAULT_MAX_WORKERS,
+    TRANSCRIPTS_ROOT,
+    _source_from_sidecar,
+    distill_all,
+    format_summary,
 )
 from distill.store import save_theses
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def roster_main(argv: list[str] | None = None) -> int:

@@ -60,10 +60,12 @@ from oracle import (
     exclusions,
     execute,
     instruments,
-    marks as marks_mod,
     listings,
     venue_map,
     venue_routing,
+)
+from oracle import (
+    marks as marks_mod,
 )
 
 # Re-exported: choosing which candidates a sitting sees is its own concern now — see that

@@ -30,6 +30,7 @@ choice is a question for a human, not grounds for an automatic refusal.
 from __future__ import annotations
 
 from core.identity import DIFFERS, IN_RANGE, MATCH, NO_PRICE, Comparison, compare
+
 from oracle.route import OracleRef
 
 # Which verdict wins when venues disagree about the same ticker. Most favourable first, and

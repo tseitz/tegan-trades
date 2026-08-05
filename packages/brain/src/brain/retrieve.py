@@ -13,8 +13,8 @@ access anywhere. The caller supplies the loaded stances and a search callable.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 from core.canon import Registry, resolve_asset, resolve_person
 from core.rank import parse_date
@@ -121,7 +121,7 @@ def summarize_split(folded: list[FoldedStance]) -> Split:
     """Count *people*, not statements — one voice restating a view 20 times is still
     one voice. All four leans are always reported, including zeros, so a caller can't
     mistake an absent key for an absent question."""
-    counts = {lean: 0 for lean in LEANS}
+    counts = dict.fromkeys(LEANS, 0)
     people: dict[str, list[str]] = {lean: [] for lean in LEANS}
     for f in folded:
         lean = f.current.lean

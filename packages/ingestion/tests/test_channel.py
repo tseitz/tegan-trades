@@ -1,9 +1,17 @@
 from datetime import date, timedelta
 
 import pytest
-from ingestion.channel import channel_base_url, tab_url
-from ingestion.channel import VideoStub, list_tab, resolve_recent
-from ingestion.channel import VideoMeta, hydrate, is_recent_enough, _published_at
+from ingestion.channel import (
+    VideoMeta,
+    VideoStub,
+    _published_at,
+    channel_base_url,
+    hydrate,
+    is_recent_enough,
+    list_tab,
+    resolve_recent,
+    tab_url,
+)
 
 
 @pytest.mark.parametrize("channel,expected", [
