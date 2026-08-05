@@ -34,10 +34,11 @@ depth for §21, failed-break states for §27, stated targets for §18.
 
 | | Entry | Why now | Cost |
 |---|---|---|---|
-| 1 | **§32 residual** — curate the six the gate now refuses | They stopped pricing wrong and started not pricing. `WTI` → `CL=F` folds into `OIL`; `JPY` needs §29 first. | free, local |
-| 2 | **§31 residual** — the guard nothing calls | `check_identity` is built and unit-tested; no path supplies it a mark, so a curated typo still places. Plus CI over the curated map. | free, network |
-| 3 | **§27 residual** — targets vs the range rule | 68 candidates on a ranging weekly, only 20 target within 2% of the bound the rule names. Read §18 first. | free, local |
-| 4 | **§4** — the `agreement`/`freshness` overlap | The first re-weight with evidence behind it, and it removes a term rather than adding one. Read §11 first. | free, local |
+| 1 | **§48** — the entry and the target are on two different clocks | Ahead of the others because it is the one that spends money: a stop a session away, a target weeks away, 69% of stops on the fill bar. Read with §27 and §35. | free, local |
+| 2 | **§32 residual** — curate the six the gate now refuses | They stopped pricing wrong and started not pricing. `WTI` → `CL=F` folds into `OIL`; `JPY` needs §29 first. | free, local |
+| 3 | **§31 residual** — the guard nothing calls | `check_identity` is built and unit-tested; no path supplies it a mark, so a curated typo still places. Plus CI over the curated map. | free, network |
+| 4 | **§27 residual** — targets vs the range rule | 68 candidates on a ranging weekly, only 20 target within 2% of the bound the rule names. Read §18 first. Now has §48's geometry behind it. | free, local |
+| 5 | **§4** — the `agreement`/`freshness` overlap | The first re-weight with evidence behind it, and it removes a term rather than adding one. Read §11 first. | free, local |
 
 **Still waiting on the corpus, not on code:** §18 (7 stated targets in 47 rows) · §21's
 measurement (13 rows carry funding, 4 usable pairs) · §27's option 2 (`daily_trend` varies now,
@@ -45,7 +46,7 @@ but the failed-break state it names has n=1).
 
 **By theme:** corpus supply §3 · §6 · §6b · §6d · §6f · §6h · §9 · §14 — durability §4b · §24 —
 venue and execution §22 · §25 · §30 · §33 · §35 · §36 · §39 · §40 · §43 — routing §29 · §31 · §32 · §44 —
-scoring §1 · §2 · §8 · §12 · §15 · §19.
+scoring §1 · §2 · §8 · §12 · §15 · §19 · §48.
 
 ---
 
@@ -106,6 +107,10 @@ Needs a different source or Tegan's own definition; blocks slice 2 either way.
 Four scoring systems (`core/rank.py`, `core/grade.py`, `brain/retrieve.py`, `core/setups.py`)
 and zero closed loops. Mining `data/setups/decisions.jsonl` — approve versus reject, against
 the ranker's own terms — is the only ground truth available.
+
+**"Only" is no longer true: §48 replays the same rows against price for a second, absolute
+label.** It cannot re-weight anything yet (2 winners in 44 resolved rows), but it is the loop
+this entry says does not exist, and it scores the rejects too.
 
 **The machinery is done:** the queue draws a stratified sample (`oracle/queue.py`), every
 decision records what else was on screen, and the reason vocabulary derives scope from cause.
@@ -825,3 +830,24 @@ Fix is to check `abort` in the submit loop, or submit in chunks of `max_workers`
 bounded by concurrency rather than by timing. `test_circuit_breaker_aborts_after_consecutive_failures`
 was loosened to a majority-aborted assertion because the precise one encoded this laptop's speed;
 tighten it back once the bound is real.
+
+---
+
+## 48. The entry and the target are on two different clocks · `OPEN` — new 2026-08-04
+
+Replaying all 137 recorded candidates against cached daily bars: the median stop sits **1.9**
+of the instrument's own daily ranges from entry, the median target **6.7** (p90 21.4). A stop
+is reachable in a session and a target is weeks out, so the two levels do not describe one
+trade. **69% of stops were reached on the very bar that filled the entry** — not a small-stop
+artifact, a selection effect: the bar that trades down to a resting limit is by construction
+moving hard against it, and usually keeps going.
+
+Also settled, and independent of the above: **40% of candidates never fill at all.**
+
+Decide which level is wrong before tuning either. Three shapes, and they are not equivalent —
+widen the stop (§35 says a stop is an intent, not a bound, so this buys less than it looks);
+enter on strength rather than into the move; or take the near target the range rule already
+names, which is §27's open residual and needs §18 read first.
+
+Replay and the traps: `scripts/probe_replay.py`. Do **not** read its win rate or expectancy —
+90 of 134 rows are unresolved and the censoring runs entirely one way.

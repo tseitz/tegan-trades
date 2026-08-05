@@ -74,7 +74,12 @@ ignore = [
 [tool.pytest.ini_options]
 # Root-level run: `uv run pytest` collects every package's suite in one pass. Each member
 # keeps its own identical block so `uv run --package <name> pytest` still works from anywhere.
-testpaths = ["packages"]
+#
+# `scripts` is here because the probes are not all display. `probe_replay.walk` decides which
+# side a limit and a stop rest on, and a long and a short are mirror images — a sign error there
+# reads perfectly and inverts the result. Anything under `scripts/` that only prints stays
+# untested; anything that computes a number someone will quote does not.
+testpaths = ["packages", "scripts"]
 markers = [
     "integration: hits the network; run explicitly",
     # Needs a populated `data/` — machine-generated ore that is gitignored and never

@@ -214,6 +214,24 @@ step fetch-prices   uv run fetch-prices
 # (§22), so a night this step misses is a night of Lighter coverage that cannot be recovered.
 step fetch-funding  uv run fetch-funding
 
+# Ordered before `setups` for the same reason `fetch-funding` is: the queue is worth more when
+# what it reads is current. `placed` is written from the *submission* reply, so an order the
+# venue killed at the open goes on reading as live — it burns its candidate through the
+# duplicate guard and appears to hold budget it never spent (§33, §40). Settling first means
+# the queue is built against what actually happened. `setups --list` does not read the order
+# log today, only `--execute` does; this is ordered for when that changes, and costs nothing.
+#
+# **Read-only.** `book` without `--cancel` cannot change anything at the venue, which is what
+# makes it safe unattended. It exits 0 whether or not the venue killed anything, so a night
+# that discovers three rejections is an `ok` line and the detail is in the log.
+#
+# **It settles Alpaca's half, not the book.** `book` talks to one venue — `cfg/execution.yaml`
+# says `alpaca` — so the Hyperliquid testnet orders stay `placed` regardless. That is not a
+# scheduling gap to close by adding a second invocation: §33 is why. `wire.order_requests`
+# sends no `cloid`, so Hyperliquid cannot be asked what became of a given candidate at all, and
+# a second step would faithfully report "nothing came back" every night.
+step reconcile      uv run book --reconcile
+
 step setups         uv run setups --list
 
 # ── what it cost, from the two places cost is actually reported ──
@@ -228,6 +246,12 @@ XAI_COST=$(grep -o '^\[ingest-x\] cost: \$[0-9.]*' "$LOG" \
 
 CANDIDATES=$(grep -oE '^[0-9]+ candidates' "$LOG" | tail -1 | cut -d' ' -f1)
 DROPPED=$(grep -oE '[0-9]+ theses dropped' "$LOG" | tail -1 | cut -d' ' -f1)
+
+# Pulled out of the log for the same reason `FUNDING` is: `book --reconcile` exits 0 whether it
+# settled nothing or discovered that the venue rejected every order last night, so the exit code
+# cannot carry it. An order killed at the open means a candidate never traded and budget that
+# looked committed never was — the one outcome here worth reading the next morning.
+KILLED=$(grep -oE '[0-9]+ killed by the venue' "$LOG" | tail -1 | cut -d' ' -f1)
 
 # Funding is reported separately from the step's exit code because it fails in a way the exit
 # code cannot see: `fetch-funding` records what it *did* reach and returns 0, so losing one
@@ -270,6 +294,7 @@ PY
   echo "  xAI (real money):      \$${XAI_COST}  ·  \$${SPENT_TOTAL}/${XAI_MONTHLY_CAP} this month"
   echo "  claude (Max allowance): \$${CLAUDE_COST} over ${CLAUDE_CALLS} calls"
   echo "  candidates:            ${CANDIDATES:-?}"
+  echo "  orders killed:         ${KILLED:-0}"
   echo "  funding observations:  ${FUNDING:-0}"
   echo "  theses dropped:        ${DROPPED:-0}"
   echo "  exit:                  $WORST"
@@ -283,6 +308,9 @@ if [ -d "$(dirname "$NOTE")" ]; then
   {
     printf '\n- **%s** · %s candidates · xAI $%s · claude $%s (%s calls)' \
       "$(date -u +%Y-%m-%d\ %H:%MZ)" "${CANDIDATES:-?}" "$XAI_COST" "$CLAUDE_COST" "$CLAUDE_CALLS"
+    # Only when non-zero, like `exit` below. Zero killed is every ordinary night and printing it
+    # would train the eye to skip the field that exists to be noticed.
+    [ "${KILLED:-0}" -eq 0 ] || printf ' · **%s order(s) killed by the venue**' "$KILLED"
     [ "$WORST" -eq 0 ] || printf ' · **exit %s — see `%s`**' "$WORST" "${LOG/#$HOME/~}"
   } >> "$NOTE"
 fi
