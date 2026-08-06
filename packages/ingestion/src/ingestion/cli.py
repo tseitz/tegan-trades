@@ -8,7 +8,7 @@ from pathlib import Path
 
 from core.env import load_env
 
-from ingestion import verify, x_roster
+from ingestion import spend, verify, x_roster
 from ingestion.roster import (
     DEFAULT_MAX_AGE_DAYS,
     DEFAULT_MAX_VIDEOS,
@@ -92,7 +92,19 @@ def x_main(argv: list[str] | None = None) -> int:
                         help="skip chart reading (~60%% cheaper, loses the best level data)")
     parser.add_argument("--dry-run", action="store_true",
                         help="search and report, but write nothing")
+    parser.add_argument("--reconcile-spend", action="store_true",
+                        help="rebuild the monthly spend ledger from data/raw/x/ and exit "
+                             "(no network, spends nothing)")
     args = parser.parse_args(argv)
+
+    if args.reconcile_spend:
+        found = spend.reconcile()
+        for month in sorted(found):
+            print(f"  {month}: ${found[month]:.2f} in raw responses "
+                  f"-> ledger now ${spend.total(month):.2f}")
+        if not found:
+            print("no priced responses found in data/raw/x/")
+        return 0
     to_date = args.to_date or datetime.now(UTC).date().isoformat()
 
     if truncated and args.from_date == resume_from:
@@ -148,7 +160,14 @@ def x_main(argv: list[str] | None = None) -> int:
         # Printed per day in a fixed, greppable shape: this is the only step in the nightly
         # cycle that spends real money, and the run summary sums these lines rather than
         # trying to work the figure out afterwards from files on disk.
-        print(f"[ingest-x] cost: ${cost_usd(response):.4f} (xAI, real money)")
+        #
+        # Recorded here too, and NOT by the nightly wrapper — a ledger written about this
+        # command instead of by it only ever saw the nightly's own calls, so every manual run
+        # was invisible to the monthly cap that gates on it (see `ingestion.spend`). Recorded
+        # even on a dry run, because a dry run withholds corpus writes, not spending.
+        day_cost = cost_usd(response)
+        spend.record(day_cost)
+        print(f"[ingest-x] cost: ${day_cost:.4f} (xAI, real money)")
 
         try:
             result = harvest(response, allowed=handles)

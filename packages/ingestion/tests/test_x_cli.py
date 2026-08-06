@@ -40,7 +40,17 @@ def _response(handle: str, day: str, post_id: str = "1"):
 
 @pytest.fixture
 def wired(tmp_path, monkeypatch):
-    """Point the CLI at a tmp corpus with a one-handle watchlist and no real network."""
+    """Point the CLI at a tmp corpus with a one-handle watchlist and no real network.
+
+    The spend ledger is redirected for EVERY test here, not just the ones asserting on it:
+    `x_main` records spend as a side effect, so a test that merely exercises the day loop
+    would otherwise write to the repo's real `data/spend.json` — the file the monthly cap
+    gates on. Caught exactly that way.
+    """
+    from ingestion import spend
+
+    monkeypatch.setattr(spend, "SPEND_PATH", tmp_path / "spend.json")
+    monkeypatch.setattr(spend, "LEGACY_PATH", tmp_path / "absent.json")
     monkeypatch.setattr(cli, "DATA_ROOT", tmp_path / "transcripts")
     monkeypatch.setattr(cli, "RAW_ROOT", tmp_path / "raw")
     monkeypatch.setattr(cli, "load_env", lambda: None)
@@ -114,3 +124,40 @@ def test_a_dry_run_spends_the_calls_but_writes_no_corpus(wired, monkeypatch):
     assert not list((wired / "transcripts").rglob("*.txt"))
     # The raw responses ARE kept — a dry run withholds corpus writes, not diagnostics.
     assert len(list((wired / "raw").glob("*.json"))) == 2
+
+
+def test_every_day_that_cost_money_lands_in_the_ledger(wired, monkeypatch, tmp_path):
+    """The cap gates on this file, so a call it does not see is a call that cannot be
+    capped. It was previously written by nightly.sh, which only ever saw the nightly's
+    own runs."""
+    from ingestion import spend
+
+    ledger = tmp_path / "spend.json"  # already redirected by `wired`
+
+    def priced(handles, frm, to, **kw):
+        r = _response("DonAlt", frm)
+        r["usage"]["cost_in_usd_ticks"] = 2_500_000_000  # $0.25
+        return r
+
+    monkeypatch.setattr(cli, "search", priced)
+    cli.x_main(["--from", "2026-08-03", "--to", "2026-08-06"])
+
+    assert spend.total(path=ledger) == 0.75, "three days at $0.25 each"
+
+
+def test_a_dry_run_still_records_what_it_spent(wired, monkeypatch, tmp_path):
+    """A dry run withholds corpus writes, not money — it makes exactly the same paid calls.
+    Leaving it out of the ledger is how a debugging session silently escapes the cap."""
+    from ingestion import spend
+
+    ledger = tmp_path / "spend.json"  # already redirected by `wired`
+
+    def priced(handles, frm, to, **kw):
+        r = _response("DonAlt", frm)
+        r["usage"]["cost_in_usd_ticks"] = 1_000_000_000  # $0.10
+        return r
+
+    monkeypatch.setattr(cli, "search", priced)
+    cli.x_main(["--from", "2026-08-03", "--to", "2026-08-05", "--dry-run"])
+
+    assert spend.total(path=ledger) == 0.20

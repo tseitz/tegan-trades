@@ -78,10 +78,84 @@ BRAIN_EXTRACT_LIMIT="${BRAIN_EXTRACT_LIMIT:-12}"
 
 mkdir -p "$REPO/data"
 
+# ── flags ────────────────────────────────────────────────────────────────────────
+#
+# These exist because the habit is running this by hand, and the *file* switches below are the
+# wrong shape for that: they persist, so `touch data/nightly.no-x` to skip X once means the
+# NEXT unattended run silently skips it too, and the file's whole point is that it survives
+# your attention. A flag lasts exactly one run, which is what "just this once" means.
+#
+# The files stay for the unattended case — launchd cannot be handed an argument.
+#
 # Tested against "1" rather than for non-emptiness, so NIGHTLY_FORCE=0 means what it reads as.
 FORCE=0
-[ "${1:-}" = "--force" ] && FORCE=1
 [ "${NIGHTLY_FORCE:-0}" = "1" ] && FORCE=1
+SKIP_STEPS=""
+ONLY_STEPS=""
+
+# Kept because the flag loop below consumes `$@`, and the caffeinate re-exec further down has
+# to hand the SAME arguments to the second invocation. Losing them there is not a visible
+# error: the re-executed script simply parses no flags, so `--force` vanishes and the run
+# defers with "already ran today" as though nothing had been asked for.
+declare -a ORIGINAL_ARGS=("$@")
+
+ALL_STEPS="verify-roster ingest-roster ingest-x distill-roster brain-extract brain-index \
+fetch-prices fetch-funding reconcile setups fetch-tickers canon-drift backup"
+
+usage() {
+  cat <<'USAGE'
+nightly.sh — the whole cycle: refresh the corpus, re-price, rebuild the queue.
+
+  --force            run even if the time/battery/already-ran gate says no
+  --no-x             skip ingest-x for THIS run (the only step that spends real money)
+  --skip a,b         skip these steps
+  --only a,b         run only these steps
+  --list             print the steps in order and exit
+  -h, --help         this
+
+Examples
+  ./scripts/nightly.sh --force --no-x        # the usual manual run: everything, free
+  ./scripts/nightly.sh --only setups         # just rebuild the queue
+  ./scripts/nightly.sh --skip ingest-roster  # everything but the slow one
+
+Persistent switches, for the unattended run (launchd takes no arguments):
+  data/nightly.pause   stop everything
+  data/nightly.no-x    stop ingest-x until removed
+USAGE
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --force) FORCE=1 ;;
+    --no-x)  SKIP_STEPS="$SKIP_STEPS ingest-x" ;;
+    --skip)  shift; SKIP_STEPS="$SKIP_STEPS ${1//,/ }" ;;
+    --only)  shift; ONLY_STEPS="$ONLY_STEPS ${1//,/ }" ;;
+    --list)  printf '%s\n' $ALL_STEPS; exit 0 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown option: $1" >&2; usage >&2; exit 64 ;;
+  esac
+  shift
+done
+
+# Refuse a name that matches no step rather than silently running everything — `--only setup`
+# for `setups` would otherwise look like it worked and quietly do nothing.
+for want in $ONLY_STEPS $SKIP_STEPS; do
+  case " $ALL_STEPS " in
+    *" $want "*) ;;
+    *) echo "unknown step: $want" >&2
+       echo "steps: $ALL_STEPS" >&2
+       exit 64 ;;
+  esac
+done
+
+# Single gate for both `step` and the ingest-x block, so a step cannot be selectable one way
+# and not the other.
+should_run() {
+  case " $SKIP_STEPS " in *" $1 "*) return 1 ;; esac
+  [ -z "$ONLY_STEPS" ] && return 0
+  case " $ONLY_STEPS " in *" $1 "*) return 0 ;; esac
+  return 1
+}
 
 # One line, overwritten every poll. A file rather than a log line because this runs all day:
 # appending would bury the night that mattered under 700 lines of "not yet", and printing
@@ -135,7 +209,7 @@ fi
 # so this does not silently depend on the exec bit surviving a checkout.
 if [ -z "${NIGHTLY_CAFFEINATED:-}" ]; then
   export NIGHTLY_CAFFEINATED=1
-  exec /usr/bin/caffeinate -s -i -m /bin/bash "$0" "$@"
+  exec /usr/bin/caffeinate -s -i -m /bin/bash "$0" ${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"}
 fi
 
 # Not stamped under `--force`, so running one by hand does not silently eat the day's automatic
@@ -147,7 +221,6 @@ rm -f "$GATE_FILE"
 STAMP="$(date +%Y%m%d-%H%M)"
 LOG_DIR="$REPO/data/logs/nightly"
 LOG="$LOG_DIR/$STAMP.log"
-SPEND="$LOG_DIR/spend.json"
 mkdir -p "$LOG_DIR"
 
 # Monthly ceiling on real money. Only ingest-x spends dollars; everything else bills against
@@ -174,14 +247,12 @@ mkdir -p "$LOG_DIR"
 # that never arrived. Both make the tracked total an undercount.
 XAI_MONTHLY_CAP="${XAI_MONTHLY_CAP:-20.00}"
 MONTH="$(date +%Y-%m)"
-SPENT_THIS_MONTH=$(uv run python - "$SPEND" "$MONTH" <<'PY' 2>/dev/null || echo "0.00"
-import json, sys
-try:
-    print(f'{json.load(open(sys.argv[1])).get(sys.argv[2], 0.0):.2f}')
-except Exception:
-    print("0.00")
-PY
-)
+# Asks `ingestion.spend` rather than reading a path, so the gate and the writer can never
+# disagree about where the ledger lives — which they briefly did when it moved out of
+# data/logs/nightly/, leaving the cap gating on a file nothing wrote to any more.
+SPENT_THIS_MONTH=$(uv run python -c "
+from ingestion import spend
+print(f'{spend.total():.2f}')" 2>/dev/null || echo "0.00")
 
 WORST=0
 RUN_STARTED=$(date +%s)
@@ -193,6 +264,10 @@ declare -a STEP_RECORDS
 
 step() {
   local name="$1"; shift
+  if ! should_run "$name"; then
+    STATUS_LINES+=("  skip  $name — deselected")
+    return 0
+  fi
   local started
   started=$(date +%s)
   echo "" | tee -a "$LOG"
@@ -225,7 +300,9 @@ step ingest-roster  uv run ingest-roster
 # The only step that spends real money, so the only one with a way to skip it. Skipping it
 # does NOT lose the days it would have covered — `ingest-x` resumes from the last capture, so
 # a paused week is picked up on resume (up to its own 7-day lookback cap).
-if [ -f "$NO_X_FILE" ]; then
+if ! should_run ingest-x; then
+  STATUS_LINES+=("  skip  ingest-x — deselected")
+elif [ -f "$NO_X_FILE" ]; then
   STATUS_LINES+=("  skip  ingest-x — $NO_X_FILE exists")
 elif awk -v s="$SPENT_THIS_MONTH" -v c="$XAI_MONTHLY_CAP" 'BEGIN{exit !(s>=c)}'; then
   STATUS_LINES+=("  skip  ingest-x — \$$SPENT_THIS_MONTH spent this month, cap \$$XAI_MONTHLY_CAP")
@@ -360,26 +437,13 @@ if [ "${FUNDING_FAILED:-0}" -gt 0 ]; then
   [ $WORST -lt 1 ] && WORST=1
 fi
 
-# Accumulate real spend into its own small file rather than re-deriving it from the logs — the
-# logs rotate at 30 nights, which would silently reset the cap partway through a long month.
-uv run python - "$SPEND" "$MONTH" "$XAI_COST" <<'PY' 2>/dev/null || true
-import json, sys
-path, month, amount = sys.argv[1], sys.argv[2], float(sys.argv[3])
-try:
-    data = json.load(open(path))
-except Exception:
-    data = {}
-data[month] = round(data.get(month, 0.0) + amount, 4)
-json.dump(data, open(path, "w"), indent=2, sort_keys=True)
-PY
-SPENT_TOTAL=$(uv run python - "$SPEND" "$MONTH" <<'PY' 2>/dev/null || echo "$XAI_COST"
-import json, sys
-try:
-    print(f'{json.load(open(sys.argv[1])).get(sys.argv[2], 0.0):.2f}')
-except Exception:
-    print("0.00")
-PY
-)
+# Read only. `ingest-x` writes the ledger itself now (`ingestion.spend`) — this script used to,
+# which meant it recorded only the calls the nightly made and every manual run was invisible to
+# the cap above. Re-reading here rather than adding $XAI_COST to the earlier figure so the
+# number reported is the ledger's, not this script's idea of it.
+SPENT_TOTAL=$(uv run python -c "
+from ingestion import spend
+print(f'{spend.total():.2f}')" 2>/dev/null || echo "$XAI_COST")
 
 {
   echo ""
