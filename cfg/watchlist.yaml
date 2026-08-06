@@ -288,8 +288,13 @@ people:
     status: candidate
     domains: [macro, crypto]
     why: "Most rigorous monetary-plumbing voice (dollar liquidity, Fed mechanics) applied to BTC. Hard-macro grounding for Cowen/Pal."
-    channels: [{ platform: x, id: "LynAldenContact", access: guest }]
-    notes: "DISCOVERED. Guest-only — track across host channels (Coin Stories etc.)."
+    channels: [{ platform: x, id: "LynAldenContact", access: grok }]
+    notes: >-
+      DISCOVERED. Guest-only for LONG-FORM — no podcast or channel of her own, so track
+      those across host channels (Coin Stories etc.). X is hers and is ingested: it was
+      marked `guest` until 2026-08-06, which is a fact about the person and not about this
+      channel, and `undigested` rightly read a reachable declared handle that nothing
+      searched as a gap.
 
   - name: "Capital Flows"
     handle: "@CapitalFlowsResearch"
@@ -347,5 +352,11 @@ x_grok_digest:
   - MarkNewtonCMT
   - LSDinmycoffee
   - Tradermayne
+  - LynAldenContact   # Added 2026-08-06. X is her only ingestible channel — she has no
+                      # long-form feed of her own, so without this the "hard-macro grounding
+                      # for Cowen/Pal" her entry argues for reaches the corpus only when a
+                      # host happens to book her. Her row read `access: guest` until now,
+                      # which described the person rather than the channel and left her
+                      # showing up as a config gap on every single run.
   # trader1sz removed 2026-07-26 — his YouTube livestreams turned out to be live, and that is
   # what's wanted from him. Was 29 posts/day at ~$3.04/mo, the second-largest line on the bill.
