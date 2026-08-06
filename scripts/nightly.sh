@@ -151,13 +151,28 @@ SPEND="$LOG_DIR/spend.json"
 mkdir -p "$LOG_DIR"
 
 # Monthly ceiling on real money. Only ingest-x spends dollars; everything else bills against
-# the Max subscription. Default is deliberately loose relative to the ~$7/mo the 11-handle
-# digest actually costs, so it is a runaway backstop rather than a budget you fight.
+# the Max subscription.
+#
+# **Set it HERE, not in `.env`.** This is read by bash before any Python runs, and nothing in
+# this script sources `.env` — that file is loaded inside the commands by `core.env.load_env`,
+# far too late to affect the check below. The plist exports only PATH and HOME. So a cap put
+# in `.env` is silently ignored and the default applies, which is exactly the kind of
+# not-wrong-just-inert config this repo keeps getting bitten by.
 #
 # **It is a trailing check, not a pre-authorisation.** Spend is recorded after a run, so the
 # run that crosses the line still completes and the *next* one is skipped. Overshoot is
 # bounded by one run — about $0.25 — which is not worth pre-estimating a call's cost to avoid.
-XAI_MONTHLY_CAP="${XAI_MONTHLY_CAP:-15.00}"
+#
+# Raised 15 -> 20 on 2026-08-06. Measured over 19 backfilled runs (scripts/nightly_report.py):
+# xAI averages $0.57/night, which projects to ~$17/month — so 15 was not a backstop any more,
+# it was a ceiling that would have started skipping ingest-x in the last days of every month.
+# 20 restores the headroom the original figure was chosen to give.
+#
+# **What this number does NOT see** — so do not read it as total spend: `spend.json` is written
+# only by this script, so manual `ingest-x` runs are invisible to it, and a call that times out
+# bills at xAI while printing no cost line here, because the figure is parsed from a response
+# that never arrived. Both make the tracked total an undercount.
+XAI_MONTHLY_CAP="${XAI_MONTHLY_CAP:-20.00}"
 MONTH="$(date +%Y-%m)"
 SPENT_THIS_MONTH=$(uv run python - "$SPEND" "$MONTH" <<'PY' 2>/dev/null || echo "0.00"
 import json, sys
