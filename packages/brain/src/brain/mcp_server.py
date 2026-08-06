@@ -17,6 +17,7 @@ without a server, a socket, or a model.
 """
 from __future__ import annotations
 
+import sqlite3
 import sys
 
 from mcp.server.fastmcp import FastMCP
@@ -24,8 +25,38 @@ from mcp.server.fastmcp import FastMCP
 from brain.report import format_passages, format_view
 from brain.retrieve import retrieve
 
-_INSTRUCTIONS = """Query a curated corpus of trader/analyst transcripts (666 videos,
-18,108 indexed chunks) belonging to the user.
+
+def corpus_counts() -> tuple[int, int, int]:
+    """`(transcripts_indexed, chunks, transcripts_with_stances)`, read from disk.
+
+    Measured rather than written down. These numbers were hardcoded as "666 videos,
+    18,108 indexed chunks" and stayed there while the corpus grew to 918 — so the server
+    spent weeks telling every caller it covered the whole corpus when it was 197
+    transcripts behind, which is precisely the failure the coverage note below warns
+    about. A stale number is worse than no number: it reads as a measurement.
+
+    Falls back to zeros if the index has never been built, since an unbuilt index must not
+    stop the server from starting and saying so.
+    """
+    from brain import stance_store, vector_store
+    try:
+        conn = vector_store.connect()
+        chunks = vector_store.count(conn)
+        transcripts = conn.execute(
+            "SELECT COUNT(DISTINCT transcript_ref) FROM chunks").fetchone()[0]
+        conn.close()
+    except (sqlite3.Error, OSError):
+        # An index that is absent, unreadable or not yet a database is a normal early
+        # state, and the server has to come up in order to report that it has nothing.
+        chunks = transcripts = 0
+    stanced = len(list(stance_store.DATA_ROOT.glob("*/*.json")))
+    return transcripts, chunks, stanced
+
+
+def build_instructions() -> str:
+    transcripts, chunks, stanced = corpus_counts()
+    return f"""Query a curated corpus of trader/analyst transcripts ({transcripts} videos,
+{chunks:,} indexed chunks) belonging to the user.
 
 Pick the tool by question shape:
 
@@ -36,15 +67,16 @@ Pick the tool by question shape:
   their mind. Needs an asset.
 
 Coverage differs sharply between them and it decides which answers are trustworthy:
-the vector index covers 666/666 transcripts, but structured stances cover far fewer, so
-`brain_roster` returning nothing usually means extraction hasn't run for that asset —
-NOT that the roster is silent on it. Say which of the two you're looking at.
+the vector index covers {transcripts}/{transcripts} transcripts, but structured stances cover
+{stanced}, so `brain_roster` returning nothing usually means extraction hasn't run for that
+asset — NOT that the roster is silent on it. Say which of the two you're looking at.
 
 Both tools are free and local. Neither calls a model. Answer from the returned text,
 quote it with attribution, and if the corpus doesn't cover something, say so rather than
 filling the gap from your own knowledge — the entire point is what THESE people think."""
 
-mcp = FastMCP("brain", instructions=_INSTRUCTIONS)
+
+mcp = FastMCP("brain", instructions=build_instructions())
 
 # The ONNX embedding model is the only expensive thing to construct, and it is immutable
 # once loaded. Everything else (stances, the index) is deliberately re-read per call:

@@ -260,3 +260,74 @@ def test_more_handles_than_the_api_allows_is_refused_before_spending_a_call():
     with pytest.raises(ValueError, match="20"):
         x_search.build_request([f"h{i}" for i in range(21)], "2026-07-24", "2026-07-26",
                                images=False)
+
+
+# ── the paid call: timeouts and retries ─────────────────────────────────────────
+#
+# `ingest-x` is the only command in the repo that spends real money, so these guard the
+# one step whose failure costs data that a later run may not be able to recover: the
+# resume window is capped, so consecutive failures eventually drop days permanently.
+
+class _Recorder:
+    """Stands in for `requests.post`, replaying a scripted sequence of outcomes."""
+
+    def __init__(self, *outcomes):
+        self.outcomes = list(outcomes)
+        self.calls: list[dict] = []
+
+    def __call__(self, url, **kwargs):
+        self.calls.append(kwargs)
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+class _Resp:
+    def __init__(self, payload, status_code=200):
+        self._payload = payload
+        self.status_code = status_code
+        self.text = json.dumps(payload)
+
+    def json(self):
+        return self._payload
+
+
+def test_a_read_timeout_is_retried_rather_than_losing_the_day():
+    import requests
+    post = _Recorder(requests.exceptions.ReadTimeout("slow"), _Resp({"ok": True}))
+
+    result = x_search.search(["a"], "2026-08-03", "2026-08-05",
+                             api_key="k", _post=post, _sleep=lambda s: None)
+
+    assert result == {"ok": True}
+    assert len(post.calls) == 2
+
+
+def test_retries_are_bounded_and_the_last_failure_surfaces():
+    import requests
+    post = _Recorder(*[requests.exceptions.ReadTimeout("slow")] * 3)
+
+    with pytest.raises(requests.exceptions.ReadTimeout):
+        x_search.search(["a"], "2026-08-03", "2026-08-05", api_key="k",
+                        _post=post, attempts=3, _sleep=lambda s: None)
+
+    assert len(post.calls) == 3
+
+
+def test_an_http_error_is_not_retried():
+    """A 4xx will not get better by asking again, and every attempt may bill. Only
+    transport failures — where the response never arrived — are worth repeating."""
+    post = _Recorder(_Resp({"error": "bad"}, status_code=400))
+
+    with pytest.raises(RuntimeError, match="HTTP 400"):
+        x_search.search(["a"], "2026-08-03", "2026-08-05", api_key="k",
+                        _post=post, _sleep=lambda s: None)
+
+    assert len(post.calls) == 1
+
+
+def test_the_default_timeout_clears_the_observed_ceiling():
+    """Measured across eight nightly runs: 63/164/195/201/236/240/301s. The old 300s
+    default sat inside that spread and the 301s run failed on it."""
+    assert x_search.DEFAULT_TIMEOUT >= 600

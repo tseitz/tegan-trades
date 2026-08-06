@@ -31,6 +31,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
+import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
@@ -305,14 +307,46 @@ def render_document(handle: str, day: str, posts) -> str:
 
 # ── the call itself (impure; injectable for tests) ──────────────────────────────
 
+# Measured across eight nightly runs: 63/164/195/201/236/240/301s to answer one window of
+# ~11 handles with charts on. The old 300s default sat *inside* that spread rather than above
+# it, and the 2026-08-05 run duly died at 301s having spent nothing and captured nothing.
+# 600s is clear of the observed ceiling with room for a slower day; the window is 2-3 days of
+# posts, so the call is inherently long and a tight timeout buys nothing.
+DEFAULT_TIMEOUT = 600
+
+# Total attempts, not retries-after-the-first.
+DEFAULT_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 20
+
+
+def _retryable():
+    """Transport failures worth repeating — the response never arrived, so nothing is known.
+
+    Deliberately narrow. An HTTP error is NOT in here: a 4xx will answer the same way next
+    time, and repeating it just bills again for the same rejection.
+    """
+    import requests
+    return (requests.exceptions.Timeout, requests.exceptions.ConnectionError)
+
+
 def search(handles, from_date: str, to_date: str, *, images: bool = False,
-           model: str = DEFAULT_MODEL, api_key: str | None = None, timeout: int = 300,
-           _post=None) -> dict:
+           model: str = DEFAULT_MODEL, api_key: str | None = None,
+           timeout: int = DEFAULT_TIMEOUT, attempts: int = DEFAULT_ATTEMPTS,
+           _post=None, _sleep=None) -> dict:
     """POST one window to xAI and return the raw response.
 
     The raw dict is returned rather than a parsed result so the caller can persist it: it is
     the only copy of the annotations, the usage counters, and the model's own narration, and
     all three have already proved necessary to diagnose a silent failure once.
+
+    **A timed-out attempt is retried, and that is a considered trade rather than a free
+    win.** This is the only call in the repo that spends real money, and a read timeout does
+    not mean the request failed server-side — the work may well have completed and billed
+    with only the response lost, so a retry can pay twice for one window. The alternative is
+    worse: `ingest-x` resumes from the last capture but only within
+    `x_roster.MAX_AUTO_LOOKBACK_DAYS`, so consecutive failures silently drop days that no
+    later run can recover. Paying twice is bounded and visible (the nightly's own monthly cap
+    gates the step); losing a day of the roster's posts is neither.
     """
     key = api_key or os.environ.get("XAI_API_KEY")
     if not key:
@@ -322,10 +356,26 @@ def search(handles, from_date: str, to_date: str, *, images: bool = False,
     if _post is None:  # pragma: no cover - network
         import requests
         _post = requests.post
+    if _sleep is None:  # pragma: no cover - timing
+        _sleep = time.sleep
 
-    resp = _post(XAI_URL, headers={"Authorization": f"Bearer {key}",
-                                   "Content-Type": "application/json"},
-                 json=body, timeout=timeout)
-    if resp.status_code != 200:
-        raise RuntimeError(f"xAI returned HTTP {resp.status_code}: {resp.text[:500]}")
-    return resp.json()
+    for attempt in range(1, attempts + 1):
+        try:
+            resp = _post(XAI_URL, headers={"Authorization": f"Bearer {key}",
+                                           "Content-Type": "application/json"},
+                         json=body, timeout=timeout)
+        except _retryable() as exc:
+            if attempt == attempts:
+                raise
+            # Printed, not swallowed: a run that quietly succeeded on its third try still
+            # spent up to three times over, and the log is where that becomes visible.
+            print(f"  ! xAI attempt {attempt}/{attempts} failed ({type(exc).__name__}); "
+                  f"retrying in {RETRY_BACKOFF_SECONDS}s", file=sys.stderr)
+            _sleep(RETRY_BACKOFF_SECONDS)
+            continue
+
+        if resp.status_code != 200:
+            raise RuntimeError(f"xAI returned HTTP {resp.status_code}: {resp.text[:500]}")
+        return resp.json()
+
+    raise AssertionError("unreachable: the loop either returns or raises")

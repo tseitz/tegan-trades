@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 from core.canon import Registry, load_registry, resolve_asset
@@ -54,6 +55,28 @@ def _read_assets(platform: str, source_id: str, stances_root: Path,
     return list(dict.fromkeys(resolve_asset(s.asset, registry)[0] for s in stances))
 
 
+def _fingerprint(txt_path: Path, sidecar_path: Path, stance_path: Path) -> float:
+    """A single number standing for "the inputs that decide this transcript's rows".
+
+    Three files feed a chunk row and any of them changing has to force a re-index: the
+    `.txt` supplies the text, the sidecar supplies `person`/`published_at`, and the stance
+    file supplies the `assets` pre-filter. Taking the max of their mtimes collapses that
+    into one comparable value; a missing file contributes 0.0.
+
+    Compared for INEQUALITY, never recency. A stance file being deleted lowers the max,
+    and a `>` test would then skip that transcript forever.
+
+    mtime, not a content hash: the transcripts are on the order of 100KB each and hashing
+    the corpus every night to save a re-embed that only fires when a file actually moves
+    is the more expensive way round. The trade is that restoring a file from backup with
+    an older stamp reads as unchanged — `--force` exists for that.
+    """
+    return max(
+        (p.stat().st_mtime if p.exists() else 0.0)
+        for p in (txt_path, sidecar_path, stance_path)
+    )
+
+
 def index_all(
     *,
     transcripts_root: Path | None = None,
@@ -62,15 +85,23 @@ def index_all(
     embedder: Embedder | None = None,
     registry: Registry | None = None,
     rebuild: bool = False,
+    force: bool = False,
     limit: int | None = None,
     batch_size: int = DEFAULT_BATCH,
 ) -> dict:
     """Walk transcripts, chunk + embed + upsert each one. Returns summary counts.
 
+    **Incremental by default**: a transcript whose text, sidecar and stance file are all
+    unchanged since it was last indexed is skipped without embedding anything. This is what
+    makes the step cheap enough to run nightly — a full pass over the real corpus measured
+    18,108 chunks / 1,086s and grows with every transcript ingested, while a quiet night
+    re-indexes the handful that actually moved. `force=True` re-embeds regardless.
+
     `chunks_skipped` counts transcripts that could not be chunked at all (their
     sidecar has no matching `.txt` file) — nothing was written for them. A
     transcript that chunks successfully but yields zero chunks (e.g. blank
     body) is NOT a skip; it still counts toward `transcripts_indexed`.
+    `transcripts_skipped` counts the unchanged ones, which is a different thing entirely.
     """
     transcripts_root = transcripts_root or TRANSCRIPTS_ROOT
     stances_root = stances_root or store_mod.DATA_ROOT
@@ -86,7 +117,11 @@ def index_all(
     if limit is not None:
         sidecar_paths = sidecar_paths[:limit]
 
+    known = {} if force else store.fingerprints(conn)
+    now = datetime.now(UTC).isoformat()
+
     transcripts_indexed = 0
+    transcripts_skipped = 0
     chunks_written = 0
     chunks_skipped = 0
 
@@ -101,10 +136,23 @@ def index_all(
         if not txt_path.exists():
             chunks_skipped += 1
             continue
-        text = txt_path.read_text(encoding="utf-8")
 
+        fingerprint = _fingerprint(
+            txt_path, sidecar_path, store_mod.stance_path(platform, source_id, stances_root)
+        )
+        if known.get(transcript_ref) == fingerprint:
+            transcripts_skipped += 1
+            continue
+
+        text = txt_path.read_text(encoding="utf-8")
         chunks = chunk_transcript(text, transcript_ref)
+
+        # Before writing, not after: chunk ids are content-addressed, so changed text lands
+        # under new ids and would otherwise accumulate beside the rows it replaces.
+        store.delete_transcript(conn, transcript_ref)
+
         if not chunks:
+            store.record_indexed(conn, transcript_ref, fingerprint, now)
             transcripts_indexed += 1
             continue
 
@@ -119,10 +167,14 @@ def index_all(
             )
             chunks_written += len(batch)
 
+        # Recorded only after the rows are committed, so a run killed mid-transcript
+        # re-does that transcript next time rather than marking it done.
+        store.record_indexed(conn, transcript_ref, fingerprint, now)
         transcripts_indexed += 1
 
     return {
         "transcripts_indexed": transcripts_indexed,
+        "transcripts_skipped": transcripts_skipped,
         "chunks_written": chunks_written,
         "chunks_skipped": chunks_skipped,
     }
@@ -131,6 +183,7 @@ def index_all(
 def _format_summary(stats: dict, elapsed: float) -> str:
     return (
         f"{stats['transcripts_indexed']} transcripts indexed, "
+        f"{stats.get('transcripts_skipped', 0)} unchanged, "
         f"{stats['chunks_written']} chunks written, "
         f"{stats['chunks_skipped']} chunks skipped, "
         f"{elapsed:.1f}s elapsed"
@@ -144,7 +197,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=None,
                         help="index at most N transcripts")
     parser.add_argument("--rebuild", action="store_true",
-                        help="clear the index before indexing")
+                        help="clear the index (and its ledger) before indexing")
+    parser.add_argument("--force", action="store_true",
+                        help="re-embed every transcript, including unchanged ones, "
+                             "without clearing the store first")
     parser.add_argument("--batch", type=int, default=DEFAULT_BATCH,
                         help="embed this many chunks per batch")
     parser.add_argument("--model", default=DEFAULT_MODEL,
@@ -155,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     stats = index_all(
         embedder=FastEmbedder(model_name=args.model),
         rebuild=args.rebuild,
+        force=args.force,
         limit=args.limit,
         batch_size=args.batch,
     )

@@ -8,6 +8,7 @@ missing index degrades to an honest empty answer instead of raising at the serve
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 
 import pytest
 from brain import mcp_server
@@ -35,10 +36,16 @@ def test_search_advertises_the_query_should_be_natural_language():
 
 
 def test_instructions_state_the_coverage_asymmetry():
-    """666/666 indexed vs. far fewer extracted is the single fact that decides whether
-    an empty roster answer means "nobody said anything" or "extraction hasn't run"."""
-    assert "666" in mcp_server._INSTRUCTIONS
-    assert "brain_roster" in mcp_server._INSTRUCTIONS
+    """Fully indexed vs. far fewer extracted is the single fact that decides whether an
+    empty roster answer means "nobody said anything" or "extraction hasn't run".
+
+    Asserts the asymmetry is *stated*, not that any particular number appears — the older
+    version pinned the literal "666" and so passed happily while that number went stale.
+    """
+    text = mcp_server.build_instructions()
+    assert "brain_roster" in text
+    assert "structured stances cover" in text
+    assert "extraction hasn't run" in text
 
 
 def test_missing_index_returns_no_hits_rather_than_raising(monkeypatch, tmp_path):
@@ -74,3 +81,35 @@ def test_roster_without_stances_distinguishes_gap_from_silence(monkeypatch):
     out = mcp_server.brain_roster("ETH")
     assert "coverage gap" in out
     assert "brain_search" in out
+
+
+class TestInstructionsAreMeasuredNotHardcoded:
+    """The advertised coverage was a literal string ("666 videos, 18,108 indexed chunks")
+    and went stale as the corpus grew to 918 — the server kept claiming full coverage while
+    the index was 197 transcripts behind. These pin it to what is actually on disk."""
+
+    def test_counts_come_from_the_index_not_a_constant(self, monkeypatch):
+        import brain.mcp_server as mod
+        monkeypatch.setattr(mod, "corpus_counts", lambda: (918, 22643, 455))
+
+        text = mod.build_instructions()
+
+        assert "918 videos" in text
+        assert "22,643 indexed chunks" in text
+        assert "918/918 transcripts" in text
+        assert "455" in text
+
+    def test_an_unreadable_index_does_not_stop_the_server_starting(self, monkeypatch):
+        """An unbuilt or corrupt index must degrade to zeros, not raise at import time —
+        the server has to come up in order to report that it has nothing."""
+        from brain import vector_store
+
+        def _boom(*a, **kw):
+            raise sqlite3.DatabaseError("file is not a database")
+
+        monkeypatch.setattr(vector_store, "connect", _boom)
+
+        import brain.mcp_server as mod
+        transcripts, chunks, _ = mod.corpus_counts()
+
+        assert (transcripts, chunks) == (0, 0)

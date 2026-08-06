@@ -8,9 +8,12 @@
 #   2. ingest-roster   free    new YouTube transcripts
 #   3. ingest-x        $$      xAI — the ONLY step that spends real money
 #   4. distill-roster  Max     LLM extraction, subscription-billed
-#   5. fetch-prices    free
-#   6. fetch-funding   free    what holding a position costs — must precede setups
-#   7. setups --list   free    the queue you actually read
+#   5. brain-extract   Max     LLM stance extraction — capped per night, see below
+#   6. brain-index     free    local embeddings; MUST follow brain-extract
+#   7. fetch-prices    free
+#   8. fetch-funding   free    what holding a position costs — must precede setups
+#   9. reconcile       free    settle what the venue did with yesterday's orders
+#  10. setups --list   free    the queue you actually read
 #
 # **A failing step does not abort the run.** A YouTube outage should not cost you the price
 # refresh, and a bad roster marker should not cost you the whole night. Every step's status is
@@ -61,6 +64,17 @@ NIGHTLY_EARLIEST="${NIGHTLY_EARLIEST:-0615}"
 # three, data/logs/nightly/), so this is a "do not start a job on a dying laptop" floor rather
 # than a budget.
 NIGHTLY_MIN_BATTERY="${NIGHTLY_MIN_BATTERY:-30}"
+
+# How many transcripts `brain-extract` may process in one night.
+#
+# **The cap is the whole point of this variable.** `brain-extract` with no limit processes
+# every un-extracted transcript it can find, and the backlog was 408 when this was added —
+# one uncapped night would be ~$159 of Max allowance (measured mean $0.3909/call over 431
+# real calls, data/brain-extract-overnight.log) and would almost certainly hit the usage cap,
+# at which point every remaining call fails instantly and `--max-consecutive-failures` aborts
+# the sweep. A normal day brings 4-8 new transcripts, so 12 keeps pace AND drains the backlog
+# by a few a night, at roughly $4.70 of allowance. Raise it deliberately, not by default.
+BRAIN_EXTRACT_LIMIT="${BRAIN_EXTRACT_LIMIT:-12}"
 
 mkdir -p "$REPO/data"
 
@@ -198,6 +212,25 @@ else
 fi
 
 step distill-roster uv run distill-roster --concurrency 3
+
+# ── the brain: stances, then the vector index over them ──
+#
+# **This order is load-bearing, not alphabetical.** `brain-index` reads each transcript's
+# stance file to populate the `assets` column it uses as a pre-filter (`index_cli._read_assets`),
+# so a transcript indexed before its stance exists is stored with NO assets and is invisible
+# to every asset-filtered query. Extraction first means a transcript ingested tonight gets its
+# stances tonight and is indexed with them in the same run.
+#
+# Indexing is incremental — it re-embeds only what changed, keyed on the transcript, its
+# sidecar AND its stance file, so a stance arriving later still forces a re-index of that one
+# transcript. That is what makes it cheap enough to be here: a full pass measured 18,108
+# chunks / 1,086s and grows with the corpus, while a quiet night is seconds.
+step brain-extract  uv run brain-extract --limit "$BRAIN_EXTRACT_LIMIT"
+
+# Free — local `fastembed` (BAAI/bge-small-en-v1.5), no API, no LLM, no network. The only
+# cost is CPU, which is why it has no cap the way brain-extract does.
+step brain-index    uv run brain-index
+
 step fetch-prices   uv run fetch-prices
 
 # Ordered before `setups` deliberately — the queue reads this log to price each candidate's
@@ -243,6 +276,18 @@ CLAUDE_CALLS=$(grep -c 'usage-equivalent cost:' "$LOG" || true)
 # $2.56 for a run that spent $0.22. The command that spends the money reports the money.
 XAI_COST=$(grep -o '^\[ingest-x\] cost: \$[0-9.]*' "$LOG" \
   | sed 's/.*\$//' | awk '{s+=$1} END {printf "%.2f", s+0}')
+
+# The brain's two layers, reported together because staleness in either one is invisible from
+# the outside: `brain_search` answers just as confidently over a corpus it stopped indexing
+# three weeks ago. Both were silently 197 transcripts behind when these steps were added.
+BRAIN_EXTRACTED=$(grep -oE '^TOTAL: [0-9]+ extracted' "$LOG" | tail -1 | cut -d' ' -f2)
+BRAIN_INDEXED=$(grep -oE '^[0-9]+ transcripts indexed' "$LOG" | tail -1 | cut -d' ' -f1)
+# The circuit breaker means a usage cap was hit and the rest were never attempted. They cost
+# nothing and are retryable, but a night that hits it has NOT kept up and should say so.
+if grep -q 'CIRCUIT BREAKER TRIPPED' "$LOG"; then
+  STATUS_LINES+=("  WARN  brain-extract — circuit breaker tripped, see log")
+  [ $WORST -lt 1 ] && WORST=1
+fi
 
 CANDIDATES=$(grep -oE '^[0-9]+ candidates' "$LOG" | tail -1 | cut -d' ' -f1)
 DROPPED=$(grep -oE '[0-9]+ theses dropped' "$LOG" | tail -1 | cut -d' ' -f1)
@@ -293,6 +338,7 @@ PY
   echo ""
   echo "  xAI (real money):      \$${XAI_COST}  ·  \$${SPENT_TOTAL}/${XAI_MONTHLY_CAP} this month"
   echo "  claude (Max allowance): \$${CLAUDE_COST} over ${CLAUDE_CALLS} calls"
+  echo "  brain:                 ${BRAIN_EXTRACTED:-0} extracted · ${BRAIN_INDEXED:-0} indexed"
   echo "  candidates:            ${CANDIDATES:-?}"
   echo "  orders killed:         ${KILLED:-0}"
   echo "  funding observations:  ${FUNDING:-0}"

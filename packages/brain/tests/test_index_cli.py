@@ -5,6 +5,7 @@ stances_root) are injected.
 from __future__ import annotations
 
 import json
+import os
 
 import numpy as np
 import pytest
@@ -68,6 +69,24 @@ def _write_stance_file(root, platform, source_id, assets):
         "transcript_ref": f"{platform}/{source_id}", "schema_version": "1",
         "model": "m", "extracted_at": "t", "stances": stances,
     }), encoding="utf-8")
+
+
+def _bump_mtime(path, seconds=10.0):
+    """Push a file's mtime forward by a visible margin.
+
+    Tests write files milliseconds apart, and the incremental check compares mtimes — on a
+    filesystem with coarse timestamp granularity (HFS+ is 1s) a rewrite can land on the
+    SAME mtime as the original and the change would look like no change. Setting the stamp
+    explicitly makes these tests assert the skip logic rather than the clock.
+    """
+    st = path.stat()
+    os.utime(path, (st.st_atime, st.st_mtime + seconds))
+
+
+def _touch(path, text):
+    """Rewrite a file's contents and guarantee the mtime moves."""
+    path.write_text(text, encoding="utf-8")
+    _bump_mtime(path)
 
 
 @pytest.fixture
@@ -260,6 +279,134 @@ class TestRebuild:
         )
 
         assert count(conn) == first_count
+
+
+class TestIncremental:
+    """Re-indexing an unchanged corpus must cost nothing.
+
+    `index_all` used to re-embed every transcript on every run — 18,108 chunks / 1,086s
+    measured on the real corpus, growing linearly, which is what kept `brain-index` out
+    of the nightly cycle. Embedding is local and free in money but not in time.
+    """
+
+    def _index(self, data_root, conn, embedder, **kw):
+        return index_all(
+            transcripts_root=data_root / "transcripts",
+            stances_root=data_root / "stances",
+            conn=conn, embedder=embedder, **kw,
+        )
+
+    def test_second_run_over_unchanged_corpus_embeds_nothing(self, data_root):
+        _write_transcript(data_root, "youtube", "vid1", "Cowen", "hello world " * 50)
+        conn = connect(data_root / "index.db")
+        self._index(data_root, conn, _FakeEmbedder())
+
+        embedder = _FakeEmbedder()
+        stats = self._index(data_root, conn, embedder)
+
+        assert embedder.calls == []
+        assert stats["transcripts_skipped"] == 1
+        assert stats["transcripts_indexed"] == 0
+
+    def test_changed_transcript_text_is_reindexed(self, data_root):
+        _write_transcript(data_root, "youtube", "vid1", "Cowen", "hello world " * 50)
+        conn = connect(data_root / "index.db")
+        self._index(data_root, conn, _FakeEmbedder())
+
+        _touch(data_root / "transcripts" / "youtube" / "vid1.txt", "different text " * 50)
+        embedder = _FakeEmbedder()
+        stats = self._index(data_root, conn, embedder)
+
+        assert stats["transcripts_indexed"] == 1
+        assert embedder.calls != []
+
+    def test_stance_file_arriving_after_indexing_reindexes_for_its_assets(self, data_root):
+        """The load-bearing case, and the reason a plain mtime-on-the-transcript check is
+        not enough. `_read_assets` populates the asset pre-filter from the stance file, so
+        a transcript indexed BEFORE extraction ran is stored with empty assets. The old
+        full re-embed masked this by rebuilding every row nightly; skipping on the
+        transcript alone would freeze `assets = ''` permanently and make the chunk
+        unreachable from every asset-filtered query in `brain_roster`.
+        """
+        _write_transcript(data_root, "youtube", "vid1", "Cowen", "hello world")
+        conn = connect(data_root / "index.db")
+        self._index(data_root, conn, _FakeEmbedder())
+        assert conn.execute("SELECT assets FROM chunks LIMIT 1").fetchone()[0] == ""
+
+        _write_stance_file(data_root, "youtube", "vid1", ["BTC"])
+        stats = self._index(data_root, conn, _FakeEmbedder())
+
+        assert stats["transcripts_indexed"] == 1
+        assert conn.execute("SELECT assets FROM chunks LIMIT 1").fetchone()[0] == "BTC"
+
+    def test_changed_sidecar_is_reindexed(self, data_root):
+        """person/published_at are denormalized onto every chunk row, so a corrected
+        sidecar has to reach the store even though the transcript text is untouched."""
+        _write_transcript(data_root, "youtube", "vid1", "Cowen", "hello world")
+        conn = connect(data_root / "index.db")
+        self._index(data_root, conn, _FakeEmbedder())
+
+        _write_transcript(data_root, "youtube", "vid1", "Benjamin Cowen", "hello world")
+        _bump_mtime(data_root / "transcripts" / "youtube" / "vid1.json")
+        self._index(data_root, conn, _FakeEmbedder())
+
+        assert conn.execute("SELECT person FROM chunks LIMIT 1").fetchone()[0] == "Benjamin Cowen"
+
+    def test_force_reindexes_everything(self, data_root):
+        _write_transcript(data_root, "youtube", "vid1", "Cowen", "hello world " * 50)
+        conn = connect(data_root / "index.db")
+        self._index(data_root, conn, _FakeEmbedder())
+
+        embedder = _FakeEmbedder()
+        stats = self._index(data_root, conn, embedder, force=True)
+
+        assert stats["transcripts_indexed"] == 1
+        assert stats["transcripts_skipped"] == 0
+        assert embedder.calls != []
+
+    def test_rebuild_also_clears_the_ledger(self, data_root):
+        """`rebuild` clears the chunk rows. If the fingerprint ledger survived that, every
+        transcript would look already-indexed and be skipped — leaving an EMPTY index that
+        reports success. This asserts the two are cleared together."""
+        _write_transcript(data_root, "youtube", "vid1", "Cowen", "hello world " * 50)
+        conn = connect(data_root / "index.db")
+        self._index(data_root, conn, _FakeEmbedder())
+        before = count(conn)
+
+        stats = self._index(data_root, conn, _FakeEmbedder(), rebuild=True)
+
+        assert stats["transcripts_indexed"] == 1
+        assert count(conn) == before > 0
+
+    def test_reindexing_drops_the_previous_versions_chunks(self, data_root):
+        """Chunk ids are content-addressed, so re-indexing changed text writes rows under
+        NEW ids and the old ones are orphaned rather than overwritten. Without an explicit
+        delete the store accumulates text that is no longer in any transcript, and search
+        can return a passage that has since been corrected."""
+        _write_transcript(data_root, "youtube", "vid1", "Cowen", "original wording " * 50)
+        conn = connect(data_root / "index.db")
+        self._index(data_root, conn, _FakeEmbedder())
+
+        _touch(data_root / "transcripts" / "youtube" / "vid1.txt", "replacement wording " * 50)
+        self._index(data_root, conn, _FakeEmbedder())
+
+        texts = [r[0] for r in conn.execute("SELECT text FROM chunks").fetchall()]
+        assert texts, "expected the new version to be indexed"
+        assert not any("original" in t for t in texts)
+
+    def test_deleting_a_stance_file_reindexes_rather_than_freezing_assets(self, data_root):
+        """Fingerprints are compared for INEQUALITY, not recency. A stance file that goes
+        away lowers the fingerprint, and a `>` comparison would skip it forever."""
+        _write_transcript(data_root, "youtube", "vid1", "Cowen", "hello world")
+        _write_stance_file(data_root, "youtube", "vid1", ["BTC"])
+        conn = connect(data_root / "index.db")
+        self._index(data_root, conn, _FakeEmbedder())
+        assert conn.execute("SELECT assets FROM chunks LIMIT 1").fetchone()[0] == "BTC"
+
+        (data_root / "stances" / "youtube" / "vid1.json").unlink()
+        self._index(data_root, conn, _FakeEmbedder())
+
+        assert conn.execute("SELECT assets FROM chunks LIMIT 1").fetchone()[0] == ""
 
 
 class TestBatching:

@@ -40,6 +40,12 @@ CREATE TABLE IF NOT EXISTS chunks (
 CREATE INDEX IF NOT EXISTS idx_chunks_transcript_ref ON chunks(transcript_ref);
 CREATE INDEX IF NOT EXISTS idx_chunks_person ON chunks(person);
 CREATE INDEX IF NOT EXISTS idx_chunks_published_at ON chunks(published_at);
+
+CREATE TABLE IF NOT EXISTS indexed (
+  transcript_ref TEXT PRIMARY KEY,
+  fingerprint    REAL NOT NULL,
+  indexed_at     TEXT NOT NULL
+);
 """
 
 
@@ -116,7 +122,47 @@ def count(conn: sqlite3.Connection) -> int:
 
 
 def clear(conn: sqlite3.Connection) -> None:
+    """Empty the store — BOTH the chunks and the ledger that says what has been indexed.
+
+    These must be cleared together. Dropping the chunk rows while leaving the ledger
+    behind would make every transcript look already-indexed on the next run, so a
+    `--rebuild` would skip the entire corpus and leave an empty index reporting success.
+    """
     conn.execute("DELETE FROM chunks")
+    conn.execute("DELETE FROM indexed")
+    conn.commit()
+
+
+def delete_transcript(conn: sqlite3.Connection, transcript_ref: str) -> int:
+    """Drop every chunk belonging to one transcript. Returns the number removed.
+
+    Needed before re-indexing a transcript whose text changed. Chunk ids are
+    content-addressed (`brain.chunk`), so new text yields new ids and `upsert_chunks`
+    writes alongside the old rows rather than replacing them — leaving orphaned passages
+    that no transcript contains any more but that `search` will still happily return.
+    """
+    cursor = conn.execute("DELETE FROM chunks WHERE transcript_ref = ?", (transcript_ref,))
+    conn.commit()
+    return cursor.rowcount
+
+
+def fingerprints(conn: sqlite3.Connection) -> dict[str, float]:
+    """The whole ledger as `{transcript_ref: fingerprint}`, read in one query.
+
+    Returned wholesale rather than probed per transcript: the corpus is ~900 rows and the
+    caller checks every one of them, so a single SELECT beats 900 round trips.
+    """
+    return dict(conn.execute("SELECT transcript_ref, fingerprint FROM indexed").fetchall())
+
+
+def record_indexed(
+    conn: sqlite3.Connection, transcript_ref: str, fingerprint: float, indexed_at: str
+) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO indexed (transcript_ref, fingerprint, indexed_at) "
+        "VALUES (?, ?, ?)",
+        (transcript_ref, fingerprint, indexed_at),
+    )
     conn.commit()
 
 
