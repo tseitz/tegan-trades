@@ -875,3 +875,21 @@ trades that cannot be placed either way.
 number a position beside them is deliberate — flattening carries a live stop and is a trading
 decision, not budget housekeeping. So this needs a separate, separately-confirmed close path,
 not a wider menu.
+
+---
+
+## 53. Give the backup its own Google OAuth client ID · `OPEN` — new 2026-08-06
+
+`scripts/backup.sh` authenticates with rclone's shared client ID, which prints on every run:
+*"being retired and will stop working during 2026"*. It is August. The off-machine copy is the
+one thing in the repo with no local fallback, and it is currently resting on a credential with
+a stated expiry inside the next few months.
+
+Create a project in Google Cloud Console, enable the Drive API, make an OAuth client ID of type
+Desktop, then `rclone config update gdrive client_id=… client_secret=…` and re-authorise. It
+also lifts the per-user rate limit that made the first seeding pass take over ten minutes for
+87MB.
+
+**The failure mode is the reason for urgency, not the deadline.** When the shared ID dies the
+backup starts exiting non-zero every night, which the nightly reports and nobody is paged for —
+the same shape as the launchd/TCC denial that ran silently for a night before anyone looked.

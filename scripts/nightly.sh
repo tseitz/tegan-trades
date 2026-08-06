@@ -236,15 +236,16 @@ mkdir -p "$LOG_DIR"
 # run that crosses the line still completes and the *next* one is skipped. Overshoot is
 # bounded by one run — about $0.25 — which is not worth pre-estimating a call's cost to avoid.
 #
-# Raised 15 -> 20 on 2026-08-06. Measured over 19 backfilled runs (scripts/nightly_report.py):
-# xAI averages $0.57/night, which projects to ~$17/month — so 15 was not a backstop any more,
-# it was a ceiling that would have started skipping ingest-x in the last days of every month.
-# 20 restores the headroom the original figure was chosen to give.
+# Raised 15 -> 20 on 2026-08-06, on a figure the same day's work then undercut. The $0.57/night
+# that justified it came from the nightly-only history, and `ingestion.spend` went on to measure
+# what that history had never seen: July $5.55 tracked against $7.44 real, August $3.07 against
+# $7.18. So 20 is headroom over a known-low number, not a derived ceiling. Re-derive it from
+# `scripts/nightly_report.py` once a full month of the reconciled ledger exists.
 #
-# **What this number does NOT see** — so do not read it as total spend: `spend.json` is written
-# only by this script, so manual `ingest-x` runs are invisible to it, and a call that times out
-# bills at xAI while printing no cost line here, because the figure is parsed from a response
-# that never arrived. Both make the tracked total an undercount.
+# **Still a floor, but a much closer one.** `ingest-x` writes the ledger itself now, so runs made
+# by hand reach it — they were most of the gap above. What stays invisible is a call that times
+# out: it bills at xAI and returns no response to read `cost_in_usd_ticks` from. See
+# `ingestion/spend.py`, which owns this and explains why that trade is accepted.
 XAI_MONTHLY_CAP="${XAI_MONTHLY_CAP:-20.00}"
 MONTH="$(date +%Y-%m)"
 # Asks `ingestion.spend` rather than reading a path, so the gate and the writer can never
