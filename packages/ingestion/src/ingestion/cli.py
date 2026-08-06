@@ -128,9 +128,11 @@ def x_main(argv: list[str] | None = None) -> int:
     failed: list[str] = []
     total_written = 0
 
-    for day in days:
+    # `end` is the exclusive upper bound the tool wants; `day` is the day it actually covers
+    # and the only one worth naming in output. See `x_search.day_windows`.
+    for day, end in days:
         try:
-            response = search(handles, day, day, images=args.images)
+            response = search(handles, day, end, images=args.images)
         except Exception as exc:  # noqa: BLE001 - one bad day must not cost the others
             print(f"  ! {day}: {type(exc).__name__}: {exc}", file=sys.stderr)
             failed.append(day)

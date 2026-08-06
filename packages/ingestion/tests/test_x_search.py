@@ -335,16 +335,30 @@ def test_the_default_timeout_clears_the_observed_ceiling():
 
 # ── splitting the window into days ──────────────────────────────────────────────
 
-def test_a_single_day_window_is_one_day():
-    assert x_search.day_windows("2026-08-03", "2026-08-03") == ["2026-08-03"]
+def test_a_one_day_window_asks_for_the_NEXT_day_as_its_upper_bound():
+    """`to_date` is exclusive at the tool. Measured across all 13 raw responses in
+    data/raw/x/: a request for 08-02..08-04 returned 08-02 and 08-03, never 08-04.
 
-
-def test_a_range_is_split_into_one_window_per_day_inclusive_of_both_ends():
-    """The prompt and the tool both treat the range as inclusive, so a 3-day window is
-    three days of work — not two."""
-    assert x_search.day_windows("2026-08-03", "2026-08-05") == [
-        "2026-08-03", "2026-08-04", "2026-08-05",
+    So a window of `(d, d)` is EMPTY — it returns zero posts for every handle and reads
+    exactly like a quiet day. A live dry run against the real API confirmed it: four
+    consecutive `(d, d)` days, 11 x_search calls each, 0 verified posts every time.
+    """
+    assert x_search.day_windows("2026-08-03", "2026-08-04") == [
+        ("2026-08-03", "2026-08-04"),
     ]
+
+
+def test_a_range_is_split_into_one_window_per_day_covered():
+    assert x_search.day_windows("2026-08-03", "2026-08-06") == [
+        ("2026-08-03", "2026-08-04"),
+        ("2026-08-04", "2026-08-05"),
+        ("2026-08-05", "2026-08-06"),
+    ]
+
+
+def test_an_empty_range_yields_nothing_rather_than_an_empty_request():
+    """from == to covered no days before the split and must cover none after it."""
+    assert x_search.day_windows("2026-08-03", "2026-08-03") == []
 
 
 def test_a_backwards_range_yields_nothing_rather_than_looping():
@@ -353,5 +367,13 @@ def test_a_backwards_range_yields_nothing_rather_than_looping():
 
 def test_a_month_boundary_is_not_special():
     assert x_search.day_windows("2026-07-30", "2026-08-01") == [
-        "2026-07-30", "2026-07-31", "2026-08-01",
+        ("2026-07-30", "2026-07-31"),
+        ("2026-07-31", "2026-08-01"),
     ]
+
+
+def test_the_split_covers_exactly_the_days_the_single_call_used_to():
+    """A faithful refactor: the old one-shot request for [from, to) covered from..to-1, and
+    the sum of the per-day windows has to cover the same set — no day gained, none lost."""
+    covered = [d for d, _ in x_search.day_windows("2026-07-31", "2026-08-03")]
+    assert covered == ["2026-07-31", "2026-08-01", "2026-08-02"]

@@ -308,24 +308,38 @@ def render_document(handle: str, day: str, posts) -> str:
 
 # ── the call itself (impure; injectable for tests) ──────────────────────────────
 
-def day_windows(from_date: str, to_date: str) -> list[str]:
-    """Every day in the inclusive range `from_date..to_date`, one entry each.
+def day_windows(from_date: str, to_date: str) -> list[tuple[str, str]]:
+    """Split `[from_date, to_date)` into one `(from, to)` request window per day covered.
 
-    The unit of work used to be the whole window in a single call, which made the request
-    slow in proportion to how much ground it had to cover and made the whole thing
-    all-or-nothing: the 2026-08-05 run asked for three days, took 301s, hit the timeout and
-    kept none of it. Asking a day at a time makes each call small, and — because
-    `x_roster.store_posts` writes a day wholesale and `resume_window` resumes from the last
-    day actually captured — a day that fails costs only that day. The next run picks it up.
+    **`to_date` is EXCLUSIVE at the xAI tool, whatever the prompt says.** Measured across
+    all 13 historical raw responses in `data/raw/x/`, without exception: a request for
+    `2026-08-02 .. 2026-08-04` returned posts dated 08-02 and 08-03 and never 08-04;
+    `2026-07-31 .. 2026-08-03` returned 07-31, 08-01, 08-02. The PROMPT asks for the range
+    "inclusive" and that wording is left alone because every successful capture in the
+    corpus was made under it — but it describes what the model is asked for, not what the
+    tool serves, and the tool is what binds. A one-day window is therefore `(d, d+1)`, not
+    `(d, d)`. `(d, d)` is an EMPTY range: it returns zero posts, for every handle, looking
+    exactly like a quiet day.
 
-    Both ends are inclusive because the tool config and the prompt both say "between
-    {from_date} and {to_date} inclusive"; a half-open range here would silently drop a day.
+    Consequences worth knowing, both pre-existing rather than introduced here: the caller
+    passing `to_date = today` captures only up to yesterday, and re-requesting the last
+    captured day (which `x_roster.resume_window` does deliberately) re-fetches a day that
+    may have been partial when it was first seen.
+
+    Splitting at all is what makes a slow window survivable. The whole range used to go up
+    as one call, so its duration scaled with the ground it covered and a failure lost all of
+    it — the 2026-08-05 run asked for three days, spent 301s against a 300s timeout, and
+    kept nothing. Because `x_roster.store_posts` writes a day wholesale and `resume_window`
+    reads the last day actually captured, a day that fails now costs only that day.
     """
     start = date.fromisoformat(from_date)
     end = date.fromisoformat(to_date)
-    if end < start:
+    if end <= start:
         return []
-    return [(start + timedelta(days=i)).isoformat() for i in range((end - start).days + 1)]
+    return [
+        ((start + timedelta(days=i)).isoformat(), (start + timedelta(days=i + 1)).isoformat())
+        for i in range((end - start).days)
+    ]
 
 
 # **A hang guard, NOT a cost or latency control.** It is worth being explicit about this,
