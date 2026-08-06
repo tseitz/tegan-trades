@@ -44,8 +44,8 @@ measurement (13 rows carry funding, 4 usable pairs) · §27's option 2 (`daily_t
 but the failed-break state it names has n=1).
 
 **By theme:** corpus supply §3 · §6b · §6d · §6f · §6h · §9 · §14 — durability §4b · §24 —
-venue and execution §22 · §25 · §30 · §33 · §36 · §39 · §40 · §43 — routing §29 · §31 · §32 · §44 —
-scoring §1 · §2 · §8 · §12 · §15 · §19 · §48.
+venue and execution §22 · §25 · §30 · §33 · §36 · §39 · §40 · §43 · §50 · §52 —
+routing §29 · §31 · §32 · §44 · §51 — scoring §1 · §2 · §8 · §12 · §15 · §19 · §48.
 
 ---
 
@@ -819,3 +819,59 @@ and target at the median before truncation, so clustering is the whole difficult
 
 Then decide whether an authored target should rejoin the ladder as a rung. It is dropped
 outright today, which is right for the *target* and possibly wasteful for the runners.
+
+---
+
+## 50. Return an approval to the queue only when a real venue rejected it · `OPEN` — new 2026-08-06
+
+`resurfaces` (`oracle/setups_cli.py`) revives `later` and nothing else, so an approval is
+terminal whether or not an order ever reached a venue. The 2026-08-05 sitting approved six and
+placed one; the other five sit in the sidecar as `approved` and can never be offered again.
+
+**That is correct for a rehearsal**, and deliberately so: a testnet or paper universe missing a
+ticker says nothing about the trade, and the approvals are the backlog §4 scores against. It is
+wrong when a real venue took the order and the order did not survive — an execution failure
+leaves the setup standing.
+
+**Read `data/execution/orders.jsonl` beside the sidecar and resurface on the outcome, not the
+verdict.** `venues.is_real_money` already draws the network half of the line: `failed` on a
+real-money network returns, anything on a rehearsal network stays buried.
+
+Which real-money refusals count is the open question. `portfolio_full` is a fact about the book
+rather than about the trade (§52), so it likely returns; `unlisted` and `dust` do not.
+
+---
+
+## 51. Say `unmapped` when the map is silent, and curate what Alpaca lists · `OPEN` — new 2026-08-06
+
+`guards.check_listing` answers `unlisted` to two unrelated questions — `cfg/venue_map.yaml` has
+no row for the asset, and the row's symbol is missing from the target network's universe. 16 of
+the 20 refusals in `data/execution/orders.jsonl` are `unlisted`, and the detail it prints
+("KMI has no listing on this venue") reads as the venue's answer when it is the map's silence.
+KMI is `active`, `tradable` and `easy_to_borrow` on Alpaca.
+
+**Split the code**, so a curation gap tallies apart from a network that genuinely lacks the
+market. Then curate: 67 of the map's 156 assets carry an `alpaca` row against 509 in the roster,
+and 29 of the 94 assets ever judged have no row at all — `UNH`, `DOW`, `FCX`, `RDDT`, `WMB`.
+
+An unmapped asset also falls through to `cfg/execution.yaml`'s `venue`, which is how the crypto
+token `PERP` came to be offered to Alpaca. Add rows through §31's probe rather than by name;
+§31's missing CI check is what keeps this from decaying again.
+
+---
+
+## 52. Offer to free room instead of refusing when the book is full · `OPEN` — new 2026-08-06
+
+`portfolio.remaining` at ~0 refuses the candidate and names what the book is holding, and that
+is where the sitting ends. On 2026-08-05 the paper book sat at 4.79% of the 5% ceiling with
+$222.74 left, so two approvals refused against a ~$1,000 risk budget. The positions holding it
+were opened 2026-07-29 and nothing retires them — `max_order_age_days` only makes `book` flag.
+
+**Offer the choice at the point of refusal, and again before the queue prints.** The second is
+the more valuable: judging 40 candidates against a book with no room spends the scarce input on
+trades that cannot be placed either way.
+
+`book --cancel` is most of the mechanism but retires resting entries only, and its refusal to
+number a position beside them is deliberate — flattening carries a live stop and is a trading
+decision, not budget housekeeping. So this needs a separate, separately-confirmed close path,
+not a wider menu.
