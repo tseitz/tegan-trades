@@ -35,6 +35,7 @@ import sys
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 
 XAI_URL = "https://api.x.ai/v1/responses"
 DEFAULT_MODEL = "grok-4.5"
@@ -307,12 +308,43 @@ def render_document(handle: str, day: str, posts) -> str:
 
 # ── the call itself (impure; injectable for tests) ──────────────────────────────
 
-# Measured across eight nightly runs: 63/164/195/201/236/240/301s to answer one window of
-# ~11 handles with charts on. The old 300s default sat *inside* that spread rather than above
-# it, and the 2026-08-05 run duly died at 301s having spent nothing and captured nothing.
-# 600s is clear of the observed ceiling with room for a slower day; the window is 2-3 days of
-# posts, so the call is inherently long and a tight timeout buys nothing.
-DEFAULT_TIMEOUT = 600
+def day_windows(from_date: str, to_date: str) -> list[str]:
+    """Every day in the inclusive range `from_date..to_date`, one entry each.
+
+    The unit of work used to be the whole window in a single call, which made the request
+    slow in proportion to how much ground it had to cover and made the whole thing
+    all-or-nothing: the 2026-08-05 run asked for three days, took 301s, hit the timeout and
+    kept none of it. Asking a day at a time makes each call small, and — because
+    `x_roster.store_posts` writes a day wholesale and `resume_window` resumes from the last
+    day actually captured — a day that fails costs only that day. The next run picks it up.
+
+    Both ends are inclusive because the tool config and the prompt both say "between
+    {from_date} and {to_date} inclusive"; a half-open range here would silently drop a day.
+    """
+    start = date.fromisoformat(from_date)
+    end = date.fromisoformat(to_date)
+    if end < start:
+        return []
+    return [(start + timedelta(days=i)).isoformat() for i in range((end - start).days + 1)]
+
+
+# **A hang guard, NOT a cost or latency control.** It is worth being explicit about this,
+# because the natural reading is backwards: a timeout does not save money. The search has
+# almost certainly completed and billed server-side by the time the client gives up — all
+# timing out does is throw the answer away and under-report the spend, since the cost line is
+# parsed from a response that never arrived.
+#
+# So the only thing this defends against is a socket that never closes wedging the nightly
+# cycle, which runs unattended and would otherwise never reach fetch-prices or setups. It is
+# therefore set far above any plausible real answer rather than near it: measured across eight
+# nightly runs, 63/164/195/201/236/240/301s for a 2-3 day window, and the old 300s default sat
+# *inside* that spread. The real fix for slowness is `day_windows` — a smaller unit of work —
+# not a tighter clock.
+#
+# Split connect/read: failing to reach the host at all is a different thing from a call
+# thinking, and should not take fifteen minutes to notice.
+DEFAULT_CONNECT_TIMEOUT = 15
+DEFAULT_TIMEOUT = 900
 
 # Total attempts, not retries-after-the-first.
 DEFAULT_ATTEMPTS = 3
@@ -363,7 +395,7 @@ def search(handles, from_date: str, to_date: str, *, images: bool = False,
         try:
             resp = _post(XAI_URL, headers={"Authorization": f"Bearer {key}",
                                            "Content-Type": "application/json"},
-                         json=body, timeout=timeout)
+                         json=body, timeout=(DEFAULT_CONNECT_TIMEOUT, timeout))
         except _retryable() as exc:
             if attempt == attempts:
                 raise

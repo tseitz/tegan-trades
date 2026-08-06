@@ -23,6 +23,7 @@ from ingestion.store import DATA_ROOT
 from ingestion.x_search import (
     SearchNotRun,
     cost_usd,
+    day_windows,
     group_by_author_day,
     harvest,
     search,
@@ -115,45 +116,74 @@ def x_main(argv: list[str] | None = None) -> int:
     for handle in x_roster.undigested(watchlist):
         print(f"  · {handle}: declared on a person but not in the digest — not searched")
 
-    print(f"searching {len(handles)} handles, {args.from_date}..{to_date}"
-          f"{' with charts' if args.images else ''}")
-    response = search(handles, args.from_date, to_date, images=args.images)
+    days = day_windows(args.from_date, to_date)
+    print(f"searching {len(handles)} handles across {len(days)} day(s), "
+          f"{args.from_date}..{to_date}{' with charts' if args.images else ''}")
 
-    # The raw response is written even on a dry run. A dry run withholds *corpus* writes; the
-    # raw file is diagnostic, and the run most worth diagnosing is the one that just failed.
-    stamp = f"{args.from_date}_{to_date}{'_img' if args.images else ''}"
-    raw_path = RAW_ROOT / f"{stamp}.json"
-    raw_path.parent.mkdir(parents=True, exist_ok=True)
-    raw_path.write_text(json.dumps(response, indent=2), encoding="utf-8")
+    # **One call per day, each persisted before the next is attempted.** The window used to go
+    # up in a single request, so a failure anywhere lost all of it — which is exactly what
+    # happened on 2026-08-05. Storing per day means a run that dies halfway keeps the days it
+    # got, and `x_roster.resume_window` reads the last day actually captured, so the next run
+    # resumes from there without being told.
+    failed: list[str] = []
+    total_written = 0
 
-    try:
-        result = harvest(response, allowed=handles)
-    except SearchNotRun as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        print(f"  raw response kept at {raw_path}", file=sys.stderr)
+    for day in days:
+        try:
+            response = search(handles, day, day, images=args.images)
+        except Exception as exc:  # noqa: BLE001 - one bad day must not cost the others
+            print(f"  ! {day}: {type(exc).__name__}: {exc}", file=sys.stderr)
+            failed.append(day)
+            continue
+
+        # The raw response is written even on a dry run. A dry run withholds *corpus* writes;
+        # the raw file is diagnostic, and the run most worth diagnosing is the one that just
+        # failed.
+        raw_path = RAW_ROOT / f"{day}{'_img' if args.images else ''}.json"
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
+        raw_path.write_text(json.dumps(response, indent=2), encoding="utf-8")
+
+        # Printed per day in a fixed, greppable shape: this is the only step in the nightly
+        # cycle that spends real money, and the run summary sums these lines rather than
+        # trying to work the figure out afterwards from files on disk.
+        print(f"[ingest-x] cost: ${cost_usd(response):.4f} (xAI, real money)")
+
+        try:
+            result = harvest(response, allowed=handles)
+        except SearchNotRun as exc:
+            print(f"error: {day}: {exc}", file=sys.stderr)
+            print(f"  raw response kept at {raw_path}", file=sys.stderr)
+            failed.append(day)
+            continue
+
+        orphans = x_roster.dropped_unattributable(result.posts, watchlist)
+        print(f"  {day}: {result.tool_calls} x_search calls -> "
+              f"{len(result.posts)} verified posts")
+        if result.dropped:
+            print("    dropped: "
+                  + ", ".join(f"{k}={v}" for k, v in result.dropped.most_common()))
+        if orphans:
+            print(f"    unattributable: {len(orphans)} "
+                  f"({', '.join(sorted({p.handle for p in orphans}))})")
+
+        if args.dry_run:
+            for (handle, d), posts in sorted(group_by_author_day(result.posts).items()):
+                print(f"    {handle} {d}: {len(posts)} posts")
+            continue
+
+        written = x_roster.store_posts(result.posts, watchlist, root=DATA_ROOT)
+        total_written += len(written)
+        for path in written:
+            print(f"    {path.name}")
+
+    if not args.dry_run:
+        print(f"wrote {total_written} documents across {len(days) - len(failed)} day(s)")
+    if failed:
+        # Non-zero so the nightly records a FAIL, but the days that DID land are already on
+        # disk — this is a partial run, not a lost one.
+        print(f"  ! {len(failed)} day(s) failed and were not captured: "
+              f"{', '.join(failed)}", file=sys.stderr)
         return 1
-
-    orphans = x_roster.dropped_unattributable(result.posts, watchlist)
-    # Printed in a fixed, greppable shape: this is the only step in the nightly cycle that
-    # spends real money, and the run summary reads this line rather than trying to work the
-    # figure out afterwards from files on disk.
-    print(f"[ingest-x] cost: ${cost_usd(response):.4f} (xAI, real money)")
-    print(f"{result.tool_calls} x_search calls -> {len(result.posts)} verified posts")
-    if result.dropped:
-        print("  dropped: " + ", ".join(f"{k}={v}" for k, v in result.dropped.most_common()))
-    if orphans:
-        print(f"  unattributable: {len(orphans)} "
-              f"({', '.join(sorted({p.handle for p in orphans}))})")
-
-    if args.dry_run:
-        for (handle, day), posts in sorted(group_by_author_day(result.posts).items()):
-            print(f"  {handle} {day}: {len(posts)} posts")
-        return 0
-
-    written = x_roster.store_posts(result.posts, watchlist, root=DATA_ROOT)
-    print(f"wrote {len(written)} documents")
-    for path in written:
-        print(f"  {path.name}")
     return 0
 
 

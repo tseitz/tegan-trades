@@ -271,9 +271,15 @@ step setups         uv run setups --list
 CLAUDE_COST=$(grep -o 'usage-equivalent cost: \$[0-9.]*' "$LOG" \
   | sed 's/.*\$//' | awk '{s+=$1} END {printf "%.2f", s+0}')
 CLAUDE_CALLS=$(grep -c 'usage-equivalent cost:' "$LOG" || true)
-# Read from ingest-x's own reported line. An earlier version summed data/raw/x/ by modification
-# time and silently re-counted the same day's manual runs into the nightly total — it reported
-# $2.56 for a run that spent $0.22. The command that spends the money reports the money.
+# Read from ingest-x's own reported lines — plural: it now calls xAI once per day in the
+# window and prints a cost line for each, so this sums them. An earlier version summed
+# data/raw/x/ by modification time and silently re-counted the same day's manual runs into the
+# nightly total — it reported $2.56 for a run that spent $0.22. The command that spends the
+# money reports the money.
+#
+# **Still a floor, and more visibly so now.** A day that times out bills server-side but
+# prints nothing, because the cost is parsed from a response that never arrived. A partial
+# run therefore under-reports, which matters because $XAI_MONTHLY_CAP is checked against it.
 XAI_COST=$(grep -o '^\[ingest-x\] cost: \$[0-9.]*' "$LOG" \
   | sed 's/.*\$//' | awk '{s+=$1} END {printf "%.2f", s+0}')
 

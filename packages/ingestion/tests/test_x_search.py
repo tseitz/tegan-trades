@@ -331,3 +331,27 @@ def test_the_default_timeout_clears_the_observed_ceiling():
     """Measured across eight nightly runs: 63/164/195/201/236/240/301s. The old 300s
     default sat inside that spread and the 301s run failed on it."""
     assert x_search.DEFAULT_TIMEOUT >= 600
+
+
+# ── splitting the window into days ──────────────────────────────────────────────
+
+def test_a_single_day_window_is_one_day():
+    assert x_search.day_windows("2026-08-03", "2026-08-03") == ["2026-08-03"]
+
+
+def test_a_range_is_split_into_one_window_per_day_inclusive_of_both_ends():
+    """The prompt and the tool both treat the range as inclusive, so a 3-day window is
+    three days of work — not two."""
+    assert x_search.day_windows("2026-08-03", "2026-08-05") == [
+        "2026-08-03", "2026-08-04", "2026-08-05",
+    ]
+
+
+def test_a_backwards_range_yields_nothing_rather_than_looping():
+    assert x_search.day_windows("2026-08-05", "2026-08-03") == []
+
+
+def test_a_month_boundary_is_not_special():
+    assert x_search.day_windows("2026-07-30", "2026-08-01") == [
+        "2026-07-30", "2026-07-31", "2026-08-01",
+    ]
