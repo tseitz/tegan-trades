@@ -122,8 +122,20 @@ def extract_all(
 
     sidecar_paths = sorted(transcripts_root.glob("*/*.json"))
     if limit is not None:
-        # Applied to the sorted list *before* submitting work, so a given `--limit N`
-        # deterministically picks the same N transcripts on every run.
+        # **The limit counts work to DO, not files to walk**, so it is applied after
+        # dropping what is already extracted. Slicing the raw path list instead would pick
+        # the same first N transcripts every run: the nightly cycle passes `--limit 12` to
+        # drain a backlog a few a night, and the first night would extract those 12 while
+        # every night after skipped all 12, did nothing, and reported success — the backlog
+        # never draining and new transcripts never reached.
+        #
+        # Determinism is unchanged for the sampling case `--limit` was written for: the
+        # candidate list is still sorted, so the same un-extracted set yields the same N.
+        # `force` re-extracts regardless, so nothing is filtered out under it.
+        if not force:
+            sidecar_paths = [
+                p for p in sidecar_paths if not exists(p.parent.name, p.stem)
+            ]
         sidecar_paths = sidecar_paths[:limit]
 
     # Each transcript is an independent unit of work — concurrency is safe: distinct

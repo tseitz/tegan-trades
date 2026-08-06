@@ -205,3 +205,52 @@ def test_format_summary_has_totals_and_dropped_marker():
     out = format_summary([r])
     assert "Cowen" in out and "TOTAL" in out
     assert "    ~ c: bad asset" in out
+
+
+def test_limit_counts_work_to_do_not_files_walked(tmp_path):
+    """`--limit N` has to mean "extract N MORE", not "look at the first N paths".
+
+    The nightly cycle runs `brain-extract --limit 12` to drain a backlog a few a night.
+    Applying the limit to the raw sorted path list instead of to the un-extracted ones
+    makes it pick the SAME first N files on every run — so the first night extracts them
+    and every night after skips all 12 and does nothing, forever, while reporting success.
+    The backlog never drains and newly ingested transcripts are never reached.
+    """
+    for i in range(6):
+        _write_transcript(tmp_path, f"vid0000000{i}", "Cowen")
+    already = {"youtube/vid00000000", "youtube/vid00000001", "youtube/vid00000002"}
+    calls = []
+
+    def fake_extract(text, source, **kw):
+        calls.append(source.transcript_ref)
+        return _empty(source)
+
+    extract_all(
+        root=tmp_path, extract=fake_extract, extracted_at="t", limit=2,
+        exists=lambda platform, vid: f"{platform}/{vid}" in already,
+    )
+
+    assert len(calls) == 2
+    assert not already & set(calls), "spent the budget re-walking finished transcripts"
+    assert set(calls) == {"youtube/vid00000003", "youtube/vid00000004"}
+
+
+def test_limit_still_deterministic_across_runs_when_nothing_completes(tmp_path):
+    """The determinism the sampling case relies on is preserved: given the same set of
+    un-extracted transcripts, the same N are chosen."""
+    for i in range(5):
+        _write_transcript(tmp_path, f"vid0000000{i}", "Cowen")
+    calls = []
+
+    def fake_extract(text, source, **kw):
+        calls.append(source.transcript_ref)
+        return _empty(source)
+
+    extract_all(root=tmp_path, extract=fake_extract, extracted_at="t", limit=2,
+                exists=lambda platform, vid: False)
+    first = sorted(calls)
+    calls.clear()
+    extract_all(root=tmp_path, extract=fake_extract, extracted_at="t", limit=2,
+                exists=lambda platform, vid: False)
+
+    assert first == sorted(calls) == ["youtube/vid00000000", "youtube/vid00000001"]
