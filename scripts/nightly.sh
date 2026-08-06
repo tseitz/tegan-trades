@@ -169,7 +169,12 @@ PY
 )
 
 WORST=0
+RUN_STARTED=$(date +%s)
 declare -a STATUS_LINES
+# Parallel to STATUS_LINES, but machine-readable: `name|status|seconds`, assembled into a JSON
+# row at the end. The pretty lines above answer "what happened last night"; this answers "is
+# distill getting slower", which no single run's log can. See scripts/nightly_report.py.
+declare -a STEP_RECORDS
 
 step() {
   local name="$1"; shift
@@ -184,12 +189,15 @@ step() {
   # skip the night's ingestion. Recorded as a warning so it still surfaces in the summary.
   if [ "$name" = "verify-roster" ] && [ $rc -ne 0 ]; then
     STATUS_LINES+=("  WARN  $name (${secs}s) — roster disagrees with reality, see log")
+    STEP_RECORDS+=("$name|warn|$secs")
     [ $WORST -lt 1 ] && WORST=1
   elif [ $rc -ne 0 ]; then
     STATUS_LINES+=("  FAIL  $name (${secs}s) rc=$rc")
+    STEP_RECORDS+=("$name|fail|$secs")
     WORST=2
   else
     STATUS_LINES+=("  ok    $name (${secs}s)")
+    STEP_RECORDS+=("$name|ok|$secs")
   fi
   return 0
 }
@@ -266,6 +274,27 @@ step fetch-funding  uv run fetch-funding
 step reconcile      uv run book --reconcile
 
 step setups         uv run setups --list
+
+# ── config drift and durability, after the queue is built ──
+#
+# Ordered last on purpose: neither affects tonight's queue, and both should run even on a night
+# an earlier step failed — which the `step` helper already guarantees.
+
+# Free, network, no key. The canon registry decides whether a newly-mentioned coin resolves to
+# anything at all, and it only goes stale in one direction — a coin that launched after the last
+# refresh is unresolvable until this runs. Cheap enough that nightly beats reasoning about when.
+step fetch-tickers  uv run fetch-tickers
+
+# The REPORT half only. `--review` is an interactive curation loop and must never be automated —
+# what this does is make the drift visible, because it currently surfaces only when someone
+# thinks to run the command by hand. It found 25 unmapped labels the first time it was run
+# unprompted, several of them ordinary tickers the roster discusses weekly.
+step canon-drift    uv run distill-canon
+
+# Off-machine copy. There is no Time Machine destination on this laptop and data/ is gitignored,
+# so before this existed the corpus lived on exactly one disk. See scripts/backup.sh for what is
+# copied and what is deliberately not.
+step backup         ./scripts/backup.sh
 
 # ── what it cost, from the two places cost is actually reported ──
 CLAUDE_COST=$(grep -o 'usage-equivalent cost: \$[0-9.]*' "$LOG" \
@@ -351,6 +380,47 @@ PY
   echo "  theses dropped:        ${DROPPED:-0}"
   echo "  exit:                  $WORST"
 } | tee -a "$LOG"
+
+# ── one machine-readable row per run ──
+#
+# The per-night log answers "what happened last night" and is rotated away after 30. This
+# answers the questions that need history: which step is slowest, is distill drifting upward,
+# how often does ingest-x fail, is the corpus still growing. Appended rather than rotated —
+# it is ~400 bytes a night, so a decade costs about a megabyte, and the trend IS the value.
+# Read it with `uv run python scripts/nightly_report.py`.
+uv run python - "$LOG_DIR/history.jsonl" "$WORST" "$RUN_STARTED" "$XAI_COST" "$CLAUDE_COST" \
+  "$CLAUDE_CALLS" "$CANDIDATES" "$FUNDING" "$BRAIN_EXTRACTED" "$BRAIN_INDEXED" \
+  "${STEP_RECORDS[@]}" <<'PY' 2>/dev/null || true
+import json, sys, time
+path, worst, started, xai, claude, calls, cands, funding, bx, bi, *steps = sys.argv[1:]
+
+def num(v, cast=float, default=0):
+    try:
+        return cast(v)
+    except (TypeError, ValueError):
+        return default
+
+row = {
+    "run": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    "exit": num(worst, int),
+    "duration_s": int(time.time()) - num(started, int),
+    # A step that never ran (skipped on the monthly cap, or the script died early) is ABSENT
+    # rather than zero — averaging a zero it never spent would quietly drag every trend down.
+    "steps": [
+        {"name": n, "status": s, "seconds": num(sec, int)}
+        for n, s, sec in (rec.split("|") for rec in steps)
+    ],
+    "cost": {"xai": num(xai), "claude": num(claude), "claude_calls": num(calls, int)},
+    "output": {
+        "candidates": num(cands, int),
+        "funding": num(funding, int),
+        "brain_extracted": num(bx, int),
+        "brain_indexed": num(bi, int),
+    },
+}
+with open(path, "a", encoding="utf-8") as fh:
+    fh.write(json.dumps(row) + "\n")
+PY
 
 # One line per night somewhere it will actually be read. A nightly job that dies silently and a
 # quiet market look identical, so the point of this file is that a *missing* line is the signal.

@@ -930,7 +930,7 @@ def cross_reference(
     #
     # A conflict needs two views. When the weekly is ranging there is only one, so this
     # refusal was reporting the daily leg alone under a name that claims otherwise — the same
-    # error the gate above made until §6 split ranging out of ``weekly_disagrees``.
+    # error the gate above made until ranging was split out of ``weekly_disagrees``.
     #
     # Audited 2026-07-28 (§27): of 1,017 refusals, **256 had a ranging weekly**, and releasing
     # those recovers 23 candidates. The remaining 761 are genuine two-timeframe disagreements

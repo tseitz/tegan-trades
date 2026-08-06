@@ -43,7 +43,7 @@ depth for §21, failed-break states for §27, stated targets for §18.
 measurement (13 rows carry funding, 4 usable pairs) · §27's option 2 (`daily_trend` varies now,
 but the failed-break state it names has n=1).
 
-**By theme:** corpus supply §3 · §6 · §6b · §6d · §6f · §6h · §9 · §14 — durability §4b · §24 —
+**By theme:** corpus supply §3 · §6b · §6d · §6f · §6h · §9 · §14 — durability §4b · §24 —
 venue and execution §22 · §25 · §30 · §33 · §36 · §39 · §40 · §43 — routing §29 · §31 · §32 · §44 —
 scoring §1 · §2 · §8 · §12 · §15 · §19 · §48.
 
@@ -130,37 +130,20 @@ at r=0.771, so 0.35 of the weight buys one measurement twice (§11). Resolving t
 
 ## 4b. The decision sidecars are irreplaceable and unbacked · `PARTLY DONE`
 
-**`data/setups/decisions.jsonl` is mirrored** to the vault by `oracle/decisions.py` — subordinate
-to the primary, reconciled at startup, `--no-mirror` to disable.
+**All of `data/` is now mirrored off-machine nightly** by `scripts/backup.sh` — so nothing here
+is a data-loss risk any more, only a question of where a record's *authoritative* copy lives.
 
-**`data/triage/decisions.jsonl` is not**, and it is blocked on a layering question rather than
-effort. `distill/triage_cli.py` has its own `record_decision`; importing `oracle.decisions`
+**`data/setups/decisions.jsonl` is also mirrored** to the vault by `oracle/decisions.py` —
+subordinate to the primary, reconciled at startup, `--no-mirror` to disable.
+
+**`data/triage/decisions.jsonl` has no vault mirror**, and it is blocked on a layering question
+rather than effort. `distill/triage_cli.py` has its own `record_decision`; importing `oracle.decisions`
 would be a backwards dependency (pipeline order is ingestion → distill → brain → oracle), and
 `core/` is barred from I/O.
 
 **Pick one before the triage sidecar grows:** accept a small duplicate mirror in `distill`, add
 a workspace member for shared file plumbing, or let `distill` depend on `oracle`. The loss is
 milder than the setups one — triage records `approve`/`skip` only, with no reason.
-
----
-
-## 6. No freshness loop · `OPEN`
-
-The machinery is batch-historical; the use case is real-time. The question worth answering is
-"price is approaching this level *now*", and that needs a scheduled ingest → distill → setups
-pipeline.
-
-**Next: nightly via launchd** — not cron, not the Claude scheduler, because the pipeline must
-not need a session open. The plist needs `WEBSHARE_PROXY_*` or transcript fetches hit YouTube's
-IP block.
-
-**Design for silent failure:** a dead nightly job and a quiet market look identical unless the
-note carries a last-successful-run line.
-
-The gate half of this entry is fixed — age is a half-life, not a cliff, and a ranging weekly no
-longer counts as disagreement. That took candidates 8 → 49. The rule it set, worth not
-re-litigating: **gate a rule you wrote or a fact that is missing; score a measurement on a
-continuum.**
 
 ---
 
@@ -259,7 +242,7 @@ The audit, before any billing change or bulk pass:
   single biggest lever. Must stay extractive — abstractive summarising would destroy
   `asset_heard`, `watching` and citation integrity.
 - Is the system prompt cached across calls? Do retries resend transcripts?
-- Measure the real daily volume of §6's loop before pricing anything.
+- Measure the real daily volume of the nightly cycle before pricing anything.
 
 ---
 
@@ -410,6 +393,10 @@ otherwise.
 **Decide whether it wants the vault mirror `oracle/decisions.py` already implements.** Milder
 than the decision sidecars — this is measurement, not judgement, and most is re-pullable inside
 the venues' windows — but a machine asleep for a month costs a month of Lighter coverage outright.
+
+Less urgent since `scripts/backup.sh`: the log is copied off-machine nightly, so disk loss no
+longer costs it. What a mirror would still buy is a copy that is *readable from the vault*
+alongside the decisions it explains, which is a different want.
 
 ## 25. Route each order to the venue that is actually cheapest · `PARTLY DONE` — 2026-07-30
 

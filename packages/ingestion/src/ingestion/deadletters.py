@@ -6,8 +6,9 @@ mark them permanent are not ``RequestException`` and so bypass ``_TRANSIENT`` on
 attempt. What is expensive is that ``failed`` was never zero. The nightly run of 2026-07-27
 reported ``10 failed`` and every one was expected: 6 with captions disabled, 2 deleted, 2
 livestreams not yet aired. A counter that always reads ten cannot report the eleventh, which
-is precisely the silent-failure mode ``docs/IMPROVEMENTS.md`` §6 asks the nightly to design
-against.
+is precisely the silent-failure mode the nightly cycle is built to avoid — see
+``scripts/nightly.sh``, where the same reasoning gives every step a recorded status and a
+missing vault line, rather than a quiet log, is the signal.
 
 So the registry's job is to move the permanently-dead out of ``failed`` and leave that count
 meaning "something happened that nobody has accounted for".

@@ -8,8 +8,8 @@ arguing:
    ``None`` and the weekly check skips ``None``. So a thesis reaches the daily leg either
    because the weekly *agrees* (a genuine two-timeframe conflict) or because the weekly is
    **ranging** — no macro opinion at all, and then the daily alone kills it. That is the same
-   shape §6 fixed for ``weekly_disagrees``, where 630 of 2,247 rows were dying for the absence
-   of an opinion rather than the presence of a contrary one.
+   shape already fixed for ``weekly_disagrees``, where 630 of 2,247 rows were dying for the
+   absence of an opinion rather than the presence of a contrary one.
 
 2. **Both legs use the same ``TREND_DEPTH``/``SWING_WIDTH``**, but a daily swing and a weekly
    swing are not the same distance in time. Anchoring two swings back therefore reads a
