@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from core.dealing_range import DealingRange
-from core.exits import EXTREME, OPPOSING, RANGE_BOUND
+from core.exits import EXTERNAL, EXTREME, INTERNAL, OPPOSING, RANGE_BOUND, ExitLevel
 from core.funding import FundingOutlook
 from core.levels import NEAREST, STATED
 from core.setups import (
@@ -115,6 +115,20 @@ def _reason(outcome):
     return outcome.reason
 
 
+def _nearest(setup):
+    """The first level price meets on the way out — ``core.exits``' ``levels[0]``.
+
+    Since v8 that is no longer the target: an internal entry targets the range boundary and
+    everything nearer is a partial, so the nearest level is the head of ``ladder``. Rebuilt
+    from both fields rather than read off one, because which of them holds it depends on the
+    entry's liquidity, and the tests below are about *which level wins the nearest contest* —
+    a question that outlived the target moving away from it."""
+    rungs = [*setup.ladder,
+             ExitLevel(price=setup.target, kind=setup.target_source,
+                       reward_risk=setup.reward_risk)]
+    return min(rungs, key=lambda level: abs(level.price - setup.entry))
+
+
 # ── the happy path ──────────────────────────────────────────────────────────
 
 def test_a_permitted_long_becomes_a_setup():
@@ -156,8 +170,8 @@ def test_entry_is_the_near_edge_of_the_zone():
 
 def test_reward_risk_is_measured_from_entry_to_stop():
     setup = cross_reference(_row(), _ctx(), published_close=100.0)
-    # entry 110, stop 95 (far edge 100 padded by one ATR), target 140 -> risk 15, reward 30
-    assert setup.reward_risk == 2.0
+    # entry 110, stop 95 (far edge 100 padded by one ATR), target 200 -> risk 15, reward 90
+    assert setup.reward_risk == 6.0
 
 
 def test_the_scored_reward_risk_is_measured_from_price_not_entry():
@@ -166,9 +180,9 @@ def test_the_scored_reward_risk_is_measured_from_price_not_entry():
     supposed to rank the trade. Measuring the remaining move from where the market actually
     is removes that. Both numbers are kept; only the scored one changes."""
     setup = cross_reference(_row(), _ctx(), published_close=100.0)
-    # entry 110, price 105, target 140, risk 15 -> 35/15, against reward_risk's 30/15
-    assert setup.reward_risk_from_price == pytest.approx(35 / 15)
-    assert setup.reward_risk == 2.0
+    # entry 110, price 105, target 200, risk 15 -> 95/15, against reward_risk's 90/15
+    assert setup.reward_risk_from_price == pytest.approx(95 / 15)
+    assert setup.reward_risk == 6.0
 
 
 def test_a_zone_price_has_run_far_from_keeps_its_headline_rr_and_loses_its_scored_one():
@@ -176,8 +190,8 @@ def test_a_zone_price_has_run_far_from_keeps_its_headline_rr_and_loses_its_score
     earned by being unreachable. The displayed number is still the trade's real reward:risk —
     you would make that if filled — but it no longer buys rank."""
     far = cross_reference(_row(), _ctx(price=138.0), published_close=100.0)
-    assert far.reward_risk == 2.0                              # unchanged: |140 - 110| / 15
-    assert far.reward_risk_from_price == pytest.approx(2 / 15)  # |140 - 138| / 15
+    assert far.reward_risk == 6.0                               # unchanged: |200 - 110| / 15
+    assert far.reward_risk_from_price == pytest.approx(62 / 15)  # |200 - 138| / 15
 
 
 def test_the_reward_risk_gate_still_judges_the_trade_not_the_journey():
@@ -185,8 +199,14 @@ def test_the_reward_risk_gate_still_judges_the_trade_not_the_journey():
     setup" — and per the gates-vs-scores split a rule is gated while a measurement on a
     continuum is scored. Reachability is a continuum, so it must not reach this gate: a
     candidate whose remaining move is thin is demoted, never refused."""
-    far = cross_reference(_row(), _ctx(price=138.0), published_close=100.0)
+    # A wide zone (110 down to 75) so the boundary at 200 still pays 2.25R from entry while
+    # paying only 1.55R from a price that has already run to 138. Since v8 the target is the
+    # boundary, so the gap between the two ratios has to come from the risk leg.
+    wide = (Zone(block=_block(top=110.0, bottom=75.0, invalidation=65.0),
+                 structural_target=140.0),)
+    far = cross_reference(_row(), _ctx(price=138.0, zones=wide), published_close=100.0)
     assert isinstance(far, Setup)
+    assert far.reward_risk >= MIN_REWARD_RISK
     assert far.reward_risk_from_price < MIN_REWARD_RISK
 
 
@@ -419,8 +439,8 @@ def test_a_stated_target_nearer_than_structure_is_believed():
     """'If the person has a target, listen to that' — but only when it is the first thing price
     meets. 130 is 20 from entry against structure's 30, so it leads."""
     setup = cross_reference(_row(key_levels=[130.0]), _ctx(), published_close=100.0)
-    assert setup.target == 130.0
-    assert setup.target_source == STATED
+    assert _nearest(setup).price == 130.0
+    assert _nearest(setup).kind == STATED
 
 
 def test_a_stated_target_beyond_the_nearest_structural_level_is_dropped():
@@ -428,8 +448,8 @@ def test_a_stated_target_beyond_the_nearest_structural_level_is_dropped():
     print 150 and never mention 140; now 140 is the target and 150 is gone entirely, because a
     number nobody has to trade through is not a level."""
     setup = cross_reference(_row(key_levels=[150.0]), _ctx(), published_close=100.0)
-    assert setup.target == 140.0
-    assert setup.target_source == EXTREME
+    assert _nearest(setup).price == 140.0
+    assert _nearest(setup).kind == EXTREME
     assert 150.0 not in [level.price for level in setup.ladder]
 
 
@@ -441,33 +461,33 @@ def test_overhead_supply_caps_the_target_and_the_rest_becomes_the_ladder():
                     structural_target=None)
     ctx = _ctx(zones=(*_ctx().zones, overhead))
     setup = cross_reference(_row(), ctx, published_close=100.0)
-    assert setup.target == 130.0
-    assert setup.target_source == OPPOSING
-    assert [level.price for level in setup.ladder] == [140.0, 200.0]
-    assert [level.kind for level in setup.ladder] == [EXTREME, RANGE_BOUND]
+    assert setup.target == 200.0
+    assert setup.target_source == RANGE_BOUND
+    assert [level.price for level in setup.ladder] == [130.0, 140.0]
+    assert [level.kind for level in setup.ladder] == [OPPOSING, EXTREME]
 
 
 def test_an_abstained_reading_falls_back_to_the_structural_target():
     """No levels at all means structure supplies the number. 'That's generally where it's going
     whether they call it that way or not.'"""
     setup = cross_reference(_row(key_levels=[]), _ctx(), published_close=100.0)
-    assert setup.target == 140.0
-    assert setup.target_source == EXTREME
+    assert _nearest(setup).price == 140.0
+    assert _nearest(setup).kind == EXTREME
 
 
 def test_an_inferred_nearest_target_is_used_and_labelled_as_such():
     """Several levels beyond entry resolve to the nearest rather than abstaining, and the
     source records that it was inferred so it stays separable from a clean read."""
     setup = cross_reference(_row(key_levels=[130.0, 160.0]), _ctx(), published_close=100.0)
-    assert setup.target == 130.0
-    assert setup.target_source == NEAREST
+    assert _nearest(setup).price == 130.0
+    assert _nearest(setup).kind == NEAREST
 
 
 def test_a_stated_target_below_entry_is_unreasonable():
     """Stated at 105 it was above the publish price of 100, but the zone's near edge is 110 —
     so by the time there's an entry, the 'target' is behind it."""
     setup = cross_reference(_row(key_levels=[105.0]), _ctx(), published_close=100.0)
-    assert setup.target_source == EXTREME
+    assert _nearest(setup).kind == EXTREME
 
 
 def test_a_stated_target_price_has_already_reached_is_unreasonable():
@@ -479,8 +499,8 @@ def test_a_stated_target_price_has_already_reached_is_unreasonable():
     Here the zone entry is 110 and price is 130, so a stated 125 clears the entry and the R:R
     floor and would once have been believed. It is not a target any more; it is history."""
     setup = cross_reference(_row(key_levels=[125.0]), _ctx(price=130.0), published_close=100.0)
-    assert setup.target == 140.0
-    assert setup.target_source == EXTREME
+    assert _nearest(setup).price == 140.0
+    assert _nearest(setup).kind == EXTREME
 
 
 def test_a_short_target_price_has_already_reached_is_unreasonable():
@@ -494,8 +514,8 @@ def test_a_short_target_price_has_already_reached_is_unreasonable():
     )
     setup = cross_reference(_row(direction="short", key_levels=[160.0]), ctx,
                             published_close=185.0)
-    assert setup.target == 140.0
-    assert setup.target_source == EXTREME
+    assert _nearest(setup).price == 140.0
+    assert _nearest(setup).kind == EXTREME
 
 
 def test_a_stated_target_still_ahead_of_price_is_untouched():
@@ -504,15 +524,15 @@ def test_a_stated_target_still_ahead_of_price_is_untouched():
     listen' has to keep firing for the ordinary case, or the fix would quietly delete the
     stated leg of target selection instead of cleaning it."""
     setup = cross_reference(_row(key_levels=[135.0]), _ctx(price=130.0), published_close=100.0)
-    assert setup.target == 135.0
-    assert setup.target_source == STATED
+    assert _nearest(setup).price == 135.0
+    assert _nearest(setup).kind == STATED
 
 
 def test_a_stated_target_with_reward_risk_below_one_is_unreasonable():
     # entry 110, stop 95 (the far edge padded by one ATR) -> risk 15. A target at 115 is 5 of
     # reward. It is nearer than structure's 140, so only the R:R floor can reject it.
     setup = cross_reference(_row(key_levels=[115.0]), _ctx(), published_close=100.0)
-    assert setup.target_source == EXTREME
+    assert _nearest(setup).kind == EXTREME
 
 
 def test_an_implausibly_distant_stated_target_is_unreasonable():
@@ -520,8 +540,8 @@ def test_an_implausibly_distant_stated_target_is_unreasonable():
     A call for 500 is not a target, it's a vibe. Structure is pushed out to 400 so the ceiling
     is what rejects it rather than the nearest-wins rule."""
     setup = cross_reference(_row(key_levels=[500.0]), _far_ctx(), published_close=100.0)
-    assert setup.target == 400.0
-    assert setup.target_source == EXTREME
+    assert _nearest(setup).price == 400.0
+    assert _nearest(setup).kind == EXTREME
 
 
 def test_the_distance_ceiling_scales_with_volatility_not_with_the_structural_target():
@@ -532,22 +552,28 @@ def test_the_distance_ceiling_scales_with_volatility_not_with_the_structural_tar
     quiet = cross_reference(_row(key_levels=[300.0]), _far_ctx(atr=5.0), published_close=100.0)
     volatile = cross_reference(_row(key_levels=[300.0]), _far_ctx(atr=50.0),
                                published_close=100.0)
-    assert quiet.target_source == EXTREME
-    assert volatile.target == 300.0 and volatile.target_source == STATED
+    assert _nearest(quiet).kind == EXTREME
+    assert _nearest(volatile).price == 300.0 and _nearest(volatile).kind == STATED
 
 
 def test_an_unknown_atr_skips_the_distance_check_rather_than_failing_it():
     """Inability to judge must not read as a verdict — the rule imbalance.is_displacement
     follows too."""
     setup = cross_reference(_row(key_levels=[300.0]), _far_ctx(atr=None), published_close=100.0)
-    assert setup.target == 300.0
+    assert _nearest(setup).price == 300.0
 
 
 def test_a_candidate_below_the_reward_risk_floor_is_refused():
     """A trade risking more than it stands to make is not a setup. Left to scoring alone, a
     0.32-RR candidate still surfaced mid-list on live data."""
-    thin = (Zone(block=_block(), structural_target=115.0),)   # entry 110, stop 100 -> RR 0.5
-    outcome = cross_reference(_row(), _ctx(zones=thin), published_close=100.0)
+    # The range has to be tight for this to bite now: the boundary is the target on an internal
+    # entry, so a thin post-break extreme no longer sets the ratio. Entry 110 against a boundary
+    # at 115 over a padded risk of 15 is 0.33R.
+    thin = (Zone(block=_block(), structural_target=115.0),)
+    outcome = cross_reference(
+        _row(), _ctx(zones=thin, dealing_range=_range(low=102.0, high=115.0)),
+        published_close=100.0,
+    )
     assert _reason(outcome) == "reward_risk_too_low"
 
 
@@ -579,7 +605,7 @@ def test_the_stop_is_padded_away_from_entry_by_a_multiple_of_atr():
     """
     setup = cross_reference(_row(), _ctx(), published_close=100.0, stop_pad_atr=1.0)
     assert setup.stop == 95.0
-    assert setup.reward_risk == 2.0     # reward 30 over risk 15, was 3.0 unpadded
+    assert setup.reward_risk == 6.0     # reward 90 over risk 15, was 9.0 unpadded
 
 
 def test_padding_moves_a_short_stop_the_other_way():
@@ -589,7 +615,8 @@ def test_padding_moves_a_short_stop_the_other_way():
     setup = cross_reference(_row(direction="short"), _short_ctx(),
                             published_close=185.0, stop_pad_atr=1.0)
     assert setup.stop == 195.0          # raw far edge 190 plus one ATR
-    assert setup.reward_risk == 2.0     # reward 30 over risk 15
+    # A short entered at 180 targets the range LOW at 80 — reward 100 over risk 15.
+    assert setup.reward_risk == pytest.approx(100 / 15)
 
 
 def test_the_shipped_default_pads_by_one_atr():
@@ -606,7 +633,7 @@ def test_padding_can_be_switched_off_per_call():
     reaches for it, and ``scripts/probe_stop_padding.py`` sweeps through it."""
     setup = cross_reference(_row(), _ctx(), published_close=100.0, stop_pad_atr=0.0)
     assert setup.stop == 100.0          # the raw far edge
-    assert setup.reward_risk == 3.0
+    assert setup.reward_risk == 9.0
 
 
 def test_an_unknown_atr_skips_padding_rather_than_failing_it():
@@ -614,7 +641,7 @@ def test_an_unknown_atr_skips_padding_rather_than_failing_it():
     ``imbalance.is_displacement`` already follow for the distance ceiling."""
     setup = cross_reference(_row(), _ctx(atr=None), published_close=100.0, stop_pad_atr=1.0)
     assert setup.stop == 100.0
-    assert setup.reward_risk == 3.0
+    assert setup.reward_risk == 9.0
 
 
 def test_a_degenerate_zone_is_refused_on_its_raw_height_not_its_padded_one():
@@ -656,7 +683,8 @@ def test_the_zone_keeps_its_raw_edges_when_the_stop_is_padded():
 def test_the_reward_risk_floor_is_configurable():
     thin = (Zone(block=_block(), structural_target=115.0),)
     setup = cross_reference(
-        _row(), _ctx(zones=thin), published_close=100.0, min_reward_risk=0.1
+        _row(), _ctx(zones=thin, dealing_range=_range(low=102.0, high=115.0)),
+        published_close=100.0, min_reward_risk=0.1,
     )
     assert isinstance(setup, Setup)
     assert setup.reward_risk == pytest.approx(5 / 15)   # reward 5 over a padded risk of 15
@@ -687,6 +715,103 @@ def test_a_structural_target_behind_entry_falls_through_to_the_range_boundary():
     setup = cross_reference(_row(), _ctx(zones=behind), published_close=100.0)
     assert setup.target == 200.0
     assert setup.target_source == RANGE_BOUND
+
+
+# ── where you entered decides where you exit ────────────────────────────────
+#
+# See ``core.exits``' module docstring for the doctrine and the measurement. In short: an order
+# block is internal range liquidity, so an entry on one targets *external* range liquidity —
+# the range boundary — and every level in between is a partial, not the destination.
+
+
+def test_an_internal_entry_targets_the_range_boundary_over_a_nearer_obstruction():
+    """The LNGX shape: a live opposing block at 130 was being quoted as the target at 1.33R
+    while the boundary sat at 200 for 6.0R, with the block a partial on the way."""
+    blocked = (
+        Zone(block=_block(), structural_target=None),
+        Zone(block=_block(BEARISH, top=140.0, bottom=130.0, invalidation=150.0),
+             structural_target=None),
+    )
+    setup = cross_reference(_row(), _ctx(zones=blocked), published_close=100.0)
+    assert setup.target == 200.0
+    assert setup.target_source == RANGE_BOUND
+    assert setup.reward_risk == pytest.approx(90 / 15)
+    # The obstruction survives as a rung rather than being discarded — it is where a partial
+    # would go, which is the whole reason to keep it.
+    assert [level.price for level in setup.ladder] == [130.0]
+    assert setup.ladder[0].kind == OPPOSING
+
+
+def test_an_internal_entry_records_its_liquidity_and_its_distance():
+    setup = cross_reference(_row(), _ctx(), published_close=100.0)
+    assert setup.entry_liquidity == INTERNAL
+    # Entry 110 in an 80-200 range: 30 above the low, a quarter of a 120-wide range.
+    assert setup.entry_outside_widths == pytest.approx(-0.25)
+
+
+def test_an_external_sweep_entry_targets_the_nearest_internal_level_instead():
+    """The inverse leg: "if you're entering based on external, ultimately you're targeting
+    internal". Entry 75 is 0.04 widths below an 80-200 range's low — a poke, not a regime
+    change — so the extreme at 140 is the destination and the boundary is a runner beyond it."""
+    swept = (Zone(block=_block(top=75.0, bottom=65.0, invalidation=55.0),
+                  structural_target=140.0),)
+    setup = cross_reference(_row(), _ctx(zones=swept), published_close=70.0)
+    assert setup.entry == 75.0
+    assert setup.entry_liquidity == EXTERNAL
+    assert setup.target == 140.0
+    assert setup.target_source == EXTREME
+    assert [level.price for level in setup.ladder] == [200.0]
+
+
+def test_an_entry_far_outside_the_range_is_refused_rather_than_retargeted():
+    """SOL: a short whose entry sat 3.92 widths above a range price was trading inside. Filling
+    it requires the breakout that redraws the range, so the target would be computed from a
+    range that no longer exists. Not a sweep, and not a trade."""
+    stranded = (Zone(block=_block(top=45.0, bottom=35.0, invalidation=25.0),
+                     structural_target=140.0),)
+    outcome = cross_reference(_row(), _ctx(zones=stranded), published_close=40.0)
+    assert _reason(outcome) == "entry_outside_range"
+
+
+def test_the_sweep_threshold_is_the_line_between_those_two():
+    """Same shape either side of ``MAX_SWEEP_WIDTHS`` — 0.25 of an 80-200 range is 30, so an
+    entry at 50 is the last one still treated as a sweep."""
+    def _at(entry_top):
+        zones = (Zone(block=_block(top=entry_top, bottom=entry_top - 10.0,
+                                   invalidation=entry_top - 20.0),
+                      structural_target=140.0),)
+        return cross_reference(_row(), _ctx(zones=zones), published_close=entry_top - 5)
+
+    assert _at(50.0).entry_liquidity == EXTERNAL
+    assert _reason(_at(49.0)) == "entry_outside_range"
+
+
+def test_an_internal_entry_with_levels_but_no_boundary_is_refused_as_having_no_external():
+    """Distinct from ``no_target``, which means structure offered nothing at all. Here there is
+    a level — an opposing block above — but no external range liquidity, and Mayne's
+    disqualifier #3 refuses on that rather than falling back to the internal one.
+
+    Degenerate by construction: it takes a block spanning from below the range's midpoint to
+    above its high, which is the only way price can be in discount while the entry sits past
+    the boundary."""
+    straddling = (
+        Zone(block=_block(top=210.0, bottom=100.0, invalidation=90.0), structural_target=None),
+        Zone(block=_block(BEARISH, top=350.0, bottom=340.0, invalidation=360.0),
+             structural_target=None),
+    )
+    outcome = cross_reference(_row(), _ctx(zones=straddling), published_close=100.0)
+    assert _reason(outcome) == "no_external_target"
+
+
+def test_price_outside_its_own_range_is_refused_rather_than_read_as_a_deep_discount():
+    """TSLA: price 321.55 against a 368.60-432.86 range clamped to 0.0 and passed the
+    manifesto's discount gate as a *maximally deep* one. The strongest possible signal from the
+    weakest possible evidence — see ``DealingRange.position_at``."""
+    outcome = cross_reference(
+        _row(), _ctx(price=70.0, dealing_range=_range(low=80.0, high=200.0)),
+        published_close=100.0,
+    )
+    assert _reason(outcome) == "wrong_side_of_range"
 
 
 # ── tiering ─────────────────────────────────────────────────────────────────
@@ -958,7 +1083,9 @@ def test_the_merged_row_is_labelled_by_the_instrument_not_by_the_representative(
     further = cross_reference(_row(id="b", asset="IWM", key_levels=[150.0]), ctx,
                               published_close=100.0)
     (candidate,) = collapse([nearer, further], aliases={"RUT": "IWM"})
-    assert candidate.target == 130.0     # the representative is still RUT's row
+    # RUT's row is still the representative — its 130 is the only authored level to survive
+    # the nearest-wins rule, and it rides along as a partial under the shared boundary target.
+    assert 130.0 in [level.price for level in candidate.ladder]
     assert candidate.asset == "IWM"
 
 
@@ -986,10 +1113,14 @@ def test_an_unaliased_label_keeps_its_own_candidate_and_carries_no_aliases():
 def test_the_nearest_target_wins_among_disagreeing_views():
     """If they can't agree how far price goes, the smallest claim is the one to hold them to."""
     ctx = _ctx()
-    optimist = cross_reference(_row(id="t1", key_levels=[160.0]), ctx, published_close=100.0)
+    optimist = cross_reference(_row(id="t1", key_levels=[135.0]), ctx, published_close=100.0)
     modest = cross_reference(_row(id="t2", key_levels=[130.0]), ctx, published_close=100.0)
     candidate = collapse([optimist, modest])[0]
-    assert candidate.target == 130.0
+    # Both name a level and both survive; the group carries the modest one's ladder. The
+    # *target* can no longer express this — members of a group share a zone, so they share a
+    # boundary — which is why the representative choice reads the ladder now.
+    assert 130.0 in [level.price for level in candidate.ladder]
+    assert 135.0 not in [level.price for level in candidate.ladder]
 
 
 def test_a_named_target_represents_the_group_over_an_unnamed_one():
@@ -1000,15 +1131,15 @@ def test_a_named_target_represents_the_group_over_an_unnamed_one():
     ctx = _ctx()
     authored = cross_reference(_row(id="t1", key_levels=[130.0]), ctx, published_close=100.0)
     structural = cross_reference(_row(id="t2", key_levels=[]), ctx, published_close=100.0)
-    assert structural.target_source == EXTREME
+    assert _nearest(structural).kind == EXTREME
     candidate = collapse([authored, structural])[0]
-    assert candidate.target == 130.0
-    assert candidate.target_source == STATED
+    assert _nearest(candidate).price == 130.0
+    assert _nearest(candidate).kind == STATED
 
 
 def test_structure_is_still_used_when_nobody_stated_a_target():
     candidate = collapse(_setups_for(["Mayne", "Cred"]))[0]
-    assert candidate.target_source == EXTREME
+    assert _nearest(candidate).kind == EXTREME
 
 
 def test_separate_zones_stay_separate():
@@ -1146,8 +1277,24 @@ def test_every_zone_level_refusal_the_engine_emits_is_classified_as_one():
             _row(), _ctx(zones=(Zone(block=_block(), structural_target=None),),
                          dealing_range=_range(low=102.0, high=109.0)),
             published_close=100.0)),
+        # reward_risk_too_low needs a tight range for the same reason — see
+        # test_a_candidate_below_the_reward_risk_floor_is_refused.
         _reason(cross_reference(
-            _row(), _ctx(zones=(Zone(block=_block(), structural_target=115.0),)),
+            _row(), _ctx(zones=(Zone(block=_block(), structural_target=115.0),),
+                         dealing_range=_range(low=102.0, high=115.0)),
+            published_close=100.0)),
+        # entry_outside_range: entry 45 sits 0.29 widths below an 80-200 range's low.
+        _reason(cross_reference(
+            _row(), _ctx(zones=(Zone(block=_block(top=45.0, bottom=35.0, invalidation=25.0),
+                                     structural_target=140.0),)),
+            published_close=40.0)),
+        # no_external_target: a level above the entry, but no boundary rung beyond it.
+        _reason(cross_reference(
+            _row(), _ctx(zones=(
+                Zone(block=_block(top=210.0, bottom=100.0, invalidation=90.0),
+                     structural_target=None),
+                Zone(block=_block(BEARISH, top=350.0, bottom=340.0, invalidation=360.0),
+                     structural_target=None))),
             published_close=100.0)),
         _reason(cross_reference(_row(), _ctx(price=95.0), published_close=100.0)),
         # Funding so extreme that carry eats the whole target — the trade loses money at its

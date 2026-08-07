@@ -32,10 +32,29 @@ further, it is unrelated, landing further 9 times in 12 with a median gap of +1.
 worst of +8.61 R. Letting it override the nearest obstacle is what put 11.70 on that card;
 letting it come *in front of* one is fine, because a shorter claim costs nothing.
 
-**Nearest first is the whole ordering.** The first element is the target — what gates
-reward-to-risk and what the queue prints — and everything after it is upside the trade can be
-held for once the first level pays. Nothing here decides how much to take at each; that is a
-sizing question and this module does no arithmetic beyond distance.
+**Nearest first is the whole ordering**, and which of those levels is the *target* is a
+separate question answered by ``select_target``. Nothing here decides how much to take at
+each; that is a sizing question and this module does no arithmetic beyond distance.
+
+**Where you entered decides where you exit.** The roster's methodology is explicit and it is
+the inverse of picking the nearest level. TraderMayne, ``NSTmMdnQg7Y``: "An order block itself
+is internal range liquidity, so generally we're going to be targeting external range
+liquidity." And ``v2CY0WvFj8o`` names taking the nearest level as the mistake — "it's going to
+take out this buy-side liquidity here *that's still within the range*, and they're going to
+close their trade… and they're going to go, 'What the heck? I closed early.'" The internal
+levels are pit stops; the range boundary is the destination.
+
+So the rule is a fork on where the entry rests, and ``v2CY0WvFj8o`` gives the test verbatim:
+"if it's outside of the current dealing range, that is your external range liquidity."
+
+- entry **inside** the range → internal entry → target the boundary, everything nearer is a
+  partial.
+- entry **outside** it → external sweep → "if you're entering based on external, ultimately
+  you're targeting internal", i.e. the nearest level, which is the pre-existing behaviour.
+
+Measured on the live queue before this existed: 36 of 52 candidates were internal entries
+being quoted against the nearest obstruction, median R:R understated by 0.89 and worst by
+7.13. See ``scripts/probe_external_target.py``.
 """
 from __future__ import annotations
 
@@ -66,6 +85,95 @@ STRUCTURAL_KINDS = frozenset(_SPECIFICITY)
 # congestion, which is where a zone sits by construction. At 1.0 R it is 31 of 49, and the
 # survivors are levels a chart reader would actually mark. TUNE.
 MATERIAL_R = 1.0
+
+# Which side of the dealing range the entry rests on — see the module docstring.
+INTERNAL = "internal"
+EXTERNAL = "external"
+
+# How far past the boundary an entry may sit and still be a *sweep* rather than evidence the
+# range is the wrong one, in range-widths.
+#
+# A sweep is price poking just beyond the boundary and reversing, which is a small fraction of
+# a width. An entry a whole width out is not that: it is a zone from a different price regime
+# than the range it is being measured against, and filling it would require the breakout that
+# redraws the range — "as price breaks out of this range, it forms a new range". The target
+# would be computed from a range that no longer exists by the time the order fills.
+#
+# Chosen, not discovered: the live distribution runs continuously from 0.00 to 3.92 widths with
+# no natural break. At 0.25 it splits the 11 live external entries 6/5 — keeping ENA (0.00),
+# AR (0.03), OIL (0.03), ORCL (0.11), CHINA (0.24) and STABLE (0.24), refusing SMH (0.35),
+# CLSK (0.41), TSM (0.48), AVAX (1.19) and SOL (3.92, a short whose entry sat almost four
+# widths above a range price was trading inside). TUNE.
+MAX_SWEEP_WIDTHS = 0.25
+
+
+@dataclass(frozen=True, slots=True)
+class EntryLiquidity:
+    """Which kind of liquidity the entry rests on, and how far outside the range it sits.
+
+    ``widths`` is signed and always meaningful: negative inside the range, 0.0 exactly on the
+    boundary, positive outside. Carried alongside ``kind`` rather than recomputed because the
+    magnitude is what separates a sweep from a stale range, and the caller records it so the
+    threshold can be re-tuned against outcomes rather than re-argued.
+    """
+    kind: str        # INTERNAL | EXTERNAL
+    widths: float
+
+
+def entry_liquidity(*, entry: float, dealing_range, sign: int) -> EntryLiquidity:
+    """Whether ``entry`` rests inside the dealing range or beyond its boundary.
+
+    Anchored on the entry rather than on price deliberately. ``DealingRange.permits`` tests
+    where price *is*; this asks where the resting order *sits*, and the two disagree on 11 of
+    52 live candidates — price inside its range with the zone beyond the boundary.
+
+    ``dealing_range`` is duck-typed on ``low``/``high``, matching ``exit_levels``.
+    """
+    width = dealing_range.high - dealing_range.low
+    if width <= 0:
+        # A degenerate range cannot place anything relative to itself. Reporting INTERNAL
+        # would be a fabricated reading of exactly the kind this module is here to remove;
+        # callers refuse such a range long before this, so the answer only has to be honest.
+        return EntryLiquidity(kind=EXTERNAL, widths=0.0)
+    beyond = (dealing_range.low - entry) if sign > 0 else (entry - dealing_range.high)
+    widths = beyond / width
+    # Exactly on the boundary is external: ENA measured 0.00 widths out, and sitting *on* the
+    # external liquidity is the purest sweep there is, not an interior entry.
+    return EntryLiquidity(kind=EXTERNAL if widths >= 0 else INTERNAL, widths=widths)
+
+
+def is_sweep(liquidity: EntryLiquidity, *,
+             max_sweep_widths: float = MAX_SWEEP_WIDTHS) -> bool:
+    """Whether an external entry is close enough to the boundary to be a genuine sweep."""
+    return liquidity.kind == EXTERNAL and liquidity.widths <= max_sweep_widths
+
+
+def select_target(levels, liquidity: EntryLiquidity):
+    """Split ``levels`` into the target and everything else, per the entry's liquidity.
+
+    Returns ``(target, ladder)``, or ``None`` when no target exists — which for an internal
+    entry means no external range liquidity lies beyond it, and is a refusal rather than a
+    reason to fall back to an internal level: "if there's no clear liquidity, there is no
+    trade" (``Tv6DJTNobJ4``, disqualifier #3).
+
+    The returned ``ladder`` means different things on the two branches, and deliberately so:
+    partials *below* an internal entry's boundary target, runners *beyond* an external entry's
+    nearest target. Both are "every other level this trade could come off at", which is what
+    the renderer and the decisions sidecar want; neither needs to know which branch produced
+    it, because each rung's own price says which side of the target it is on.
+    """
+    if not levels:
+        return None
+    if liquidity.kind == EXTERNAL:
+        return levels[0], tuple(levels[1:])
+    # ``_truncate_at_range`` drops everything past the boundary and keeps the boundary itself,
+    # so when a RANGE_BOUND rung exists it is the furthest one. Found by kind rather than by
+    # taking the last element: without a range there is no boundary rung at all, and the last
+    # level would then be some opposing block masquerading as the destination.
+    boundary = next((lv for lv in levels if lv.kind == RANGE_BOUND), None)
+    if boundary is None:
+        return None
+    return boundary, tuple(lv for lv in levels if lv.price != boundary.price)
 
 
 @dataclass(frozen=True, slots=True)

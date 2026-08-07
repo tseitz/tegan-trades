@@ -3,12 +3,17 @@ from datetime import date
 import pytest
 from core.dealing_range import DealingRange
 from core.exits import (
+    EXTERNAL,
     EXTREME,
+    INTERNAL,
     MATERIAL_R,
     OPPOSING,
     RANGE_BOUND,
     ExitLevel,
+    entry_liquidity,
     exit_levels,
+    is_sweep,
+    select_target,
 )
 from core.levels import NEAREST, STATED
 from core.setups import Zone
@@ -222,3 +227,102 @@ def test_levels_landing_on_one_price_collapse_to_the_most_specific_reason():
 def test_a_zero_risk_trade_is_refused_rather_than_dividing_by_zero():
     with pytest.raises(ValueError):
         _levels(entry=100.0, stop=100.0)
+
+
+# ── entry liquidity: which side of the boundary the order rests on ──────────────────────
+
+def test_an_entry_inside_the_range_is_internal():
+    found = entry_liquidity(entry=100.0, dealing_range=_range(low=80.0, high=200.0), sign=1)
+    assert found.kind == INTERNAL
+    assert found.widths < 0
+
+
+def test_an_entry_below_the_range_low_is_external_for_a_long():
+    """120 wide, entry 12 below the low — a tenth of a width, which is a sweep."""
+    found = entry_liquidity(entry=68.0, dealing_range=_range(low=80.0, high=200.0), sign=1)
+    assert found.kind == EXTERNAL
+    assert found.widths == pytest.approx(0.1)
+
+
+def test_an_entry_above_the_range_high_is_external_for_a_short():
+    found = entry_liquidity(entry=212.0, dealing_range=_range(low=80.0, high=200.0), sign=-1)
+    assert found.kind == EXTERNAL
+    assert found.widths == pytest.approx(0.1)
+
+
+def test_an_entry_exactly_on_the_boundary_is_external_at_zero_widths():
+    """ENA measured 0.00 widths outside — sitting exactly on the boundary is the purest sweep,
+    not an interior entry, so it must not fall through to the internal branch."""
+    found = entry_liquidity(entry=80.0, dealing_range=_range(low=80.0, high=200.0), sign=1)
+    assert found.kind == EXTERNAL
+    assert found.widths == 0.0
+
+
+def test_a_sweep_is_a_poke_past_the_boundary_and_a_regime_change_is_not():
+    """The live split at ``MAX_SWEEP_WIDTHS``: DASH at 0.09 is a sweep, SOL at 3.92 — a short
+    whose entry sat 3.92 widths above a range price was trading inside — is not."""
+    span = _range(low=80.0, high=200.0)
+    sweep = entry_liquidity(entry=80.0 - (0.09 * 120), dealing_range=span, sign=1)
+    regime = entry_liquidity(entry=80.0 - (3.92 * 120), dealing_range=span, sign=1)
+    assert is_sweep(sweep) is True
+    assert is_sweep(regime) is False
+
+
+def test_an_internal_entry_is_never_a_sweep():
+    inside = entry_liquidity(entry=100.0, dealing_range=_range(), sign=1)
+    assert is_sweep(inside) is False
+
+
+# ── target selection: the destination depends on where you entered ──────────────────────
+
+def test_an_internal_entry_targets_the_range_boundary_and_the_rest_are_partials():
+    """TraderMayne, ``NSTmMdnQg7Y``: "An order block itself is internal range liquidity, so
+    generally we're going to be targeting external range liquidity." The LNGX shape — the
+    nearest opposing block was being quoted as the target at 1.05R while the boundary sat at
+    3.55R with four blocks in between."""
+    levels = _levels(zones=(_zone(bottom=120.0), _zone(bottom=160.0)))
+    assert _prices(levels) == [120.0, 140.0, 160.0, 200.0]
+    inside = entry_liquidity(entry=100.0, dealing_range=_range(), sign=1)
+
+    target, ladder = select_target(levels, inside)
+    assert target.price == 200.0
+    assert target.kind == RANGE_BOUND
+    assert _prices(ladder) == [120.0, 140.0, 160.0]
+
+
+def test_an_external_sweep_entry_targets_the_nearest_internal_level():
+    """The inverse leg of the same rule: "if you're entering based on external, ultimately
+    you're targeting internal"."""
+    levels = _levels(entry=76.0, zones=(_zone(bottom=120.0),))
+    outside = entry_liquidity(entry=76.0, dealing_range=_range(), sign=1)
+
+    target, ladder = select_target(levels, outside)
+    assert target.price == levels[0].price
+    assert _prices(ladder) == _prices(levels[1:])
+
+
+def test_an_internal_entry_with_no_boundary_rung_has_no_target():
+    """Mayne's disqualifier #3 — "if there's no clear liquidity, there is no trade". The caller
+    refuses on this rather than falling back to an internal level."""
+    levels = _levels(dealing_range=None, zones=(_zone(bottom=120.0),))
+    assert RANGE_BOUND not in _kinds(levels)
+    inside = entry_liquidity(entry=100.0, dealing_range=_range(), sign=1)
+
+    assert select_target(levels, inside) is None
+
+
+def test_selecting_from_no_levels_at_all_yields_nothing():
+    inside = entry_liquidity(entry=100.0, dealing_range=_range(), sign=1)
+    assert select_target((), inside) is None
+
+
+def test_a_boundary_that_is_already_the_nearest_level_leaves_an_empty_ladder():
+    """14 of 36 live internal entries already targeted the boundary — that is a no-op, not a
+    special case, and it must not manufacture a partial rung out of the target itself."""
+    levels = _levels(structural_target=None)
+    assert _prices(levels) == [200.0]
+    inside = entry_liquidity(entry=100.0, dealing_range=_range(), sign=1)
+
+    target, ladder = select_target(levels, inside)
+    assert target.price == 200.0
+    assert ladder == ()

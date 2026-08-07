@@ -68,6 +68,18 @@ def test_position_at_spans_zero_to_one():
     assert dr.position_at(11.5) == 0.5
 
 
+def test_position_at_is_none_outside_the_range_rather_than_clamped():
+    """Price outside the range has no position *in* it, and answering 0.0 or 1.0 invents one.
+
+    Measured: 5 of 52 live candidates had price outside their own range, headed by a TSLA long
+    at 321.55 against a range of 368.60-432.86 — 0.73 widths BELOW the low, reported as a
+    maximally deep discount. See ``scripts/probe_external_target.py``.
+    """
+    dr = dealing_range(RANGE_BARS)
+    assert dr.position_at(2.99) is None
+    assert dr.position_at(20.01) is None
+
+
 # ── zone_at ──────────────────────────────────────────────────────────────────
 
 def test_zone_at_is_discount_below_and_premium_above_equilibrium():
@@ -83,6 +95,15 @@ def test_zone_at_is_equilibrium_exactly_at_the_midpoint():
     assert dr.zone_at(11.5) == EQUILIBRIUM
 
 
+def test_zone_at_is_none_outside_the_range():
+    """Once price has left the range there is no premium/discount reading to give. The range
+    is stale and is meant to be redrawn — "as price breaks out of this range, it forms a new
+    range" — so the honest answer is that this range cannot say."""
+    dr = dealing_range(RANGE_BARS)
+    assert dr.zone_at(2.99) is None
+    assert dr.zone_at(20.01) is None
+
+
 # ── permits ──────────────────────────────────────────────────────────────────
 
 def test_permits_long_only_in_discount():
@@ -95,6 +116,15 @@ def test_permits_short_only_in_premium():
     dr = dealing_range(RANGE_BARS)
     assert dr.permits("short", 20) is True
     assert dr.permits("short", 3) is False
+
+
+def test_permits_refuses_price_outside_the_range():
+    """The TSLA case: price below the range low used to clamp to 0.0 and read as DISCOUNT, so
+    a long was permitted on a fabricated reading. ``permits`` already fails closed on a None
+    zone, so this needs no new refusal reason."""
+    dr = dealing_range(RANGE_BARS)
+    assert dr.permits("long", 2.99) is False
+    assert dr.permits("short", 20.01) is False
 
 
 def test_permits_fails_closed_on_neutral_and_unrecognised_directions():

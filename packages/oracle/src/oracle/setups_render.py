@@ -155,14 +155,22 @@ def _levels(c: Candidate) -> list[_Level]:
     *is* its origin swing), and printing the same number on two rungs implies two distinct
     places the trade could be wrong when there is only one.
 
-    ``ladder`` rungs are drawn *above* the target for a long and below it for a short, because
-    they are what price meets after it: they are labelled ``runner`` rather than ``target`` so
-    the one number the reward-to-risk is quoted on stays unambiguous. Each carries its own
-    ratio, since "how much more is up there" is the whole reason to hold past the first level.
+    ``ladder`` rungs are labelled by which side of the target they fall on, which since v8 is
+    no longer always the far side. An internal entry targets the range boundary, so its other
+    levels sit *between* entry and target and are **partials** — places to take some off on the
+    way, per "internal range liquidity can be used for partials". An external sweep targets the
+    nearest level instead, so its rungs sit beyond it and are **runners**.
+
+    Read off each rung's own distance rather than off ``entry_liquidity``, because that is the
+    fact the label actually asserts, and a rung cannot then contradict where it is drawn.
+    Neither is ``target``: the one number the reward-to-risk is quoted on stays unambiguous.
     """
+    reach = abs(c.target - c.entry)
     raw = [
         (c.target, "target", c.target_source, False),
-        *((level.price, "runner", f"{level.kind} · {level.reward_risk:.2f}R", False)
+        *((level.price,
+           "partial" if abs(level.price - c.entry) < reach else "runner",
+           f"{level.kind} · {level.reward_risk:.2f}R", False)
           for level in c.ladder),
         (c.entry, "entry", "", False),
         (c.price, "price", "", True),
@@ -270,8 +278,8 @@ def format_candidate(candidate: Candidate, *, rank: int | None = None,
             label = _pad(paint("◀ price now", "bold_cyan", color=color), label_w)
             extra = ""
         else:
-            style = {"target": "green", "runner": "dim", "stop": "red",
-                     "invalidation": "red"}.get(lv.labels[0], "bold")
+            style = {"target": "green", "runner": "dim", "partial": "dim",
+                     "stop": "red", "invalidation": "red"}.get(lv.labels[0], "bold")
             price_txt = _rpad(paint(prices[i], style, color=color), price_w)
             label = _pad(label, label_w)
             pct = "" if lv.pct is None else f"{lv.pct:+.1f}%"

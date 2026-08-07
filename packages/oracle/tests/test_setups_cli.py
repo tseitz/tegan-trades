@@ -367,18 +367,37 @@ def test_format_candidate_always_shows_target_source():
     assert EXTREME in structural
 
 
-def test_the_ladder_is_drawn_above_the_target_with_its_own_ratios():
-    """The runners are what price meets *after* the target, so they sit beyond it and are
-    labelled apart from it — the reward-to-risk in the headline is quoted on the target alone
-    and must not read as though it were earned at the top of the ladder."""
+def test_a_ladder_beyond_the_target_is_drawn_as_runners():
+    """An external sweep entry targets the nearest level, so its other levels sit beyond it —
+    the reward-to-risk in the headline is quoted on the target alone and must not read as
+    though it were earned at the top of the ladder."""
     text = setups_cli.format_candidate(_candidate(ladder=(
         ExitLevel(price=150.0, kind=OPPOSING, reward_risk=4.0),
         ExitLevel(price=180.0, kind=RANGE_BOUND, reward_risk=7.0),
     )))
-    rungs = [ln for ln in text.splitlines() if "target" in ln or "runner" in ln]
+    rungs = [ln for ln in text.splitlines()
+             if "target" in ln or "runner" in ln or "partial" in ln]
     assert [ln.split()[0] for ln in rungs] == ["180", "150", "140"]
     assert "runner" in rungs[0] and RANGE_BOUND in rungs[0] and "7.00R" in rungs[0]
     assert "target" in rungs[2]
+
+
+def test_a_ladder_below_the_target_is_drawn_as_partials():
+    """The v8 shape, and the common one: an internal entry targets the range boundary and the
+    levels on the way are partials, not runners. Labelling those "runner" would tell you to
+    hold *past* a level the methodology says to take some off at."""
+    text = setups_cli.format_candidate(_candidate(
+        target=180.0, target_source=RANGE_BOUND, ladder=(
+            ExitLevel(price=130.0, kind=OPPOSING, reward_risk=2.0),
+            ExitLevel(price=150.0, kind=EXTREME, reward_risk=4.0),
+        )))
+    rungs = [ln for ln in text.splitlines()
+             if "target" in ln or "runner" in ln or "partial" in ln]
+    assert [ln.split()[0] for ln in rungs] == ["180", "150", "130"]
+    assert "target" in rungs[0] and RANGE_BOUND in rungs[0]
+    assert "partial" in rungs[1] and EXTREME in rungs[1] and "4.00R" in rungs[1]
+    assert "partial" in rungs[2] and OPPOSING in rungs[2]
+    assert "runner" not in text
 
 
 def test_a_candidate_with_no_ladder_renders_exactly_as_it_did():
@@ -386,6 +405,7 @@ def test_a_candidate_with_no_ladder_renders_exactly_as_it_did():
     grow an empty rung."""
     text = setups_cli.format_candidate(_candidate())
     assert "runner" not in text
+    assert "partial" not in text
 
 
 def test_format_candidate_shows_freshness_so_an_old_view_reads_as_one():

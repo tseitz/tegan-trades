@@ -631,6 +631,15 @@ def decision_record(candidate: Candidate, decision: str, *, decided_at: str,
             {"price": level.price, "kind": level.kind, "reward_risk": level.reward_risk}
             for level in candidate.ladder
         ],
+        # Which liquidity the entry rested on, and how far outside the range it sat in
+        # range-widths. These are what *selected* the target — an internal entry takes the
+        # boundary, an external sweep takes the nearest level — so without them a recorded
+        # target cannot be read back as a decision, only as a number. The distance is the
+        # input to ``MAX_SWEEP_WIDTHS``, a TUNE constant chosen off a continuous distribution
+        # with no natural break; re-tuning it against outcomes is only possible if every
+        # decision carries the distance it was judged at.
+        "entry_liquidity": candidate.entry_liquidity,
+        "entry_outside_widths": candidate.entry_outside_widths,
         # Both are inputs the correlation needs and neither was recoverable after the fact.
         # ``reward_risk`` is a weighted term in ``_score`` *and* the headline number in the
         # queue, so its weight was the one thing decisions could not be mined against;

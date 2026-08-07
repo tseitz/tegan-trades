@@ -45,7 +45,17 @@ from hashlib import sha256
 
 from core.dealing_range import DealingRange
 from core.dealing_range import dealing_range as resolve_dealing_range
-from core.exits import STRUCTURAL_KINDS, ExitLevel, exit_levels
+from core.exits import (
+    EXTERNAL,
+    INTERNAL,
+    MAX_SWEEP_WIDTHS,
+    STRUCTURAL_KINDS,
+    ExitLevel,
+    entry_liquidity,
+    exit_levels,
+    is_sweep,
+    select_target,
+)
 from core.funding import FundingOutlook, carry_adjusted_rr
 from core.imbalance import atr
 from core.levels import read_target
@@ -101,7 +111,13 @@ ZONE_LEVEL_REASONS = frozenset({
     "no_invalidation",
     "degenerate_zone",
     "price_past_stop",
+    # Both new in v8, and both zone-level for the same reason: they are decided from ``entry``,
+    # which is the zone's near edge. One weekly zone stranded outside the range says nothing
+    # about the asset's daily zone, so a thesis can legitimately be refused for one and pass on
+    # the other.
+    "entry_outside_range",
     "no_target",
+    "no_external_target",
     "reward_risk_too_low",
     "carry_dominates",
 })
@@ -117,10 +133,25 @@ TIER_NONCRYPTO = "non-crypto"
 MAJOR_RANK_MAX = 10
 LARGE_RANK_MAX = 100
 
-# Reward-to-risk floor, used twice: a stated target must clear it to be believed, and a
-# candidate must clear it to exist at all. A trade risking more than it stands to make is not
-# a setup — "ask yourself what are the chances that I lose money on this trade?"
-MIN_REWARD_RISK = 1.0
+# Reward-to-risk floor for a candidate to exist at all — the roster's, not a chosen one.
+# TraderMayne states it as a hard disqualifier: "we aim for a minimum of two-to-one… the moment
+# you go below that two to one threshold, the math is no longer protecting you. You're not
+# taking good trades anymore." It is a floor and not a ceiling; he likes 5:1.
+#
+# It was 1.0, and against the *nearest* obstruction rather than the range boundary, which made
+# it doubly slack: a trade quoted at 1.05R was really a 3.55R trade being measured to its first
+# partial. Both halves had to move together — raising the floor alone would have cut the live
+# queue from 52 to 12 and cut it for the wrong reason, killing trades whose actual destination
+# was 3-5R. With the target at the boundary it is 29 of 52. See
+# ``scripts/probe_external_target.py``.
+MIN_REWARD_RISK = 2.0
+
+# The floor an *authored* target must clear to be believed as a level, kept where the trade
+# gate used to be. Deliberately not raised with it: since ``core.exits``, an author's number is
+# only ever a rung on the ladder — a candidate to be the nearest level, which for an internal
+# entry is a partial and never the destination. "Is this a real level" and "is this trade worth
+# taking" are different questions, and a 1.5R authored level is a perfectly good partial.
+MIN_AUTHORED_REWARD_RISK = 1.0
 
 # A stated target further than this many ATRs from entry is a vibe, not a target.
 #
@@ -311,7 +342,12 @@ DEFAULT_WEIGHTS = SetupWeights()
 # zone's height is a fact about one candle on the day it formed and says nothing about how much
 # the instrument moves today; where the two coincided, noise took the trade out rather than
 # being wrong did.
-SCORE_VERSION = 7
+# v8 moves the target from the nearest structural level to the range boundary on an internal
+# entry. Like v7 this changes no term and no weight — it changes an *input*: the target feeds
+# ``reward_risk_from_price``, which is a scored term. Ranking moves on 22 of 36 internal
+# entries (median +0.89 R, worst +7.13) and candidates stop existing on three separate new
+# refusals, so by v7's own rule the cohort must partition here.
+SCORE_VERSION = 8
 
 # Weekly trend agrees with the thesis, versus has no opinion at all. There is no third value:
 # a weekly that genuinely contradicts is still refused outright, so it never reaches scoring.
@@ -508,10 +544,17 @@ class Setup:
     zone_timeframe: str   # WEEKLY | DAILY — which series ``block`` was read from
     tier: str
     score: float
-    # Every exit level *beyond* ``target``, nearest first — the runners. ``target`` is
-    # ``core.exits``' first level and is kept as its own field rather than read back off the
-    # head of this tuple, so the gated, printed number stays one unmissable thing.
+    # Every exit level other than ``target``, nearest first. On an internal entry these sit
+    # *below* the target and are partials; on an external sweep they sit beyond it and are
+    # runners — see ``core.exits.select_target``. ``target`` is kept as its own field rather
+    # than read back off this tuple, so the gated, printed number stays one unmissable thing.
     ladder: tuple[ExitLevel, ...] = ()
+    # INTERNAL | EXTERNAL — which liquidity the *entry* rests on, and how far outside the
+    # range it sits in range-widths (negative inside). Recorded rather than derived because
+    # it is what selected the target, and because ``MAX_SWEEP_WIDTHS`` is a TUNE constant
+    # that can only be re-tuned against outcomes if the distance travels with the decision.
+    entry_liquidity: str = INTERNAL
+    entry_outside_widths: float = 0.0
     # ── carry: what holding this costs. Reported, never scored — see CARRY_HOLD_DAYS. ──
     # All four are None together when ``Context.funding`` was absent.
     funding_annual: float | None = None      # the median rate used, as a fraction per year
@@ -523,6 +566,34 @@ class Setup:
     # rate measured over a month from one measured over three nights — the distinction
     # ``FundingOutlook.n`` exists for, which previously stopped at the engine's door.
     funding_n: int | None = None
+
+
+def all_levels(trade) -> tuple[ExitLevel, ...]:
+    """Every exit level for a ``Setup`` or ``Candidate``, nearest first.
+
+    The sequence ``core.exits`` produced before ``select_target`` split it into a target and
+    the rest. Rebuilt rather than stored because which field holds the nearest level depends on
+    the entry's liquidity, and several callers — the renderer, ``collapse``'s representative
+    choice — want the undivided list back.
+    """
+    head = ExitLevel(price=trade.target, kind=trade.target_source,
+                     reward_risk=trade.reward_risk)
+    return tuple(sorted((head, *trade.ladder),
+                        key=lambda level: abs(level.price - trade.entry)))
+
+
+def _nearest_named(trade) -> float | None:
+    """Distance from entry to the nearest level this trade's author actually named.
+
+    ``None`` when nobody named one. Reads the whole ladder rather than ``target_source``, which
+    stopped being the right question in v8: an internal entry always targets the range boundary,
+    so an authored number now lives *in the ladder* as a partial. Keying the representative
+    choice off ``target_source`` alone would silently retire "if they call something, we listen"
+    for every internal entry — which is nearly all of them.
+    """
+    named = [abs(level.price - trade.entry) for level in all_levels(trade)
+             if level.kind not in STRUCTURAL_KINDS]
+    return min(named) if named else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -563,8 +634,11 @@ class Candidate:
     views: tuple[View, ...]
     thesis_ids: tuple[str, ...]
     score: float
-    # The representative's runners — see ``Setup.ladder``.
+    # The representative's other exit levels, and which liquidity its entry rested on — see
+    # the matching fields on ``Setup``.
     ladder: tuple[ExitLevel, ...] = ()
+    entry_liquidity: str = INTERNAL
+    entry_outside_widths: float = 0.0
     # Other corpus labels for this same instrument, folded in by ``collapse``. Carried rather
     # than dropped because the label is what ``cfg/exclusions.yaml`` and the decision key are
     # written in: a spelling absorbed silently takes any standing "I don't trade this" with it.
@@ -692,8 +766,16 @@ def collapse(
     candidates = []
     for (asset, *_), members in groups.items():
         folded = tuple(sorted({s.asset for s in members} - {asset}))
-        authored = [s for s in members if s.target_source not in STRUCTURAL_KINDS]
-        rep = min(authored or members, key=lambda s: abs(s.target - s.entry))
+        # "If they call something, we listen" — prefer a member whose author named a level,
+        # and among those the smallest claim. Both halves read the whole ladder rather than
+        # ``target_source``; see ``_nearest_named``. The structural fallback still orders by
+        # target distance, which for a group of internal entries is a tie (they share a zone,
+        # so they share a boundary) and settles on the first member — harmless, because what
+        # the representative contributes past that point is identical across the group.
+        named = [(distance, s) for s in members
+                 if (distance := _nearest_named(s)) is not None]
+        rep = (min(named, key=lambda pair: pair[0])[1] if named
+               else min(members, key=lambda s: abs(s.target - s.entry)))
 
         # Latest statement per person, newest first. Keeping only the latest means a person who
         # restated ten times doesn't read as ten separate voices, and surfacing the date means a
@@ -720,6 +802,8 @@ def collapse(
             entry=rep.entry, entry_top=rep.entry_top, entry_bottom=rep.entry_bottom,
             stop=rep.stop, invalidation=rep.invalidation,
             target=rep.target, target_source=rep.target_source, ladder=rep.ladder,
+            entry_liquidity=rep.entry_liquidity,
+            entry_outside_widths=rep.entry_outside_widths,
             reward_risk=rep.reward_risk,
             reward_risk_from_price=rep.reward_risk_from_price, approach=rep.approach,
             price=rep.price,
@@ -875,6 +959,8 @@ def cross_reference(
     weights: SetupWeights = DEFAULT_WEIGHTS,
     half_life: HalfLife = DEFAULT_HALF_LIFE,
     min_reward_risk: float = MIN_REWARD_RISK,
+    min_authored_reward_risk: float = MIN_AUTHORED_REWARD_RISK,
+    max_sweep_widths: float = MAX_SWEEP_WIDTHS,
     max_target_atr: float = MAX_TARGET_ATR,
     stop_pad_atr: float = STOP_PAD_ATR,
 ) -> Outcome:
@@ -1008,14 +1094,33 @@ def cross_reference(
     # decides is ``core.exits``: the author's target is one candidate among the structural
     # ones and only survives when it is the nearest of them. Everything past the nearest
     # becomes the ladder, so a target that used to be printed alone is now visibly a runner.
+    # ── which liquidity the entry rests on, which decides which level is the target ──
+    #
+    # Checked here rather than beside the premium/discount gate because it needs ``entry``, and
+    # that is a fact about the zone rather than about price. ``permits`` above asks where price
+    # *is*; this asks where the resting order *sits*, and on the live queue the two disagree on
+    # 11 of 52 candidates — price inside its range with the zone beyond the boundary.
+    liquidity = entry_liquidity(entry=entry, dealing_range=context.dealing_range, sign=sign)
+    if liquidity.kind == EXTERNAL and not is_sweep(liquidity,
+                                                   max_sweep_widths=max_sweep_widths):
+        # A gate, not a score, per the rule at the top of this module: whether the entry lies
+        # outside the range is a fact about the trade's geometry. Filling it needs the breakout
+        # that redraws the range, so any target quoted from today's range is a claim about a
+        # range that will no longer exist. See ``core.exits.MAX_SWEEP_WIDTHS``.
+        return refuse("entry_outside_range")
+
     stated = read_target(row, published_close)
     # Propagated with the reading's own source rather than flattened to STATED — a NEAREST
     # target is inferred, and relabelling it clean would destroy the provenance that makes
     # "did inferred targets do as well as clean ones" answerable.
+    #
+    # Gated on ``MIN_AUTHORED_REWARD_RISK`` rather than on the trade floor: this asks whether
+    # the number is a believable *level*, and since ``core.exits`` an authored target competes
+    # only to be the nearest one — a partial on an internal entry, never the destination.
     authored = stated.target if (not stated.abstained and _reasonable(
         stated.target, entry=entry, risk=risk, sign=sign,
         price_now=context.price, atr_now=context.atr,
-        min_reward_risk=min_reward_risk, max_target_atr=max_target_atr,
+        min_reward_risk=min_authored_reward_risk, max_target_atr=max_target_atr,
     )) else None
     # Every live zone on the asset, not just this candidate's: a weekly bearish block is an
     # obstruction to an H12 long even though the two are separate candidates. Same-side blocks
@@ -1028,8 +1133,16 @@ def cross_reference(
     )
     if not levels:
         return refuse("no_target")
-    target, target_source = levels[0].price, levels[0].kind
-    ladder = levels[1:]
+    # Which of those levels is the destination depends on where the entry rests — see
+    # ``core.exits.select_target``. Distinct from ``no_target`` above: there structure offered
+    # nothing at all, here it offered levels but no *external* liquidity, which is Mayne's
+    # disqualifier #3 ("if there's no clear liquidity, there is no trade") rather than a reason
+    # to settle for an internal level.
+    chosen = select_target(levels, liquidity)
+    if chosen is None:
+        return refuse("no_external_target")
+    target_level, ladder = chosen
+    target, target_source = target_level.price, target_level.kind
 
     reward_risk = abs(target - entry) / risk
     # A trade risking more than it stands to make is not a setup, whichever source supplied the
@@ -1090,6 +1203,7 @@ def cross_reference(
         entry=entry, entry_top=block.top, entry_bottom=block.bottom,
         stop=stop, invalidation=block.invalidation,
         target=target, target_source=target_source, ladder=ladder,
+        entry_liquidity=liquidity.kind, entry_outside_widths=liquidity.widths,
         reward_risk=reward_risk, reward_risk_from_price=reward_risk_from_price,
         approach=approach, price=context.price,
         freshness=freshness, trend_alignment=trend_alignment,

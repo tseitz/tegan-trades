@@ -61,6 +61,23 @@ class DealingRange:
         return (self.low + self.high) / 2
 
     def position_at(self, price: float) -> float | None:
+        """Where ``price`` sits in the range, or None when it sits outside it.
+
+        ``position_in_range`` **clamps**, which is right for its other caller — order-block
+        zone depth, where a price past the far edge is meaningfully "at the extreme". It is
+        wrong here. A price outside the range has no position *in* the range, and clamping
+        invents the most extreme reading available: a long below the range low returns 0.0 and
+        reads as a maximally deep discount, which is the strongest possible signal produced
+        from the weakest possible evidence.
+
+        Measured: 5 of 52 live candidates had price outside their own range, headed by a TSLA
+        long at 321.55 against a range of 368.60-432.86 — 0.73 widths below the low, reported
+        as a perfect discount. Those rows are not deep, they are stale: price has left the
+        range and the range is meant to be redrawn, since "as price breaks out of this range,
+        it forms a new range". See ``scripts/probe_external_target.py``.
+        """
+        if not self.low <= price <= self.high:
+            return None
         return position_in_range(self.low, self.high, price)
 
     def zone_at(self, price: float) -> str | None:
