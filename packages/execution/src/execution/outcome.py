@@ -72,13 +72,24 @@ def _timestamp(value) -> datetime | None:
 @dataclass(frozen=True)
 class ExitFill:
     """One print from the venue's activity feed. ``order_id`` is what makes the exit
-    attributable — it is the only field that ties a print back to a bracket leg."""
+    attributable — it is the only field that ties a print back to a bracket leg.
+
+    ``closing`` is the venue SAYING whether this print opened or closed exposure. Hyperliquid
+    does (``dir``: "Close Short"); Alpaca does not, and ``None`` means the reader has to fall
+    back to side and timing. Worth carrying because the fallback has a real blind spot: a
+    re-entry in the same direction produces a print with the same side as this position's exit,
+    and only the venue's own word separates them.
+
+    ``fee`` is what the venue charged for this print. ``None`` on a venue that reports none.
+    """
     order_id: str
     symbol: str
     side: str
     qty: float
     price: float
     at: datetime | None
+    closing: bool | None = None
+    fee: float | None = None
 
 
 @dataclass(frozen=True)
@@ -96,12 +107,28 @@ class TradeClose:
 
 @dataclass(frozen=True)
 class Realized:
-    """What the trade made, in dollars and in both R's. See the module docstring."""
+    """What the trade made, in dollars and in R. See the module docstring for the two denominators.
+
+    ``pnl`` is the PRICE MOVE and nothing else, which is what Hyperliquid's own ``closedPnl``
+    reports and what a plan priced on levels predicted. ``pnl_net`` is what the account actually
+    kept, after what the venue charged to open, close and hold.
+
+    On equities those are the same number. On a perp they are not, and the gap is not small: the
+    SOL short closed 2026-08-08 moved -5.66528 and cost 0.17263 in fees plus 3.43939 in funding
+    over 11 days, so it was -0.57R on price and -0.93R in fact. Funding scales with the hold, so
+    reporting gross alone would flatter long holds least and bias any calibration toward short
+    ones for reasons unrelated to the setup.
+    """
     pnl: float
     risk_planned: float | None
     risk_at_fill: float
     r_planned: float | None
     r_at_fill: float | None
+    # ``None`` means not measured, never "there was none" — see ``realized``.
+    fees: float | None = None
+    funding: float | None = None
+    pnl_net: float | None = None
+    r_net_at_fill: float | None = None
 
 
 @dataclass(frozen=True)
@@ -144,6 +171,77 @@ def parse_fills(activities) -> tuple[ExitFill, ...]:
             qty=qty,
             price=price,
             at=_timestamp(raw.get("transaction_time")),
+        ))
+    return tuple(sorted(fills, key=lambda f: (f.at is None,
+                                              f.at or datetime.max.replace(tzinfo=UTC))))
+
+
+# Hyperliquid's ``dir`` on a fill. "Close Long" / "Close Short" / "Long > Short" all reduce or
+# reverse exposure; "Open Long" / "Open Short" add it. Matched on the leading word so a phrasing
+# this list has not seen falls through to ``None`` — unknown, not asserted either way.
+def closing_from_dir(direction: str | None) -> bool | None:
+    """Did this print reduce exposure? ``None`` where the venue did not say."""
+    if not direction:
+        return None
+    text = str(direction).strip().lower()
+    if text.startswith("close"):
+        return True
+    if text.startswith("open"):
+        return False
+    return None
+
+
+# Hyperliquid names its own order kinds, so the exit legs are identified by type rather than by
+# the position they appear in — the same read-don't-infer rule ``reason_for`` follows.
+def exit_leg_ids(children) -> tuple[str, ...]:
+    """A bracket's take-profit and stop oids, in that order, from the entry's ``children``.
+
+    Ordered take-profit-then-stop to match ``store.record_placement``'s ``[entry, tp, sl]``
+    convention, so one ``reason_for`` serves both venues. A child whose type names neither is
+    dropped rather than guessed at.
+    """
+    take_profit, stop = [], []
+    for child in children or []:
+        if not isinstance(child, dict):
+            continue
+        oid, kind = child.get("oid"), str(child.get("orderType") or "").lower()
+        if oid is None:
+            continue
+        if "take profit" in kind:
+            take_profit.append(str(oid))
+        elif "stop" in kind:
+            stop.append(str(oid))
+    return (*take_profit, *stop)
+
+
+def parse_hl_fills(rows) -> tuple[ExitFill, ...]:
+    """Hyperliquid's fill feed as ``ExitFill``s, oldest first.
+
+    Field names differ from Alpaca's throughout (``px``/``sz``/``coin``/``time``), and two fields
+    have no Alpaca counterpart: ``dir`` states whether the print opened or closed, and ``fee`` is
+    charged per print. Both are carried rather than derived — see ``ExitFill``.
+
+    ``side`` is normalised from the venue's book notation: ``B`` is the bid (a buy), ``A`` the ask
+    (a sell). Left as the repo's own words so ``exit_side_for`` compares against one vocabulary.
+    """
+    fills: list[ExitFill] = []
+    for raw in rows or []:
+        if not isinstance(raw, dict):
+            continue
+        qty, price = number(raw.get("sz")), number(raw.get("px"))
+        oid = raw.get("oid")
+        if qty is None or price is None or oid is None or qty <= 0:
+            continue
+        stamp = number(raw.get("time"))
+        fills.append(ExitFill(
+            order_id=str(oid),
+            symbol=str(raw.get("coin") or ""),
+            side={"B": "buy", "A": "sell"}.get(str(raw.get("side") or ""), ""),
+            qty=qty,
+            price=price,
+            at=(datetime.fromtimestamp(stamp / 1000, tz=UTC) if stamp is not None else None),
+            closing=closing_from_dir(raw.get("dir")),
+            fee=number(raw.get("fee")),
         ))
     return tuple(sorted(fills, key=lambda f: (f.at is None,
                                               f.at or datetime.max.replace(tzinfo=UTC))))
@@ -210,6 +308,45 @@ def entry_end(fills, entry_order_id: str) -> datetime | None:
     return max(stamps) if stamps else None
 
 
+def entry_price(fills, entry_order_id: str) -> float | None:
+    """The qty-weighted price the entry actually filled at, from its own prints.
+
+    Needed because the two venues report it in different places. Alpaca puts it on the order
+    (``filled_avg_price``, which lands on the reconciled row); Hyperliquid puts it only in the
+    fills — ``query_order_by_oid`` returns size remaining and no price at all. Reading it from
+    the feed works for both, and the feed is authoritative either way.
+    """
+    prints = [f for f in fills if f.order_id == entry_order_id and f.qty > 0]
+    if not prints:
+        return None
+    qty = sum(f.qty for f in prints)
+    return sum(f.qty * f.price for f in prints) / qty if qty else None
+
+
+def fees_for(fills, order_ids) -> float | None:
+    """What the venue charged across these orders' prints. ``None`` if nothing can be said.
+
+    Summed over the ENTRY and the exit together, because the question a close row answers is what
+    the round trip cost — the SOL short paid 0.04252 to open and 0.13011 to close.
+
+    **A venue that reported prints and charged nothing on any of them charged nothing.** The
+    distinction that matters is prints-with-no-fee-field (Alpaca, which is commission-free on
+    equities) versus no prints at all (nothing to say). Returning ``None`` for the first would
+    make ``costs_known`` false on every equity close and quietly strip ``credible`` from the whole
+    Alpaca history over a fee that does not exist.
+
+    NOT COMPLETE ON ALPACA. ``fills`` reads the ``FILL`` activity type only, and regulatory pass-
+    throughs (SEC/TAF) and short borrow arrive as their own activity types. Those are cents on
+    the trades recorded so far and would matter on a short or at size — the same caveat
+    ``AlpacaBroker.funding_paid`` carries.
+    """
+    wanted = {str(i) for i in (order_ids or [])}
+    prints = [f for f in fills if f.order_id in wanted]
+    if not prints:
+        return None
+    return sum(f.fee for f in prints if f.fee is not None)
+
+
 def exit_fills(fills, *, symbol: str, entry_order_id: str, exit_side: str,
                after: datetime) -> tuple[ExitFill, ...]:
     """The prints that took this position off, out of an account-wide feed.
@@ -221,12 +358,16 @@ def exit_fills(fills, *, symbol: str, entry_order_id: str, exit_side: str,
     * ``after`` — an earlier, separate position in the same symbol also closed on this side.
     * ``entry_order_id`` — excluded **by id, not only by time**, so a straggling entry print
       landing after the boundary cannot be misread as a partial close.
+
+    **Where the venue states whether a print closed exposure, that wins over the side.** Side
+    plus timing cannot tell this position's exit from a re-entry in the same direction, and
+    Hyperliquid answers the question directly. See ``ExitFill.closing``.
     """
     return tuple(
         f for f in fills
         if f.symbol == symbol
         and f.order_id != entry_order_id
-        and f.side == exit_side
+        and (f.closing if f.closing is not None else f.side == exit_side)
         and f.at is not None and f.at >= after
     )
 
@@ -269,15 +410,28 @@ def is_flat(*, exit_qty: float, entry_qty: float) -> bool:
 
 
 def realized(*, direction: str, entry: float, exit_price: float, qty: float,
-             stop: float, risk_planned: float | None) -> Realized:
-    """P/L in dollars and in both R's. See the module docstring for why there are two.
+             stop: float, risk_planned: float | None,
+             fees: float | None = None, funding: float | None = None) -> Realized:
+    """P/L in dollars and in R. See the module docstring for why there are two denominators.
 
     A missing ``risk_planned`` yields ``None``, never 0.0 — "no risk recorded" and "risked
     nothing" must not read the same, and a zero would present as a scratch. Same asymmetry
     ``store.risk_by_key`` is built on.
+
+    **``fees`` is a cost and ``funding`` is signed.** Fees are always paid; funding is received
+    as often as it is paid, because a short in a backwardated market is on the receiving side.
+    Treating funding as a cost regardless would understate a winner as reliably as ignoring it
+    overstates a loser.
+
+    **Unmeasured costs leave ``pnl_net`` absent, never equal to gross.** Defaulting them to zero
+    makes a perp row claim its holding was free — the SOL short's 209 funding events would have
+    read as 0.00. An equity passes ``0.0`` for both, which is a measurement (there is no funding
+    on a share) and keeps its net knowable.
     """
     move = exit_price - entry if direction == "long" else entry - exit_price
     pnl = move * qty
+    costs_known = fees is not None and funding is not None
+    pnl_net = pnl - fees + funding if costs_known else None
     # Distance to the stop from where the entry ACTUALLY filled. Absolute, so it is a magnitude
     # on either side and a long and a short divide the same way.
     risk_at_fill = abs(entry - stop) * qty
@@ -290,6 +444,11 @@ def realized(*, direction: str, entry: float, exit_price: float, qty: float,
         # Undefined rather than infinite when the stop sits on the entry. Raising here would
         # take out a nightly step over a degenerate row.
         r_at_fill=pnl / risk_at_fill if risk_at_fill > 0 else None,
+        fees=fees,
+        funding=funding,
+        pnl_net=pnl_net,
+        r_net_at_fill=(pnl_net / risk_at_fill
+                       if pnl_net is not None and risk_at_fill > 0 else None),
     )
 
 
@@ -332,7 +491,8 @@ def stop_survival(*, planned_entry, fill, stop) -> float | None:
 
 
 def fill_quality(*, qty: float, median_volume: float | None, ceiling: float,
-                 paper: bool, stop_survival: float | None = None) -> FillQuality:
+                 paper: bool, stop_survival: float | None = None,
+                 costs_known: bool = True) -> FillQuality:
     """Is this row evidence about the strategy, or an artefact? Three independent ways to fail.
 
     * **Venue.** Paper matches against the quote without ever consuming the book, so every paper
@@ -362,7 +522,10 @@ def fill_quality(*, qty: float, median_volume: float | None, ceiling: float,
 
     if reasons:
         credible = False
-    elif participation is None or stop_survival is None:
+    elif participation is None or stop_survival is None or not costs_known:
+        # ``None``, not ``False``. A perp row missing its funding is not a disproven row, it is
+        # an unfinished one — and 0.36R of unmeasured holding cost is exactly the size of error
+        # that would survive a reviewer glancing at the P/L column.
         credible = None
     else:
         credible = True

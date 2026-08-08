@@ -40,6 +40,30 @@ FAILED_STATUSES = frozenset({"canceled", "expired", "rejected", "done_for_day"})
 # The venue's own label for "this order opens exposure". The only orders safe to cancel.
 OPENING_INTENTS = frozenset({"buy_to_open", "sell_to_open"})
 
+# **Hyperliquid's vocabulary is open-ended, so it is classified by suffix rather than listed.**
+# The sets above are Alpaca's, which is a closed enumeration. Hyperliquid ships at least a dozen
+# variants — ``marginCanceled``, ``liquidatedCanceled``, ``siblingFilledCanceled``,
+# ``reduceOnlyCanceled``, ``minTradeNtlRejected``, ``perpMarginRejected`` — and adds more as it
+# adds order kinds, so enumerating them would silently misread every future one as still working.
+#
+# Suffix rather than substring: ``siblingFilledCanceled`` contains "Filled" and is not a fill.
+TERMINAL_SUFFIXES = ("canceled", "rejected")
+
+
+def is_terminal_status(status: str) -> bool:
+    """Can nothing more happen to this order? Covers both venues' vocabularies.
+
+    Unrecognised still means *working*, which is the asymmetry ``TERMINAL_STATUSES`` was written
+    for: reading a live order as dead releases the duplicate guard onto a live bracket, and that
+    is worse than one missed re-entry.
+    """
+    return status in TERMINAL_STATUSES or status.lower().endswith(TERMINAL_SUFFIXES)
+
+
+def is_failed_status(status: str) -> bool:
+    """Terminal without ever having traded — the set that makes a ``placed`` row a lie."""
+    return status in FAILED_STATUSES or status.lower().endswith(TERMINAL_SUFFIXES)
+
 
 def _number(value) -> float | None:
     if value is None or isinstance(value, bool):
@@ -123,11 +147,17 @@ class OrderState:
     filled_qty: float
     filled_avg_price: float | None
     leg_statuses: tuple[str, ...]
+    # The venue ids of this bracket's exit legs, take-profit first. Populated where the venue
+    # will name them: Alpaca sends them back at placement, and Hyperliquid returns them as the
+    # entry order's ``children``. It is written to the reconciled row so the close pass can name
+    # which leg took the trade on a venue whose placement reply gave only one oid — the log
+    # heals itself with what reconcile discovers. Empty means the venue did not say.
+    leg_order_ids: tuple[str, ...] = ()
 
     @property
     def settled(self) -> bool:
         """Nothing more can happen to this order, whether it traded or not."""
-        return self.status in DEAD_STATUSES
+        return self.status == "filled" or is_terminal_status(self.status)
 
     @property
     def traded(self) -> bool:
@@ -136,7 +166,7 @@ class OrderState:
     @property
     def failed(self) -> bool:
         """The venue took it and then killed it. A ``placed`` row against this is a lie."""
-        return self.status in FAILED_STATUSES and not self.traded
+        return is_failed_status(self.status) and not self.traded
 
 
 def parse_state(payload, candidate_key: str) -> OrderState | None:
@@ -176,10 +206,18 @@ def is_live(state: OrderState | None) -> bool:
     """
     if state is None:
         return True
-    if state.status in TERMINAL_STATUSES:
+    if is_terminal_status(state.status):
         return False
     if state.status == "filled":
-        return any(leg not in DEAD_STATUSES for leg in state.leg_statuses)
+        # **No leg information means LIVE, not flat.** Hyperliquid reports no per-leg status, so
+        # ``leg_statuses`` is empty there — and an empty tuple made ``any(...)`` false, which
+        # read a filled entry as a closed position. That releases the duplicate guard onto an
+        # OPEN position and lets a second bracket go onto it, which is the exact outcome this
+        # function exists to prevent. Unknown fails closed, like ``state is None`` above.
+        if not state.leg_statuses:
+            return True
+        return any(not (leg == "filled" or is_terminal_status(leg))
+                   for leg in state.leg_statuses)
     return True
 
 

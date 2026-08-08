@@ -42,7 +42,8 @@ from execution import config as config_module
 from execution import journal, outcome, store
 from execution.book import RestingOrder, stale
 from execution.session import open_broker
-from execution.venues import ALL_NETWORKS, is_real_money
+from execution.venues import ALL_NETWORKS, default_network, is_real_money
+from execution.venues import NETWORKS as VENUE_NETWORKS
 
 
 def _parse_args(argv):
@@ -50,6 +51,10 @@ def _parse_args(argv):
         prog="book",
         description="What the account is holding: resting entries and open positions.",
     )
+    parser.add_argument("--venue", choices=sorted(VENUE_NETWORKS), default=None,
+                        help="override cfg/execution.yaml's venue. Needed to settle the venue "
+                             "that is not the default — the nightly reconcile only ever reached "
+                             "one, so the other's orders went unsettled indefinitely")
     parser.add_argument("--network", choices=sorted(ALL_NETWORKS), default=None,
                         help="override cfg/execution.yaml's network")
     parser.add_argument("--cancel", action="store_true",
@@ -88,7 +93,10 @@ def render(orders, positions, *, account, max_age: float, now: datetime) -> list
         lines.append("")
 
     if orders is None:
-        lines.append("  resting entries: this venue cannot be asked (see IMPROVEMENTS §33)")
+        # Still true for the LISTING, and a narrower statement than it used to be: this venue
+        # can now be asked what became of a candidate (``HyperliquidBroker.states``), but a
+        # resting-order sweep needs every open order rather than the ones this log knows about.
+        lines.append("  resting entries: this venue cannot be asked")
     elif not orders:
         lines.append("  resting entries: none")
     else:
@@ -217,7 +225,10 @@ def reconcile(broker, orders_path, *, network: str, out) -> int:
     assets = {str(r.get("candidate_key")): str(r.get("asset") or "?")
               for r in store.load(orders_path)}
 
-    states = broker.states(sorted(keys))
+    # Hyperliquid answers nothing without the oid index; Alpaca ignores it. See
+    # ``store.order_ids_by_key`` and ``Broker.states``.
+    states = broker.states(sorted(keys),
+                           store.order_ids_by_key(orders_path, network=network))
 
     out(f"  RECONCILING  {len(keys)} placed order(s) against {network}")
     killed = 0
@@ -250,11 +261,11 @@ def reconcile(broker, orders_path, *, network: str, out) -> int:
         f"{unreadable} unreadable")
     # Phrased as the likely cause rather than a verdict. Nothing readable came back, and the
     # two reasons for that look identical from here: a venue that cannot be asked about a
-    # candidate at all (Hyperliquid sends no ``cloid`` — §33), or one that simply did not
-    # answer this time. Claiming the first would be a confident guess.
+    # candidate at all, or one that simply did not answer this time. Claiming the first would be
+    # a confident guess.
     if unreadable == len(states) and unreadable:
         out("  nothing came back — either this venue cannot be asked about a candidate "
-            "(see IMPROVEMENTS §33) or it did not answer; the log is unchanged")
+            "or it did not answer; the log is unchanged")
     if killed:
         # Said plainly because the consequence is not obvious from the word "rejected": the
         # duplicate guard reads live state, so these candidates are already free to be offered
@@ -278,16 +289,26 @@ def render_closed(rows, *, network: str) -> list[str]:
         return ["  closed trades: none"]
 
     credible = [r for r in closes if r.get("credible")]
-    total = sum(float(r.get("pnl") or 0.0) for r in closes)
-    real = sum(float(r.get("pnl") or 0.0) for r in credible)
+
+    def kept(row) -> float:
+        """What the account actually kept. Net where the venue's costs were readable, which on a
+        perp is the only honest figure — the SOL short's gross reads -5.67 and it cost -9.28."""
+        net = row.get("pnl_net")
+        return float(net if isinstance(net, (int, float)) else (row.get("pnl") or 0.0))
+
+    total = sum(kept(r) for r in closes)
+    real = sum(kept(r) for r in credible)
 
     lines = [f"  CLOSED  {len(closes)} closed, ${total:,.2f}  ·  "
              f"{len(credible)} credible, ${real:,.2f}"]
+    # "kept" and "R net" rather than "P/L" and "R", because on a perp the gross figure is not
+    # what the account has and a column headed P/L will be read as though it were.
     lines.append(f"   {'asset':<8} {'reason':<7} {'held':>7} {'qty':>8} {'exit':>10} "
-                 f"{'P/L':>12} {'R':>7}  candidate")
+                 f"{'kept':>12} {'R net':>7}  candidate")
     for r in closes:
         held = r.get("held_days")
-        r_at_fill = r.get("r_at_fill")
+        net = r.get("r_net_at_fill")
+        r_at_fill = net if isinstance(net, (int, float)) else r.get("r_at_fill")
         asset = r.get("asset") or "?"
         reason = r.get("exit_reason") or "?"
         key = r.get("candidate_key") or "?"
@@ -295,7 +316,7 @@ def render_closed(rows, *, network: str) -> list[str]:
             f"   {asset!s:<8} {reason!s:<7} "
             f"{(f'{held:6.1f}d' if isinstance(held, (int, float)) else '     ?')} "
             f"{float(r.get('exit_qty') or 0):>8g} {float(r.get('exit_price') or 0):>10,.2f} "
-            f"{float(r.get('pnl') or 0):>+12,.2f} "
+            f"{kept(r):>+12,.2f} "
             f"{(f'{r_at_fill:+7.2f}' if isinstance(r_at_fill, (int, float)) else '      ?')}"
             f"  {key!s}"
             + ("" if r.get("credible") else "   NOT EVIDENCE")
@@ -357,10 +378,10 @@ def close_out(broker, orders_path, *, network: str, max_participation: float | N
     if not dates:
         out("  nothing awaiting a close has a placement on this network")
         return 0
-    fills = broker.fills(since=min(dates))
+    since_date = min(dates)
+    fills = broker.fills(since=since_date)
     if fills is None:
-        out("  exits cannot be read from this venue — nothing settled "
-            "(see IMPROVEMENTS §33)")
+        out("  exits cannot be read from this venue — nothing settled")
         return 0
 
     # How many open positions each symbol carries. Two candidates long the same instrument is
@@ -380,15 +401,30 @@ def close_out(broker, orders_path, *, network: str, max_participation: float | N
         if entry is None or settle is None:
             continue
         asset = str(entry.get("asset") or "?")
-        order_ids = [str(i) for i in (entry.get("order_ids") or [])]
         symbol = str(entry.get("coin") or entry.get("asset") or "")
         direction = str(entry.get("direction") or "long")
+
+        # ``[entry, take_profit, stop_loss]``, however the venue chose to reveal it. Alpaca
+        # returns all three at placement. Hyperliquid returns one, and reconcile then discovers
+        # the other two from the entry's ``children`` and writes them to the settled row — so a
+        # perp close can name its leg instead of recording ``unknown``. The placed row wins when
+        # it is complete, because it is the earlier and more direct observation.
+        placed_ids = [str(i) for i in (entry.get("order_ids") or [])]
+        discovered = [str(i) for i in (settle.get("leg_order_ids") or [])]
+        order_ids = (placed_ids if len(placed_ids) >= 3
+                     else ([placed_ids[0], *discovered] if placed_ids else []))
+
         # Every numeric comes off a log that predates several of its own fields, so each is
         # parsed rather than cast. One malformed row must cost ONE candidate, not every
         # candidate sorted after it — this runs unattended.
-        entry_price = outcome.number(settle.get("filled_avg_price"))
         entry_qty = outcome.number(settle.get("filled_qty")) or 0.0
         stop = outcome.number(entry.get("stop"))
+        # Alpaca puts the fill price on the order; Hyperliquid puts it only in the fills. The
+        # settled row first, then the entry's own prints — see ``outcome.entry_price``.
+        entry_price = outcome.number(settle.get("filled_avg_price"))
+
+        if order_ids and entry_price is None:
+            entry_price = outcome.entry_price(fills, order_ids[0])
 
         if not order_ids or entry_price is None or stop is None or entry_qty <= 0:
             out(f"    {asset:<8} {key}  ? cannot be attributed — the log row is missing an "
@@ -437,6 +473,26 @@ def close_out(broker, orders_path, *, network: str, max_participation: float | N
             continue
 
         depth = broker.depth(symbol)
+
+        # ── costs of the whole trade, priced ONCE, before the legs are walked ──
+        #
+        # Both of these were per-leg and both were wrong in a way no single-leg exit reveals,
+        # because ``share`` is 1.0 there:
+        #
+        # * **Entry fees are shared between the legs; a leg's own fee is not.** Scaling the sum
+        #   of both by ``share`` charged half of each leg's own fee to nobody.
+        # * **Funding is read once over the whole hold.** Asked per leg from the same ``opened``,
+        #   the window to the first exit sits inside the window to the second and its funding is
+        #   counted in both rows. Pro-rating one reading means the rows sum to what was charged.
+        #
+        # Neither showed up as a missing number — ``costs_known`` stayed true and the row read as
+        # measured evidence, which is the only reason they are worth this much comment.
+        entry_fees = outcome.fees_for(fills, [order_ids[0]])
+        last_exit_at = max((f.at for f in exits if f.at is not None), default=None)
+        # The POSITION's window. See ``HyperliquidBroker.funding_paid``: a wider start charges
+        # this close for funding from a different hold of the same coin.
+        hold_funding = broker.funding_paid(symbol, start=opened, end=last_exit_at)
+
         for group in outcome.group_by_order(exits).values():
             close = outcome.close_from_fills(group, candidate_key=key, order_ids=order_ids)
             if close is None:
@@ -445,16 +501,24 @@ def close_out(broker, orders_path, *, network: str, max_participation: float | N
             # rather than two rows each claiming the whole trade's risk.
             share = close.qty / entry_qty
             planned = outcome.number(entry.get("risk"))
+            leg_fees = outcome.fees_for(fills, [close.order_id])
+            fees = (entry_fees * share + leg_fees
+                    if entry_fees is not None and leg_fees is not None else None)
             result = outcome.realized(
                 direction=direction, entry=entry_price, exit_price=close.price,
                 qty=close.qty, stop=stop,
                 risk_planned=planned * share if planned is not None else None,
+                fees=fees,
+                funding=hold_funding * share if hold_funding is not None else None,
             )
             quality = outcome.fill_quality(
                 qty=close.qty,
                 median_volume=depth.median_volume if depth is not None else None,
                 ceiling=max_participation if max_participation is not None else 1.0,
                 paper=not is_real_money(network),
+                # A perp row missing its funding is unfinished, not disproven. On the SOL short
+                # funding was 0.36R — larger than most edges this repo is trying to detect.
+                costs_known=result.pnl_net is not None,
                 # Measured against the entry the plan asked for, not the one it got — that
                 # difference IS the check. See ``outcome.stop_survival``.
                 stop_survival=outcome.stop_survival(
@@ -467,7 +531,11 @@ def close_out(broker, orders_path, *, network: str, max_participation: float | N
             # After the log, never instead of it, and it cannot fail the pass. See ``journal``.
             if note_path is not None:
                 journal.append(note_path, row, warn=out)
-            r = f"{result.r_at_fill:+.2f}R" if result.r_at_fill is not None else "?R"
+            # Net where it is known, gross otherwise, and marked so the two are never confused.
+            # On a perp they differ by more than most edges this repo is trying to detect.
+            r = ("?R" if result.r_at_fill is None else
+                 f"{result.r_net_at_fill:+.2f}R net" if result.r_net_at_fill is not None
+                 else f"{result.r_at_fill:+.2f}R gross")
             flag = "" if quality.credible else "   NOT EVIDENCE"
             out(f"    {asset:<8} {key}  + {close.reason} @ {close.price:,.2f}  "
                 f"{result.pnl:+,.2f} ({r}){flag}")
@@ -483,6 +551,13 @@ def main(argv: list[str] | None = None, *, now: datetime | None = None,
     now = now or datetime.now(UTC)
 
     config = config_module.load()
+    if args.venue is not None:
+        # Before the network, and the network defaults with it: naming a venue without one has to
+        # resolve to THAT venue's rehearsal, or `--venue hyperliquid` against an Alpaca config
+        # would carry `paper` across and fail validation. See ``venues.default_network``.
+        config = replace(config, venue=args.venue,
+                         network=args.network or default_network(args.venue))
+        config.validate()
     if args.network is not None:
         # ``replace``, not a field-by-field rebuild — the same trap ``oracle.execute`` names:
         # a rebuild silently resets every setting it forgot to list, and a flag about *where*

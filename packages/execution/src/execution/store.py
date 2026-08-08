@@ -131,6 +131,11 @@ def record_reconciliation(path, state, *, network: str, at: str | None = None) -
         "filled_qty": state.filled_qty,
         "filled_avg_price": state.filled_avg_price,
         "leg_statuses": list(state.leg_statuses),
+        # Discovered, not re-derived: Hyperliquid's placement reply gave one oid for a
+        # three-order bracket, and the entry query returns the other two as ``children``. Writing
+        # them here is how the close pass gets to name the leg on that venue instead of
+        # recording every perp exit as ``unknown``. See ``outcome.reason_for``.
+        "leg_order_ids": list(state.leg_order_ids),
     }
     _append(path, record)
     return record
@@ -179,7 +184,15 @@ def record_close(path, close, realized, quality, *, network: str, asset: str,
         "entry_price": entry_price,
         "entry_at": entry_at.isoformat() if entry_at is not None else None,
         "held_days": held_days,
+        # ``pnl`` is the PRICE MOVE — it is what Hyperliquid's own ``closedPnl`` reports, and the
+        # two agree to the cent. ``pnl_net`` is what the account kept after the venue's fees and
+        # funding. On an equity they are equal; on the SOL short they were -5.67 and -9.28, so
+        # writing only the first understated a perp loss by 0.36R.
         "pnl": realized.pnl,
+        "fees": realized.fees,
+        "funding": realized.funding,
+        "pnl_net": realized.pnl_net,
+        "r_net_at_fill": realized.r_net_at_fill,
         "risk_planned": realized.risk_planned,
         "risk_at_fill": realized.risk_at_fill,
         "r_planned": realized.r_planned,
@@ -266,6 +279,42 @@ def awaiting_exit_keys(path, *, network: str | None = None) -> set[str]:
              and not isinstance(row.get("filled_qty"), bool)
              and float(row["filled_qty"]) > 0)
     }
+
+
+def order_ids_by_key(path, *, network: str | None = None) -> dict[str, list[str]]:
+    """The venue order ids each placed candidate produced. Latest placement wins.
+
+    **This is the index that makes Hyperliquid answerable.** That venue sends no ``cloid``
+    (``wire.order_requests``), so it knows an order only by an oid — which was long read as a gap,
+    on the grounds that the oid was something this repo would have to index itself. It already
+    had: ``record_placement`` has written ``order_ids`` on every placement since this module
+    existed, including all seven Hyperliquid ones. ``HyperliquidBroker.states`` takes this mapping
+    and asks ``query_order_by_oid`` per order.
+
+    Latest placement wins for the same reason as ``risk_by_key``: a re-entered candidate has new
+    orders, and the previous oids describe a bracket that is gone.
+
+    A row with no ``order_ids`` is **absent rather than an empty list**, so a caller can tell
+    "nothing recorded" from "asked and there were none".
+
+    NOTE THE DURABILITY ASYMMETRY, which the module docstring above understates. For Alpaca the
+    join survives losing this file — ``candidate_key`` goes out as the ``client_order_id``, so
+    the venue holds it. For Hyperliquid this mapping is the ONLY copy, and ``data/`` is
+    gitignored and unbacked. Lose it and those orders become permanently unattributable, which
+    is the real argument for sending a ``cloid``: not answerability, durability.
+    """
+    out: dict[str, list[str]] = {}
+    for row in load(path):
+        if row.get("outcome") != PLACED:
+            continue
+        if network is not None and row.get("network") != network:
+            continue
+        ids = row.get("order_ids")
+        if not isinstance(ids, list) or not ids:
+            out.pop(row["candidate_key"], None)
+            continue
+        out[row["candidate_key"]] = [str(i) for i in ids]
+    return out
 
 
 def load(path) -> list[dict]:

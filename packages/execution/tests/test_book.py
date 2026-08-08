@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from execution import book
 from execution.book import (
     Position,
     RestingOrder,
@@ -196,3 +197,60 @@ def test_a_resting_order_is_hashable_and_frozen():
     assert isinstance(order, RestingOrder)
     with pytest.raises(AttributeError):
         order.qty = 1  # type: ignore[misc]
+
+
+# ── Hyperliquid's status vocabulary is open-ended ────────────────────────────────────────────
+#
+# ``TERMINAL_STATUSES`` is Alpaca's list. Hyperliquid has a dozen ``*Canceled`` and ``*Rejected``
+# variants and adds more (siblingFilledCanceled, liquidatedCanceled, minTradeNtlRejected...), so
+# it is classified by suffix rather than enumerated — an unrecognised status must not read as
+# working when the venue has plainly finished with it.
+
+def test_hyperliquids_canceled_variants_are_terminal():
+    for status in ("canceled", "marginCanceled", "liquidatedCanceled",
+                   "siblingFilledCanceled", "reduceOnlyCanceled"):
+        assert book.is_terminal_status(status), status
+
+
+def test_hyperliquids_rejected_variants_are_terminal_and_never_traded():
+    for status in ("rejected", "minTradeNtlRejected", "perpMarginRejected"):
+        assert book.is_terminal_status(status), status
+        assert book.is_failed_status(status), status
+
+
+def test_alpacas_own_vocabulary_still_classifies():
+    for status in ("canceled", "expired", "rejected", "done_for_day", "replaced"):
+        assert book.is_terminal_status(status), status
+    assert not book.is_terminal_status("filled")
+    assert not book.is_terminal_status("new")
+
+
+def test_an_unrecognised_status_is_still_treated_as_working():
+    """The asymmetry ``TERMINAL_STATUSES`` was built on: reading a live order as dead releases
+    the duplicate guard onto a live bracket, which is worse than one missed re-entry."""
+    assert not book.is_terminal_status("someNewStatusHyperliquidAdded")
+
+
+# ── a filled parent whose legs are unknown must read as LIVE ─────────────────────────────────
+
+def test_a_filled_entry_with_no_leg_information_is_live():
+    """Hyperliquid reports no per-leg status, so ``leg_statuses`` is empty there. An empty tuple
+    made ``any(...)`` false and the position read as closed — which would release the duplicate
+    guard onto an OPEN position and allow a second bracket on it. Unknown must fail closed."""
+    state = book.OrderState(candidate_key="k", status="filled", filled_qty=3.81,
+                            filled_avg_price=74.4, leg_statuses=())
+    assert book.is_live(state) is True
+
+
+def test_a_filled_entry_whose_legs_are_all_done_is_not_live():
+    """Alpaca's path, unchanged: both exits finished means the position is flat and the
+    candidate is free again."""
+    state = book.OrderState(candidate_key="k", status="filled", filled_qty=1.0,
+                            filled_avg_price=1.0, leg_statuses=("canceled", "filled"))
+    assert book.is_live(state) is False
+
+
+def test_a_filled_entry_with_one_working_leg_is_live():
+    state = book.OrderState(candidate_key="k", status="filled", filled_qty=1.0,
+                            filled_avg_price=1.0, leg_statuses=("new", "held"))
+    assert book.is_live(state) is True

@@ -119,7 +119,11 @@ class Session:
         # traded. Scoped to this network, so a testnet rehearsal cannot veto the mainnet trade
         # it was rehearsing for (see ``store.placed_keys``).
         placed = store.placed_keys(orders_path, network=config.network)
-        live = broker.live_keys(placed)
+        # The oid index, for a venue that has no other handle on a candidate. Alpaca ignores it
+        # (the key IS its ``client_order_id``); Hyperliquid answers nothing without it, which is
+        # why the guard there used to be unable to narrow at all. See ``store.order_ids_by_key``.
+        live = broker.live_keys(
+            placed, store.order_ids_by_key(orders_path, network=config.network))
         # The opening risk balance, from the same log and the same live set — no extra call. A
         # live key includes a *filled* bracket whose exit legs are still working, which is
         # exactly the position that is still at risk, so the two questions share one answer.

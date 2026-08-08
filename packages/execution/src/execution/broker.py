@@ -18,6 +18,7 @@ Three venue facts that shape the class, all verified against the SDK rather than
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Protocol, cast
 
 # Aliased because ``execution.account.Account`` is this package's own account state and the
@@ -31,7 +32,7 @@ from execution.account import Account
 from execution.book import OrderState, Position, RestingOrder
 from execution.book import is_live as order_is_live
 from execution.liquidity import Liquidity, parse_book, parse_context
-from execution.outcome import ExitFill
+from execution.outcome import ExitFill, exit_leg_ids, number, parse_hl_fills
 from execution.participation import Depth
 from execution.plan import Market, OrderPlan
 from execution.wire import GROUPING, Placement, order_requests, parse_placement
@@ -154,9 +155,14 @@ class Broker(Protocol):
     # What became of each candidate's bracket. A ``None`` value is "cannot be read", which is
     # not a status — see ``book.is_live``. The duplicate guard and the reconcile pass both read
     # this, so neither can reach a different conclusion about the same order.
-    def states(self, keys) -> dict[str, OrderState | None]: ...
+    # ``order_ids`` is how a venue is told which orders belong to a candidate, and the two
+    # answer differently. Alpaca needs nothing: ``candidate_key`` went out as the
+    # ``client_order_id``, so the key IS the handle. Hyperliquid sends no ``cloid`` and knows
+    # only its own oids, so it needs the mapping ``store.order_ids_by_key`` keeps — and without
+    # it every key comes back ``None``. Both callers already read the log, so supplying it is free.
+    def states(self, keys, order_ids=None) -> dict[str, OrderState | None]: ...
 
-    def live_keys(self, keys) -> set[str]: ...
+    def live_keys(self, keys, order_ids=None) -> set[str]: ...
 
     # Every print this account has made since ``since``, for attributing an exit back to the
     # bracket leg that caused it. Same None/empty distinction as ``resting``, and here it is
@@ -164,6 +170,13 @@ class Broker(Protocol):
     # so a venue that cannot be asked must answer ``None`` or the close pass will conclude that
     # a trade which ended weeks ago is still running. See ``outcome`` and ``store.record_close``.
     def fills(self, since: str) -> tuple[ExitFill, ...] | None: ...
+
+    # Funding actually charged while a position was held, signed. **``0.0`` and ``None`` are
+    # different answers**: an equity has no funding, so zero is a measurement; ``None`` means the
+    # venue could not be read, and a perp outcome missing its funding is not evidence. On the SOL
+    # short funding was 0.36R — 64% again the price-move loss. See ``outcome.realized``.
+    def funding_paid(self, symbol: str, *, start: datetime, end: datetime | None = None
+                     ) -> float | None: ...
 
 
 @dataclass(frozen=True)
@@ -328,7 +341,7 @@ class HyperliquidBroker:
 
         ``wire.order_requests`` sends no ``cloid``, so an order placed by this repo is known
         to the venue only by an oid nothing here indexes. The same blocker that keeps
-        ``live_keys`` conservative, tracked as `docs/IMPROVEMENTS.md` §33.
+        ``live_keys`` conservative. See ``states`` for what this venue CAN now answer.
         """
         return None
 
@@ -342,30 +355,124 @@ class HyperliquidBroker:
         """Refuses. Nothing here can produce an order id to pass in — see ``resting``."""
         return f"cancelling is not implemented for {self.network}; cancel {order_id} by hand"
 
-    def states(self, keys) -> dict[str, OrderState | None]:
-        """Every key unreadable — this venue cannot be asked about a candidate at all.
+    def states(self, keys, order_ids=None) -> dict[str, OrderState | None]:
+        """What became of each candidate's bracket, asked by its recorded oid.
 
-        ``wire.order_requests`` sends no ``cloid``, so an order this repo placed is known to
-        the venue only by an oid nothing here indexes. ``None`` is exactly right for that: not
-        a status, but "no answer available", which every reader already handles.
+        **This venue CAN be asked, and the long-standing claim that it could not was wrong.**
+        That claim held the blocker to be the wire — no ``cloid``, so the venue knows an order only
+        by an oid this repo would have to index itself. The repo already indexed it:
+        ``store.record_placement`` has
+        written ``order_ids`` on every placement since the log existed. ``order_ids`` is that
+        mapping, from ``store.order_ids_by_key``; verified on testnet 2026-08-08, where all seven
+        logged oids resolved and two positions turned out to have been filled and unrecorded for
+        over a week.
+
+        The entry query also returns the bracket's ``children``, so the exit legs' oids come back
+        for free — which is what lets a close on this venue name the leg that took it instead of
+        settling for ``unknown``.
+
+        ``None`` for a key with no recorded oid, and for one the venue no longer knows. Not a
+        status: "no answer available", which every reader already fails closed on.
+
+        NO LEG STATUSES ARE REPORTED. The children carry no status of their own and asking per
+        leg would be two more round trips per candidate; ``book.is_live`` treats an empty leg
+        tuple on a filled parent as still live, which keeps the duplicate guard conservative here
+        exactly as it was before.
         """
-        return dict.fromkeys(keys)
+        mapping = order_ids or {}
+        out: dict[str, OrderState | None] = {}
+        for key in keys:
+            oids = mapping.get(key) or []
+            out[key] = self._state_for(key, oids[0]) if oids else None
+        return out
+
+    def _state_for(self, key: str, oid) -> OrderState | None:
+        try:
+            reply = self._info.query_order_by_oid(self.account_address, int(oid))
+        except Exception:  # noqa: BLE001 - unreadable is not a status
+            return None
+        if not isinstance(reply, dict) or reply.get("status") != "order":
+            return None
+        wrapper = reply.get("order") or {}
+        detail = wrapper.get("order") or {}
+        status = str(wrapper.get("status") or "")
+        if not status:
+            return None
+        original = number(detail.get("origSz")) or 0.0
+        remaining = number(detail.get("sz"))
+        return OrderState(
+            candidate_key=key,
+            status=status,
+            # The venue reports size REMAINING, not size filled, so the fill is the difference.
+            # A filled entry reads sz 0.0 against origSz 3.81.
+            filled_qty=(original - remaining) if remaining is not None else 0.0,
+            # Not available on an order — the price lives in the fills. ``close_out`` recovers it
+            # from the entry's own prints, which every venue reports.
+            filled_avg_price=None,
+            leg_statuses=(),
+            leg_order_ids=exit_leg_ids(detail.get("children")),
+        )
 
     def fills(self, since: str) -> tuple[ExitFill, ...] | None:
-        """``None`` — the same §33 wall ``states`` hits, and for the same reason.
+        """Every print this account has made since ``since``, oldest first. ``None`` if unreadable.
 
-        This venue does report a user's fills, so the refusal is not about the data existing.
-        It is that a fill here carries an oid and no ``cloid``, so there is nothing to attribute
-        it back to a candidate *or* to a bracket leg with — and a close pass cannot say which
-        leg took a trade from a price alone (see ``outcome.reason_for``).
+        Richer than Alpaca's feed in two ways worth using rather than reproducing by inference:
+        ``dir`` states whether a print opened or closed exposure (so ``exit_fills`` never has to
+        guess a close from the side), and ``fee`` is per print, which matters here because perp
+        fees are a real term against a risk budget — the SOL short paid 0.17263 against 9.9822.
 
-        ``None`` rather than ``()`` matters more here than anywhere: an empty tuple would tell
-        the close pass that no position on this venue has ever closed, so every perp trade would
-        sit on the exit work list forever, re-asked every night. See ``Broker.fills``.
+        ``closedPnl`` is deliberately NOT read. It is the venue's own realised figure and it
+        agrees with ``outcome.realized`` to the cent, so reading it would add a second source of
+        truth for a number this repo can already compute — and it is gross of both fees and
+        funding, so it is not the answer anyone wants on its own.
         """
-        return None
+        try:
+            start_ms = int(datetime.strptime(since, "%Y-%m-%d")
+                           .replace(tzinfo=UTC).timestamp() * 1000)
+            raw = self._info.user_fills_by_time(self.account_address, start_ms)
+        except Exception:  # noqa: BLE001 - unreadable is "not measured", not a crash
+            return None
+        if not isinstance(raw, list):
+            return None
+        return parse_hl_fills(raw)
 
-    def live_keys(self, keys) -> set[str]:
+    def funding_paid(self, symbol: str, *, start: datetime,
+                     end: datetime | None = None) -> float | None:
+        """Funding charged on ``symbol`` while THIS position was open, signed. ``None`` if unreadable.
+
+        **Not the same thing as ``data/funding``.** That log samples the current *rate* nightly so
+        the queue can price carry before entering; this is what the venue actually took. The SOL
+        short paid 3.43939 over 209 events in 11 days — 0.36R against a 9.9822 budget, and 64%
+        again the size of the price-move loss it was recorded as.
+
+        **The window is the position's own, at full precision, and that is not a nicety.** Summed
+        from a coarser or earlier start it picks up funding from a *different* hold of the same
+        coin: measured on SOL, widening the start by twelve hours pulled in one pre-position event
+        and moved the total by 0.019. A coin held twice would charge the first hold's funding to
+        the second close.
+
+        Signed, because a short in a backwardated market is on the receiving side. See
+        ``outcome.realized``.
+        """
+        try:
+            start_ms = int(start.timestamp() * 1000)
+            end_ms = int(end.timestamp() * 1000) if end is not None else None
+            raw = self._info.user_funding_history(self.account_address, start_ms, end_ms)
+        except Exception:  # noqa: BLE001 - see ``fills``
+            return None
+        if not isinstance(raw, list):
+            return None
+        total = 0.0
+        for row in raw:
+            delta = (row or {}).get("delta") or {}
+            if str(delta.get("coin") or "") != symbol:
+                continue
+            usdc = number(delta.get("usdc"))
+            if usdc is not None:
+                total += usdc
+        return total
+
+    def live_keys(self, keys, order_ids=None) -> set[str]:
         """Every key, unchanged — this venue cannot yet answer the question.
 
         Deliberately conservative rather than unimplemented. ``AlpacaBroker`` can narrow the
@@ -376,12 +483,15 @@ class HyperliquidBroker:
 
         So the guard keeps its old meaning here — placed once, blocked thereafter — which is
         safe and occasionally costs a re-entry. Sending a ``cloid`` per leg is the fix; it is
-        a wire change and is tracked in `docs/IMPROVEMENTS.md` §33 rather than guessed at.
+        a wire change, and it is worth making for DURABILITY rather than answerability: the oid
+        index lives in gitignored, unbacked ``data/``, and losing it makes these orders
+        permanently unattributable. See ``store.order_ids_by_key``.
 
         Derived from ``states`` rather than returning ``set(keys)`` directly, so that the day a
         ``cloid`` starts going out, this method is already correct.
         """
-        return {key for key, state in self.states(keys).items() if order_is_live(state)}
+        return {key for key, state in self.states(keys, order_ids).items()
+                if order_is_live(state)}
 
     def place(self, plan: OrderPlan) -> Placement:
         """Send the bracket as one grouped action, and report what came back."""

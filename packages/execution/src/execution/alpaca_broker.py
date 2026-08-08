@@ -335,7 +335,7 @@ class AlpacaBroker:
         self._depth[coin] = depth
         return depth
 
-    def states(self, keys) -> dict[str, OrderState | None]:
+    def states(self, keys, order_ids=None) -> dict[str, OrderState | None]:
         """What became of each candidate's bracket, keyed by ``candidate_key``.
 
         One request per key, and the only place this package asks the venue that question.
@@ -353,6 +353,20 @@ class AlpacaBroker:
             )
             for key in keys
         }
+
+    def funding_paid(self, symbol: str, *, start: datetime,
+                     end: datetime | None = None) -> float | None:
+        """``0.0`` — a measurement, not an unknown. Equities have no funding rate.
+
+        The distinction is load-bearing: ``None`` would mark every equity close as having
+        unmeasured holding costs and strip `credible` off the whole Alpaca history for a term
+        that does not exist here. See ``Broker.funding_paid``.
+
+        NOT COMPLETE FOR SHORTS. A borrowed short does accrue a hard-to-borrow fee, which Alpaca
+        reports as its own activity type and this does not read. Every close recorded so far is
+        long, so the zero is honest today and will quietly stop being so on the first short.
+        """
+        return 0.0
 
     def fills(self, since: str) -> tuple[ExitFill, ...] | None:
         """Every print this account has made since ``since``, oldest first. ``None`` if unreadable.
@@ -404,7 +418,7 @@ class AlpacaBroker:
             return None
         return parse_fills(rows)
 
-    def live_keys(self, keys) -> set[str]:
+    def live_keys(self, keys, order_ids=None) -> set[str]:
         """Of these candidate keys, which still have something live at the venue.
 
         The duplicate guard exists to stop **two live brackets on one candidate**, not to

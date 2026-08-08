@@ -232,7 +232,7 @@ class StatefulBroker(FakeBroker):
         self._replies = replies
         self.asked: list[str] = []
 
-    def states(self, keys):
+    def states(self, keys, order_ids=None):
         self.asked = list(keys)
         return {k: parse_state(self._replies.get(k), k) for k in keys}
 
@@ -393,9 +393,10 @@ EXIT_ACTIVITY = _activity("c29d3a96", 1639, 31.21, "2026-08-07T13:39:09.192769Z"
 class ExitBroker:
     """A broker that answers the two questions the close pass asks."""
 
-    def __init__(self, fills=(), depth=INTL_DEPTH):
+    def __init__(self, fills=(), depth=INTL_DEPTH, funding=0.0):
         self._fills = fills
         self._depth = depth
+        self._funding = funding
 
     def fills(self, since):
         self.since = since
@@ -403,6 +404,13 @@ class ExitBroker:
 
     def depth(self, coin):
         return self._depth
+
+    def funding_paid(self, symbol, *, start, end=None):
+        self.funding_window = (start, end)
+        self.funding_calls = getattr(self, "funding_calls", [])
+        self.funding_calls.append((start, end))
+        # 0.0 is the equity answer and a measurement — see ``AlpacaBroker.funding_paid``.
+        return self._funding
 
 
 def _intl_log(tmp_path, *, network="paper", filled_qty=1639.0):
@@ -730,3 +738,48 @@ def test_a_gap_collapsed_trade_is_disqualified_on_its_own_merits(tmp_path):
     assert round(row["stop_survival"], 3) == 0.085
     assert row["credible"] is False
     assert any("stop distance" in r for r in row["not_evidence"])
+
+
+# ── costs across an exit that closed in pieces ───────────────────────────────────────────────
+#
+# Both bugs here were silent: they wrote a wrong number that ``costs_known`` still called
+# measured, so the row read as evidence. A single-leg exit hides both, because ``share`` is 1.0.
+
+def _fee_fill(order_id, qty, price, at, fee, side="sell", symbol="INTL", closing=None):
+    return outcome.ExitFill(order_id=order_id, symbol=symbol, side=side, qty=qty, price=price,
+                            at=datetime.fromisoformat(at), fee=fee, closing=closing)
+
+
+def test_entry_fees_are_pro_rated_but_a_legs_own_fees_are_not(tmp_path):
+    """An exit leg's fee belongs entirely to that leg — only the ENTRY's fee is shared between
+    them. Scaling the whole sum by ``share`` charged half of each leg's own fee to nobody, so a
+    two-part exit under-reported fees by half of the exit side."""
+    path = _intl_log(tmp_path)
+    fills = (
+        _fee_fill(ENTRY_ID, 1639, 29.621233, "2026-07-29T13:34:57+00:00", 10.0, side="buy"),
+        _fee_fill(TP_ID, 800, 32.34, "2026-08-05T14:00:00+00:00", 4.0),
+        _fee_fill("byhand", 839, 30.50, "2026-08-07T13:39:09+00:00", 6.0),
+    )
+    assert _close_out(path, ExitBroker(fills=fills)) == 2
+    closes = [r for r in store.load(path) if r["outcome"] == store.CLOSED]
+    # 10 entry (split across the two) + 4 + 6 exit = 20, whatever the split.
+    assert round(sum(r["fees"] for r in closes), 4) == 20.0
+
+
+def test_funding_is_read_once_over_the_whole_hold_not_once_per_leg(tmp_path):
+    """Called per leg with the same start, the window ``opened -> first exit`` sits inside
+    ``opened -> second exit`` and its funding is counted in both rows. Read once over the whole
+    hold and pro-rated, the rows sum to what was actually charged."""
+    path = _intl_log(tmp_path)
+    fills = (
+        _fee_fill(ENTRY_ID, 1639, 29.621233, "2026-07-29T13:34:57+00:00", 0.0, side="buy"),
+        _fee_fill(TP_ID, 800, 32.34, "2026-08-05T14:00:00+00:00", 0.0),
+        _fee_fill("byhand", 839, 30.50, "2026-08-07T13:39:09+00:00", 0.0),
+    )
+    broker = ExitBroker(fills=fills, funding=-100.0)
+    assert _close_out(path, broker) == 2
+    closes = [r for r in store.load(path) if r["outcome"] == store.CLOSED]
+    assert round(sum(r["funding"] for r in closes), 4) == -100.0
+    # One read per candidate, and the window runs to the LAST exit.
+    assert len(broker.funding_calls) == 1
+    assert broker.funding_calls[0][1] == datetime.fromisoformat("2026-08-07T13:39:09+00:00")

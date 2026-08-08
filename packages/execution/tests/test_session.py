@@ -51,7 +51,7 @@ class FakeBroker:
         self.live_keys_calls: list[set] = []
         self.cancelled: list[str] = []
 
-    def live_keys(self, keys) -> set:
+    def live_keys(self, keys, order_ids=None) -> set:
         self.live_keys_calls.append(set(keys))
         return set(keys) if self._live is None else set(keys) & set(self._live)
 

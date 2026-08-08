@@ -44,7 +44,7 @@ measurement (13 rows carry funding, 4 usable pairs) · §27's option 2 (`daily_t
 but the failed-break state it names has n=1).
 
 **By theme:** corpus supply §3 · §6b · §6d · §6f · §6h · §9 · §14 — durability §4b · §24 —
-venue and execution §22 · §25 · §30 · §33 · §36 · §39 · §40 · §43 · §50 · §52 —
+venue and execution §22 · §25 · §30 · §36 · §39 · §40 · §43 · §50 · §52 —
 routing §29 · §31 · §32 · §44 · §51 — scoring §1 · §2 · §8 · §12 · §15 · §19 · §48.
 
 ---
@@ -540,31 +540,6 @@ decision that it has none. `WTI` most likely routes to `CL=F` and then folds int
 silence would remove `CAT`, `CVX`, `NKE` and most of the equity corpus to catch nothing. Alpaca
 cannot close it — our close comes from Yahoo by ticker and Alpaca's by the same ticker, so both
 resolve `WTI` to W&T Offshore and agree. A non-circular equity source is the open question.
-
----
-
-## 33. Hyperliquid's duplicate guard cannot tell a live bracket from a dead one · `PARTLY DONE`
-
-`Broker.live_keys` narrows the guard from "an order was once sent" to "something is still
-working", so a bracket that round-tripped flat no longer burns its candidate. `AlpacaBroker`
-implements it against the venue; `HyperliquidBroker` returns every key unchanged, keeping the
-old conservative meaning.
-
-**The blocker is the wire, not the guard.** `wire.order_requests` sends no `cloid`, so the
-venue knows those orders only by an oid this repo would have to index itself. Sending
-`candidate_key` as the `cloid` on the entry leg makes the same question answerable there —
-that is how Alpaca can answer it at all.
-
-**Two readers depend on that now, not one.** `Broker.states` is the single place a candidate is
-asked about, and `book --reconcile` (§40) reads it too — so on Hyperliquid the order log cannot
-be settled either, not just the guard. The `cloid` buys both.
-
-**One settled fact worth not re-deriving** (`alpaca_wire`, verified on paper): a GTC bracket
-sent with the market shut is `accepted`, so the 06:15 nightly needs no scheduler.
-
-**This entry used to claim a gap "costs a spread rather than a stop". That was wrong** — see
-§39, which VRT proved live. Holding-side gaps are measured in `core.gaps` and no guard
-reaches those.
 
 ---
 

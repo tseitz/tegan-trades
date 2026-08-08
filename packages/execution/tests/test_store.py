@@ -124,13 +124,14 @@ class StubState:
     """An ``execution.book.OrderState`` shaped stub — the store reads it structurally."""
 
     def __init__(self, key="abc123", status="rejected", failed=True, filled_qty=0.0,
-                 filled_avg_price=None, legs=("canceled", "canceled")):
+                 filled_avg_price=None, legs=("canceled", "canceled"), leg_order_ids=()):
         self.candidate_key = key
         self.status = status
         self.failed = failed
         self.filled_qty = filled_qty
         self.filled_avg_price = filled_avg_price
         self.leg_statuses = legs
+        self.leg_order_ids = leg_order_ids
 
 
 def test_a_reconciliation_is_appended_not_a_correction(tmp_path):
@@ -465,3 +466,75 @@ def test_a_credible_close_carries_no_reasons(tmp_path):
     row = store.load(path)[0]
     assert row["not_evidence"] == []
     assert row["credible"] is True
+
+
+# ── the oid index: how a venue with no cloid is asked about a candidate ──────────────────────
+
+def test_order_ids_are_read_back_per_candidate(tmp_path):
+    """Hyperliquid knows an order only by its oid, and THIS is the index. It was long assumed
+    the oid was something this repo would have to start indexing — it already had."""
+    path = _placed(tmp_path, [
+        {"candidate_key": "a", "network": "testnet", "order_ids": [57089713957]},
+        {"candidate_key": "b", "network": "testnet", "order_ids": [57297232474]},
+    ])
+    assert store.order_ids_by_key(path, network="testnet") == {
+        "a": ["57089713957"], "b": ["57297232474"]}
+
+
+def test_order_ids_are_scoped_by_network(tmp_path):
+    """An oid from testnet does not resolve on mainnet, and asking would be a wrong answer
+    rather than no answer."""
+    path = _placed(tmp_path, [
+        {"candidate_key": "a", "network": "testnet", "order_ids": [1]},
+        {"candidate_key": "b", "network": "mainnet", "order_ids": [2]},
+    ])
+    assert store.order_ids_by_key(path, network="mainnet") == {"b": ["2"]}
+
+
+def test_the_latest_placement_supplies_the_oids(tmp_path):
+    """A re-entered candidate has new orders, and the old oids describe a bracket that is gone."""
+    path = _placed(tmp_path, [
+        {"candidate_key": "a", "network": "testnet", "order_ids": [1]},
+        {"candidate_key": "a", "network": "testnet", "order_ids": [9]},
+    ])
+    assert store.order_ids_by_key(path, network="testnet") == {"a": ["9"]}
+
+
+def test_a_placement_with_no_order_ids_is_absent(tmp_path):
+    """A refusal never reached the venue, and a failed placement may carry none. Absent rather
+    than an empty list, so a caller can tell "no oids recorded" from "asked and got none"."""
+    path = _placed(tmp_path, [{"candidate_key": "a", "network": "testnet"}])
+    assert store.order_ids_by_key(path, network="testnet") == {}
+
+
+def test_a_close_records_what_holding_it_cost(tmp_path):
+    """The whole point of the costs work, and it was missing: ``Realized`` grew these four
+    fields and ``record_close`` did not write them, so the SOL short's 3.43939 of funding was
+    computed and then dropped. The row read -0.57R when the trade was -0.93R.
+    """
+    path = tmp_path / "orders.jsonl"
+    realized = outcome.realized(direction="short", entry=74.4, exit_price=75.887, qty=3.81,
+                                stop=77.02, risk_planned=9.9822,
+                                fees=0.17263, funding=-3.43939)
+    store.record_close(path, CLOSE, realized, QUALITY, network="testnet",
+                       asset="SOL", entry_price=74.4)
+    row = store.load(path)[0]
+    assert row["fees"] == 0.17263
+    assert row["funding"] == -3.43939
+    assert round(row["pnl_net"], 4) == round(realized.pnl - 0.17263 - 3.43939, 4)
+    assert round(row["r_net_at_fill"], 4) == -0.9294
+
+
+def test_a_close_with_unmeasured_costs_records_them_as_absent(tmp_path):
+    """Not zero. An equity passes 0.0 and means it; a perp whose funding could not be read has
+    to say so, or the row claims a free hold."""
+    path = tmp_path / "orders.jsonl"
+    realized = outcome.realized(direction="short", entry=74.4, exit_price=75.887, qty=3.81,
+                                stop=77.02, risk_planned=9.9822)
+    store.record_close(path, CLOSE, realized, QUALITY, network="testnet",
+                       asset="SOL", entry_price=74.4)
+    row = store.load(path)[0]
+    assert row["fees"] is None
+    assert row["funding"] is None
+    assert row["pnl_net"] is None
+    assert row["r_net_at_fill"] is None

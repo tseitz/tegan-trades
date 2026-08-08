@@ -372,3 +372,131 @@ def test_a_definite_disqualifier_beats_an_unmeasured_one():
     q = outcome.fill_quality(qty=1.0, median_volume=None, ceiling=0.01, paper=True,
                              stop_survival=None)
     assert q.credible is False
+
+
+# ── the venue saying whether a fill opened or closed ────────────────────────────────────────
+#
+# Hyperliquid states it (``dir``: "Close Short"); Alpaca does not, so there the side and the
+# entry timestamp are all there is. Preferring the statement is the same read-don't-infer rule
+# ``reason_for`` follows, and it is stronger: side + time cannot tell a close from a re-entry.
+
+def test_a_venue_stated_close_is_preferred_over_the_side():
+    opened = datetime(2026, 7, 28, 13, 0, tzinfo=UTC)
+    fills = (
+        outcome.ExitFill(order_id="x", symbol="SOL", side="buy", qty=3.81, price=75.887,
+                         at=datetime(2026, 8, 8, 13, 0, tzinfo=UTC), closing=True),
+    )
+    got = outcome.exit_fills(fills, symbol="SOL", entry_order_id="e",
+                             exit_side="buy", after=opened)
+    assert len(got) == 1
+
+
+def test_a_venue_stated_OPEN_is_excluded_even_when_the_side_matches():
+    """The case side-inference gets wrong: re-entering SOL short after closing means a later
+    SELL of SOL that is an OPEN, not this position's exit. Alpaca cannot distinguish it; where
+    the venue says so, this must."""
+    opened = datetime(2026, 7, 28, 13, 0, tzinfo=UTC)
+    fills = (
+        outcome.ExitFill(order_id="x", symbol="SOL", side="buy", qty=1.0, price=75.0,
+                         at=datetime(2026, 8, 8, 13, 0, tzinfo=UTC), closing=False),
+    )
+    assert outcome.exit_fills(fills, symbol="SOL", entry_order_id="e",
+                              exit_side="buy", after=opened) == ()
+
+
+def test_without_a_statement_the_side_still_decides():
+    """Alpaca's path must not regress — it has no ``dir`` and never will."""
+    opened = datetime(2026, 7, 29, 13, 0, tzinfo=UTC)
+    fills = outcome.parse_fills([_fill(at="2026-08-07T13:39:09Z")])
+    assert len(outcome.exit_fills(fills, symbol="INTL", entry_order_id="e",
+                                 exit_side="sell", after=opened)) == 1
+
+
+# ── what it cost to hold ────────────────────────────────────────────────────────────────────
+#
+# The SOL short, closed 2026-08-08 after 11 days: the price move was -5.66528 (which is exactly
+# what the venue's own ``closedPnl`` reported) and holding it cost 0.17263 in fees and 3.43939 in
+# funding across 209 events. So the trade was -0.57R on price and -0.93R in fact. Recording the
+# first as the outcome understates a perp loss by 0.36R, and it gets worse the longer the hold.
+
+def test_gross_pnl_is_the_price_move_and_matches_the_venue():
+    r = outcome.realized(direction="short", entry=74.4, exit_price=75.887, qty=3.81,
+                         stop=77.02, risk_planned=9.9822)
+    # The venue reported closedPnl -5.66528 against its own per-print average; recomputing from
+    # the qty-weighted price lands within 0.0002, which is the price rounding and not a defect.
+    assert round(r.pnl, 5) == -5.66547
+    assert round(r.r_at_fill, 4) == -0.5676
+
+
+def test_costs_are_subtracted_into_a_net_pnl():
+    r = outcome.realized(direction="short", entry=74.4, exit_price=75.887, qty=3.81,
+                         stop=77.02, risk_planned=9.9822,
+                         fees=0.17263, funding=-3.43939)
+    assert round(r.pnl_net, 4) == round(r.pnl - 0.17263 - 3.43939, 4)
+    assert round(r.r_net_at_fill, 4) == -0.9294
+
+
+def test_funding_received_improves_the_net():
+    """Funding is signed — the short side is paid in a backwardated market, and treating it as a
+    cost regardless would understate a winner as reliably as ignoring it overstates a loser."""
+    r = outcome.realized(direction="short", entry=100.0, exit_price=100.0, qty=1.0,
+                         stop=105.0, risk_planned=5.0, fees=0.0, funding=2.0)
+    assert r.pnl == 0.0
+    assert r.pnl_net == 2.0
+
+
+def test_unmeasured_costs_leave_the_net_absent_rather_than_equal_to_gross():
+    """The trap this exists for: defaulting costs to zero makes a perp row silently claim its
+    holding was free, and a 209-event funding bill reads as 0.00."""
+    r = outcome.realized(direction="short", entry=74.4, exit_price=75.887, qty=3.81,
+                         stop=77.02, risk_planned=9.9822)
+    assert r.fees is None
+    assert r.funding is None
+    assert r.pnl_net is None
+    assert r.r_net_at_fill is None
+
+
+def test_equities_measure_zero_funding_rather_than_none():
+    """An equity genuinely has no funding, so 0.0 is a measurement and the net is knowable.
+    ``None`` here would make every Alpaca row uncredible on a term that does not exist."""
+    r = outcome.realized(direction="long", entry=29.621233, exit_price=31.21, qty=1639.0,
+                         stop=29.19, risk_planned=999.79, fees=0.0, funding=0.0)
+    assert r.pnl_net == r.pnl
+    assert r.r_net_at_fill == r.r_at_fill
+
+
+def test_a_row_whose_holding_cost_is_unknown_is_not_evidence():
+    """Not ``False`` but ``None`` — unmeasured, the same as an unreadable market. A perp outcome
+    missing 0.36R of funding is not a disproven row, it is an unfinished one."""
+    q = outcome.fill_quality(qty=3.81, median_volume=1_000_000.0, ceiling=0.01, paper=False,
+                             stop_survival=1.0, costs_known=False)
+    assert q.credible is None
+
+
+def test_a_row_with_known_costs_and_nothing_against_it_is_evidence():
+    q = outcome.fill_quality(qty=3.81, median_volume=1_000_000.0, ceiling=0.01, paper=False,
+                             stop_survival=1.0, costs_known=True)
+    assert q.credible is True
+
+
+def test_a_venue_that_charges_nothing_on_its_prints_reports_zero_fees():
+    """Alpaca prints carry no fee field at all. ``None`` here would make ``costs_known`` false on
+    every equity close and strip ``credible`` from the entire Alpaca history over a fee that does
+    not exist — a silent regression the suite would not otherwise have caught."""
+    fills = outcome.parse_fills([_fill(order_id="e")])
+    assert outcome.fees_for(fills, ["e"]) == 0.0
+
+
+def test_a_venue_that_does_charge_is_summed_across_entry_and_exit():
+    fills = (
+        outcome.ExitFill(order_id="e", symbol="SOL", side="sell", qty=3.81, price=74.4,
+                         at=None, closing=False, fee=0.04252),
+        outcome.ExitFill(order_id="x", symbol="SOL", side="buy", qty=3.81, price=75.888,
+                         at=None, closing=True, fee=0.13011),
+    )
+    assert round(outcome.fees_for(fills, ["e", "x"]), 5) == 0.17263
+
+
+def test_no_matching_prints_says_nothing_about_fees():
+    """Distinct from a measured zero: there is no order here to have been charged for."""
+    assert outcome.fees_for(outcome.parse_fills([_fill(order_id="e")]), ["other"]) is None
