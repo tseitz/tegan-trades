@@ -1,30 +1,30 @@
 {
   "$ONION": {
-    "market_cap_rank": 10091,
+    "market_cap_rank": 10143,
     "name": "MyOnion.fun"
   },
   "0G": {
-    "market_cap_rank": 623,
+    "market_cap_rank": 583,
     "name": "0G"
   },
   "1INCH": {
-    "market_cap_rank": 232,
+    "market_cap_rank": 228,
     "name": "1INCH"
   },
   "2Z": {
-    "market_cap_rank": 168,
+    "market_cap_rank": 167,
     "name": "DoubleZero"
   },
   "3LON": {
-    "market_cap_rank": 960,
+    "market_cap_rank": 976,
     "name": "3lon"
   },
   "67": {
-    "market_cap_rank": 739,
+    "market_cap_rank": 734,
     "name": "SIXSEVEN"
   },
   "A": {
-    "market_cap_rank": 244,
+    "market_cap_rank": 245,
     "name": "Vaulta"
   },
   "A7A5": {
@@ -36,31 +36,31 @@
     "name": "Aave"
   },
   "AB": {
-    "market_cap_rank": 264,
+    "market_cap_rank": 269,
     "name": "AB"
   },
   "ABEY": {
-    "market_cap_rank": 936,
+    "market_cap_rank": 923,
     "name": "Abey"
   },
   "ABT": {
-    "market_cap_rank": 855,
+    "market_cap_rank": 857,
     "name": "Arcblock"
   },
   "ACRDX": {
-    "market_cap_rank": 411,
+    "market_cap_rank": 416,
     "name": "Anemoy Tokenized Apollo Diversified Credit Fund"
   },
   "ACRED": {
-    "market_cap_rank": 233,
+    "market_cap_rank": 232,
     "name": "Apollo Diversified Credit Securitize Fund"
   },
   "ACU": {
-    "market_cap_rank": 690,
+    "market_cap_rank": 660,
     "name": "Acurast"
   },
   "ACX": {
-    "market_cap_rank": 659,
+    "market_cap_rank": 663,
     "name": "Across Protocol"
   },
   "ADA": {
@@ -68,11 +68,11 @@
     "name": "Cardano"
   },
   "ADI": {
-    "market_cap_rank": 343,
+    "market_cap_rank": 347,
     "name": "ADI"
   },
   "ADS": {
-    "market_cap_rank": 907,
+    "market_cap_rank": 912,
     "name": "Adshares"
   },
   "AERO": {
@@ -80,19 +80,15 @@
     "name": "Aerodrome Finance"
   },
   "AEVO": {
-    "market_cap_rank": 850,
+    "market_cap_rank": 835,
     "name": "Aevo"
   },
-  "AGGON": {
-    "market_cap_rank": 950,
-    "name": "iShares Core US Aggregate Bond ETF (Ondo Tokenized ETF)"
-  },
   "AGIX": {
-    "market_cap_rank": 940,
+    "market_cap_rank": 953,
     "name": "SingularityNET"
   },
   "AI": {
-    "market_cap_rank": 654,
+    "market_cap_rank": 648,
     "name": "Gensyn"
   },
   "AIAT": {
@@ -104,39 +100,39 @@
     "name": "GAIB AID"
   },
   "AIOT": {
-    "market_cap_rank": 1133,
+    "market_cap_rank": 1140,
     "name": "OKZOO"
   },
   "AIOZ": {
-    "market_cap_rank": 371,
+    "market_cap_rank": 378,
     "name": "AIOZ Network"
   },
   "AIPF": {
-    "market_cap_rank": 489,
+    "market_cap_rank": 472,
     "name": "AI Powered Finance"
   },
   "AIX": {
-    "market_cap_rank": 550,
+    "market_cap_rank": 513,
     "name": "AI XOVIA"
   },
   "AIXBT": {
-    "market_cap_rank": 871,
+    "market_cap_rank": 863,
     "name": "aixbt"
   },
   "AKE": {
-    "market_cap_rank": 263,
+    "market_cap_rank": 271,
     "name": "Akedo"
   },
   "AKT": {
-    "market_cap_rank": 200,
+    "market_cap_rank": 195,
     "name": "Akash Network"
   },
   "ALCH": {
-    "market_cap_rank": 726,
+    "market_cap_rank": 730,
     "name": "Alchemist AI"
   },
   "ALEO": {
-    "market_cap_rank": 759,
+    "market_cap_rank": 782,
     "name": "ALEO"
   },
   "ALFW": {
@@ -148,7 +144,7 @@
     "name": "Algorand"
   },
   "ALLO": {
-    "market_cap_rank": 345,
+    "market_cap_rank": 304,
     "name": "Allora"
   },
   "ALT": {
@@ -160,39 +156,39 @@
     "name": "America Party"
   },
   "AMP": {
-    "market_cap_rank": 558,
+    "market_cap_rank": 577,
     "name": "Amp"
   },
   "ANA": {
-    "market_cap_rank": 602,
+    "market_cap_rank": 606,
     "name": "Nirvana ANA"
   },
   "ANKR": {
-    "market_cap_rank": 568,
+    "market_cap_rank": 565,
     "name": "Ankr Network"
   },
   "ANSEM": {
-    "market_cap_rank": 315,
+    "market_cap_rank": 294,
     "name": "The Black Bull"
   },
   "ANTFUN": {
-    "market_cap_rank": 128,
+    "market_cap_rank": 129,
     "name": "AntFun"
   },
   "ANVL": {
-    "market_cap_rank": 437,
+    "market_cap_rank": 335,
     "name": "Anvil"
   },
   "AP3X": {
-    "market_cap_rank": 658,
+    "market_cap_rank": 661,
     "name": "APEX"
   },
   "APE": {
-    "market_cap_rank": 209,
+    "market_cap_rank": 212,
     "name": "ApeCoin"
   },
   "APEPE": {
-    "market_cap_rank": 165,
+    "market_cap_rank": 162,
     "name": "Ape and Pepe"
   },
   "APES": {
@@ -200,59 +196,59 @@
     "name": "APES"
   },
   "APEX": {
-    "market_cap_rank": 591,
+    "market_cap_rank": 609,
     "name": "APEX"
   },
   "API3": {
-    "market_cap_rank": 673,
+    "market_cap_rank": 671,
     "name": "Api3"
   },
   "APR": {
-    "market_cap_rank": 390,
+    "market_cap_rank": 382,
     "name": "aPriori"
   },
   "APT": {
-    "market_cap_rank": 99,
+    "market_cap_rank": 98,
     "name": "Aptos"
   },
   "APTM": {
-    "market_cap_rank": 864,
+    "market_cap_rank": 876,
     "name": "Apertum"
   },
   "APXUSD": {
-    "market_cap_rank": 126,
+    "market_cap_rank": 125,
     "name": "apxUSD"
   },
   "APYUSD": {
-    "market_cap_rank": 175,
+    "market_cap_rank": 171,
     "name": "apyUSD"
   },
+  "AQUA": {
+    "market_cap_rank": 954,
+    "name": "Aquarius"
+  },
   "AR": {
-    "market_cap_rank": 230,
+    "market_cap_rank": 229,
     "name": "Arweave"
   },
   "ARARA": {
-    "market_cap_rank": 904,
+    "market_cap_rank": 908,
     "name": "Araracoin"
   },
   "ARB": {
-    "market_cap_rank": 97,
+    "market_cap_rank": 95,
     "name": "Arbitrum"
   },
   "ARC": {
-    "market_cap_rank": 406,
+    "market_cap_rank": 315,
     "name": "AI Rig Complex"
   },
   "ARDR": {
-    "market_cap_rank": 872,
+    "market_cap_rank": 849,
     "name": "Ardor"
   },
-  "ARENA": {
-    "market_cap_rank": 961,
-    "name": "The Arena"
-  },
   "ARK": {
-    "market_cap_rank": 826,
+    "market_cap_rank": 829,
     "name": "ARK"
   },
   "ARKM": {
@@ -260,43 +256,43 @@
     "name": "Arkham"
   },
   "ARPA": {
-    "market_cap_rank": 1246,
+    "market_cap_rank": 1258,
     "name": "ARPA"
   },
   "ARRR": {
-    "market_cap_rank": 433,
+    "market_cap_rank": 441,
     "name": "Pirate Chain"
   },
   "ARW": {
-    "market_cap_rank": 3331,
+    "market_cap_rank": 3450,
     "name": "Arowana"
   },
   "ARX": {
-    "market_cap_rank": 616,
+    "market_cap_rank": 657,
     "name": "Arcium"
   },
   "ASSET": {
-    "market_cap_rank": 502,
+    "market_cap_rank": 510,
     "name": "REAL"
   },
   "ASTER": {
-    "market_cap_rank": 47,
+    "market_cap_rank": 46,
     "name": "Aster"
   },
   "ASTEROID": {
-    "market_cap_rank": 731,
+    "market_cap_rank": 729,
     "name": "Asteroid Shiba"
   },
   "ASTR": {
-    "market_cap_rank": 485,
+    "market_cap_rank": 478,
     "name": "Astar"
   },
   "AT": {
-    "market_cap_rank": 572,
+    "market_cap_rank": 588,
     "name": "Apro"
   },
   "ATH": {
-    "market_cap_rank": 291,
+    "market_cap_rank": 288,
     "name": "Aethir"
   },
   "ATOM": {
@@ -304,55 +300,59 @@
     "name": "Cosmos Hub"
   },
   "ATONE": {
-    "market_cap_rank": 799,
+    "market_cap_rank": 788,
     "name": "AtomOne"
   },
   "ATOS": {
-    "market_cap_rank": 580,
+    "market_cap_rank": 590,
     "name": "Atoshi"
   },
   "AUCTION": {
-    "market_cap_rank": 746,
+    "market_cap_rank": 758,
     "name": "Bounce"
   },
   "AUDIO": {
-    "market_cap_rank": 857,
+    "market_cap_rank": 855,
     "name": "Audius"
   },
   "AUKI": {
-    "market_cap_rank": 782,
+    "market_cap_rank": 751,
     "name": "Auki"
   },
   "AUSD": {
-    "market_cap_rank": 151,
+    "market_cap_rank": 153,
     "name": "AUSD"
   },
   "AUSDT": {
-    "market_cap_rank": 417,
+    "market_cap_rank": 421,
     "name": "Alloy Tether"
   },
+  "AVA": {
+    "market_cap_rank": 941,
+    "name": "AVA (Travala)"
+  },
   "AVAX": {
-    "market_cap_rank": 32,
+    "market_cap_rank": 31,
     "name": "Avalanche"
   },
   "AVNT": {
-    "market_cap_rank": 655,
+    "market_cap_rank": 635,
     "name": "Avantis"
   },
   "AVUSD": {
-    "market_cap_rank": 224,
+    "market_cap_rank": 220,
     "name": "Avant USD"
   },
   "AWE": {
-    "market_cap_rank": 245,
+    "market_cap_rank": 238,
     "name": "AWE Network"
   },
   "AXL": {
-    "market_cap_rank": 461,
+    "market_cap_rank": 463,
     "name": "Axelar"
   },
   "AXS": {
-    "market_cap_rank": 191,
+    "market_cap_rank": 189,
     "name": "Axie Infinity"
   },
   "AZTEC": {
@@ -360,43 +360,39 @@
     "name": "Aztec"
   },
   "B": {
-    "market_cap_rank": 622,
+    "market_cap_rank": 613,
     "name": "Baseline"
   },
   "B2": {
-    "market_cap_rank": 808,
+    "market_cap_rank": 811,
     "name": "BSquared Network"
   },
   "B2M": {
-    "market_cap_rank": 873,
+    "market_cap_rank": 870,
     "name": "Bit2Me"
   },
   "B3": {
-    "market_cap_rank": 786,
+    "market_cap_rank": 784,
     "name": "B3 (Base)"
   },
   "BABY": {
-    "market_cap_rank": 439,
+    "market_cap_rank": 414,
     "name": "Babylon"
   },
   "BABYCLAW": {
-    "market_cap_rank": 12946,
+    "market_cap_rank": 13016,
     "name": "Baby Claw"
   },
   "BABYDOGE": {
-    "market_cap_rank": 382,
+    "market_cap_rank": 368,
     "name": "Baby Doge Coin"
   },
   "BAN": {
-    "market_cap_rank": 311,
+    "market_cap_rank": 300,
     "name": "Comedian"
   },
-  "BANANA": {
-    "market_cap_rank": 959,
-    "name": "Banana Gun"
-  },
   "BANANAS31": {
-    "market_cap_rank": 322,
+    "market_cap_rank": 321,
     "name": "Banana For Scale"
   },
   "BAND": {
@@ -404,31 +400,31 @@
     "name": "Band"
   },
   "BANK": {
-    "market_cap_rank": 834,
+    "market_cap_rank": 886,
     "name": "Lorenzo Protocol"
   },
   "BARD": {
-    "market_cap_rank": 507,
+    "market_cap_rank": 517,
     "name": "Lombard"
   },
   "BAS": {
-    "market_cap_rank": 331,
+    "market_cap_rank": 342,
     "name": "BNB Attestation Service"
   },
   "BASED": {
-    "market_cap_rank": 822,
+    "market_cap_rank": 846,
     "name": "Based"
   },
   "BASEDHYPE": {
-    "market_cap_rank": 449,
+    "market_cap_rank": 530,
     "name": "BasedHype"
   },
   "BAT": {
-    "market_cap_rank": 255,
+    "market_cap_rank": 252,
     "name": "Basic Attention"
   },
   "BC": {
-    "market_cap_rank": 132,
+    "market_cap_rank": 133,
     "name": "BCGame Coin"
   },
   "BCAP": {
@@ -436,7 +432,7 @@
     "name": "Blockchain Capital"
   },
   "BCE": {
-    "market_cap_rank": 440,
+    "market_cap_rank": 438,
     "name": "bitcastle Token"
   },
   "BCH": {
@@ -444,43 +440,43 @@
     "name": "Bitcoin Cash"
   },
   "BCSPX": {
-    "market_cap_rank": 618,
+    "market_cap_rank": 620,
     "name": "Backed CSPX Core S&P 500"
   },
   "BDCA": {
-    "market_cap_rank": 526,
+    "market_cap_rank": 538,
     "name": "BitDCA"
   },
   "BDX": {
-    "market_cap_rank": 86,
+    "market_cap_rank": 81,
     "name": "Beldex"
   },
   "BEAM": {
-    "market_cap_rank": 310,
+    "market_cap_rank": 325,
     "name": "Beam"
   },
   "BEAT": {
-    "market_cap_rank": 91,
+    "market_cap_rank": 79,
     "name": "Audiera"
   },
   "BERA": {
-    "market_cap_rank": 420,
+    "market_cap_rank": 422,
     "name": "Berachain"
   },
   "BFC": {
-    "market_cap_rank": 958,
+    "market_cap_rank": 962,
     "name": "Bifrost"
   },
   "BFUSD": {
-    "market_cap_rank": 56,
+    "market_cap_rank": 55,
     "name": "BFUSD"
   },
   "BGB": {
-    "market_cap_rank": 62,
+    "market_cap_rank": 61,
     "name": "Bitget Token"
   },
   "BGBTC": {
-    "market_cap_rank": 414,
+    "market_cap_rank": 417,
     "name": "Bitget Wrapped BTC"
   },
   "BIB01": {
@@ -488,47 +484,47 @@
     "name": "Backed IB01 $ Treasury Bond 0-1yr"
   },
   "BICO": {
-    "market_cap_rank": 789,
+    "market_cap_rank": 493,
     "name": "Biconomy"
   },
   "BIGTIME": {
-    "market_cap_rank": 1125,
+    "market_cap_rank": 1146,
     "name": "Big Time"
   },
   "BILL": {
-    "market_cap_rank": 370,
+    "market_cap_rank": 372,
     "name": "Billions Network"
   },
   "BIM": {
-    "market_cap_rank": 529,
+    "market_cap_rank": 531,
     "name": "BIM"
   },
   "BIO": {
-    "market_cap_rank": 410,
+    "market_cap_rank": 399,
     "name": "Bio Protocol"
   },
-  "BIRB": {
-    "market_cap_rank": 952,
-    "name": "Moonbirds"
+  "BITCOIN": {
+    "market_cap_rank": 922,
+    "name": "HarryPotterObamaSonic10Inu (ETH)"
   },
   "BLAST": {
-    "market_cap_rank": 905,
+    "market_cap_rank": 899,
     "name": "Blast"
   },
   "BLESS": {
-    "market_cap_rank": 427,
+    "market_cap_rank": 720,
     "name": "Bless"
   },
   "BLUAI": {
-    "market_cap_rank": 930,
+    "market_cap_rank": 719,
     "name": "Bluwhale"
   },
   "BLUR": {
-    "market_cap_rank": 503,
+    "market_cap_rank": 512,
     "name": "Blur"
   },
   "BMX": {
-    "market_cap_rank": 868,
+    "market_cap_rank": 864,
     "name": "BitMart"
   },
   "BNB": {
@@ -536,55 +532,55 @@
     "name": "BNB"
   },
   "BNKR": {
-    "market_cap_rank": 579,
+    "market_cap_rank": 591,
     "name": "BankrCoin"
   },
   "BNT": {
-    "market_cap_rank": 671,
+    "market_cap_rank": 676,
     "name": "Bancor Network"
   },
   "BNX": {
-    "market_cap_rank": 885,
+    "market_cap_rank": 889,
     "name": "BinaryX [OLD]"
   },
   "BOLD": {
-    "market_cap_rank": 633,
+    "market_cap_rank": 631,
     "name": "BOLD"
   },
   "BOME": {
-    "market_cap_rank": 495,
+    "market_cap_rank": 459,
     "name": "BOOK OF MEME"
   },
   "BONK": {
-    "market_cap_rank": 144,
+    "market_cap_rank": 146,
     "name": "Bonk"
   },
   "BORA": {
-    "market_cap_rank": 737,
+    "market_cap_rank": 740,
     "name": "BORA"
   },
   "BORG": {
-    "market_cap_rank": 202,
+    "market_cap_rank": 198,
     "name": "SwissBorg"
   },
   "BOT": {
-    "market_cap_rank": 317,
+    "market_cap_rank": 322,
     "name": "BOT"
   },
   "BP": {
-    "market_cap_rank": 248,
+    "market_cap_rank": 249,
     "name": "Backpack"
   },
   "BPX": {
-    "market_cap_rank": 798,
+    "market_cap_rank": 809,
     "name": "Black Phoenix"
   },
   "BR": {
-    "market_cap_rank": 479,
+    "market_cap_rank": 518,
     "name": "Bedrock"
   },
   "BRETT": {
-    "market_cap_rank": 494,
+    "market_cap_rank": 495,
     "name": "Brett"
   },
   "BREV": {
@@ -592,27 +588,31 @@
     "name": "Brevis"
   },
   "BRLA": {
-    "market_cap_rank": 720,
+    "market_cap_rank": 612,
     "name": "BRLA Digital BRLA"
   },
   "BRLV": {
-    "market_cap_rank": 309,
+    "market_cap_rank": 313,
     "name": "Crown BRLV"
   },
+  "BROCCOLI": {
+    "market_cap_rank": 947,
+    "name": "CZ's Dog"
+  },
   "BRZ": {
-    "market_cap_rank": 386,
+    "market_cap_rank": 388,
     "name": "Brazilian Digital"
   },
   "BSB": {
-    "market_cap_rank": 578,
+    "market_cap_rank": 556,
     "name": "Block Street"
   },
   "BSPX": {
-    "market_cap_rank": 270,
+    "market_cap_rank": 274,
     "name": "Bending Spoons xStock"
   },
   "BSV": {
-    "market_cap_rank": 135,
+    "market_cap_rank": 130,
     "name": "Bitcoin SV"
   },
   "BTC": {
@@ -620,11 +620,11 @@
     "name": "Bitcoin"
   },
   "BTCP": {
-    "market_cap_rank": 2807,
+    "market_cap_rank": 2838,
     "name": "Bitcoin Pro"
   },
   "BTSE": {
-    "market_cap_rank": 210,
+    "market_cap_rank": 205,
     "name": "BTSE Token"
   },
   "BTT": {
@@ -632,11 +632,11 @@
     "name": "BitTorrent"
   },
   "BTW": {
-    "market_cap_rank": 109,
+    "market_cap_rank": 118,
     "name": "Bitway"
   },
   "BTY": {
-    "market_cap_rank": 729,
+    "market_cap_rank": 745,
     "name": "Bityuan"
   },
   "BUCK": {
@@ -648,183 +648,187 @@
     "name": "BlackRock USD Institutional Digital Liquidity Fund"
   },
   "BULLA": {
-    "market_cap_rank": 1678,
+    "market_cap_rank": 1709,
     "name": "BULLA"
   },
   "BURN": {
-    "market_cap_rank": 553,
+    "market_cap_rank": 563,
     "name": "BurnedFi"
   },
   "BUSD": {
-    "market_cap_rank": 2310,
+    "market_cap_rank": 2324,
     "name": "BUSD"
   },
+  "C98": {
+    "market_cap_rank": 935,
+    "name": "Coin98"
+  },
   "CAKE": {
-    "market_cap_rank": 104,
+    "market_cap_rank": 102,
     "name": "PancakeSwap"
   },
   "CAP": {
-    "market_cap_rank": 423,
+    "market_cap_rank": 385,
     "name": "Cap"
   },
   "CARDS": {
-    "market_cap_rank": 486,
+    "market_cap_rank": 539,
     "name": "Collector Crypt"
   },
   "CARV": {
-    "market_cap_rank": 841,
+    "market_cap_rank": 789,
     "name": "CARV"
   },
   "CASH": {
-    "market_cap_rank": 228,
+    "market_cap_rank": 226,
     "name": "CASH"
   },
   "CASHCAT": {
-    "market_cap_rank": 217,
+    "market_cap_rank": 268,
     "name": "Cash Cat"
   },
   "CATI": {
-    "market_cap_rank": 830,
+    "market_cap_rank": 837,
     "name": "Catizen"
   },
   "CAW": {
-    "market_cap_rank": 870,
+    "market_cap_rank": 888,
     "name": "A Hunters Dream"
   },
   "CBK": {
-    "market_cap_rank": 899,
+    "market_cap_rank": 898,
     "name": "Cobak"
   },
   "CC": {
-    "market_cap_rank": 24,
+    "market_cap_rank": 26,
     "name": "Canton"
   },
   "CCD": {
-    "market_cap_rank": 469,
+    "market_cap_rank": 497,
     "name": "Concordium"
   },
   "CELO": {
-    "market_cap_rank": 541,
+    "market_cap_rank": 529,
     "name": "Celo"
   },
   "CELR": {
-    "market_cap_rank": 1151,
+    "market_cap_rank": 1145,
     "name": "Celer Network"
   },
   "CET": {
-    "market_cap_rank": 675,
+    "market_cap_rank": 674,
     "name": "CoinEx"
   },
   "CETUS": {
-    "market_cap_rank": 888,
+    "market_cap_rank": 877,
     "name": "Cetus Protocol"
   },
   "CFG": {
-    "market_cap_rank": 351,
+    "market_cap_rank": 361,
     "name": "Centrifuge"
   },
   "CFX": {
-    "market_cap_rank": 160,
+    "market_cap_rank": 151,
     "name": "Conflux"
   },
   "CGPT": {
-    "market_cap_rank": 854,
+    "market_cap_rank": 862,
     "name": "ChainGPT"
   },
   "CGUSD": {
-    "market_cap_rank": 300,
+    "market_cap_rank": 303,
     "name": "Cygnus Finance Global USD"
   },
   "CHEEMS": {
-    "market_cap_rank": 257,
+    "market_cap_rank": 256,
     "name": "Cheems Token"
   },
   "CHFAU": {
-    "market_cap_rank": 368,
+    "market_cap_rank": 370,
     "name": "AllUnity CHF"
   },
   "CHIP": {
-    "market_cap_rank": 425,
+    "market_cap_rank": 423,
     "name": "USD.AI"
   },
   "CHZ": {
-    "market_cap_rank": 205,
+    "market_cap_rank": 207,
     "name": "Chiliz"
   },
   "CKB": {
-    "market_cap_rank": 490,
+    "market_cap_rank": 486,
     "name": "Nervos Network"
   },
   "CLO": {
-    "market_cap_rank": 902,
+    "market_cap_rank": 918,
     "name": "Yei Finance"
   },
   "COAI": {
-    "market_cap_rank": 354,
+    "market_cap_rank": 336,
     "name": "ChainOpera AI"
   },
   "COCO": {
-    "market_cap_rank": 169,
+    "market_cap_rank": 165,
     "name": "coco"
   },
   "COINDEPO": {
-    "market_cap_rank": 607,
+    "market_cap_rank": 624,
     "name": "COINDEPO"
   },
   "COLLECT": {
-    "market_cap_rank": 640,
+    "market_cap_rank": 655,
     "name": "Collect on Fanable"
   },
   "COMP": {
-    "market_cap_rank": 188,
+    "market_cap_rank": 183,
     "name": "Compound"
   },
   "CORE": {
-    "market_cap_rank": 713,
+    "market_cap_rank": 723,
     "name": "Core"
   },
   "COTI": {
-    "market_cap_rank": 454,
+    "market_cap_rank": 528,
     "name": "COTI"
   },
   "COW": {
-    "market_cap_rank": 358,
+    "market_cap_rank": 362,
     "name": "CoW Protocol"
   },
   "CPOOL": {
-    "market_cap_rank": 845,
+    "market_cap_rank": 850,
     "name": "Clearpool"
   },
   "CRABAI": {
-    "market_cap_rank": 942,
+    "market_cap_rank": 950,
     "name": "Claude Crab"
   },
   "CRCLB": {
-    "market_cap_rank": 328,
+    "market_cap_rank": 324,
     "name": "Circle Internet Group (bStocks Tokenized Stock)"
   },
   "CRCLON": {
-    "market_cap_rank": 273,
+    "market_cap_rank": 267,
     "name": "Circle Internet Group (Ondo Tokenized Stock)"
   },
   "CRCLX": {
-    "market_cap_rank": 421,
+    "market_cap_rank": 403,
     "name": "Circle xStock"
   },
   "CRMC": {
-    "market_cap_rank": 1560,
+    "market_cap_rank": 1781,
     "name": "Chrema Coin"
   },
   "CRO": {
-    "market_cap_rank": 37,
+    "market_cap_rank": 38,
     "name": "Cronos"
   },
   "CROSS": {
-    "market_cap_rank": 434,
+    "market_cap_rank": 429,
     "name": "CROSS"
   },
   "CRV": {
-    "market_cap_rank": 120,
+    "market_cap_rank": 116,
     "name": "Curve DAO"
   },
   "CRVUSD": {
@@ -832,67 +836,67 @@
     "name": "crvUSD"
   },
   "CSPR": {
-    "market_cap_rank": 619,
+    "market_cap_rank": 599,
     "name": "Casper Network"
   },
   "CTC": {
-    "market_cap_rank": 528,
+    "market_cap_rank": 527,
     "name": "Creditcoin"
   },
   "CTK": {
-    "market_cap_rank": 895,
+    "market_cap_rank": 881,
     "name": "Shentu"
   },
   "CTSI": {
-    "market_cap_rank": 606,
+    "market_cap_rank": 722,
     "name": "Cartesi"
   },
   "CURR": {
-    "market_cap_rank": 921,
+    "market_cap_rank": 951,
     "name": "CURRENC Group Inc."
   },
   "CUSD": {
-    "market_cap_rank": 266,
+    "market_cap_rank": 264,
     "name": "Cap USD"
   },
   "CUSDO": {
-    "market_cap_rank": 914,
+    "market_cap_rank": 928,
     "name": "Compounding OpenDollar"
   },
   "CVC": {
-    "market_cap_rank": 949,
+    "market_cap_rank": 955,
     "name": "Civic"
   },
   "CVX": {
-    "market_cap_rank": 201,
+    "market_cap_rank": 203,
     "name": "Convex Finance"
   },
   "CX": {
-    "market_cap_rank": 549,
+    "market_cap_rank": 578,
     "name": "Cortex"
   },
   "CXO": {
-    "market_cap_rank": 709,
+    "market_cap_rank": 710,
     "name": "CargoX"
   },
   "CYBER": {
-    "market_cap_rank": 753,
+    "market_cap_rank": 766,
     "name": "CYBER"
   },
   "CYDX": {
-    "market_cap_rank": 349,
+    "market_cap_rank": 355,
     "name": "CyberDEX"
   },
   "CYS": {
-    "market_cap_rank": 216,
+    "market_cap_rank": 206,
     "name": "Cysic"
   },
   "DAG": {
-    "market_cap_rank": 692,
+    "market_cap_rank": 702,
     "name": "Constellation"
   },
   "DAI": {
-    "market_cap_rank": 274,
+    "market_cap_rank": 276,
     "name": "DAI on PulseChain"
   },
   "DASH": {
@@ -900,11 +904,11 @@
     "name": "Dash"
   },
   "DATA": {
-    "market_cap_rank": 302,
+    "market_cap_rank": 309,
     "name": "Data Network"
   },
   "DBR": {
-    "market_cap_rank": 287,
+    "market_cap_rank": 286,
     "name": "deBridge"
   },
   "DCR": {
@@ -912,59 +916,63 @@
     "name": "Decred"
   },
   "DEEP": {
-    "market_cap_rank": 520,
+    "market_cap_rank": 475,
     "name": "DeepBook"
   },
   "DEGEN": {
-    "market_cap_rank": 458,
+    "market_cap_rank": 451,
     "name": "Degen"
   },
   "DEP": {
-    "market_cap_rank": 665,
+    "market_cap_rank": 668,
     "name": "DEAPCOIN"
   },
   "DETO": {
-    "market_cap_rank": 883,
+    "market_cap_rank": 894,
     "name": "Delta Exchange"
   },
   "DEUS": {
-    "market_cap_rank": 1126,
+    "market_cap_rank": 1111,
     "name": "XMAQUINA"
   },
   "DEXE": {
-    "market_cap_rank": 250,
+    "market_cap_rank": 248,
     "name": "DeXe"
   },
   "DEXNET": {
-    "market_cap_rank": 1794,
+    "market_cap_rank": 1949,
     "name": "DexNet"
   },
   "DG": {
-    "market_cap_rank": 918,
+    "market_cap_rank": 909,
     "name": "DeGate"
   },
   "DGB": {
-    "market_cap_rank": 332,
+    "market_cap_rank": 339,
     "name": "DigiByte"
   },
+  "DIA": {
+    "market_cap_rank": 943,
+    "name": "DIA"
+  },
   "DIEM": {
-    "market_cap_rank": 426,
+    "market_cap_rank": 432,
     "name": "Diem"
   },
   "DINERO": {
-    "market_cap_rank": 1108,
+    "market_cap_rank": 1130,
     "name": "Dinero"
   },
   "DKA": {
-    "market_cap_rank": 866,
+    "market_cap_rank": 901,
     "name": "dKargo"
   },
   "DODO": {
-    "market_cap_rank": 700,
+    "market_cap_rank": 735,
     "name": "DODO"
   },
   "DOG": {
-    "market_cap_rank": 367,
+    "market_cap_rank": 354,
     "name": "Dog (Bitcoin)"
   },
   "DOGE": {
@@ -972,95 +980,95 @@
     "name": "Dogecoin"
   },
   "DOGS": {
-    "market_cap_rank": 839,
+    "market_cap_rank": 834,
     "name": "Dogs"
   },
   "DOLA": {
-    "market_cap_rank": 435,
+    "market_cap_rank": 426,
     "name": "DOLA"
   },
   "DOT": {
-    "market_cap_rank": 52,
+    "market_cap_rank": 54,
     "name": "Polkadot"
   },
   "DOVU": {
-    "market_cap_rank": 813,
+    "market_cap_rank": 801,
     "name": "DOVU"
   },
   "DRAMB": {
-    "market_cap_rank": 754,
+    "market_cap_rank": 762,
     "name": "Roundhill Memory ETF (bStocks Tokenized Stock)"
   },
   "DRV": {
-    "market_cap_rank": 259,
+    "market_cap_rank": 262,
     "name": "Derive"
   },
   "DUAL": {
-    "market_cap_rank": 803,
+    "market_cap_rank": 805,
     "name": "Dual"
   },
   "DUSD": {
-    "market_cap_rank": 324,
+    "market_cap_rank": 344,
     "name": "StandX DUSD"
   },
   "DUSK": {
-    "market_cap_rank": 540,
+    "market_cap_rank": 499,
     "name": "DUSK"
   },
   "DYDX": {
-    "market_cap_rank": 261,
+    "market_cap_rank": 260,
     "name": "dYdX"
   },
   "EARNUSD": {
-    "market_cap_rank": 698,
+    "market_cap_rank": 692,
     "name": "Lido EarnUSD"
   },
   "EAT": {
-    "market_cap_rank": 2213,
+    "market_cap_rank": 2241,
     "name": "WYDE: End Hunger"
   },
   "EBTC": {
-    "market_cap_rank": 551,
+    "market_cap_rank": 553,
     "name": "eBTC"
   },
   "EDEN": {
-    "market_cap_rank": 911,
+    "market_cap_rank": 890,
     "name": "OpenEden"
   },
   "EDGE": {
-    "market_cap_rank": 897,
+    "market_cap_rank": 907,
     "name": "Definitive"
   },
   "EDU": {
-    "market_cap_rank": 667,
+    "market_cap_rank": 651,
     "name": "Open Campus"
   },
   "EGLD": {
-    "market_cap_rank": 284,
+    "market_cap_rank": 292,
     "name": "MultiversX"
   },
   "EIGEN": {
-    "market_cap_rank": 207,
+    "market_cap_rank": 213,
     "name": "EigenCloud (prev. EigenLayer)"
   },
   "ELEPHANT": {
-    "market_cap_rank": 821,
+    "market_cap_rank": 820,
     "name": "Elephant Money"
   },
   "ELF": {
-    "market_cap_rank": 428,
+    "market_cap_rank": 430,
     "name": "aelf"
   },
   "ELG": {
-    "market_cap_rank": 401,
+    "market_cap_rank": 398,
     "name": "Escoin"
   },
   "ELON": {
-    "market_cap_rank": 668,
+    "market_cap_rank": 687,
     "name": "Dogelon Mars"
   },
   "EMRL.D": {
-    "market_cap_rank": 566,
+    "market_cap_rank": 570,
     "name": "Emerald Security Token"
   },
   "ENA": {
@@ -1068,27 +1076,27 @@
     "name": "Ethena"
   },
   "ENJ": {
-    "market_cap_rank": 412,
+    "market_cap_rank": 418,
     "name": "Enjin Coin"
   },
   "ENS": {
-    "market_cap_rank": 176,
+    "market_cap_rank": 170,
     "name": "Ethereum Name Service"
   },
   "ENSO": {
-    "market_cap_rank": 809,
+    "market_cap_rank": 803,
     "name": "Enso"
   },
   "EPIC": {
-    "market_cap_rank": 682,
+    "market_cap_rank": 536,
     "name": "Epic Chain"
   },
   "ERG": {
-    "market_cap_rank": 832,
+    "market_cap_rank": 795,
     "name": "Ergo"
   },
   "ESP": {
-    "market_cap_rank": 530,
+    "market_cap_rank": 500,
     "name": "Espresso"
   },
   "ETC": {
@@ -1100,27 +1108,27 @@
     "name": "Ethereum"
   },
   "ETH:GUSDCQ": {
-    "market_cap_rank": 719,
+    "market_cap_rank": 721,
     "name": "Galaxy USDC Quality (Ethereum)"
   },
   "ETH:GUSDTQ": {
-    "market_cap_rank": 661,
+    "market_cap_rank": 672,
     "name": "Galaxy USDT Quality"
   },
   "ETH:GWETHQ": {
-    "market_cap_rank": 874,
+    "market_cap_rank": 880,
     "name": "Galaxy WETH Quality"
   },
   "ETHFI": {
-    "market_cap_rank": 117,
+    "market_cap_rank": 112,
     "name": "Ether.fi"
   },
   "ETHW": {
-    "market_cap_rank": 685,
+    "market_cap_rank": 690,
     "name": "EthereumPoW"
   },
   "EUL": {
-    "market_cap_rank": 595,
+    "market_cap_rank": 647,
     "name": "Euler"
   },
   "EURC": {
@@ -1128,91 +1136,91 @@
     "name": "EURC"
   },
   "EURCV": {
-    "market_cap_rank": 184,
+    "market_cap_rank": 182,
     "name": "EUR CoinVertible"
   },
   "EURE": {
-    "market_cap_rank": 676,
+    "market_cap_rank": 677,
     "name": "Monerium EUR emoney [OLD]"
   },
   "EURI": {
-    "market_cap_rank": 515,
+    "market_cap_rank": 521,
     "name": "Eurite"
   },
   "EURSAFO": {
-    "market_cap_rank": 66,
+    "market_cap_rank": 64,
     "name": "Spiko Amundi Overnight Swap Fund (EUR)"
   },
   "EURSPKCC": {
-    "market_cap_rank": 604,
+    "market_cap_rank": 607,
     "name": "Spiko Digital Assets Cash & Carry Fund - Euro Share Class"
   },
   "EUSD": {
-    "market_cap_rank": 735,
+    "market_cap_rank": 739,
     "name": "Electronic USD"
   },
   "EUTBL": {
-    "market_cap_rank": 68,
+    "market_cap_rank": 69,
     "name": "Spiko EU T-Bills Money Market Fund"
   },
   "EV": {
-    "market_cap_rank": 771,
+    "market_cap_rank": 769,
     "name": "Everything"
   },
   "EWT": {
-    "market_cap_rank": 738,
+    "market_cap_rank": 728,
     "name": "Energy Web Token"
   },
   "EX": {
-    "market_cap_rank": 9093,
+    "market_cap_rank": 9130,
     "name": "Elexium"
   },
   "EXOD": {
-    "market_cap_rank": 399,
+    "market_cap_rank": 411,
     "name": "EXOD"
   },
   "FAI": {
-    "market_cap_rank": 766,
+    "market_cap_rank": 786,
     "name": "Freysa AI"
   },
   "FARTCOIN": {
-    "market_cap_rank": 215,
+    "market_cap_rank": 216,
     "name": "Fartcoin"
   },
   "FB": {
-    "market_cap_rank": 538,
+    "market_cap_rank": 544,
     "name": "Fractal Bitcoin"
   },
   "FDIT": {
-    "market_cap_rank": 348,
+    "market_cap_rank": 350,
     "name": "Fidelity Digital Interest Token"
   },
   "FDUSD": {
-    "market_cap_rank": 116,
+    "market_cap_rank": 115,
     "name": "First Digital USD"
   },
   "FET": {
-    "market_cap_rank": 124,
+    "market_cap_rank": 123,
     "name": "Artificial Superintelligence Alliance"
   },
   "FEUSD": {
-    "market_cap_rank": 303,
+    "market_cap_rank": 305,
     "name": "Felix feUSD"
   },
   "FF": {
-    "market_cap_rank": 166,
+    "market_cap_rank": 164,
     "name": "Falcon Finance"
   },
   "FGRS": {
-    "market_cap_rank": 154,
+    "market_cap_rank": 169,
     "name": "FGRS (Figure Tokenized Stock)"
   },
   "FIDA": {
-    "market_cap_rank": 833,
+    "market_cap_rank": 852,
     "name": "Bonfida"
   },
   "FIDD": {
-    "market_cap_rank": 424,
+    "market_cap_rank": 427,
     "name": "Fidelity Digital Dollar"
   },
   "FIGR_HELOC": {
@@ -1220,31 +1228,31 @@
     "name": "Figure Heloc"
   },
   "FIL": {
-    "market_cap_rank": 89,
+    "market_cap_rank": 91,
     "name": "Filecoin"
   },
   "FILQ-A": {
-    "market_cap_rank": 452,
+    "market_cap_rank": 454,
     "name": "Fidelity USD Digital Liquidity Fund-Acc"
   },
   "FINS": {
-    "market_cap_rank": 10169,
+    "market_cap_rank": 10213,
     "name": "FINS"
   },
   "FIUSD": {
-    "market_cap_rank": 430,
+    "market_cap_rank": 431,
     "name": "Sygnum FIUSD Liquidity Fund"
   },
   "FLIP": {
-    "market_cap_rank": 627,
+    "market_cap_rank": 625,
     "name": "Chainflip"
   },
   "FLOKI": {
-    "market_cap_rank": 163,
+    "market_cap_rank": 155,
     "name": "FLOKI"
   },
   "FLOW": {
-    "market_cap_rank": 455,
+    "market_cap_rank": 439,
     "name": "Flow"
   },
   "FLR": {
@@ -1252,35 +1260,35 @@
     "name": "Flare"
   },
   "FLUID": {
-    "market_cap_rank": 267,
+    "market_cap_rank": 251,
     "name": "Fluid"
   },
   "FLUX": {
-    "market_cap_rank": 891,
+    "market_cap_rank": 885,
     "name": "Flux"
   },
   "FM": {
-    "market_cap_rank": 2202,
+    "market_cap_rank": 2369,
     "name": "Full Moon"
   },
   "FO": {
-    "market_cap_rank": 483,
+    "market_cap_rank": 491,
     "name": "Official FO"
   },
   "FOGO": {
-    "market_cap_rank": 594,
+    "market_cap_rank": 585,
     "name": "Fogo"
   },
   "FOLKS": {
-    "market_cap_rank": 534,
+    "market_cap_rank": 579,
     "name": "FOLKS"
   },
   "FONQ": {
-    "market_cap_rank": 514,
+    "market_cap_rank": 519,
     "name": "FONQ"
   },
   "FORM": {
-    "market_cap_rank": 289,
+    "market_cap_rank": 291,
     "name": "Four"
   },
   "FRAX": {
@@ -1288,83 +1296,75 @@
     "name": "Frax (prev. FXS)"
   },
   "FRTC": {
-    "market_cap_rank": 938,
+    "market_cap_rank": 942,
     "name": "FART COIN"
   },
   "FRXUSD": {
-    "market_cap_rank": 243,
+    "market_cap_rank": 241,
     "name": "Frax USD"
   },
   "FT": {
-    "market_cap_rank": 395,
+    "market_cap_rank": 401,
     "name": "Flying Tulip"
   },
   "FTRB": {
-    "market_cap_rank": 986,
+    "market_cap_rank": 999,
     "name": "Faith Tribe"
   },
   "FUN": {
-    "market_cap_rank": 474,
+    "market_cap_rank": 490,
     "name": "FUNToken"
   },
-  "FUZZY": {
-    "market_cap_rank": 954,
-    "name": "Fuzzybear"
-  },
   "FWT": {
-    "market_cap_rank": 9605,
+    "market_cap_rank": 9684,
     "name": "Fade Wallet Token"
   },
-  "FXN": {
-    "market_cap_rank": 2318,
-    "name": "f(x) Protocol"
-  },
   "FXSAVE": {
-    "market_cap_rank": 376,
+    "market_cap_rank": 379,
     "name": "f(x) USD Saving"
   },
   "FXUSD": {
-    "market_cap_rank": 344,
+    "market_cap_rank": 349,
     "name": "f(x) Protocol fxUSD"
   },
   "G": {
-    "market_cap_rank": 684,
+    "market_cap_rank": 703,
     "name": "Gravity (by Galxe)"
   },
   "GAL": {
-    "market_cap_rank": 537,
+    "market_cap_rank": 543,
     "name": "GAL (migrated to Gravity - G)"
   },
   "GALA": {
-    "market_cap_rank": 280,
+    "market_cap_rank": 278,
     "name": "GALA"
   },
   "GAMA": {
-    "market_cap_rank": 811,
+    "market_cap_rank": 822,
     "name": "Gama Token"
   },
   "GAME": {
-    "market_cap_rank": 898,
+    "market_cap_rank": 940,
     "name": "GameBuild"
   },
   "GAS": {
-    "market_cap_rank": 362,
+    "market_cap_rank": 364,
     "name": "Gas"
   },
   "GBPSAFO": {
-    "market_cap_rank": 613,
+    "market_cap_rank": 615,
     "name": "Spiko Amundi Overnight Swap Fund (GBP)"
   },
   "GCOIN": {
-    "market_cap_rank": 656,
+    "market_cap_rank": 707,
     "name": "Playnance"
   },
   "GEKKO": {
-    "market_cap_rank": 524,
+    "market_cap_rank": 534,
     "name": "GEKKO"
   },
   "GENIUS": {
-    "market_cap_rank": 229,
+    "market_cap_rank": 235,
     "name": "Genius"
   },
   "GEOD": {
@@ -1372,19 +1372,19 @@
     "name": "Geodnet"
   },
   "GEODE": {
-    "market_cap_rank": 663,
+    "market_cap_rank": 667,
     "name": "Geode Chain"
   },
   "GGBR": {
-    "market_cap_rank": 586,
+    "market_cap_rank": 587,
     "name": "Goldfish Gold"
   },
   "GHO": {
-    "market_cap_rank": 83,
+    "market_cap_rank": 85,
     "name": "GHO"
   },
   "GIGA": {
-    "market_cap_rank": 859,
+    "market_cap_rank": 858,
     "name": "Gigachad"
   },
   "GIGGLE": {
@@ -1392,63 +1392,67 @@
     "name": "Giggle Fund"
   },
   "GLIDR": {
-    "market_cap_rank": 357,
+    "market_cap_rank": 428,
     "name": "Glidr"
   },
   "GLM": {
-    "market_cap_rank": 271,
+    "market_cap_rank": 272,
     "name": "Golem"
   },
+  "GMRT": {
+    "market_cap_rank": 581,
+    "name": "The Game Company"
+  },
   "GMT": {
-    "market_cap_rank": 774,
+    "market_cap_rank": 778,
     "name": "GMT"
   },
   "GMX": {
-    "market_cap_rank": 338,
+    "market_cap_rank": 334,
     "name": "GMX"
   },
   "GNO": {
-    "market_cap_rank": 130,
+    "market_cap_rank": 132,
     "name": "Gnosis"
   },
   "GOHOME": {
-    "market_cap_rank": 536,
+    "market_cap_rank": 537,
     "name": "GOHOME"
   },
   "GOMINING": {
-    "market_cap_rank": 234,
+    "market_cap_rank": 231,
     "name": "GoMining Token"
   },
   "GOOGLON": {
-    "market_cap_rank": 747,
+    "market_cap_rank": 759,
     "name": "Alphabet Class A (Ondo Tokenized Stock)"
   },
   "GOOGLX": {
-    "market_cap_rank": 617,
+    "market_cap_rank": 614,
     "name": "Alphabet xStock"
   },
   "GPS": {
-    "market_cap_rank": 482,
+    "market_cap_rank": 470,
     "name": "GoPlus Security"
   },
   "GPT": {
-    "market_cap_rank": 1015,
+    "market_cap_rank": 897,
     "name": "Gold Park"
   },
   "GRAM": {
-    "market_cap_rank": 26,
+    "market_cap_rank": 25,
     "name": "Gram (prev. Toncoin)"
   },
   "GRASS": {
-    "market_cap_rank": 161,
+    "market_cap_rank": 159,
     "name": "Grass"
   },
   "GRT": {
-    "market_cap_rank": 189,
+    "market_cap_rank": 187,
     "name": "The Graph"
   },
   "GRVT": {
-    "market_cap_rank": 585,
+    "market_cap_rank": 584,
     "name": "GRVT Token"
   },
   "GRX": {
@@ -1456,99 +1460,91 @@
     "name": "GRX Chain"
   },
   "GT": {
-    "market_cap_rank": 81,
+    "market_cap_rank": 84,
     "name": "Gate"
   },
   "GUSD": {
-    "market_cap_rank": 505,
+    "market_cap_rank": 509,
     "name": "Gemini Dollar"
   },
   "GWEI": {
-    "market_cap_rank": 532,
+    "market_cap_rank": 391,
     "name": "ETHGas"
   },
   "H": {
-    "market_cap_rank": 181,
+    "market_cap_rank": 188,
     "name": "Humanity"
   },
-  "HANDY": {
-    "market_cap_rank": 951,
-    "name": "Handy"
-  },
   "HASH": {
-    "market_cap_rank": 105,
+    "market_cap_rank": 104,
     "name": "Provenance Blockchain"
   },
   "HBAR": {
-    "market_cap_rank": 30,
+    "market_cap_rank": 29,
     "name": "Hedera"
   },
   "HBD": {
-    "market_cap_rank": 605,
+    "market_cap_rank": 608,
     "name": "Hive Dollar"
   },
   "HDX": {
-    "market_cap_rank": 457,
+    "market_cap_rank": 444,
     "name": "Hydration"
   },
   "HEGIC": {
-    "market_cap_rank": 923,
+    "market_cap_rank": 930,
     "name": "Hegic"
   },
   "HEI": {
-    "market_cap_rank": 696,
+    "market_cap_rank": 884,
     "name": "Heima"
   },
   "HEZ": {
-    "market_cap_rank": 569,
+    "market_cap_rank": 572,
     "name": "Hermez Network"
   },
-  "HFT": {
-    "market_cap_rank": 728,
-    "name": "Hashflow"
-  },
   "HFUN": {
-    "market_cap_rank": 896,
+    "market_cap_rank": 916,
     "name": "Hypurr Fun"
   },
   "HIMSON": {
-    "market_cap_rank": 603,
+    "market_cap_rank": 602,
     "name": "Hims & Hers Health (Ondo Tokenized Stock)"
   },
   "HIVE": {
-    "market_cap_rank": 740,
+    "market_cap_rank": 747,
     "name": "Hive"
   },
   "HNT": {
-    "market_cap_rank": 582,
+    "market_cap_rank": 580,
     "name": "Helium"
   },
   "HOLO": {
-    "market_cap_rank": 419,
+    "market_cap_rank": 405,
     "name": "Holoworld"
   },
   "HOME": {
-    "market_cap_rank": 466,
+    "market_cap_rank": 515,
     "name": "HOME"
   },
   "HOT": {
-    "market_cap_rank": 366,
+    "market_cap_rank": 375,
     "name": "Holo"
   },
   "HSK": {
-    "market_cap_rank": 644,
+    "market_cap_rank": 645,
     "name": "HashKey Platform Token"
   },
   "HTX": {
-    "market_cap_rank": 46,
+    "market_cap_rank": 47,
     "name": "HTX DAO"
   },
   "HUMA": {
-    "market_cap_rank": 559,
+    "market_cap_rank": 560,
     "name": "Huma Finance"
   },
   "HUNDRED": {
-    "market_cap_rank": 773,
+    "market_cap_rank": 777,
     "name": "HUNDRED"
   },
   "HUNT": {
@@ -1560,15 +1556,15 @@
     "name": "Hyperliquid"
   },
   "HYPER": {
-    "market_cap_rank": 779,
+    "market_cap_rank": 760,
     "name": "Hyperlane"
   },
   "IBITON": {
-    "market_cap_rank": 478,
+    "market_cap_rank": 477,
     "name": "iShares Bitcoin Trust (Ondo Tokenized)"
   },
   "ICNT": {
-    "market_cap_rank": 653,
+    "market_cap_rank": 589,
     "name": "Impossible Cloud Network Token"
   },
   "ICP": {
@@ -1576,51 +1572,51 @@
     "name": "Internet Computer"
   },
   "ICX": {
-    "market_cap_rank": 721,
+    "market_cap_rank": 713,
     "name": "ICON"
   },
   "IDLE": {
-    "market_cap_rank": 1282,
+    "market_cap_rank": 1286,
     "name": "IdleMine"
   },
   "IDOL": {
-    "market_cap_rank": 610,
+    "market_cap_rank": 594,
     "name": "MEET48"
   },
   "IEFAON": {
-    "market_cap_rank": 861,
+    "market_cap_rank": 856,
     "name": "iShares Core MSCI EAFE ETF (Ondo Tokenized ETF)"
   },
   "ILV": {
-    "market_cap_rank": 715,
+    "market_cap_rank": 711,
     "name": "Illuvium"
   },
   "IMX": {
-    "market_cap_rank": 269,
+    "market_cap_rank": 270,
     "name": "Immutable"
   },
   "INC": {
-    "market_cap_rank": 705,
+    "market_cap_rank": 644,
     "name": "Incrypt"
   },
   "INJ": {
-    "market_cap_rank": 102,
+    "market_cap_rank": 105,
     "name": "Injective"
   },
   "INTCON": {
-    "market_cap_rank": 878,
+    "market_cap_rank": 851,
     "name": "Intel (Ondo Tokenized Stock)"
   },
   "INX": {
-    "market_cap_rank": 947,
+    "market_cap_rank": 945,
     "name": "Infinex"
   },
   "IO": {
-    "market_cap_rank": 442,
+    "market_cap_rank": 450,
     "name": "io.net"
   },
   "IOST": {
-    "market_cap_rank": 776,
+    "market_cap_rank": 780,
     "name": "IOST"
   },
   "IOTA": {
@@ -1628,63 +1624,67 @@
     "name": "IOTA"
   },
   "IOTX": {
-    "market_cap_rank": 770,
+    "market_cap_rank": 757,
     "name": "IoTeX"
   },
   "IQ": {
-    "market_cap_rank": 860,
+    "market_cap_rank": 865,
     "name": "IQ"
   },
   "IRYS": {
-    "market_cap_rank": 620,
+    "market_cap_rank": 596,
     "name": "Irys"
   },
   "ISLM": {
-    "market_cap_rank": 931,
+    "market_cap_rank": 929,
     "name": "Islamic Coin"
   },
   "IUSD": {
-    "market_cap_rank": 408,
+    "market_cap_rank": 425,
     "name": "InfiniFi USD"
   },
   "IVVON": {
-    "market_cap_rank": 312,
+    "market_cap_rank": 319,
     "name": "iShares Core S&P 500 ETF (Ondo Tokenized ETF)"
   },
   "JAAA": {
-    "market_cap_rank": 84,
+    "market_cap_rank": 86,
     "name": "Janus Henderson Anemoy AAA CLO Fund"
   },
   "JASMY": {
-    "market_cap_rank": 155,
+    "market_cap_rank": 161,
     "name": "JasmyCoin"
   },
   "JCT": {
-    "market_cap_rank": 385,
+    "market_cap_rank": 446,
     "name": "Janction"
   },
   "JELLYJELLY": {
-    "market_cap_rank": 383,
+    "market_cap_rank": 387,
     "name": "Jelly-My-Jelly"
   },
+  "JIMOTHY": {
+    "market_cap_rank": 934,
+    "name": "Jimothy The Raccoon"
+  },
   "JOHN": {
-    "market_cap_rank": 8642,
+    "market_cap_rank": 8705,
     "name": "Little John"
   },
   "JPYC": {
-    "market_cap_rank": 807,
+    "market_cap_rank": 833,
     "name": "JPY Coin v1"
   },
   "JPYSC": {
-    "market_cap_rank": 1436,
+    "market_cap_rank": 1449,
     "name": "JPYSC"
   },
   "JST": {
-    "market_cap_rank": 74,
+    "market_cap_rank": 75,
     "name": "JUST"
   },
   "JTO": {
-    "market_cap_rank": 141,
+    "market_cap_rank": 139,
     "name": "Jito"
   },
   "JTRSY": {
@@ -1692,23 +1692,23 @@
     "name": "Janus Henderson Anemoy Treasury Fund"
   },
   "JUP": {
-    "market_cap_rank": 88,
+    "market_cap_rank": 89,
     "name": "Jupiter"
   },
   "JUPUSD": {
-    "market_cap_rank": 402,
+    "market_cap_rank": 407,
     "name": "JupUSD"
   },
   "KAG": {
-    "market_cap_rank": 146,
+    "market_cap_rank": 145,
     "name": "Kinesis Silver"
   },
   "KAIA": {
-    "market_cap_rank": 179,
+    "market_cap_rank": 173,
     "name": "Kaia"
   },
   "KAITO": {
-    "market_cap_rank": 153,
+    "market_cap_rank": 176,
     "name": "KAITO"
   },
   "KAS": {
@@ -1716,11 +1716,11 @@
     "name": "Kaspa"
   },
   "KAU": {
-    "market_cap_rank": 119,
+    "market_cap_rank": 120,
     "name": "Kinesis Gold"
   },
   "KAVA": {
-    "market_cap_rank": 462,
+    "market_cap_rank": 464,
     "name": "Kava"
   },
   "KCS": {
@@ -1728,79 +1728,87 @@
     "name": "KuCoin"
   },
   "KEEP": {
-    "market_cap_rank": 1193,
+    "market_cap_rank": 1183,
     "name": "Keep Network"
   },
   "KEKIUS": {
-    "market_cap_rank": 805,
+    "market_cap_rank": 906,
     "name": "Kekius Maximus"
   },
   "KGEN": {
-    "market_cap_rank": 547,
+    "market_cap_rank": 474,
     "name": "KGeN"
   },
   "KITE": {
-    "market_cap_rank": 138,
+    "market_cap_rank": 143,
     "name": "Kite"
   },
   "KMNO": {
-    "market_cap_rank": 265,
+    "market_cap_rank": 263,
     "name": "Kamino"
   },
   "KNC": {
-    "market_cap_rank": 863,
+    "market_cap_rank": 874,
     "name": "Kyber Network Crystal"
   },
   "KNTQ": {
-    "market_cap_rank": 678,
+    "market_cap_rank": 670,
     "name": "Kinetiq"
   },
   "KOGE": {
-    "market_cap_rank": 159,
+    "market_cap_rank": 158,
     "name": "KOGE"
   },
   "KSM": {
-    "market_cap_rank": 375,
+    "market_cap_rank": 386,
     "name": "Kusama"
   },
   "KTA": {
-    "market_cap_rank": 393,
+    "market_cap_rank": 410,
     "name": "Keeta"
   },
   "KTI": {
-    "market_cap_rank": 800,
+    "market_cap_rank": 828,
     "name": "KOTAI"
   },
   "KUB": {
-    "market_cap_rank": 480,
+    "market_cap_rank": 487,
     "name": "KUB Coin"
   },
   "LAB": {
-    "market_cap_rank": 475,
+    "market_cap_rank": 482,
     "name": "LAB"
   },
   "LB": {
-    "market_cap_rank": 869,
+    "market_cap_rank": 891,
     "name": "LoveBit"
   },
   "LBT": {
-    "market_cap_rank": 314,
+    "market_cap_rank": 320,
     "name": "Law Blocks AI"
   },
+  "LCS": {
+    "market_cap_rank": 984,
+    "name": "LocalCoinSwap"
+  },
   "LCX": {
-    "market_cap_rank": 934,
+    "market_cap_rank": 939,
     "name": "LCX"
   },
   "LDO": {
-    "market_cap_rank": 140,
+    "market_cap_rank": 142,
     "name": "Lido DAO"
   },
   "LEO": {
-    "market_cap_rank": 13,
+    "market_cap_rank": 14,
     "name": "LEO Token"
   },
+  "LIMO": {
+    "market_cap_rank": 4794,
+    "name": "Limoverse"
+  },
   "LINEA": {
-    "market_cap_rank": 391,
+    "market_cap_rank": 400,
     "name": "Linea"
   },
   "LINK": {
@@ -1808,119 +1816,115 @@
     "name": "Chainlink"
   },
   "LION": {
-    "market_cap_rank": 484,
+    "market_cap_rank": 520,
     "name": "Loaded Lions"
   },
   "LISTA": {
-    "market_cap_rank": 752,
+    "market_cap_rank": 744,
     "name": "Lista DAO"
   },
   "LISUSD": {
-    "market_cap_rank": 304,
+    "market_cap_rank": 307,
     "name": "Lista USD"
   },
   "LIT": {
-    "market_cap_rank": 778,
-    "name": "Litentry"
+    "market_cap_rank": 90,
+    "name": "Lighter"
   },
   "LON": {
-    "market_cap_rank": 763,
+    "market_cap_rank": 767,
     "name": "Tokenlon"
   },
   "LPT": {
-    "market_cap_rank": 352,
+    "market_cap_rank": 357,
     "name": "Livepeer"
   },
   "LQTY": {
-    "market_cap_rank": 848,
+    "market_cap_rank": 843,
     "name": "Liquity"
   },
-  "LRC": {
-    "market_cap_rank": 1013,
-    "name": "Loopring"
-  },
   "LSK": {
-    "market_cap_rank": 867,
+    "market_cap_rank": 866,
     "name": "Lisk"
   },
   "LTC": {
-    "market_cap_rank": 28,
+    "market_cap_rank": 27,
     "name": "Litecoin"
   },
   "LUMIA": {
-    "market_cap_rank": 1128,
+    "market_cap_rank": 1123,
     "name": "Lumia"
   },
   "LUNA": {
-    "market_cap_rank": 646,
+    "market_cap_rank": 643,
     "name": "Terra"
   },
   "LUNC": {
-    "market_cap_rank": 133,
+    "market_cap_rank": 135,
     "name": "Terra Luna Classic"
   },
   "LUSD": {
-    "market_cap_rank": 662,
+    "market_cap_rank": 665,
     "name": "Liquity USD"
   },
   "M": {
-    "market_cap_rank": 5245,
+    "market_cap_rank": 5270,
     "name": "Mantis"
   },
   "MAG7.SSI": {
-    "market_cap_rank": 321,
+    "market_cap_rank": 326,
     "name": "MAG7.ssi"
   },
   "MAGMA": {
-    "market_cap_rank": 416,
+    "market_cap_rank": 419,
     "name": "Magma Finance"
   },
   "MANA": {
-    "market_cap_rank": 214,
+    "market_cap_rank": 215,
     "name": "Decentraland"
   },
   "MANTA": {
-    "market_cap_rank": 660,
+    "market_cap_rank": 658,
     "name": "Manta Network"
   },
   "MANTRA": {
-    "market_cap_rank": 638,
+    "market_cap_rank": 630,
     "name": "MANTRA"
   },
   "MARSCOIN": {
-    "market_cap_rank": 394,
+    "market_cap_rank": 373,
     "name": "MarsCoin"
   },
   "MARSMI": {
-    "market_cap_rank": 962,
+    "market_cap_rank": 961,
     "name": "MarsMi"
   },
   "MASK": {
-    "market_cap_rank": 554,
+    "market_cap_rank": 548,
     "name": "Mask Network"
   },
   "MAX": {
-    "market_cap_rank": 847,
+    "market_cap_rank": 844,
     "name": "MAX"
   },
   "MBG": {
-    "market_cap_rank": 557,
+    "market_cap_rank": 552,
     "name": "MBG By Multibank Group"
   },
   "ME": {
-    "market_cap_rank": 539,
+    "market_cap_rank": 535,
     "name": "Magic Eden"
   },
   "MED": {
-    "market_cap_rank": 928,
+    "market_cap_rank": 937,
     "name": "Medibloc"
   },
   "MEDXT": {
-    "market_cap_rank": 946,
+    "market_cap_rank": 958,
     "name": "MEDXT"
   },
   "MEGA": {
-    "market_cap_rank": 504,
+    "market_cap_rank": 507,
     "name": "MegaETH"
   },
   "MELANIA": {
@@ -1928,23 +1932,23 @@
     "name": "Melania Meme"
   },
   "MEME": {
-    "market_cap_rank": 597,
+    "market_cap_rank": 604,
     "name": "Memecoin"
   },
   "MERC": {
-    "market_cap_rank": 882,
+    "market_cap_rank": 905,
     "name": "Liquid Mercury"
   },
   "MERL": {
-    "market_cap_rank": 743,
+    "market_cap_rank": 726,
     "name": "Merlin Chain"
   },
   "MET": {
-    "market_cap_rank": 272,
+    "market_cap_rank": 275,
     "name": "Meteora"
   },
   "META": {
-    "market_cap_rank": 227,
+    "market_cap_rank": 233,
     "name": "MetaDAO"
   },
   "METAL": {
@@ -1952,87 +1956,79 @@
     "name": "Metal Blockchain"
   },
   "METIS": {
-    "market_cap_rank": 801,
+    "market_cap_rank": 813,
     "name": "Metis"
   },
   "MEW": {
-    "market_cap_rank": 642,
+    "market_cap_rank": 640,
     "name": "cat in a dogs world"
   },
-  "MEY": {
-    "market_cap_rank": 935,
-    "name": "Mey Network"
-  },
   "MF-ONE": {
-    "market_cap_rank": 319,
+    "market_cap_rank": 323,
     "name": "Midas mF-ONE"
   },
   "MGLO": {
-    "market_cap_rank": 498,
+    "market_cap_rank": 502,
     "name": "Midas Fasanara Global Open"
   },
   "MGLOBAL": {
-    "market_cap_rank": 364,
+    "market_cap_rank": 366,
     "name": "Midas Fasanara Global"
-  },
-  "MGO": {
-    "market_cap_rank": 956,
-    "name": "Mango Network"
   },
   "MHORSE": {
     "market_cap_rank": 365,
     "name": "MEME HORSE"
   },
   "MHYPER": {
-    "market_cap_rank": 527,
+    "market_cap_rank": 533,
     "name": "Midas mHYPER"
   },
   "MINA": {
-    "market_cap_rank": 404,
+    "market_cap_rank": 402,
     "name": "Mina Protocol"
   },
   "MLK": {
-    "market_cap_rank": 856,
+    "market_cap_rank": 845,
     "name": "MiL.k"
   },
   "MM1-USD": {
-    "market_cap_rank": 674,
+    "market_cap_rank": 678,
     "name": "Midas M1 USD Market Neutral"
   },
   "MMT": {
-    "market_cap_rank": 574,
+    "market_cap_rank": 434,
     "name": "Momentum"
   },
   "MNGO": {
-    "market_cap_rank": 664,
+    "market_cap_rank": 659,
     "name": "Mango"
   },
   "MNT": {
-    "market_cap_rank": 54,
+    "market_cap_rank": 52,
     "name": "Mantle"
   },
   "MOCA": {
-    "market_cap_rank": 600,
+    "market_cap_rank": 603,
     "name": "Moca Network"
   },
   "MOG": {
-    "market_cap_rank": 506,
+    "market_cap_rank": 508,
     "name": "Mog Coin"
   },
   "MON": {
-    "market_cap_rank": 142,
+    "market_cap_rank": 141,
     "name": "Monad"
   },
   "MOODENG": {
-    "market_cap_rank": 544,
+    "market_cap_rank": 532,
     "name": "Moo Deng"
   },
   "MOOLAH": {
-    "market_cap_rank": 827,
+    "market_cap_rank": 871,
     "name": "Moolah"
   },
   "MOR": {
-    "market_cap_rank": 842,
+    "market_cap_rank": 840,
     "name": "Morpheus AI"
   },
   "MORPHO": {
@@ -2040,119 +2036,119 @@
     "name": "Morpho"
   },
   "MOVE": {
-    "market_cap_rank": 608,
+    "market_cap_rank": 642,
     "name": "Movement"
   },
-  "MOVR": {
-    "market_cap_rank": 939,
-    "name": "Moonriver"
+  "MOW": {
+    "market_cap_rank": 798,
+    "name": "MowCat"
   },
   "MPC": {
-    "market_cap_rank": 840,
+    "market_cap_rank": 841,
     "name": "My Paqman Coin"
   },
   "MRVLON": {
-    "market_cap_rank": 887,
+    "market_cap_rank": 867,
     "name": "Marvell Technology (Ondo Tokenized Stock)"
   },
   "MSTRON": {
-    "market_cap_rank": 820,
+    "market_cap_rank": 816,
     "name": "MicroStrategy (Ondo Tokenized Stock)"
   },
   "MSTRX": {
-    "market_cap_rank": 459,
+    "market_cap_rank": 458,
     "name": "MicroStrategy xStock"
   },
   "MSUSD": {
-    "market_cap_rank": 733,
+    "market_cap_rank": 718,
     "name": "Main Street USD"
   },
   "MSY": {
-    "market_cap_rank": 815,
+    "market_cap_rank": 748,
     "name": "Main Street Yield"
   },
   "MTBILL": {
-    "market_cap_rank": 341,
+    "market_cap_rank": 343,
     "name": "Midas mTBILL"
   },
   "MTL": {
-    "market_cap_rank": 825,
+    "market_cap_rank": 819,
     "name": "Metal DAO"
   },
   "MUB": {
-    "market_cap_rank": 320,
+    "market_cap_rank": 341,
     "name": "Micron Technology (bStocks Tokenized Stock)"
   },
+  "MUBARAK": {
+    "market_cap_rank": 960,
+    "name": "Mubarak"
+  },
   "MUON": {
-    "market_cap_rank": 472,
+    "market_cap_rank": 467,
     "name": "Micron Technology (Ondo Tokenized Stock)"
   },
   "MUSD": {
-    "market_cap_rank": 677,
+    "market_cap_rank": 701,
     "name": "MetaMask USD"
   },
   "MVL": {
-    "market_cap_rank": 765,
+    "market_cap_rank": 773,
     "name": "MVL"
   },
   "MX": {
-    "market_cap_rank": 196,
+    "market_cap_rank": 194,
     "name": "MX"
   },
   "MY": {
-    "market_cap_rank": 702,
+    "market_cap_rank": 632,
     "name": "MetYa"
   },
   "MYX": {
-    "market_cap_rank": 973,
+    "market_cap_rank": 968,
     "name": "MYX Finance"
   },
   "NAORIS": {
-    "market_cap_rank": 812,
+    "market_cap_rank": 817,
     "name": "NaoX Protocol"
   },
   "NAT": {
-    "market_cap_rank": 519,
+    "market_cap_rank": 562,
     "name": "DMT-NAT"
   },
   "NCX": {
-    "market_cap_rank": 647,
+    "market_cap_rank": 654,
     "name": "NovaChargeX Coin"
   },
   "NEAR": {
-    "market_cap_rank": 39,
+    "market_cap_rank": 40,
     "name": "NEAR Protocol"
   },
   "NEET": {
-    "market_cap_rank": 881,
+    "market_cap_rank": 737,
     "name": "Not in Employment, Education, or Training"
   },
   "NEIRO": {
-    "market_cap_rank": 688,
+    "market_cap_rank": 684,
     "name": "Neiro"
   },
   "NEO": {
-    "market_cap_rank": 213,
+    "market_cap_rank": 217,
     "name": "NEO"
   },
   "NEON": {
-    "market_cap_rank": 1770,
+    "market_cap_rank": 1793,
     "name": "Neon"
   },
-  "NERO": {
-    "market_cap_rank": 2270,
-    "name": "NERO Chain"
-  },
   "NES": {
-    "market_cap_rank": 652,
+    "market_cap_rank": 639,
     "name": "Nesa"
   },
   "NEX": {
-    "market_cap_rank": 275,
+    "market_cap_rank": 283,
     "name": "Nexus"
   },
   "NEXO": {
-    "market_cap_rank": 79,
+    "market_cap_rank": 83,
     "name": "NEXO"
   },
   "NFT": {
@@ -2160,27 +2156,27 @@
     "name": "AINFT"
   },
   "NIGHT": {
-    "market_cap_rank": 125,
+    "market_cap_rank": 122,
     "name": "Midnight"
   },
   "NIL": {
-    "market_cap_rank": 890,
+    "market_cap_rank": 875,
     "name": "Nillion"
   },
   "NILA": {
-    "market_cap_rank": 336,
+    "market_cap_rank": 340,
     "name": "MindWaveDAO"
   },
   "NKYC": {
-    "market_cap_rank": 670,
+    "market_cap_rank": 682,
     "name": "NKYC Token"
   },
   "NMR": {
-    "market_cap_rank": 361,
+    "market_cap_rank": 376,
     "name": "Numeraire"
   },
   "NOCK": {
-    "market_cap_rank": 704,
+    "market_cap_rank": 731,
     "name": "Nockchain"
   },
   "NOPAL": {
@@ -2188,15 +2184,15 @@
     "name": "Nest BlackOpal LiquidStone II Vault"
   },
   "NOS": {
-    "market_cap_rank": 732,
+    "market_cap_rank": 699,
     "name": "Nosana"
   },
   "NOT": {
-    "market_cap_rank": 565,
+    "market_cap_rank": 569,
     "name": "Notcoin"
   },
   "NOW": {
-    "market_cap_rank": 635,
+    "market_cap_rank": 634,
     "name": "ChangeNOW"
   },
   "NPC": {
@@ -2204,7 +2200,7 @@
     "name": "Non-Playable Coin"
   },
   "NUSD": {
-    "market_cap_rank": 389,
+    "market_cap_rank": 392,
     "name": "Neutrl USD"
   },
   "NVDAON": {
@@ -2212,67 +2208,67 @@
     "name": "NVIDIA (Ondo Tokenized Stock)"
   },
   "NVDAX": {
-    "market_cap_rank": 513,
+    "market_cap_rank": 526,
     "name": "NVIDIA xStock"
   },
   "NXM": {
-    "market_cap_rank": 281,
+    "market_cap_rank": 282,
     "name": "Nexus Mutual"
   },
   "NXPC": {
-    "market_cap_rank": 323,
+    "market_cap_rank": 332,
     "name": "Nexpace"
   },
   "NXT": {
-    "market_cap_rank": 750,
+    "market_cap_rank": 770,
     "name": "NEXST"
   },
   "NXUSD": {
-    "market_cap_rank": 831,
+    "market_cap_rank": 830,
     "name": "NXUSD"
   },
   "NYC": {
-    "market_cap_rank": 703,
+    "market_cap_rank": 708,
     "name": "NYC"
   },
   "NYM": {
-    "market_cap_rank": 926,
+    "market_cap_rank": 920,
     "name": "Nym"
   },
   "O": {
-    "market_cap_rank": 295,
+    "market_cap_rank": 302,
     "name": "o1.exchange"
   },
   "OCEAN": {
-    "market_cap_rank": 730,
+    "market_cap_rank": 746,
     "name": "Ocean Protocol"
   },
   "OFT": {
-    "market_cap_rank": 915,
+    "market_cap_rank": 913,
     "name": "ONFA"
   },
   "OHM": {
-    "market_cap_rank": 129,
+    "market_cap_rank": 128,
     "name": "Olympus"
   },
   "OHO": {
-    "market_cap_rank": 900,
+    "market_cap_rank": 903,
     "name": "OHO Blockchain"
   },
   "OKB": {
-    "market_cap_rank": 43,
+    "market_cap_rank": 41,
     "name": "OKB"
   },
   "OL": {
-    "market_cap_rank": 1739,
+    "market_cap_rank": 1735,
     "name": "OPENLOOT"
   },
   "OMI": {
-    "market_cap_rank": 436,
+    "market_cap_rank": 437,
     "name": "ECOMI"
   },
   "ON": {
-    "market_cap_rank": 444,
+    "market_cap_rank": 436,
     "name": "Orochi Network"
   },
   "ONDO": {
@@ -2280,71 +2276,71 @@
     "name": "Ondo"
   },
   "ONE": {
-    "market_cap_rank": 836,
+    "market_cap_rank": 831,
     "name": "Harmony"
   },
   "ONG": {
-    "market_cap_rank": 790,
+    "market_cap_rank": 791,
     "name": "Ontology Gas"
   },
   "ONT": {
-    "market_cap_rank": 522,
+    "market_cap_rank": 523,
     "name": "Ontology"
   },
   "ONYC": {
-    "market_cap_rank": 139,
+    "market_cap_rank": 138,
     "name": "OnRe Tokenized Reinsurance"
   },
   "OP": {
-    "market_cap_rank": 162,
+    "market_cap_rank": 156,
     "name": "Optimism"
   },
   "OPCODE": {
-    "market_cap_rank": 542,
+    "market_cap_rank": 546,
     "name": "Opcode"
   },
   "OPEN": {
-    "market_cap_rank": 447,
+    "market_cap_rank": 455,
     "name": "OpenLedger"
   },
   "OPG": {
-    "market_cap_rank": 862,
+    "market_cap_rank": 838,
     "name": "OpenGradient"
   },
   "ORBS": {
-    "market_cap_rank": 683,
+    "market_cap_rank": 679,
     "name": "Orbs"
   },
   "ORCA": {
-    "market_cap_rank": 339,
+    "market_cap_rank": 345,
     "name": "Orca"
   },
   "ORDI": {
-    "market_cap_rank": 326,
+    "market_cap_rank": 310,
     "name": "ORDI"
   },
   "ORE": {
-    "market_cap_rank": 643,
+    "market_cap_rank": 653,
     "name": "ORE"
   },
   "ORI": {
-    "market_cap_rank": 523,
+    "market_cap_rank": 542,
     "name": "Orizon"
   },
   "OSK": {
-    "market_cap_rank": 493,
+    "market_cap_rank": 498,
     "name": "OSK"
   },
   "OSMO": {
-    "market_cap_rank": 755,
+    "market_cap_rank": 753,
     "name": "Osmosis"
   },
   "OUSG": {
-    "market_cap_rank": 111,
+    "market_cap_rank": 110,
     "name": "Ondo Short-Term U.S. Government Bond Fund"
   },
   "OZA": {
-    "market_cap_rank": 570,
+    "market_cap_rank": 545,
     "name": "Ozapay"
   },
   "OZO": {
@@ -2352,31 +2348,31 @@
     "name": "Ozone Chain"
   },
   "PATHUSD": {
-    "market_cap_rank": 560,
+    "market_cap_rank": 561,
     "name": "pathUSD"
   },
   "PAXG": {
-    "market_cap_rank": 41,
+    "market_cap_rank": 42,
     "name": "PAX Gold"
   },
   "PC": {
-    "market_cap_rank": 1131,
+    "market_cap_rank": 1143,
     "name": "Pentagon Chain"
   },
   "PC0000015": {
-    "market_cap_rank": 239,
+    "market_cap_rank": 244,
     "name": "Tradable NA Third Party Online Merchant SSTN"
   },
   "PC0000019": {
-    "market_cap_rank": 355,
+    "market_cap_rank": 358,
     "name": "Tradable North America PoS Lender SSTN"
   },
   "PC0000023": {
-    "market_cap_rank": 301,
+    "market_cap_rank": 306,
     "name": "Tradable NA Neobank SSTL"
   },
   "PC0000027": {
-    "market_cap_rank": 612,
+    "market_cap_rank": 618,
     "name": "Tradable LatAm BNPL SSTN"
   },
   "PC0000031": {
@@ -2384,15 +2380,15 @@
     "name": "Tradable NA Rent Financing Platform SSTN"
   },
   "PC0000033": {
-    "market_cap_rank": 182,
+    "market_cap_rank": 181,
     "name": "Tradable APAC Diversified Finance Provider SSTN"
   },
   "PC0000049": {
-    "market_cap_rank": 422,
+    "market_cap_rank": 424,
     "name": "Tradable Eu/LatAm PoS Financing SSTL"
   },
   "PC0000077": {
-    "market_cap_rank": 253,
+    "market_cap_rank": 254,
     "name": "Tradable Singapore Fintech SSL"
   },
   "PC0000081": {
@@ -2404,23 +2400,23 @@
     "name": "Tradable LatAm Middle-Market Lender SSTL"
   },
   "PC0000089": {
-    "market_cap_rank": 535,
+    "market_cap_rank": 540,
     "name": "Tradable LatAm Residential SSTL"
   },
   "PC0000097": {
-    "market_cap_rank": 208,
+    "market_cap_rank": 211,
     "name": "Tradable LatAm Fintech SSTN"
   },
   "PC0000101": {
-    "market_cap_rank": 296,
+    "market_cap_rank": 301,
     "name": "Tradable NA Post-Settlement Legal Financing Receivables"
   },
   "PC0016245": {
-    "market_cap_rank": 711,
+    "market_cap_rank": 714,
     "name": "NA Capital-as-a-Service SSTN"
   },
   "PCI": {
-    "market_cap_rank": 543,
+    "market_cap_rank": 547,
     "name": "Paycoin"
   },
   "PEANUT": {
@@ -2428,19 +2424,19 @@
     "name": "Peanut"
   },
   "PEAQ": {
-    "market_cap_rank": 464,
+    "market_cap_rank": 476,
     "name": "peaq"
   },
   "PENDLE": {
-    "market_cap_rank": 145,
+    "market_cap_rank": 144,
     "name": "Pendle"
   },
   "PENGU": {
-    "market_cap_rank": 110,
+    "market_cap_rank": 109,
     "name": "Pudgy Penguins"
   },
   "PEOPLE": {
-    "market_cap_rank": 545,
+    "market_cap_rank": 551,
     "name": "ConstitutionDAO"
   },
   "PEPE": {
@@ -2448,15 +2444,15 @@
     "name": "Pepe"
   },
   "PGOLD": {
-    "market_cap_rank": 288,
+    "market_cap_rank": 289,
     "name": "Pleasing Gold"
   },
   "PHA": {
-    "market_cap_rank": 849,
+    "market_cap_rank": 810,
     "name": "PHALA"
   },
   "PI": {
-    "market_cap_rank": 64,
+    "market_cap_rank": 66,
     "name": "Pi Network"
   },
   "PIEVERSE": {
@@ -2464,39 +2460,39 @@
     "name": "Pieverse"
   },
   "PINKSALE": {
-    "market_cap_rank": 880,
+    "market_cap_rank": 896,
     "name": "PinkSale"
   },
   "PIPEDOG": {
-    "market_cap_rank": 517,
+    "market_cap_rank": 616,
     "name": "pipedog"
   },
   "PIPPIN": {
-    "market_cap_rank": 892,
+    "market_cap_rank": 882,
     "name": "pippin"
   },
   "PLLDV3": {
-    "market_cap_rank": 889,
+    "market_cap_rank": 812,
     "name": "Palladium Network"
   },
   "PLUME": {
-    "market_cap_rank": 325,
+    "market_cap_rank": 312,
     "name": "Plume"
   },
   "PM": {
-    "market_cap_rank": 584,
+    "market_cap_rank": 595,
     "name": "PumpMeme"
   },
   "PMT": {
-    "market_cap_rank": 1393,
+    "market_cap_rank": 1413,
     "name": "Public Masterpiece Token"
   },
   "PMUSD": {
-    "market_cap_rank": 481,
+    "market_cap_rank": 462,
     "name": "Precious Metals USD"
   },
   "PNDC": {
-    "market_cap_rank": 1570,
+    "market_cap_rank": 1670,
     "name": "PondCoin"
   },
   "PNUT": {
@@ -2504,7 +2500,7 @@
     "name": "Peanut the Squirrel"
   },
   "POD": {
-    "market_cap_rank": 929,
+    "market_cap_rank": 904,
     "name": "Dolphin"
   },
   "POL": {
@@ -2512,59 +2508,67 @@
     "name": "POL (ex-MATIC)"
   },
   "POLYX": {
-    "market_cap_rank": 476,
+    "market_cap_rank": 484,
     "name": "Polymesh"
   },
+  "PONS": {
+    "market_cap_rank": 724,
+    "name": "Pons"
+  },
   "POPCAT": {
-    "market_cap_rank": 470,
+    "market_cap_rank": 481,
     "name": "Popcat"
   },
   "POWER": {
-    "market_cap_rank": 819,
+    "market_cap_rank": 807,
     "name": "Power Protocol"
   },
+  "POWR": {
+    "market_cap_rank": 802,
+    "name": "Powerledger"
+  },
   "PRDT": {
-    "market_cap_rank": 699,
+    "market_cap_rank": 704,
     "name": "Predictions"
   },
   "PREOPAI": {
-    "market_cap_rank": 777,
+    "market_cap_rank": 783,
     "name": "OpenAI (Republic Pre-IPO)"
   },
   "PRIME": {
-    "market_cap_rank": 920,
+    "market_cap_rank": 924,
     "name": "Echelon Prime"
   },
   "PRIZE": {
-    "market_cap_rank": 471,
+    "market_cap_rank": 466,
     "name": "Prize Protocol"
   },
   "PRL": {
-    "market_cap_rank": 429,
+    "market_cap_rank": 412,
     "name": "Perle"
   },
   "PRN": {
-    "market_cap_rank": 546,
+    "market_cap_rank": 559,
     "name": "Peoples Reserve"
   },
   "PRO": {
-    "market_cap_rank": 788,
+    "market_cap_rank": 792,
     "name": "Propy"
   },
   "PROM": {
-    "market_cap_rank": 552,
+    "market_cap_rank": 550,
     "name": "Prom"
   },
   "PROS": {
-    "market_cap_rank": 2043,
+    "market_cap_rank": 2040,
     "name": "Prospective"
   },
   "PROVE": {
-    "market_cap_rank": 629,
+    "market_cap_rank": 638,
     "name": "Succinct"
   },
   "PTGC": {
-    "market_cap_rank": 768,
+    "market_cap_rank": 733,
     "name": "The Grays Currency"
   },
   "PUMP": {
@@ -2572,87 +2576,87 @@
     "name": "Pump.fun"
   },
   "PUNDIX": {
-    "market_cap_rank": 797,
+    "market_cap_rank": 806,
     "name": "Pundi X"
   },
   "PURR": {
-    "market_cap_rank": 500,
+    "market_cap_rank": 514,
     "name": "Purr"
   },
   "PYBOBO": {
-    "market_cap_rank": 707,
+    "market_cap_rank": 696,
     "name": "Capybobo"
   },
   "PYTH": {
-    "market_cap_rank": 123,
+    "market_cap_rank": 124,
     "name": "Pyth Network"
   },
   "PYUSD": {
-    "market_cap_rank": 34,
+    "market_cap_rank": 33,
     "name": "PayPal USD"
   },
   "Q": {
-    "market_cap_rank": 277,
+    "market_cap_rank": 273,
     "name": "Quack AI"
   },
   "QANX": {
-    "market_cap_rank": 761,
+    "market_cap_rank": 763,
     "name": "QANplatform"
   },
   "QFI": {
-    "market_cap_rank": 276,
+    "market_cap_rank": 200,
     "name": "Quantix Finance"
   },
+  "QKC": {
+    "market_cap_rank": 956,
+    "name": "QuarkChain"
+  },
   "QNT": {
-    "market_cap_rank": 75,
+    "market_cap_rank": 74,
     "name": "Quant"
   },
   "QQQON": {
-    "market_cap_rank": 567,
+    "market_cap_rank": 575,
     "name": "Invesco QQQ ETF (Ondo Tokenized ETF)"
   },
   "QQQX": {
-    "market_cap_rank": 588,
+    "market_cap_rank": 597,
     "name": "Nasdaq xStock"
   },
   "QRL": {
-    "market_cap_rank": 340,
+    "market_cap_rank": 374,
     "name": "Quantum Resistant Ledger"
   },
   "QTUM": {
-    "market_cap_rank": 330,
+    "market_cap_rank": 331,
     "name": "Qtum"
   },
   "QUBIC": {
     "market_cap_rank": 360,
     "name": "Qubic"
   },
-  "QUID": {
-    "market_cap_rank": 944,
-    "name": "Squid"
-  },
   "RAD": {
-    "market_cap_rank": 1120,
+    "market_cap_rank": 1135,
     "name": "Radworks"
   },
   "RAIL": {
-    "market_cap_rank": 282,
+    "market_cap_rank": 281,
     "name": "Railgun"
   },
   "RAIN": {
-    "market_cap_rank": 14,
+    "market_cap_rank": 13,
     "name": "Rain"
   },
   "RAVE": {
-    "market_cap_rank": 305,
+    "market_cap_rank": 293,
     "name": "RaveDAO"
   },
   "RAY": {
-    "market_cap_rank": 180,
+    "market_cap_rank": 178,
     "name": "Raydium"
   },
   "RE": {
-    "market_cap_rank": 363,
+    "market_cap_rank": 329,
     "name": "RE"
   },
   "REAL": {
@@ -2660,63 +2664,59 @@
     "name": "RealLink"
   },
   "RECALL": {
-    "market_cap_rank": 1121,
+    "market_cap_rank": 1093,
     "name": "Recall"
   },
   "RED": {
-    "market_cap_rank": 487,
+    "market_cap_rank": 489,
     "name": "RedStone"
   },
   "REI": {
-    "market_cap_rank": 710,
+    "market_cap_rank": 633,
     "name": "Rei"
   },
   "REKT": {
-    "market_cap_rank": 431,
+    "market_cap_rank": 442,
     "name": "Rekt"
   },
   "RENDER": {
-    "market_cap_rank": 85,
+    "market_cap_rank": 87,
     "name": "Render"
   },
   "REQ": {
-    "market_cap_rank": 518,
+    "market_cap_rank": 525,
     "name": "Request"
   },
   "REUR": {
-    "market_cap_rank": 875,
+    "market_cap_rank": 883,
     "name": "Royal Euro"
   },
   "REUSD": {
-    "market_cap_rank": 577,
+    "market_cap_rank": 549,
     "name": "Resupply USD"
   },
   "REUSDE": {
-    "market_cap_rank": 829,
+    "market_cap_rank": 823,
     "name": "Re Protocol reUSDe"
   },
   "REZ": {
-    "market_cap_rank": 751,
+    "market_cap_rank": 736,
     "name": "Renzo"
   },
   "RIF": {
-    "market_cap_rank": 337,
+    "market_cap_rank": 327,
     "name": "Rootstock Infrastructure Framework"
   },
   "RIVER": {
-    "market_cap_rank": 403,
+    "market_cap_rank": 394,
     "name": "River"
   },
-  "RIZE": {
-    "market_cap_rank": 1218,
-    "name": "RIZE"
-  },
   "RLB": {
-    "market_cap_rank": 238,
+    "market_cap_rank": 240,
     "name": "Rollbit Coin"
   },
   "RLC": {
-    "market_cap_rank": 794,
+    "market_cap_rank": 808,
     "name": "iExec RLC"
   },
   "RLUSD": {
@@ -2724,107 +2724,107 @@
     "name": "Ripple USD"
   },
   "RNT": {
-    "market_cap_rank": 521,
+    "market_cap_rank": 524,
     "name": "Reental"
   },
   "ROBO": {
-    "market_cap_rank": 634,
+    "market_cap_rank": 617,
     "name": "Fabric Protocol"
   },
   "ROLL": {
-    "market_cap_rank": 745,
+    "market_cap_rank": 756,
     "name": "ROLL"
   },
   "RON": {
-    "market_cap_rank": 508,
+    "market_cap_rank": 504,
     "name": "Ronin"
   },
   "ROSA": {
-    "market_cap_rank": 945,
+    "market_cap_rank": 938,
     "name": "Rosa Inu"
   },
   "ROSE": {
-    "market_cap_rank": 465,
+    "market_cap_rank": 457,
     "name": "Oasis"
   },
   "RPL": {
-    "market_cap_rank": 561,
+    "market_cap_rank": 573,
     "name": "Rocket Pool"
   },
   "RSC": {
-    "market_cap_rank": 903,
+    "market_cap_rank": 915,
     "name": "ResearchCoin"
   },
   "RSR": {
-    "market_cap_rank": 298,
+    "market_cap_rank": 299,
     "name": "Reserve Rights"
   },
   "RUNE": {
-    "market_cap_rank": 195,
+    "market_cap_rank": 192,
     "name": "THORChain"
   },
   "RVN": {
-    "market_cap_rank": 377,
+    "market_cap_rank": 380,
     "name": "Ravencoin"
   },
   "RYZE": {
-    "market_cap_rank": 814,
+    "market_cap_rank": 836,
     "name": "Ryze"
   },
   "S": {
-    "market_cap_rank": 285,
+    "market_cap_rank": 284,
     "name": "Sonic"
   },
   "SAFE": {
-    "market_cap_rank": 334,
+    "market_cap_rank": 328,
     "name": "Safe"
   },
   "SAFO": {
-    "market_cap_rank": 192,
+    "market_cap_rank": 196,
     "name": "Spiko Amundi Overnight Swap Fund"
   },
   "SAHARA": {
-    "market_cap_rank": 639,
+    "market_cap_rank": 629,
     "name": "Sahara AI"
   },
   "SAI": {
-    "market_cap_rank": 687,
+    "market_cap_rank": 686,
     "name": "Sai"
   },
   "SAIL.R": {
-    "market_cap_rank": 762,
+    "market_cap_rank": 764,
     "name": "SailOut Royalty"
   },
   "SAND": {
-    "market_cap_rank": 240,
+    "market_cap_rank": 243,
     "name": "The Sandbox"
   },
   "SAPIEN": {
-    "market_cap_rank": 792,
+    "market_cap_rank": 793,
     "name": "Sapien"
   },
   "SATS": {
-    "market_cap_rank": 785,
+    "market_cap_rank": 775,
     "name": "SATS (Ordinals)"
   },
   "SB": {
-    "market_cap_rank": 564,
+    "market_cap_rank": 558,
     "name": "Snowbank"
   },
   "SC": {
-    "market_cap_rank": 714,
+    "market_cap_rank": 712,
     "name": "Siacoin"
   },
   "SCOR": {
-    "market_cap_rank": 1462,
+    "market_cap_rank": 1474,
     "name": "Scor"
   },
   "SECZ": {
-    "market_cap_rank": 757,
+    "market_cap_rank": 749,
     "name": "Securitize"
   },
   "SEDA": {
-    "market_cap_rank": 922,
+    "market_cap_rank": 933,
     "name": "SEDA"
   },
   "SEI": {
@@ -2832,95 +2832,99 @@
     "name": "Sei"
   },
   "SENT": {
-    "market_cap_rank": 256,
+    "market_cap_rank": 266,
     "name": "Sentient"
   },
   "SENTIS": {
-    "market_cap_rank": 491,
+    "market_cap_rank": 485,
     "name": "SentismAI"
   },
   "SERV": {
-    "market_cap_rank": 764,
+    "market_cap_rank": 761,
     "name": "OpenServ"
   },
   "SFP": {
-    "market_cap_rank": 242,
+    "market_cap_rank": 237,
     "name": "SafePal"
   },
   "SFRXUSD": {
-    "market_cap_rank": 583,
+    "market_cap_rank": 574,
     "name": "Frax Staked frxUSD"
   },
   "SGB": {
-    "market_cap_rank": 858,
+    "market_cap_rank": 872,
     "name": "Songbird"
   },
   "SHFL": {
-    "market_cap_rank": 211,
+    "market_cap_rank": 223,
     "name": "Shuffle"
   },
   "SHIB": {
-    "market_cap_rank": 31,
+    "market_cap_rank": 34,
     "name": "Shiba Inu"
   },
   "SHORT": {
-    "market_cap_rank": 5927,
+    "market_cap_rank": 6130,
     "name": "Bermuda Shorts"
   },
   "SHX": {
-    "market_cap_rank": 380,
+    "market_cap_rank": 384,
     "name": "Stronghold"
   },
   "SIGN": {
-    "market_cap_rank": 886,
+    "market_cap_rank": 879,
     "name": "Sign"
   },
   "SIREN": {
-    "market_cap_rank": 625,
+    "market_cap_rank": 564,
     "name": "Siren"
   },
   "SKHYB": {
-    "market_cap_rank": 601,
+    "market_cap_rank": 680,
     "name": "SK Hynix (bStocks Tokenized Stock)"
   },
   "SKL": {
-    "market_cap_rank": 756,
+    "market_cap_rank": 765,
     "name": "SKALE"
   },
   "SKR": {
-    "market_cap_rank": 407,
+    "market_cap_rank": 413,
     "name": "Seeker"
   },
   "SKY": {
-    "market_cap_rank": 55,
+    "market_cap_rank": 56,
     "name": "Sky"
   },
   "SKYAI": {
-    "market_cap_rank": 286,
+    "market_cap_rank": 242,
     "name": "SkyAI"
   },
   "SLP": {
-    "market_cap_rank": 804,
+    "market_cap_rank": 799,
     "name": "Smooth Love Potion"
   },
   "SLVON": {
-    "market_cap_rank": 716,
+    "market_cap_rank": 706,
     "name": "iShares Silver Trust (Ondo Tokenized Stock)"
   },
   "SLX": {
-    "market_cap_rank": 837,
+    "market_cap_rank": 738,
     "name": "Solstice"
   },
   "SMILEK": {
-    "market_cap_rank": 278,
+    "market_cap_rank": 279,
     "name": "Smilek to the Bank"
   },
+  "SN107": {
+    "market_cap_rank": 893,
+    "name": "Tiger Alpha"
+  },
   "SN120": {
-    "market_cap_rank": 496,
+    "market_cap_rank": 471,
     "name": "affine"
   },
   "SN3": {
-    "market_cap_rank": 708,
+    "market_cap_rank": 694,
     "name": "\u03c4emplar"
   },
   "SN4": {
@@ -2928,131 +2932,131 @@
     "name": "Targon"
   },
   "SN44": {
-    "market_cap_rank": 533,
+    "market_cap_rank": 496,
     "name": "Score"
   },
   "SN51": {
-    "market_cap_rank": 373,
+    "market_cap_rank": 353,
     "name": "lium"
   },
   "SN53": {
-    "market_cap_rank": 581,
+    "market_cap_rank": 586,
     "name": "EfficientFrontier"
   },
   "SN56": {
-    "market_cap_rank": 901,
+    "market_cap_rank": 902,
     "name": "Gradients"
   },
   "SN64": {
-    "market_cap_rank": 268,
+    "market_cap_rank": 261,
     "name": "Chutes"
   },
   "SN68": {
-    "market_cap_rank": 775,
+    "market_cap_rank": 755,
     "name": "NOVA"
   },
   "SN75": {
-    "market_cap_rank": 910,
+    "market_cap_rank": 900,
     "name": "Hippius"
   },
   "SN8": {
-    "market_cap_rank": 672,
+    "market_cap_rank": 652,
     "name": "Vanta Network"
   },
   "SN9": {
-    "market_cap_rank": 630,
+    "market_cap_rank": 622,
     "name": "iota"
   },
   "SNC": {
-    "market_cap_rank": 787,
+    "market_cap_rank": 800,
     "name": "Scandic Coin"
   },
   "SNDKB": {
-    "market_cap_rank": 258,
+    "market_cap_rank": 253,
     "name": "SanDisk (bStocks Tokenized Stock)"
   },
   "SNEK": {
-    "market_cap_rank": 723,
+    "market_cap_rank": 700,
     "name": "Snek"
   },
   "SNT": {
-    "market_cap_rank": 744,
+    "market_cap_rank": 768,
     "name": "Status"
   },
   "SNX": {
-    "market_cap_rank": 221,
+    "market_cap_rank": 225,
     "name": "Synthetix"
   },
   "SODA": {
-    "market_cap_rank": 706,
+    "market_cap_rank": 709,
     "name": "SODAX"
   },
   "SOL": {
     "market_cap_rank": 7,
     "name": "Solana"
   },
-  "SOMI": {
-    "market_cap_rank": 955,
-    "name": "Somnia"
-  },
   "SOON": {
     "market_cap_rank": 316,
     "name": "SOON"
   },
   "SOPH": {
-    "market_cap_rank": 933,
+    "market_cap_rank": 932,
     "name": "Sophon"
   },
   "SOSO": {
-    "market_cap_rank": 223,
+    "market_cap_rank": 224,
     "name": "SoSoValue"
   },
   "SOXLB": {
-    "market_cap_rank": 816,
+    "market_cap_rank": 825,
     "name": "Semicon Bull 3X ETF (bStocks Tokenized Stock)"
   },
   "SPACE": {
-    "market_cap_rank": 589,
+    "market_cap_rank": 610,
     "name": "Spacecoin"
   },
   "SPCM": {
-    "market_cap_rank": 1803,
+    "market_cap_rank": 1862,
     "name": "SPACEM WORLD"
   },
   "SPCXB": {
-    "market_cap_rank": 260,
+    "market_cap_rank": 280,
     "name": "SpaceX (bStocks Tokenized Stock)"
   },
   "SPCXX": {
-    "market_cap_rank": 611,
+    "market_cap_rank": 541,
     "name": "SpaceX xStock"
   },
   "SPK": {
-    "market_cap_rank": 438,
+    "market_cap_rank": 460,
     "name": "Spark"
   },
   "SPX": {
-    "market_cap_rank": 121,
+    "market_cap_rank": 126,
     "name": "SPX6900"
   },
+  "SPYB": {
+    "market_cap_rank": 919,
+    "name": "SPY (bStocks Tokenized Stock)"
+  },
   "SPYON": {
-    "market_cap_rank": 451,
+    "market_cap_rank": 461,
     "name": "SPDR S&P 500 ETF (Ondo Tokenized ETF)"
   },
   "SPYX": {
-    "market_cap_rank": 432,
+    "market_cap_rank": 435,
     "name": "SP500 xStock"
   },
   "SQD": {
-    "market_cap_rank": 460,
+    "market_cap_rank": 468,
     "name": "SQD"
   },
   "SRX": {
-    "market_cap_rank": 609,
+    "market_cap_rank": 611,
     "name": "StorX"
   },
   "SSV": {
-    "market_cap_rank": 632,
+    "market_cap_rank": 636,
     "name": "SSV Network"
   },
   "STABLE": {
@@ -3060,83 +3064,83 @@
     "name": "\u200b\u200bStable"
   },
   "STAC": {
-    "market_cap_rank": 251,
+    "market_cap_rank": 250,
     "name": "Securitize Tokenized AAA CLO Fund"
   },
   "STAR": {
-    "market_cap_rank": 925,
+    "market_cap_rank": 854,
     "name": "Starpower"
   },
   "STAU": {
-    "market_cap_rank": 333,
+    "market_cap_rank": 337,
     "name": "STAU"
   },
   "STEAKCUSDC": {
-    "market_cap_rank": 631,
+    "market_cap_rank": 494,
     "name": "Steakhouse Confidential Prime USDC"
   },
   "STEEM": {
-    "market_cap_rank": 793,
+    "market_cap_rank": 804,
     "name": "Steem"
   },
   "STG": {
-    "market_cap_rank": 865,
+    "market_cap_rank": 826,
     "name": "Stargate Finance"
   },
   "STKRI": {
-    "market_cap_rank": 906,
+    "market_cap_rank": 914,
     "name": "Striker"
   },
   "STON": {
-    "market_cap_rank": 893,
+    "market_cap_rank": 910,
     "name": "STON"
   },
   "STONKBROKER": {
-    "market_cap_rank": 615,
+    "market_cap_rank": 440,
     "name": "StonkBroker"
   },
   "STORJ": {
-    "market_cap_rank": 1392,
+    "market_cap_rank": 1403,
     "name": "Storj"
   },
   "STRAX": {
-    "market_cap_rank": 823,
+    "market_cap_rank": 821,
     "name": "Xertra"
   },
   "STRCX": {
-    "market_cap_rank": 193,
+    "market_cap_rank": 191,
     "name": "Strategy PP Variable xStock"
   },
   "STRK": {
-    "market_cap_rank": 172,
+    "market_cap_rank": 177,
     "name": "Starknet"
   },
   "STRX": {
-    "market_cap_rank": 877,
+    "market_cap_rank": 869,
     "name": "StrikeX"
   },
   "STX": {
-    "market_cap_rank": 143,
+    "market_cap_rank": 140,
     "name": "Stacks"
   },
   "SUI": {
-    "market_cap_rank": 33,
+    "market_cap_rank": 32,
     "name": "Sui"
   },
   "SUN": {
-    "market_cap_rank": 118,
+    "market_cap_rank": 117,
     "name": "Sun Token"
   },
   "SUPER": {
-    "market_cap_rank": 388,
+    "market_cap_rank": 393,
     "name": "SuperVerse"
   },
   "SUSHI": {
-    "market_cap_rank": 448,
+    "market_cap_rank": 453,
     "name": "Sushi"
   },
   "SWFTC": {
-    "market_cap_rank": 701,
+    "market_cap_rank": 715,
     "name": "SWFTCOIN"
   },
   "SWOP": {
@@ -3144,43 +3148,43 @@
     "name": "Swop"
   },
   "SXT": {
-    "market_cap_rank": 818,
+    "market_cap_rank": 827,
     "name": "Space and Time"
   },
   "SYN": {
-    "market_cap_rank": 648,
+    "market_cap_rank": 675,
     "name": "Synapse"
   },
   "SYRUP": {
-    "market_cap_rank": 171,
+    "market_cap_rank": 172,
     "name": "Maple Finance"
   },
   "T": {
-    "market_cap_rank": 509,
+    "market_cap_rank": 503,
     "name": "Threshold Network"
   },
   "TAC": {
-    "market_cap_rank": 937,
+    "market_cap_rank": 948,
     "name": "TAC"
   },
   "TAG": {
-    "market_cap_rank": 198,
+    "market_cap_rank": 201,
     "name": "TAGGER"
   },
   "TAIKO": {
-    "market_cap_rank": 943,
+    "market_cap_rank": 959,
     "name": "Taiko"
   },
   "TAKE": {
-    "market_cap_rank": 784,
+    "market_cap_rank": 787,
     "name": "OVERTAKE"
   },
   "TAO": {
-    "market_cap_rank": 42,
+    "market_cap_rank": 43,
     "name": "Bittensor"
   },
   "TBB": {
-    "market_cap_rank": 894,
+    "market_cap_rank": 847,
     "name": "The Bitcoin Bull"
   },
   "TBK": {
@@ -3188,11 +3192,11 @@
     "name": "TronBank"
   },
   "TCY": {
-    "market_cap_rank": 689,
+    "market_cap_rank": 741,
     "name": "THORChain Yield"
   },
   "TDCCP": {
-    "market_cap_rank": 651,
+    "market_cap_rank": 646,
     "name": "TDCCP"
   },
   "TEL": {
@@ -3200,47 +3204,47 @@
     "name": "Telcoin"
   },
   "TEMPLE": {
-    "market_cap_rank": 347,
+    "market_cap_rank": 348,
     "name": "TempleDAO"
   },
   "TENDIES": {
-    "market_cap_rank": 791,
+    "market_cap_rank": 818,
     "name": "TENDIES"
   },
   "TFUEL": {
-    "market_cap_rank": 392,
+    "market_cap_rank": 395,
     "name": "Theta Fuel"
   },
   "TGBP": {
-    "market_cap_rank": 571,
+    "market_cap_rank": 669,
     "name": "Tokenised GBP"
   },
   "THBILL": {
-    "market_cap_rank": 231,
+    "market_cap_rank": 230,
     "name": "Theo Short Duration US Treasury Fund"
   },
   "THEROS": {
-    "market_cap_rank": 948,
+    "market_cap_rank": 949,
     "name": "Theros"
   },
   "THETA": {
-    "market_cap_rank": 206,
+    "market_cap_rank": 210,
     "name": "Theta Network"
   },
   "TIA": {
-    "market_cap_rank": 122,
+    "market_cap_rank": 121,
     "name": "Celestia"
   },
   "TIBBIR": {
-    "market_cap_rank": 247,
+    "market_cap_rank": 257,
     "name": "Ribbita by Virtuals"
   },
   "TIG": {
-    "market_cap_rank": 645,
+    "market_cap_rank": 662,
     "name": "The Innovation Game"
   },
   "TLTON": {
-    "market_cap_rank": 806,
+    "market_cap_rank": 815,
     "name": "iShares 20+ Year Treasury Bond ETF (Ondo Tokenized ETF)"
   },
   "TNSR": {
@@ -3252,51 +3256,51 @@
     "name": "Tokamak Network"
   },
   "TORN": {
-    "market_cap_rank": 758,
+    "market_cap_rank": 754,
     "name": "Tornado Cash"
   },
   "TOS": {
-    "market_cap_rank": 852,
+    "market_cap_rank": 842,
     "name": "TokenOS AI"
   },
   "TOSHI": {
-    "market_cap_rank": 463,
+    "market_cap_rank": 465,
     "name": "Toshi"
   },
   "TPT": {
-    "market_cap_rank": 828,
+    "market_cap_rank": 794,
     "name": "TokenPocket Token"
   },
   "TRAC": {
-    "market_cap_rank": 225,
+    "market_cap_rank": 221,
     "name": "OriginTrail"
   },
   "TRB": {
-    "market_cap_rank": 512,
+    "market_cap_rank": 522,
     "name": "Tellor Tributes"
   },
   "TREE": {
-    "market_cap_rank": 924,
+    "market_cap_rank": 921,
     "name": "Tree"
   },
   "TRIA": {
-    "market_cap_rank": 843,
+    "market_cap_rank": 859,
     "name": "TRIA"
   },
   "TROLL": {
-    "market_cap_rank": 516,
+    "market_cap_rank": 483,
     "name": "TROLL"
   },
   "TRUMP": {
-    "market_cap_rank": 114,
+    "market_cap_rank": 113,
     "name": "Official Trump"
   },
   "TRUSD": {
-    "market_cap_rank": 379,
+    "market_cap_rank": 367,
     "name": "Tori trUSD"
   },
   "TRUTH": {
-    "market_cap_rank": 686,
+    "market_cap_rank": 656,
     "name": "Swarm Network"
   },
   "TRX": {
@@ -3304,15 +3308,15 @@
     "name": "TRON"
   },
   "TSLAON": {
-    "market_cap_rank": 932,
+    "market_cap_rank": 931,
     "name": "Tesla (Ondo Tokenized Stock)"
   },
   "TSLAX": {
-    "market_cap_rank": 353,
+    "market_cap_rank": 351,
     "name": "Tesla xStock"
   },
   "TURBO": {
-    "market_cap_rank": 381,
+    "market_cap_rank": 383,
     "name": "Turbo"
   },
   "TUSD": {
@@ -3320,75 +3324,79 @@
     "name": "TrueUSD"
   },
   "TUT": {
-    "market_cap_rank": 760,
+    "market_cap_rank": 452,
     "name": "Tutorial"
   },
   "TWT": {
-    "market_cap_rank": 187,
+    "market_cap_rank": 180,
     "name": "Trust Wallet"
+  },
+  "TX": {
+    "market_cap_rank": 892,
+    "name": "tx"
   },
   "U": {
     "market_cap_rank": 58,
     "name": "United Stables"
   },
   "UAI": {
-    "market_cap_rank": 372,
+    "market_cap_rank": 377,
     "name": "UnifAI Network"
   },
   "UB": {
-    "market_cap_rank": 113,
+    "market_cap_rank": 119,
     "name": "Unibase"
   },
   "UCN": {
-    "market_cap_rank": 913,
+    "market_cap_rank": 936,
     "name": "UCHAIN"
   },
   "UKTBL": {
-    "market_cap_rank": 844,
+    "market_cap_rank": 839,
     "name": "Spiko UK T-Bills Money Market Fund"
   },
   "ULTIMA": {
-    "market_cap_rank": 156,
+    "market_cap_rank": 160,
     "name": "Ultima"
   },
   "UMA": {
-    "market_cap_rank": 628,
+    "market_cap_rank": 626,
     "name": "UMA"
   },
   "UMINT": {
-    "market_cap_rank": 846,
+    "market_cap_rank": 848,
     "name": "UBS USD Money Market Investment Fund Token"
   },
   "UNI": {
-    "market_cap_rank": 38,
+    "market_cap_rank": 37,
     "name": "Uniswap"
   },
   "UNP": {
-    "market_cap_rank": 636,
+    "market_cap_rank": 641,
     "name": "Unipoly"
   },
   "UNT": {
-    "market_cap_rank": 510,
+    "market_cap_rank": 516,
     "name": "UnityWallet Token"
   },
   "UP": {
-    "market_cap_rank": 468,
+    "market_cap_rank": 469,
     "name": "Unitas"
   },
   "UQC": {
-    "market_cap_rank": 679,
+    "market_cap_rank": 683,
     "name": "Uquid Coin"
   },
   "US": {
-    "market_cap_rank": 183,
+    "market_cap_rank": 202,
     "name": "Talus"
   },
   "USAT": {
-    "market_cap_rank": 170,
+    "market_cap_rank": 168,
     "name": "USAT"
   },
   "USD0": {
-    "market_cap_rank": 90,
+    "market_cap_rank": 92,
     "name": "Usual USD"
   },
   "USD1": {
@@ -3396,7 +3404,7 @@
     "name": "USD1"
   },
   "USDA": {
-    "market_cap_rank": 293,
+    "market_cap_rank": 285,
     "name": "USDA"
   },
   "USDAI": {
@@ -3404,7 +3412,7 @@
     "name": "USDai"
   },
   "USDAT": {
-    "market_cap_rank": 252,
+    "market_cap_rank": 259,
     "name": "Saturn Dollar"
   },
   "USDC": {
@@ -3416,43 +3424,43 @@
     "name": "USDD"
   },
   "USDE": {
-    "market_cap_rank": 25,
+    "market_cap_rank": 24,
     "name": "Ethena USDe"
   },
   "USDF": {
-    "market_cap_rank": 237,
+    "market_cap_rank": 239,
     "name": "Aster USDF"
   },
   "USDG": {
-    "market_cap_rank": 27,
+    "market_cap_rank": 28,
     "name": "Global Dollar"
   },
   "USDGO": {
-    "market_cap_rank": 61,
+    "market_cap_rank": 62,
     "name": "USDGO"
   },
   "USDH": {
-    "market_cap_rank": 772,
+    "market_cap_rank": 774,
     "name": "USDH"
   },
   "USDKG": {
-    "market_cap_rank": 418,
+    "market_cap_rank": 420,
     "name": "USDKG"
   },
   "USDM": {
-    "market_cap_rank": 835,
+    "market_cap_rank": 832,
     "name": "MegaUSD"
   },
   "USDO": {
-    "market_cap_rank": 680,
+    "market_cap_rank": 685,
     "name": "OpenEden OpenDollar"
   },
   "USDON": {
-    "market_cap_rank": 342,
+    "market_cap_rank": 338,
     "name": "Ondo U.S. Dollar Token"
   },
   "USDP": {
-    "market_cap_rank": 599,
+    "market_cap_rank": 605,
     "name": "Pax Dollar"
   },
   "USDS": {
@@ -3464,95 +3472,95 @@
     "name": "Tether"
   },
   "USDTB": {
-    "market_cap_rank": 115,
+    "market_cap_rank": 114,
     "name": "USDtb"
   },
   "USDU": {
-    "market_cap_rank": 621,
+    "market_cap_rank": 623,
     "name": "Universal USD"
   },
   "USDX": {
-    "market_cap_rank": 724,
+    "market_cap_rank": 776,
     "name": "Hex Trust USD"
   },
   "USDY": {
-    "market_cap_rank": 40,
+    "market_cap_rank": 39,
     "name": "Ondo US Dollar Yield"
   },
   "USELESS": {
-    "market_cap_rank": 456,
+    "market_cap_rank": 505,
     "name": "Useless Coin"
   },
   "USN": {
-    "market_cap_rank": 556,
+    "market_cap_rank": 576,
     "name": "Noon USN"
   },
   "USTB": {
-    "market_cap_rank": 69,
+    "market_cap_rank": 68,
     "name": "Invesco Short Duration US Government Securities Fund"
   },
   "USTBL": {
-    "market_cap_rank": 590,
+    "market_cap_rank": 601,
     "name": "USTBL"
   },
   "USTC": {
-    "market_cap_rank": 666,
+    "market_cap_rank": 664,
     "name": "TerraClassicUSD"
   },
   "USUAL": {
-    "market_cap_rank": 919,
+    "market_cap_rank": 911,
     "name": "Usual"
   },
   "USX": {
-    "market_cap_rank": 98,
+    "market_cap_rank": 99,
     "name": "USX"
   },
   "USYC": {
-    "market_cap_rank": 29,
+    "market_cap_rank": 30,
     "name": "Circle USYC"
   },
   "UTYA": {
-    "market_cap_rank": 525,
+    "market_cap_rank": 592,
     "name": "Utya"
   },
   "UUSD": {
-    "market_cap_rank": 254,
+    "market_cap_rank": 255,
     "name": "Unity USD"
   },
   "UWU": {
-    "market_cap_rank": 637,
+    "market_cap_rank": 688,
     "name": "Unicorn"
   },
   "VANA": {
-    "market_cap_rank": 694,
+    "market_cap_rank": 689,
     "name": "Vana"
   },
   "VATRENI": {
-    "market_cap_rank": 1806,
+    "market_cap_rank": 1820,
     "name": "Croatian Football Federation Token"
   },
   "VBILL": {
-    "market_cap_rank": 167,
+    "market_cap_rank": 166,
     "name": "VanEck Treasury Fund"
   },
   "VCNT": {
-    "market_cap_rank": 292,
+    "market_cap_rank": 295,
     "name": "ViciCoin"
   },
   "VELO": {
-    "market_cap_rank": 741,
+    "market_cap_rank": 742,
     "name": "Velodrome Finance"
   },
   "VELVET": {
-    "market_cap_rank": 158,
+    "market_cap_rank": 163,
     "name": "Velvet"
   },
   "VENOM": {
-    "market_cap_rank": 736,
+    "market_cap_rank": 743,
     "name": "Venom"
   },
   "VERSE": {
-    "market_cap_rank": 2394,
+    "market_cap_rank": 2382,
     "name": "Verse World"
   },
   "VET": {
@@ -3560,19 +3568,19 @@
     "name": "VeChain"
   },
   "VIN": {
-    "market_cap_rank": 884,
+    "market_cap_rank": 887,
     "name": "VulgarTycoon"
   },
   "VIRTUAL": {
-    "market_cap_rank": 112,
+    "market_cap_rank": 111,
     "name": "Virtuals Protocol"
   },
   "VR": {
-    "market_cap_rank": 712,
+    "market_cap_rank": 717,
     "name": "Victoria VR"
   },
   "VRSC": {
-    "market_cap_rank": 717,
+    "market_cap_rank": 895,
     "name": "Verus"
   },
   "VSN": {
@@ -3580,11 +3588,11 @@
     "name": "Vision"
   },
   "VTHO": {
-    "market_cap_rank": 573,
+    "market_cap_rank": 567,
     "name": "VeThor"
   },
   "VVS": {
-    "market_cap_rank": 499,
+    "market_cap_rank": 555,
     "name": "VVS Finance"
   },
   "VVV": {
@@ -3592,19 +3600,19 @@
     "name": "Venice Token"
   },
   "W": {
-    "market_cap_rank": 409,
+    "market_cap_rank": 408,
     "name": "Wormhole"
   },
   "WAL": {
-    "market_cap_rank": 350,
+    "market_cap_rank": 352,
     "name": "Walrus"
   },
   "WAVES": {
-    "market_cap_rank": 780,
+    "market_cap_rank": 785,
     "name": "Waves"
   },
   "WAXP": {
-    "market_cap_rank": 851,
+    "market_cap_rank": 860,
     "name": "WAX"
   },
   "WBT": {
@@ -3612,23 +3620,23 @@
     "name": "WhiteBIT Coin"
   },
   "WBX": {
-    "market_cap_rank": 783,
+    "market_cap_rank": 790,
     "name": "Wibx"
   },
   "WCT": {
-    "market_cap_rank": 912,
+    "market_cap_rank": 925,
     "name": "WalletConnect Token"
   },
   "WEMIX": {
-    "market_cap_rank": 249,
+    "market_cap_rank": 258,
     "name": "WEMIX"
   },
   "WET": {
-    "market_cap_rank": 927,
+    "market_cap_rank": 926,
     "name": "HumidiFi"
   },
   "WGNK": {
-    "market_cap_rank": 838,
+    "market_cap_rank": 868,
     "name": "Wrapped Gonka"
   },
   "WHITE": {
@@ -3636,15 +3644,15 @@
     "name": "Whiteheart"
   },
   "WIF": {
-    "market_cap_rank": 203,
+    "market_cap_rank": 199,
     "name": "dogwifhat"
   },
   "WIN": {
-    "market_cap_rank": 641,
+    "market_cap_rank": 637,
     "name": "WINkLink"
   },
   "WKC": {
-    "market_cap_rank": 563,
+    "market_cap_rank": 506,
     "name": "Wiki Cat"
   },
   "WLD": {
@@ -3656,31 +3664,35 @@
     "name": "World Liberty Financial"
   },
   "WM": {
-    "market_cap_rank": 283,
+    "market_cap_rank": 287,
     "name": "WrappedM by M0"
   },
   "WMTX": {
-    "market_cap_rank": 722,
+    "market_cap_rank": 705,
     "name": "World Mobile Token"
   },
   "WOJAK": {
-    "market_cap_rank": 802,
+    "market_cap_rank": 861,
     "name": "wojak"
   },
   "WOO": {
-    "market_cap_rank": 767,
+    "market_cap_rank": 772,
     "name": "WOO"
   },
   "WOULD": {
     "market_cap_rank": 297,
     "name": "would"
   },
+  "XAI": {
+    "market_cap_rank": 964,
+    "name": "Xai"
+  },
   "XAN": {
-    "market_cap_rank": 555,
+    "market_cap_rank": 557,
     "name": "Anoma"
   },
   "XAUM": {
-    "market_cap_rank": 327,
+    "market_cap_rank": 330,
     "name": "Matrixdock Gold"
   },
   "XAUT": {
@@ -3688,19 +3700,19 @@
     "name": "Tether Gold"
   },
   "XAVA": {
-    "market_cap_rank": 810,
+    "market_cap_rank": 814,
     "name": "Avalaunch"
   },
   "XCH": {
-    "market_cap_rank": 695,
+    "market_cap_rank": 725,
     "name": "Chia"
   },
   "XCN": {
-    "market_cap_rank": 226,
+    "market_cap_rank": 227,
     "name": "Onyxcoin"
   },
   "XDAI": {
-    "market_cap_rank": 378,
+    "market_cap_rank": 381,
     "name": "XDAI"
   },
   "XDC": {
@@ -3708,15 +3720,15 @@
     "name": "XDC Network"
   },
   "XDOL": {
-    "market_cap_rank": 669,
+    "market_cap_rank": 673,
     "name": "x-DOL-x"
   },
   "XEC": {
-    "market_cap_rank": 220,
+    "market_cap_rank": 208,
     "name": "eCash"
   },
   "XGLD": {
-    "market_cap_rank": 909,
+    "market_cap_rank": 946,
     "name": "Unitas Gold"
   },
   "XLM": {
@@ -3728,27 +3740,27 @@
     "name": "Monero"
   },
   "XNO": {
-    "market_cap_rank": 405,
+    "market_cap_rank": 409,
     "name": "Nano"
   },
   "XNY": {
-    "market_cap_rank": 876,
+    "market_cap_rank": 873,
     "name": "Codatta"
   },
   "XP": {
-    "market_cap_rank": 441,
+    "market_cap_rank": 445,
     "name": "Xphere"
   },
   "XPIN": {
-    "market_cap_rank": 718,
+    "market_cap_rank": 695,
     "name": "XPIN Network"
   },
   "XPL": {
-    "market_cap_rank": 164,
+    "market_cap_rank": 154,
     "name": "Plasma"
   },
   "XPR": {
-    "market_cap_rank": 313,
+    "market_cap_rank": 317,
     "name": "XPR Network"
   },
   "XRP": {
@@ -3756,35 +3768,35 @@
     "name": "XRP"
   },
   "XT": {
-    "market_cap_rank": 749,
+    "market_cap_rank": 750,
     "name": "XT.com"
   },
   "XTZ": {
-    "market_cap_rank": 149,
+    "market_cap_rank": 148,
     "name": "Tezos"
   },
   "XUSD": {
-    "market_cap_rank": 453,
+    "market_cap_rank": 456,
     "name": "StraitsX XUSD"
   },
   "XVG": {
-    "market_cap_rank": 587,
+    "market_cap_rank": 571,
     "name": "Verge"
   },
   "XVS": {
-    "market_cap_rank": 450,
+    "market_cap_rank": 447,
     "name": "Venus"
   },
   "XYO": {
-    "market_cap_rank": 497,
+    "market_cap_rank": 480,
     "name": "XYO Network"
   },
   "YB": {
-    "market_cap_rank": 879,
+    "market_cap_rank": 878,
     "name": "Yield Basis"
   },
   "YFI": {
-    "market_cap_rank": 306,
+    "market_cap_rank": 308,
     "name": "yearn.finance"
   },
   "YFSX": {
@@ -3792,39 +3804,39 @@
     "name": "YFSX"
   },
   "YGG": {
-    "market_cap_rank": 941,
+    "market_cap_rank": 944,
     "name": "Yield Guild Games"
   },
   "YLDS": {
-    "market_cap_rank": 87,
+    "market_cap_rank": 88,
     "name": "YLDS"
   },
   "YUSD": {
-    "market_cap_rank": 548,
+    "market_cap_rank": 554,
     "name": "Aegis YUSD"
   },
   "YZY": {
-    "market_cap_rank": 279,
+    "market_cap_rank": 277,
     "name": "YZY"
   },
   "ZAMA": {
-    "market_cap_rank": 241,
+    "market_cap_rank": 247,
     "name": "Zama"
   },
   "ZANO": {
-    "market_cap_rank": 199,
+    "market_cap_rank": 214,
     "name": "Zano"
   },
   "ZBCN": {
-    "market_cap_rank": 173,
+    "market_cap_rank": 179,
     "name": "Zebec Network"
   },
   "ZBT": {
-    "market_cap_rank": 467,
+    "market_cap_rank": 621,
     "name": "ZEROBASE"
   },
   "ZCHF": {
-    "market_cap_rank": 477,
+    "market_cap_rank": 479,
     "name": "Frankencoin"
   },
   "ZEC": {
@@ -3832,39 +3844,39 @@
     "name": "Zcash"
   },
   "ZEN": {
-    "market_cap_rank": 307,
+    "market_cap_rank": 311,
     "name": "Horizen"
   },
   "ZENT": {
-    "market_cap_rank": 967,
+    "market_cap_rank": 986,
     "name": "Zentry"
   },
   "ZEREBRO": {
-    "market_cap_rank": 531,
+    "market_cap_rank": 568,
     "name": "Zerebro"
   },
   "ZEST": {
-    "market_cap_rank": 596,
+    "market_cap_rank": 698,
     "name": "Zest Protocol"
   },
   "ZETA": {
-    "market_cap_rank": 445,
+    "market_cap_rank": 449,
     "name": "ZetaChain"
   },
   "ZIG": {
-    "market_cap_rank": 384,
+    "market_cap_rank": 389,
     "name": "ZIGChain"
   },
   "ZIL": {
-    "market_cap_rank": 413,
+    "market_cap_rank": 433,
     "name": "Zilliqa"
   },
   "ZK": {
-    "market_cap_rank": 294,
+    "market_cap_rank": 296,
     "name": "ZKsync"
   },
   "ZORA": {
-    "market_cap_rank": 734,
+    "market_cap_rank": 732,
     "name": "Zora"
   },
   "ZRO": {
@@ -3872,27 +3884,23 @@
     "name": "LayerZero"
   },
   "ZRX": {
-    "market_cap_rank": 335,
+    "market_cap_rank": 333,
     "name": "0x Protocol"
   },
   "ZYLO": {
-    "market_cap_rank": 817,
+    "market_cap_rank": 779,
     "name": "Zylo Ecosystem"
   },
   "\u5409\u7965\u9a6c": {
-    "market_cap_rank": 957,
+    "market_cap_rank": 952,
     "name": "\u5409\u7965\u9a6c"
   },
   "\u5e01\u5b89\u4eba\u751f": {
-    "market_cap_rank": 95,
+    "market_cap_rank": 97,
     "name": "\u5e01\u5b89\u4eba\u751f (BinanceLife)"
   },
-  "\u91d1\u8776\u5723\u7532": {
-    "market_cap_rank": 908,
-    "name": "\u91d1\u8776\u5723\u7532 (Golden Butterfly Sacred Armor)"
-  },
   "\u9f99\u867e": {
-    "market_cap_rank": 769,
+    "market_cap_rank": 771,
     "name": "\u9f99\u867e (Lobster)"
   }
 }
