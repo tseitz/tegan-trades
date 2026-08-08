@@ -426,6 +426,12 @@ DROPPED=$(grep -oE '[0-9]+ theses dropped' "$LOG" | tail -1 | cut -d' ' -f1)
 # looked committed never was — the one outcome here worth reading the next morning.
 KILLED=$(grep -oE '[0-9]+ killed by the venue' "$LOG" | tail -1 | cut -d' ' -f1)
 
+# The other half of the same step. `book --reconcile` now also records how filled trades ENDED,
+# and a finished trade is the most interesting thing a night can produce — it is the only output
+# here that is evidence rather than intention. Reported separately from KILLED because the two
+# mean opposite things: an order the venue killed never traded, a close is the one that did.
+CLOSED=$(grep -oE '[0-9]+ close\(s\) recorded' "$LOG" | tail -1 | cut -d' ' -f1)
+
 # Funding is reported separately from the step's exit code because it fails in a way the exit
 # code cannot see: `fetch-funding` records what it *did* reach and returns 0, so losing one
 # venue of three looks identical to a clean run. That matters more here than elsewhere —
@@ -456,6 +462,7 @@ print(f'{spend.total():.2f}')" 2>/dev/null || echo "$XAI_COST")
   echo "  brain:                 ${BRAIN_EXTRACTED:-0} extracted · ${BRAIN_INDEXED:-0} indexed"
   echo "  candidates:            ${CANDIDATES:-?}"
   echo "  orders killed:         ${KILLED:-0}"
+  echo "  trades closed:         ${CLOSED:-0}"
   echo "  funding observations:  ${FUNDING:-0}"
   echo "  theses dropped:        ${DROPPED:-0}"
   echo "  exit:                  $WORST"
@@ -513,6 +520,9 @@ if [ -d "$(dirname "$NOTE")" ]; then
     # Only when non-zero, like `exit` below. Zero killed is every ordinary night and printing it
     # would train the eye to skip the field that exists to be noticed.
     [ "${KILLED:-0}" -eq 0 ] || printf ' · **%s order(s) killed by the venue**' "$KILLED"
+    # The per-trade detail goes to Closed Trades.md, written by `book` itself. This is only the
+    # pointer, so a night that finished a trade is visible from the run line.
+    [ "${CLOSED:-0}" -eq 0 ] || printf ' · **%s trade(s) closed**' "$CLOSED"
     [ "$WORST" -eq 0 ] || printf ' · **exit %s — see `%s`**' "$WORST" "${LOG/#$HOME/~}"
   } >> "$NOTE"
 fi
