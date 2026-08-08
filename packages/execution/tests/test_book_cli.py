@@ -358,3 +358,343 @@ def test_the_listing_alone_asks_nothing_about_past_orders(tmp_path):
     main([], now=NOW, out=lambda _: None, broker=broker,
          orders_path=_logged(tmp_path, "rklb-1"))
     assert broker.asked == []
+
+
+# ── phase 2: how the trade ended ────────────────────────────────────────────────────────────
+#
+# ``reconcile`` settles the ENTRY. This settles the trade. The gap it closes: a candidate left
+# every work list at entry fill, so realised P/L was recorded nowhere. See ``execution.outcome``.
+
+from execution import outcome  # noqa: E402
+from execution.book_cli import close_out  # noqa: E402
+from execution.participation import Depth  # noqa: E402
+
+ENTRY_ID, TP_ID, SL_ID = "f41cbf96", "1fa9b483", "94e89e37"
+KEY = "19ba232b91ce"
+
+# The real INTL session: median 19,262 shares/day over 33 sessions.
+INTL_DEPTH = Depth(sessions=33, median_volume=19_262.0, median_trades=170.0,
+                   median_dollar_volume=597_000.0)
+
+
+def _feed(*rows):
+    return outcome.parse_fills(list(rows))
+
+
+def _activity(order_id, qty, price, at, side="sell", symbol="INTL"):
+    return {"activity_type": "FILL", "order_id": order_id, "qty": str(qty), "price": str(price),
+            "side": side, "symbol": symbol, "transaction_time": at}
+
+
+ENTRY_ACTIVITY = _activity(ENTRY_ID, 1639, 29.621233, "2026-07-29T13:34:57.147565Z", side="buy")
+EXIT_ACTIVITY = _activity("c29d3a96", 1639, 31.21, "2026-08-07T13:39:09.192769Z")
+
+
+class ExitBroker:
+    """A broker that answers the two questions the close pass asks."""
+
+    def __init__(self, fills=(), depth=INTL_DEPTH):
+        self._fills = fills
+        self._depth = depth
+
+    def fills(self, since):
+        self.since = since
+        return self._fills
+
+    def depth(self, coin):
+        return self._depth
+
+
+def _intl_log(tmp_path, *, network="paper", filled_qty=1639.0):
+    """A candidate whose entry filled, exactly as the real log has it."""
+    path = tmp_path / "orders.jsonl"
+    store._append(path, {
+        "at": "2026-07-29T03:24:29+00:00", "outcome": store.PLACED, "network": network,
+        "candidate_key": KEY, "asset": "INTL", "coin": "INTL", "direction": "long",
+        "size": 1639.0, "entry": 29.8, "stop": 29.19, "target": 32.34,
+        "risk": 999.79, "notional": 48842.2, "equity": 100000.0,
+        "order_ids": [ENTRY_ID, TP_ID, SL_ID],
+    })
+    store._append(path, {
+        "at": "2026-07-29T20:57:47+00:00", "outcome": store.RECONCILED, "network": network,
+        "candidate_key": KEY, "status": "filled", "failed": False,
+        "filled_qty": filled_qty, "filled_avg_price": 29.621233,
+        "leg_statuses": ["new", "held"],
+    })
+    return path
+
+
+def _close_out(path, broker, network="paper", lines=None):
+    return close_out(broker, path, network=network, max_participation=0.01,
+                     out=(lines.append if lines is not None else (lambda _: None)))
+
+
+def test_a_manual_exit_is_recorded_against_its_candidate(tmp_path):
+    """The real trade: bracket cancelled, 1,639 shares sold by hand on 2026-08-07. Nothing tied
+    that exit to candidate 19ba232b91ce until this pass existed."""
+    path = _intl_log(tmp_path)
+    broker = ExitBroker(fills=_feed(ENTRY_ACTIVITY, EXIT_ACTIVITY))
+    assert _close_out(path, broker) == 1
+
+    row = next(r for r in store.load(path) if r["outcome"] == store.CLOSED)
+    assert row["candidate_key"] == KEY
+    assert row["exit_reason"] == outcome.MANUAL
+    assert row["exit_price"] == 31.21
+    assert row["exit_qty"] == 1639.0
+    assert round(row["pnl"], 2) == 2603.99
+    assert round(row["r_planned"], 2) == 2.60
+    assert round(row["r_at_fill"], 2) == 3.68
+    assert round(row["held_days"], 1) == 9.0
+    assert row["reconstructed"] is True
+
+
+def test_a_reconstructed_close_flags_an_uncredible_fill(tmp_path):
+    """1,639 shares is 8.51% of a median INTL session against a 1% ceiling, and paper never
+    consumes the book. Both reasons this fill is not evidence land on the row."""
+    path = _intl_log(tmp_path)
+    _close_out(path, ExitBroker(fills=_feed(ENTRY_ACTIVITY, EXIT_ACTIVITY)))
+    row = next(r for r in store.load(path) if r["outcome"] == store.CLOSED)
+    assert round(row["participation"], 4) == 0.0851
+    assert row["paper"] is True
+    assert row["credible"] is False
+
+
+def test_a_target_fill_is_named_as_one(tmp_path):
+    path = _intl_log(tmp_path)
+    hit = _activity(TP_ID, 1639, 32.34, "2026-08-07T13:39:09Z")
+    _close_out(path, ExitBroker(fills=_feed(ENTRY_ACTIVITY, hit)))
+    row = next(r for r in store.load(path) if r["outcome"] == store.CLOSED)
+    assert row["exit_reason"] == outcome.TARGET
+
+
+def test_a_stop_fill_is_a_loss_of_about_one_r(tmp_path):
+    path = _intl_log(tmp_path)
+    stopped = _activity(SL_ID, 1639, 29.19, "2026-07-30T14:00:00Z")
+    _close_out(path, ExitBroker(fills=_feed(ENTRY_ACTIVITY, stopped)))
+    row = next(r for r in store.load(path) if r["outcome"] == store.CLOSED)
+    assert row["exit_reason"] == outcome.STOP
+    assert row["r_at_fill"] == -1.0
+
+
+def test_a_position_still_open_records_nothing(tmp_path):
+    """No exit prints means the trade is running. Writing a zero-quantity close would report a
+    scratch on a position that is still making or losing money."""
+    path = _intl_log(tmp_path)
+    assert _close_out(path, ExitBroker(fills=_feed(ENTRY_ACTIVITY))) == 0
+    assert not [r for r in store.load(path) if r["outcome"] == store.CLOSED]
+    assert store.awaiting_exit_keys(path, network="paper") == {KEY}
+
+
+def test_a_partial_exit_stays_pending(tmp_path):
+    """800 of 1,639 sold. Recording a close here would drop the candidate off the work list with
+    839 shares still on the book, and the rest of the exit would never be looked for."""
+    path = _intl_log(tmp_path)
+    half = _activity("manual", 800, 31.0, "2026-08-07T13:39:09Z")
+    assert _close_out(path, ExitBroker(fills=_feed(ENTRY_ACTIVITY, half))) == 0
+    assert store.awaiting_exit_keys(path, network="paper") == {KEY}
+
+
+def test_an_exit_split_across_two_orders_records_one_close_each(tmp_path):
+    """Half taken by the target, the rest sold by hand — two different outcomes on one
+    candidate. Averaged into a single row they would describe a trade that never happened."""
+    path = _intl_log(tmp_path)
+    fills = _feed(
+        ENTRY_ACTIVITY,
+        _activity(TP_ID, 800, 32.34, "2026-08-05T14:00:00Z"),
+        _activity("byhand", 839, 30.50, "2026-08-07T13:39:09Z"),
+    )
+    assert _close_out(path, ExitBroker(fills=fills)) == 2
+    closes = [r for r in store.load(path) if r["outcome"] == store.CLOSED]
+    assert {r["exit_reason"] for r in closes} == {outcome.TARGET, outcome.MANUAL}
+    # Risk is pro-rated by share of the position, so the two R's are comparable and sum sanely.
+    assert round(sum(r["risk_planned"] for r in closes), 2) == 999.79
+
+
+def test_a_venue_that_cannot_report_fills_records_nothing(tmp_path):
+    """Hyperliquid sends no ``cloid``, so a fill there cannot be attributed. ``None`` must leave
+    the candidate pending — an empty tuple would mean "never closed" and strand it forever."""
+    path = _intl_log(tmp_path, network="testnet")
+    broker = ExitBroker(fills=None)
+    assert _close_out(path, broker, network="testnet") == 0
+    assert store.awaiting_exit_keys(path, network="testnet") == {KEY}
+
+
+def test_an_entry_missing_from_the_feed_window_is_left_pending(tmp_path):
+    """Without the entry's own prints the position cannot be dated, and an undated boundary
+    would let an unrelated earlier sale of the same symbol count as this trade's exit."""
+    path = _intl_log(tmp_path)
+    orphan = _activity("c29d3a96", 1639, 31.21, "2026-08-07T13:39:09Z")
+    assert _close_out(path, ExitBroker(fills=_feed(orphan))) == 0
+    assert store.awaiting_exit_keys(path, network="paper") == {KEY}
+
+
+def test_a_real_money_close_is_not_flagged_as_paper(tmp_path):
+    path = _intl_log(tmp_path, network="live")
+    _close_out(path, ExitBroker(fills=_feed(ENTRY_ACTIVITY, EXIT_ACTIVITY)), network="live")
+    row = next(r for r in store.load(path) if r["outcome"] == store.CLOSED)
+    assert row["paper"] is False
+    # Still not credible: 8.51% of a median session is the other, independent reason.
+    assert row["credible"] is False
+
+
+def test_nothing_awaiting_a_close_asks_the_venue_nothing(tmp_path):
+    """A quiet night must not spend a request. ``fills`` is one call, but the pass runs nightly
+    for the rest of this account's life."""
+    path = tmp_path / "orders.jsonl"
+    broker = ExitBroker(fills=_feed(EXIT_ACTIVITY))
+    assert _close_out(path, broker) == 0
+    assert not hasattr(broker, "since")
+
+
+def test_the_feed_is_asked_from_the_earliest_open_position(tmp_path):
+    path = _intl_log(tmp_path)
+    broker = ExitBroker(fills=_feed(ENTRY_ACTIVITY, EXIT_ACTIVITY))
+    _close_out(path, broker)
+    assert broker.since == "2026-07-29"
+
+
+# ── reading the realised history back ───────────────────────────────────────────────────────
+
+from execution.book_cli import render_closed  # noqa: E402
+
+
+def _closed_rows(tmp_path):
+    path = _intl_log(tmp_path)
+    _close_out(path, ExitBroker(fills=_feed(ENTRY_ACTIVITY, EXIT_ACTIVITY)))
+    return store.load(path)
+
+
+def test_the_history_leads_with_the_totals(tmp_path):
+    text = "\n".join(render_closed(_closed_rows(tmp_path), network="paper"))
+    assert "1 closed" in text
+    assert "2,603.99" in text
+
+
+def test_an_uncredible_fill_is_marked_in_the_listing(tmp_path):
+    """The number would otherwise read as a clean +2.6R, which is the exact mistake the flag
+    exists to prevent."""
+    text = "\n".join(render_closed(_closed_rows(tmp_path), network="paper"))
+    assert "NOT EVIDENCE" in text
+
+
+def test_the_totals_exclude_fills_that_are_not_evidence(tmp_path):
+    """A summary that pools a paper fill on 8.5% of a session with real ones is a summary of
+    fiction. Both numbers are shown; only the credible one is presented as performance."""
+    text = "\n".join(render_closed(_closed_rows(tmp_path), network="paper"))
+    assert "0 credible" in text
+
+
+def test_no_closes_says_so(tmp_path):
+    assert "none" in "\n".join(render_closed([], network="paper")).lower()
+
+
+def test_the_history_is_scoped_to_one_network(tmp_path):
+    rows = _closed_rows(tmp_path)
+    assert "none" in "\n".join(render_closed(rows, network="live")).lower()
+
+
+# ── two candidates, one symbol ───────────────────────────────────────────────────────────────
+#
+# The account-wide feed cannot tell whose sell is whose when two brackets hold the same
+# instrument. A manual exit carries an order id this repo never recorded, so there is nothing to
+# attribute it by — and guessing would fabricate one close and strand the other position.
+
+OTHER_KEY = "aaaa1111bbbb"
+OTHER_ENTRY = "e2222222"
+
+
+def _two_intl(tmp_path, *, network="paper"):
+    """Two separate candidates both long INTL — two zones on one asset, which the engine can
+    legitimately produce and no guard forbids."""
+    path = _intl_log(tmp_path, network=network)
+    store._append(path, {
+        "at": "2026-07-30T03:00:00+00:00", "outcome": store.PLACED, "network": network,
+        "candidate_key": OTHER_KEY, "asset": "INTL", "coin": "INTL", "direction": "long",
+        "size": 100.0, "entry": 30.5, "stop": 29.9, "target": 33.0,
+        "risk": 60.0, "notional": 3050.0, "equity": 100000.0,
+        "order_ids": [OTHER_ENTRY, "e2tp", "e2sl"],
+    })
+    store._append(path, {
+        "at": "2026-07-30T20:00:00+00:00", "outcome": store.RECONCILED, "network": network,
+        "candidate_key": OTHER_KEY, "status": "filled", "failed": False,
+        "filled_qty": 100.0, "filled_avg_price": 30.5, "leg_statuses": ["new", "held"],
+    })
+    return path
+
+
+def test_an_unattributable_exit_on_a_contested_symbol_closes_nothing(tmp_path):
+    """The misattribution this guards: candidate A's filter matches candidate B's sell too, so
+    without the check A would be closed on B's fill and B left open forever."""
+    path = _two_intl(tmp_path)
+    fills = _feed(
+        ENTRY_ACTIVITY,
+        _activity(OTHER_ENTRY, 100, 30.5, "2026-07-30T13:35:00Z", side="buy"),
+        EXIT_ACTIVITY,  # a manual sell of 1639 — whose?
+    )
+    lines = []
+    assert _close_out(path, ExitBroker(fills=fills), lines=lines) == 0
+    assert store.awaiting_exit_keys(path, network="paper") == {KEY, OTHER_KEY}
+    assert any("cannot be attributed" in ln for ln in lines)
+
+
+def test_a_contested_symbol_still_closes_on_its_own_bracket_leg(tmp_path):
+    """Ambiguity is only about UNKNOWN order ids. A fill on this candidate's own take-profit leg
+    names its owner exactly, so contention does not block it."""
+    path = _two_intl(tmp_path)
+    fills = _feed(
+        ENTRY_ACTIVITY,
+        _activity(OTHER_ENTRY, 100, 30.5, "2026-07-30T13:35:00Z", side="buy"),
+        _activity(TP_ID, 1639, 32.34, "2026-08-07T13:39:09Z"),
+    )
+    assert _close_out(path, ExitBroker(fills=fills)) == 1
+    row = next(r for r in store.load(path) if r["outcome"] == store.CLOSED)
+    assert row["candidate_key"] == KEY
+    assert row["exit_reason"] == outcome.TARGET
+    assert store.awaiting_exit_keys(path, network="paper") == {OTHER_KEY}
+
+
+def test_an_uncontested_symbol_still_accepts_a_manual_exit(tmp_path):
+    """The ordinary case must not regress — one candidate per symbol is how it normally is, and
+    a hand-closed trade is exactly what this whole pass was built to capture."""
+    path = _intl_log(tmp_path)
+    assert _close_out(path, ExitBroker(fills=_feed(ENTRY_ACTIVITY, EXIT_ACTIVITY))) == 1
+
+
+# ── malformed rows must not take out the rest of the pass ────────────────────────────────────
+
+def test_a_malformed_row_is_skipped_without_stranding_later_candidates(tmp_path):
+    """One bad value must cost one candidate, not every candidate sorted after it. This runs
+    unattended, and the rows are read from a log that predates several of its own fields."""
+    path = _intl_log(tmp_path)
+    # Sorts before "19ba..." so it is processed first, and would abort the loop if unguarded.
+    store._append(path, {
+        "at": "2026-07-29T03:00:00+00:00", "outcome": store.PLACED, "network": "paper",
+        "candidate_key": "00bad", "asset": "BAD", "coin": "BAD", "direction": "long",
+        "size": 1.0, "entry": 1.0, "stop": "not-a-number", "target": 2.0,
+        "risk": 1.0, "order_ids": ["badentry", "badtp", "badsl"],
+    })
+    store._append(path, {
+        "at": "2026-07-29T04:00:00+00:00", "outcome": store.RECONCILED, "network": "paper",
+        "candidate_key": "00bad", "status": "filled", "failed": False,
+        "filled_qty": 1.0, "filled_avg_price": 1.0, "leg_statuses": ["new", "held"],
+    })
+    fills = _feed(
+        ENTRY_ACTIVITY, EXIT_ACTIVITY,
+        _activity("badentry", 1, 1.0, "2026-07-29T13:00:00Z", side="buy", symbol="BAD"),
+        _activity("byhand", 1, 2.0, "2026-07-30T13:00:00Z", symbol="BAD"),
+    )
+    assert _close_out(path, ExitBroker(fills=fills)) == 1
+    assert next(r for r in store.load(path)
+                if r["outcome"] == store.CLOSED)["candidate_key"] == KEY
+
+
+def test_a_reconciled_row_with_no_placement_does_not_crash_the_pass(tmp_path):
+    """``min()`` over an empty sequence raises. Reachable from a hand-edited log, or a placement
+    recorded under a different network than its settlement."""
+    path = tmp_path / "orders.jsonl"
+    store._append(path, {
+        "at": "2026-07-29T20:00:00+00:00", "outcome": store.RECONCILED, "network": "paper",
+        "candidate_key": "orphan", "status": "filled", "failed": False,
+        "filled_qty": 5.0, "filled_avg_price": 10.0, "leg_statuses": ["new", "held"],
+    })
+    assert _close_out(path, ExitBroker(fills=_feed(EXIT_ACTIVITY))) == 0

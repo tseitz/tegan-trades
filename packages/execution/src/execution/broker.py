@@ -31,6 +31,7 @@ from execution.account import Account
 from execution.book import OrderState, Position, RestingOrder
 from execution.book import is_live as order_is_live
 from execution.liquidity import Liquidity, parse_book, parse_context
+from execution.outcome import ExitFill
 from execution.participation import Depth
 from execution.plan import Market, OrderPlan
 from execution.wire import GROUPING, Placement, order_requests, parse_placement
@@ -156,6 +157,13 @@ class Broker(Protocol):
     def states(self, keys) -> dict[str, OrderState | None]: ...
 
     def live_keys(self, keys) -> set[str]: ...
+
+    # Every print this account has made since ``since``, for attributing an exit back to the
+    # bracket leg that caused it. Same None/empty distinction as ``resting``, and here it is
+    # load-bearing in a way it is nowhere else: an empty tuple says the position is still open,
+    # so a venue that cannot be asked must answer ``None`` or the close pass will conclude that
+    # a trade which ended weeks ago is still running. See ``outcome`` and ``store.record_close``.
+    def fills(self, since: str) -> tuple[ExitFill, ...] | None: ...
 
 
 @dataclass(frozen=True)
@@ -342,6 +350,20 @@ class HyperliquidBroker:
         a status, but "no answer available", which every reader already handles.
         """
         return dict.fromkeys(keys)
+
+    def fills(self, since: str) -> tuple[ExitFill, ...] | None:
+        """``None`` — the same §33 wall ``states`` hits, and for the same reason.
+
+        This venue does report a user's fills, so the refusal is not about the data existing.
+        It is that a fill here carries an oid and no ``cloid``, so there is nothing to attribute
+        it back to a candidate *or* to a bracket leg with — and a close pass cannot say which
+        leg took a trade from a price alone (see ``outcome.reason_for``).
+
+        ``None`` rather than ``()`` matters more here than anywhere: an empty tuple would tell
+        the close pass that no position on this venue has ever closed, so every perp trade would
+        sit on the exit work list forever, re-asked every night. See ``Broker.fills``.
+        """
+        return None
 
     def live_keys(self, keys) -> set[str]:
         """Every key, unchanged — this venue cannot yet answer the question.

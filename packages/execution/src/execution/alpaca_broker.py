@@ -41,6 +41,7 @@ from execution.book import (
     is_live as order_is_live,  # aliased: this class has an ``is_live`` of its own,
 )
 from execution.liquidity import Liquidity
+from execution.outcome import ExitFill, parse_fills
 from execution.participation import Depth, depth_from_bars
 from execution.plan import SHARE_GRID, Market, OrderPlan
 from execution.wire import Placement
@@ -68,6 +69,16 @@ DATA_URL = "https://data.alpaca.markets"
 # 2026-06-15..07-28) does not decide the answer, and short enough to describe the market as it
 # trades now.
 DEPTH_LOOKBACK_DAYS = 45
+
+# Alpaca's own maximum for the activities feed. A page shorter than this is the ONLY end-of-feed
+# marker the endpoint gives, so the number has to match the request exactly — ask for less and
+# every full page looks like the last one.
+ACTIVITY_PAGE_SIZE = 100
+
+# A runaway backstop, not an expected bound. ``page_token`` advances to a strictly newer id each
+# time, so the loop ends on a short page; this only caps the damage if the venue ever repeats an
+# id. 100 pages is 10,000 fills, far past any night this account will have.
+MAX_ACTIVITY_PAGES = 100
 
 KEY_HEADER = "APCA-API-KEY-ID"
 SECRET_HEADER = "APCA-API-SECRET-KEY"
@@ -342,6 +353,56 @@ class AlpacaBroker:
             )
             for key in keys
         }
+
+    def fills(self, since: str) -> tuple[ExitFill, ...] | None:
+        """Every print this account has made since ``since``, oldest first. ``None`` if unreadable.
+
+        The close pass's raw material, and deliberately **one call for the whole account**
+        rather than ``states``' one-request-per-key: a fill carries its own ``order_id``, so
+        attributing it back to a bracket leg is free once the rows are in hand.
+
+        ``None`` versus ``()`` is the asymmetry this package keeps returning to. An empty tuple
+        says "this account has traded nothing", which the close pass reads as "these positions
+        are all still open" — a defensible conclusion from a real fact. ``None`` says the venue
+        did not answer, and the candidates stay on the work list for tomorrow. Collapsing the
+        two would mark open trades closed, or worse, closed trades open forever.
+
+        **Paginated, because Alpaca's page maximum is 100 and a short page is the only end
+        marker.** The oldest fills are the ones a close pass wants, and they are last, so an
+        unpaginated read loses exactly the wrong end of the feed.
+        """
+        rows: list[dict] = []
+        page_token: str | None = None
+        try:
+            # ``for/else``: falling out of the loop means the backstop was reached with the feed
+            # still going, i.e. a KNOWN-incomplete read. That must not be handed back as
+            # complete — see the ``else`` clause.
+            for _ in range(MAX_ACTIVITY_PAGES):
+                params: dict[str, Any] = {"after": since, "direction": "asc",
+                                          "page_size": ACTIVITY_PAGE_SIZE}
+                if page_token is not None:
+                    params["page_token"] = page_token
+                payload = self._transport("GET", "/v2/account/activities/FILL", params=params)
+                # A dict here is Alpaca's error envelope — the feed itself is a bare array.
+                if not isinstance(payload, list):
+                    return None
+                rows.extend(r for r in payload if isinstance(r, dict))
+                if len(payload) < ACTIVITY_PAGE_SIZE:
+                    break
+                last_id = payload[-1].get("id") if isinstance(payload[-1], dict) else None
+                if not last_id:
+                    # A FULL page with no cursor on its last row: there is no way to ask for the
+                    # next one, and the page being full is proof there is a next one.
+                    return None
+                page_token = str(last_id)
+            else:
+                return None
+        except Exception:  # noqa: BLE001 - unreadable is "not measured", not a crash
+            # The same guard ``depth`` carries, and for a stronger reason: this runs inside an
+            # unattended nightly step, so an exception here would abort the reconcile pass and
+            # the listing after it. ``None`` leaves every candidate pending for tomorrow.
+            return None
+        return parse_fills(rows)
 
     def live_keys(self, keys) -> set[str]:
         """Of these candidate keys, which still have something live at the venue.

@@ -30,6 +30,10 @@ FAILED = "failed"
 REFUSED = "refused"
 # What the venue said had become of a ``placed`` order when someone went back and asked.
 RECONCILED = "reconciled"
+# How the trade ENDED. The outcome the log had no way to express: ``reconciled`` settles the
+# *entry*, so before this existed a candidate left every work list at entry fill and its
+# realised P/L was recorded nowhere. See ``execution.outcome``.
+CLOSED = "closed"
 
 
 def _append(path, record: dict) -> None:
@@ -132,23 +136,90 @@ def record_reconciliation(path, state, *, network: str, at: str | None = None) -
     return record
 
 
-def latest_outcomes(path, *, network: str | None = None) -> dict[str, str]:
-    """The most recent outcome recorded for each candidate key, in file order.
+def record_close(path, close, realized, quality, *, network: str, asset: str,
+                 entry_price: float, entry_at=None, reconstructed: bool = False,
+                 at: str | None = None) -> dict:
+    """Log how a trade ENDED — the outcome row, and the only one a calibration pass can regress.
 
-    Needed because a candidate can legitimately go round more than once — placed, reconciled
-    as rejected, then placed again once the duplicate guard released it. Anything that answered
-    "has this been reconciled" from the *set* of reconciled keys would mark the second
-    placement settled on the strength of the first one's verdict.
+    Appended like every other row, so a candidate that traded twice carries two closes and the
+    sequence stays readable.
+
+    **Both R denominators are written**, because an entry is a limit and can fill better than
+    planned, at which point the risk budgeted and the risk taken are different numbers. See
+    ``outcome.realized`` — the INTL trade is +2.60R against its budget and +3.68R against its
+    fill, and neither is the wrong answer.
+
+    **``credible`` is part of the record, not commentary.** A paper fill, or one above the
+    participation ceiling, never had to compete for liquidity; pooled with real fills it raises
+    the estimate of every setup that looked like it. See ``outcome.fill_quality``.
+
+    ``reconstructed`` marks a close derived from the venue's history rather than captured as it
+    happened — ``oracle.decisions`` module docstring, "never present a backfill as captured
+    live". Every close the nightly finds is reconstructed; the flag exists so a future live
+    capture is distinguishable from it.
     """
-    outcomes: dict[str, str] = {}
+    held_days = None
+    if entry_at is not None and close.at is not None:
+        held_days = (close.at - entry_at).total_seconds() / 86_400
+
+    record = {
+        "at": at or _now(),
+        "outcome": CLOSED,
+        "network": network,
+        "candidate_key": close.candidate_key,
+        "asset": asset,
+        "symbol": close.symbol,
+        # Which leg took it, read from the order id rather than guessed from the price.
+        "exit_reason": close.reason,
+        "exit_order_id": close.order_id,
+        "exit_qty": close.qty,
+        "exit_price": close.price,
+        "exit_at": close.at.isoformat() if close.at is not None else None,
+        "exit_prints": close.prints,
+        "entry_price": entry_price,
+        "entry_at": entry_at.isoformat() if entry_at is not None else None,
+        "held_days": held_days,
+        "pnl": realized.pnl,
+        "risk_planned": realized.risk_planned,
+        "risk_at_fill": realized.risk_at_fill,
+        "r_planned": realized.r_planned,
+        "r_at_fill": realized.r_at_fill,
+        # Whether any of the above is evidence.
+        "participation": quality.participation,
+        "paper": quality.paper,
+        "credible": quality.credible,
+        "reconstructed": reconstructed,
+    }
+    _append(path, record)
+    return record
+
+
+def latest_rows(path, *, network: str | None = None) -> dict[str, dict]:
+    """The most recent whole row for each candidate key, in file order.
+
+    Whole rows rather than outcome strings because the two work lists ask different things of
+    them: the entry list needs only the outcome, and the exit list has to know whether a
+    ``reconciled`` row means the entry *traded* — which lives in ``status`` and ``filled_qty``.
+
+    Needed at all because a candidate can legitimately go round more than once — placed,
+    reconciled as rejected, then placed again once the duplicate guard released it. Anything
+    that answered "has this been reconciled" from the *set* of reconciled keys would mark the
+    second placement settled on the strength of the first one's verdict.
+    """
+    rows: dict[str, dict] = {}
     for row in load(path):
         if network is not None and row.get("network") != network:
             continue
         key = row.get("candidate_key")
-        outcome = row.get("outcome")
-        if key and outcome:
-            outcomes[str(key)] = str(outcome)
-    return outcomes
+        if key and row.get("outcome"):
+            rows[str(key)] = row
+    return rows
+
+
+def latest_outcomes(path, *, network: str | None = None) -> dict[str, str]:
+    """The most recent outcome recorded for each candidate key, in file order."""
+    return {key: str(row["outcome"])
+            for key, row in latest_rows(path, network=network).items()}
 
 
 def unsettled_keys(path, *, network: str | None = None) -> set[str]:
@@ -160,6 +231,35 @@ def unsettled_keys(path, *, network: str | None = None) -> set[str]:
     """
     return {key for key, outcome in latest_outcomes(path, network=network).items()
             if outcome == PLACED}
+
+
+def awaiting_exit_keys(path, *, network: str | None = None) -> set[str]:
+    """Candidates whose entry filled and whose exit is not yet recorded. The close pass's list.
+
+    **Disjoint from ``unsettled_keys`` by construction**, because both read the *latest* row and
+    key on its outcome: a candidate is on the entry list while that row says ``placed`` and on
+    this one once it says ``reconciled`` and traded. A candidate on both would have each phase
+    writing rows about the other's business.
+
+    The two conditions beyond the outcome are load-bearing:
+
+    * ``status == "filled"`` — an order the venue **killed** never traded, so there is no
+      position to come off. Without this every rejected order joins this list forever and the
+      close pass hunts nightly for fills that cannot exist.
+    * ``filled_qty > 0`` — ``filled`` with nothing filled is a contradiction, and the defensive
+      reading costs nothing.
+
+    A key leaves the list when a ``closed`` row lands, and comes back if the candidate is
+    entered again — which is why this reads the latest row rather than a set of seen keys.
+    """
+    return {
+        key for key, row in latest_rows(path, network=network).items()
+        if row.get("outcome") == RECONCILED
+        and str(row.get("status") or "") == "filled"
+        and (isinstance(row.get("filled_qty"), (int, float))
+             and not isinstance(row.get("filled_qty"), bool)
+             and float(row["filled_qty"]) > 0)
+    }
 
 
 def load(path) -> list[dict]:

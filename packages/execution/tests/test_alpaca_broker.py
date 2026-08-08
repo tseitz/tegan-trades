@@ -413,3 +413,109 @@ def test_an_empty_error_body_is_not_read_as_a_successful_cancel():
 def test_a_bodiless_204_is_a_successful_cancel():
     transport = FakeTransport({("DELETE", "/v2/orders/ok"): {"code": 204, "message": ""}})
     assert AlpacaBroker(CREDS, transport=transport).cancel("ok") is None
+
+
+# ── the fill feed: what became of a position ────────────────────────────────────────────────
+#
+# The close pass's raw material. One call for the whole account rather than ``states``'
+# one-request-per-key, because a fill carries its own ``order_id`` and grouping is free —
+# see ``execution.outcome``.
+
+class PagingTransport:
+    """Replays a sequence of replies in order, recording the params of each call."""
+
+    def __init__(self, pages):
+        self.pages = list(pages)
+        self.calls = []
+
+    def __call__(self, method, path, body=None, params=None, base=None):
+        self.calls.append({"method": method, "path": path, "params": params})
+        return self.pages.pop(0) if self.pages else []
+
+
+def _activity(id_="1", order_id="tp", qty="100", price="31.21", symbol="INTL",
+              at="2026-08-07T13:39:09.192769Z"):
+    return {"id": id_, "activity_type": "FILL", "order_id": order_id, "qty": qty,
+            "price": price, "side": "sell", "symbol": symbol, "transaction_time": at}
+
+
+def test_fills_are_read_from_the_activity_feed():
+    transport = PagingTransport([[_activity()]])
+    broker = AlpacaBroker(CREDS, network=PAPER, transport=transport)
+    fills = broker.fills(since="2026-07-29")
+    assert fills is not None
+    assert len(fills) == 1
+    assert fills[0].order_id == "tp"
+    assert fills[0].price == 31.21
+    assert transport.calls[0]["path"] == "/v2/account/activities/FILL"
+    assert transport.calls[0]["params"]["after"] == "2026-07-29"
+
+
+def test_the_feed_is_paginated_until_a_short_page():
+    """A hundred is the venue's maximum page and nine days of a busy account exceeds it. An
+    unpaginated read would silently lose the oldest fills, which are the ones a close pass is
+    looking for."""
+    full = [_activity(id_=str(i)) for i in range(100)]
+    transport = PagingTransport([full, [_activity(id_="last")]])
+    broker = AlpacaBroker(CREDS, network=PAPER, transport=transport)
+    fills = broker.fills(since="2026-07-29")
+    assert fills is not None
+    assert len(fills) == 101
+    # The second call resumes from the last id of the first page.
+    assert transport.calls[1]["params"]["page_token"] == "99"
+
+
+def test_a_single_short_page_is_not_followed_by_another_request():
+    transport = PagingTransport([[_activity()]])
+    broker = AlpacaBroker(CREDS, network=PAPER, transport=transport)
+    broker.fills(since="2026-07-29")
+    assert len(transport.calls) == 1
+
+
+def test_an_error_reply_reads_as_unmeasured_rather_than_as_no_fills():
+    """The asymmetry this package is built on. An empty tuple would mean "this position never
+    closed", and the close pass would go on believing a closed trade is open."""
+    transport = PagingTransport([{"code": 40110000, "message": "forbidden"}])
+    broker = AlpacaBroker(CREDS, network=PAPER, transport=transport)
+    assert broker.fills(since="2026-07-29") is None
+
+
+def test_no_activity_is_an_empty_tuple_not_none():
+    """A quiet account genuinely has no fills, and that is knowledge."""
+    transport = PagingTransport([[]])
+    broker = AlpacaBroker(CREDS, network=PAPER, transport=transport)
+    assert broker.fills(since="2026-07-29") == ()
+
+
+def test_a_transport_failure_reads_as_unmeasured_rather_than_crashing():
+    """``depth`` already guards the same kind of call — "unreadable is not measured, not a
+    crash". This runs inside an unattended nightly step, so a timeout must degrade to ``None``
+    and leave the candidate pending, not abort the rest of the reconcile pass."""
+    def boom(*_a, **_kw):
+        raise TimeoutError("read timed out")
+
+    broker = AlpacaBroker(CREDS, network=PAPER, transport=boom)
+    assert broker.fills(since="2026-07-29") is None
+
+
+def test_a_truncated_feed_reads_as_unmeasured_rather_than_as_complete():
+    """Hitting the page backstop returns a PARTIAL feed. Handing that back as though it were
+    complete is the dangerous direction: the oldest fills are the ones the close pass needs, so
+    a truncated read would report positions as still open — or worse, credit a partial exit."""
+    full = [_activity(id_=f"{page}-{i}") for page in range(200) for i in range(1)]
+    pages = [[_activity(id_=f"p{p}-{i}") for i in range(100)] for p in range(200)]
+    broker = AlpacaBroker(CREDS, network=PAPER, transport=PagingTransport(pages))
+    assert broker.fills(since="2026-07-29") is None
+    assert full  # keep the fixture referenced
+
+
+def test_a_full_page_with_no_cursor_reads_as_unmeasured():
+    """No ``id`` on the last row means there is no way to ask for the next page, and the feed is
+    known to be incomplete because the page was full."""
+    page = [_activity(id_=str(i)) for i in range(99)] + [{"activity_type": "FILL",
+                                                         "order_id": "x", "qty": "1",
+                                                         "price": "1", "side": "sell",
+                                                         "symbol": "INTL",
+                                                         "transaction_time": "2026-08-07T13:00:00Z"}]
+    broker = AlpacaBroker(CREDS, network=PAPER, transport=PagingTransport([page]))
+    assert broker.fills(since="2026-07-29") is None

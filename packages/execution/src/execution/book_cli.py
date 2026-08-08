@@ -18,9 +18,17 @@ in a numbered menu, which is exactly why only one of them is numbered.
 *submission* reply, and Alpaca runs its buying-power and account-type checks at the open. So an
 order can be logged as placed and be dead hours later with nothing looking. This asks.
 
-    uv run book               # what is holding the budget, and how old it is
-    uv run book --cancel      # ...and pick entries to retire
-    uv run book --reconcile   # ...and settle what the log still calls placed
+It then asks the question after that — **how the trade ended**. Settling the entry took the
+candidate off every work list at *entry fill*, so realised P/L, which leg took it, and how long
+it was held were recorded nowhere; the log could say "I got in" and never "it worked". The two
+phases run in order because the first writes the row that puts a candidate on the second's list,
+which means a trade that opened and closed since the last pass is fully recorded tonight rather
+than half tonight and half tomorrow. See ``close_out`` and ``execution.outcome``.
+
+    uv run book                  # what is holding the budget, and how old it is
+    uv run book --cancel         # ...and pick entries to retire
+    uv run book --reconcile      # ...settle placed orders, then record how filled trades ended
+    uv run book --closed         # the realised history: what each finished trade made
     uv run book --network live
 """
 from __future__ import annotations
@@ -31,10 +39,10 @@ from dataclasses import replace
 from datetime import UTC, datetime
 
 from execution import config as config_module
-from execution import store
+from execution import journal, outcome, store
 from execution.book import RestingOrder, stale
 from execution.session import open_broker
-from execution.venues import ALL_NETWORKS
+from execution.venues import ALL_NETWORKS, is_real_money
 
 
 def _parse_args(argv):
@@ -47,7 +55,13 @@ def _parse_args(argv):
     parser.add_argument("--cancel", action="store_true",
                         help="offer to cancel resting entries (never positions)")
     parser.add_argument("--reconcile", action="store_true",
-                        help="ask the venue what became of every order the log calls placed")
+                        help="settle what the log calls placed, and record how filled trades "
+                             "ended")
+    parser.add_argument("--closed", action="store_true",
+                        help="list the realised history — what each finished trade made")
+    parser.add_argument("--no-vault-note", action="store_true",
+                        help="do not mirror closes to the vault note (the order log is "
+                             "unaffected either way)")
     parser.add_argument("--max-age", type=float, default=None,
                         help="days before an entry is flagged stale "
                              "(default: cfg/execution.yaml's max_order_age_days)")
@@ -250,6 +264,214 @@ def reconcile(broker, orders_path, *, network: str, out) -> int:
     return killed
 
 
+def render_closed(rows, *, network: str) -> list[str]:
+    """The realised history, as lines. Pure given its inputs.
+
+    **Two totals, and the second one is the honest one.** Pooling a paper fill on 8.5% of a
+    median session with real ones summarises fiction — see ``outcome.fill_quality``. Both are
+    printed because hiding the first would make the listing disagree with the log, and a reader
+    who cannot reconcile the two stops trusting either.
+    """
+    closes = [r for r in rows
+              if r.get("outcome") == store.CLOSED and r.get("network") == network]
+    if not closes:
+        return ["  closed trades: none"]
+
+    credible = [r for r in closes if r.get("credible")]
+    total = sum(float(r.get("pnl") or 0.0) for r in closes)
+    real = sum(float(r.get("pnl") or 0.0) for r in credible)
+
+    lines = [f"  CLOSED  {len(closes)} closed, ${total:,.2f}  ·  "
+             f"{len(credible)} credible, ${real:,.2f}"]
+    lines.append(f"   {'asset':<8} {'reason':<7} {'held':>7} {'qty':>8} {'exit':>10} "
+                 f"{'P/L':>12} {'R':>7}  candidate")
+    for r in closes:
+        held = r.get("held_days")
+        r_at_fill = r.get("r_at_fill")
+        asset = r.get("asset") or "?"
+        reason = r.get("exit_reason") or "?"
+        key = r.get("candidate_key") or "?"
+        lines.append(
+            f"   {asset!s:<8} {reason!s:<7} "
+            f"{(f'{held:6.1f}d' if isinstance(held, (int, float)) else '     ?')} "
+            f"{float(r.get('exit_qty') or 0):>8g} {float(r.get('exit_price') or 0):>10,.2f} "
+            f"{float(r.get('pnl') or 0):>+12,.2f} "
+            f"{(f'{r_at_fill:+7.2f}' if isinstance(r_at_fill, (int, float)) else '      ?')}"
+            f"  {key!s}"
+            + ("" if r.get("credible") else "   NOT EVIDENCE")
+        )
+    if len(credible) < len(closes):
+        # Said out loud rather than left to the flag: a reader scanning the P/L column will
+        # otherwise take the first total as performance, which is the whole failure mode.
+        lines.append(f"    {len(closes) - len(credible)} fill(s) marked NOT EVIDENCE — paper, "
+                     f"or above the participation ceiling. Not performance.")
+    return lines
+
+
+def close_out(broker, orders_path, *, network: str, max_participation: float | None,
+              out, note_path=None) -> int:
+    """Record how every filled entry ENDED. Returns the number of closes written.
+
+    The second half of the same argument ``reconcile`` makes. That pass settles the *entry*, and
+    ``store.unsettled_keys`` then drops the candidate — at entry fill, before the trade has an
+    outcome. So "did I get in" was answerable and "did it work" was not, which is the one
+    question the candidate-to-order join exists to make askable (``store`` module docstring).
+
+    **One request for the whole account**, not one per candidate: a fill carries its own
+    ``order_id``, so ``outcome.reason_for`` attributes it back to a bracket leg for free. The
+    feed is asked from the earliest open position's placement date, which is the oldest thing
+    any of these keys could need.
+
+    **A partial exit stays pending.** Writing a close for a half-exited position would take the
+    candidate off the work list with shares still on the book, and the remainder would never be
+    looked for again. See ``outcome.is_flat``.
+
+    Everything written here is ``reconstructed``: it is derived from the venue's history after
+    the fact, not captured as it happened. ``oracle.decisions`` explains why that distinction
+    has to survive onto the row.
+    """
+    keys = store.awaiting_exit_keys(orders_path, network=network)
+    if not keys:
+        out("  nothing awaiting a close")
+        return 0
+
+    placed: dict[str, dict] = {}
+    reconciled: dict[str, dict] = {}
+    for row in store.load(orders_path):
+        if row.get("network") != network:
+            continue
+        key = str(row.get("candidate_key") or "")
+        if row.get("outcome") == store.PLACED:
+            placed[key] = row
+        elif row.get("outcome") == store.RECONCILED:
+            reconciled[key] = row
+
+    # The oldest placement among the open positions. Asking from further back would be correct
+    # but slower every night forever; asking from later would miss the entry prints that date
+    # the position, and an undated position cannot be closed safely.
+    #
+    # ``default`` because a key can reach the exit list with no placement on this network — a
+    # hand-edited log, or a settlement recorded under a different network than its order. An
+    # unguarded ``min()`` raises on the empty sequence and takes the whole pass with it.
+    dates = [str(placed[k].get("at") or "")[:10] for k in keys if k in placed]
+    if not dates:
+        out("  nothing awaiting a close has a placement on this network")
+        return 0
+    fills = broker.fills(since=min(dates))
+    if fills is None:
+        out("  exits cannot be read from this venue — nothing settled "
+            "(see IMPROVEMENTS §33)")
+        return 0
+
+    # How many open positions each symbol carries. Two candidates long the same instrument is
+    # ordinary — two zones on one asset — and the account-wide feed cannot tell whose sell is
+    # whose. See the ambiguity guard below.
+    holders: dict[str, int] = {}
+    for key in keys:
+        row = placed.get(key) or {}
+        holders[str(row.get("coin") or row.get("asset") or "")] = (
+            holders.get(str(row.get("coin") or row.get("asset") or ""), 0) + 1
+        )
+
+    out(f"  CLOSING OUT  {len(keys)} filled entr{'y' if len(keys) == 1 else 'ies'}")
+    written = 0
+    for key in sorted(keys):
+        entry, settle = placed.get(key), reconciled.get(key)
+        if entry is None or settle is None:
+            continue
+        asset = str(entry.get("asset") or "?")
+        order_ids = [str(i) for i in (entry.get("order_ids") or [])]
+        symbol = str(entry.get("coin") or entry.get("asset") or "")
+        direction = str(entry.get("direction") or "long")
+        # Every numeric comes off a log that predates several of its own fields, so each is
+        # parsed rather than cast. One malformed row must cost ONE candidate, not every
+        # candidate sorted after it — this runs unattended.
+        entry_price = outcome.number(settle.get("filled_avg_price"))
+        entry_qty = outcome.number(settle.get("filled_qty")) or 0.0
+        stop = outcome.number(entry.get("stop"))
+
+        if not order_ids or entry_price is None or stop is None or entry_qty <= 0:
+            out(f"    {asset:<8} {key}  ? cannot be attributed — the log row is missing an "
+                f"entry order id, fill price, quantity or stop")
+            continue
+
+        opened = outcome.entry_end(fills, order_ids[0])
+        if opened is None:
+            # Not an error: the feed window simply does not reach this entry. Left pending
+            # rather than dated from the reconciled row, whose stamp is hours late — see
+            # ``outcome.entry_end``.
+            out(f"    {asset:<8} {key}  ? entry not in the fill window — left pending")
+            continue
+
+        exits = outcome.exit_fills(
+            fills, symbol=symbol, entry_order_id=order_ids[0],
+            exit_side=outcome.exit_side_for(direction), after=opened,
+        )
+
+        # THE AMBIGUITY GUARD. ``exit_fills`` filters on symbol, side and time, none of which
+        # distinguish two concurrent positions in the same instrument. A fill on this
+        # candidate's OWN bracket leg names its owner exactly; an unknown id — a hand-placed
+        # exit — does not. So while another open position shares the symbol, an unattributable
+        # print stops the close rather than being guessed at.
+        #
+        # Guessing costs two rows, not one: this candidate gets a fabricated close built from
+        # someone else's fill, and the position that really closed is dropped off the work list
+        # and never looked at again.
+        if holders.get(symbol, 0) > 1:
+            own = set(order_ids[1:])
+            stray = [f for f in exits if f.order_id not in own]
+            if stray:
+                ids = ", ".join(sorted({f.order_id[:8] for f in stray}))
+                out(f"    {asset:<8} {key}  ? {len(stray)} exit print(s) cannot be attributed "
+                    f"— {holders[symbol]} open positions in {symbol} and {ids} is not this "
+                    f"candidate's leg; left pending")
+                continue
+
+        exited = sum(f.qty for f in exits)
+        if not exits:
+            out(f"    {asset:<8} {key}  still open ({entry_qty:g} @ {entry_price:,.2f})")
+            continue
+        if not outcome.is_flat(exit_qty=exited, entry_qty=entry_qty):
+            out(f"    {asset:<8} {key}  partly closed, {exited:g} of {entry_qty:g} "
+                f"— left pending")
+            continue
+
+        depth = broker.depth(symbol)
+        for group in outcome.group_by_order(exits).values():
+            close = outcome.close_from_fills(group, candidate_key=key, order_ids=order_ids)
+            if close is None:
+                continue
+            # Pro-rated by share of the position, so a two-leg exit yields two comparable R's
+            # rather than two rows each claiming the whole trade's risk.
+            share = close.qty / entry_qty
+            planned = outcome.number(entry.get("risk"))
+            result = outcome.realized(
+                direction=direction, entry=entry_price, exit_price=close.price,
+                qty=close.qty, stop=stop,
+                risk_planned=planned * share if planned is not None else None,
+            )
+            quality = outcome.fill_quality(
+                qty=close.qty,
+                median_volume=depth.median_volume if depth is not None else None,
+                ceiling=max_participation if max_participation is not None else 1.0,
+                paper=not is_real_money(network),
+            )
+            row = store.record_close(orders_path, close, result, quality, network=network,
+                                     asset=asset, entry_price=entry_price,
+                                     entry_at=opened, reconstructed=True)
+            written += 1
+            # After the log, never instead of it, and it cannot fail the pass. See ``journal``.
+            if note_path is not None:
+                journal.append(note_path, row, warn=out)
+            r = f"{result.r_at_fill:+.2f}R" if result.r_at_fill is not None else "?R"
+            flag = "" if quality.credible else "   NOT EVIDENCE"
+            out(f"    {asset:<8} {key}  + {close.reason} @ {close.price:,.2f}  "
+                f"{result.pnl:+,.2f} ({r}){flag}")
+
+    out(f"  {written} close(s) recorded")
+    return written
+
+
 def main(argv: list[str] | None = None, *, now: datetime | None = None,
          input_fn=input, out=print, broker=None,
          orders_path=store.DEFAULT_PATH) -> int:
@@ -278,8 +500,22 @@ def main(argv: list[str] | None = None, *, now: datetime | None = None,
 
     # Before the listing, because it changes what the listing means: an order the venue killed
     # is not holding any budget, however confidently the log says it was placed.
+    #
+    # **The two phases are ordered, not merely adjacent.** ``reconcile`` writes the ``reconciled``
+    # row that puts a candidate on the exit work list, so running it first means a trade that
+    # both entered AND exited since the last pass gets both rows tonight instead of waiting a
+    # day for the second one.
     if args.reconcile:
         reconcile(broker, orders_path, network=config.network, out=out)
+        out("")
+        close_out(broker, orders_path, network=config.network,
+                  max_participation=config.max_participation, out=out,
+                  note_path=None if args.no_vault_note else journal.DEFAULT_NOTE)
+        out("")
+
+    if args.closed:
+        for line in render_closed(store.load(orders_path), network=config.network):
+            out(line)
         out("")
 
     orders = broker.resting()

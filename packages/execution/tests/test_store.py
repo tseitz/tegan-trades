@@ -1,9 +1,9 @@
 """The order log — what executed, what was blocked, and which candidate each came from."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from execution import store
+from execution import outcome, store
 from execution.guards import REFUSAL_UNLISTED, Refusal
 from execution.plan import OrderPlan
 from execution.wire import Placement
@@ -277,3 +277,164 @@ def test_refusals_carry_no_risk(tmp_path):
 
 def test_a_missing_log_has_nothing_at_stake(tmp_path):
     assert store.risk_by_key(tmp_path / "absent.jsonl", network="paper") == {}
+
+
+# ── the close: the second work list, and the outcome row ────────────────────────────────────
+#
+# The gap this closes: ``unsettled_keys`` drops a candidate the moment ANY reconciled row lands,
+# which is at ENTRY fill. So a trade left the work lists before it had an outcome, and realised
+# P/L was recorded nowhere. See ``execution.outcome``.
+
+def _filled(key="abc123", qty=1639.0, price=29.621233):
+    return StubState(key=key, status="filled", failed=False, filled_qty=qty,
+                     filled_avg_price=price, legs=("new", "held"))
+
+
+def _entered(tmp_path, *, network="paper"):
+    """A candidate whose entry has filled and whose exit has not been recorded."""
+    path = tmp_path / "orders.jsonl"
+    store.record_placement(path, PLAN, Placement(ok=True, order_ids=("1", "2", "3")),
+                           network=network)
+    store.record_reconciliation(path, _filled(), network=network)
+    return path
+
+
+# The real INTL numbers throughout, so a wrong sign or a swapped denominator reads as an
+# obviously wrong trade rather than as a plausible one.
+CLOSE = outcome.TradeClose(
+    candidate_key="abc123", symbol="INTL", order_id="c29d3a96", qty=1639.0, price=31.21,
+    at=None, reason=outcome.MANUAL, prints=2)
+REALIZED = outcome.Realized(
+    pnl=2603.99, risk_planned=999.79, risk_at_fill=706.79, r_planned=2.6046, r_at_fill=3.6842)
+QUALITY = outcome.FillQuality(participation=0.0851, paper=True, credible=False)
+
+
+def test_an_entry_that_filled_is_awaiting_its_exit(tmp_path):
+    path = _entered(tmp_path)
+    assert store.awaiting_exit_keys(path, network="paper") == {"abc123"}
+
+
+def test_an_order_the_venue_killed_is_never_awaiting_an_exit(tmp_path):
+    """It never traded, so there is no position to come off. This is the case that would
+    otherwise put every rejected order on the exit work list forever."""
+    path = tmp_path / "orders.jsonl"
+    store.record_placement(path, PLAN, Placement(ok=True, order_ids=("1",)), network="paper")
+    store.record_reconciliation(path, StubState(), network="paper")  # rejected
+    assert store.awaiting_exit_keys(path, network="paper") == set()
+
+
+def test_a_still_resting_entry_is_not_awaiting_an_exit(tmp_path):
+    """It belongs to the ENTRY work list. A candidate must never sit on both — the two phases
+    would each write a row about the other's business."""
+    path = tmp_path / "orders.jsonl"
+    store.record_placement(path, PLAN, Placement(ok=True, order_ids=("1",)), network="paper")
+    assert store.unsettled_keys(path, network="paper") == {"abc123"}
+    assert store.awaiting_exit_keys(path, network="paper") == set()
+
+
+def test_a_closed_trade_drops_off_the_exit_work_list(tmp_path):
+    """Otherwise every night re-derives the same close and appends a duplicate outcome."""
+    path = _entered(tmp_path)
+    store.record_close(path, CLOSE, REALIZED, QUALITY, network="paper",
+                       asset="INTL", entry_price=29.621233)
+    assert store.awaiting_exit_keys(path, network="paper") == set()
+
+
+def test_a_re_entered_candidate_awaits_a_second_exit(tmp_path):
+    """A candidate can legitimately trade twice. The second entry's outcome must not be
+    suppressed by the first one's close — the same trap ``latest_outcomes`` exists for."""
+    path = _entered(tmp_path)
+    store.record_close(path, CLOSE, REALIZED, QUALITY, network="paper",
+                       asset="INTL", entry_price=29.621233)
+    store.record_placement(path, PLAN, Placement(ok=True, order_ids=("4", "5", "6")),
+                           network="paper")
+    store.record_reconciliation(path, _filled(), network="paper")
+    assert store.awaiting_exit_keys(path, network="paper") == {"abc123"}
+
+
+def test_a_filled_row_with_no_quantity_is_not_awaiting_an_exit(tmp_path):
+    """Defensive: ``filled`` with nothing filled is a contradiction, and treating it as a
+    position would have the exit phase hunt forever for fills that cannot exist."""
+    path = tmp_path / "orders.jsonl"
+    store.record_placement(path, PLAN, Placement(ok=True, order_ids=("1",)), network="paper")
+    store.record_reconciliation(path, _filled(qty=0.0), network="paper")
+    assert store.awaiting_exit_keys(path, network="paper") == set()
+
+
+def test_the_exit_work_list_is_scoped_to_one_network(tmp_path):
+    path = _entered(tmp_path, network="testnet")
+    assert store.awaiting_exit_keys(path, network="paper") == set()
+    assert store.awaiting_exit_keys(path, network="testnet") == {"abc123"}
+
+
+def test_the_entry_work_list_is_unchanged_by_a_close(tmp_path):
+    """The invariant this whole change has to protect: ``unsettled_keys`` feeds the duplicate
+    guard's sibling and must keep meaning exactly what it meant."""
+    path = _entered(tmp_path)
+    assert store.unsettled_keys(path, network="paper") == set()
+    store.record_close(path, CLOSE, REALIZED, QUALITY, network="paper",
+                       asset="INTL", entry_price=29.621233)
+    assert store.unsettled_keys(path, network="paper") == set()
+
+
+def test_a_close_records_the_outcome_and_both_denominators(tmp_path):
+    path = tmp_path / "orders.jsonl"
+    store.record_close(path, CLOSE, REALIZED, QUALITY, network="paper",
+                       asset="INTL", entry_price=29.621233)
+    row = store.load(path)[0]
+    assert row["outcome"] == store.CLOSED
+    assert row["candidate_key"] == "abc123"
+    assert row["asset"] == "INTL"
+    assert row["exit_reason"] == "manual"
+    assert row["exit_price"] == 31.21
+    assert row["exit_qty"] == 1639.0
+    assert row["entry_price"] == 29.621233
+    assert row["pnl"] == 2603.99
+    assert row["risk_planned"] == 999.79
+    assert row["risk_at_fill"] == 706.79
+    assert row["r_planned"] == 2.6046
+    assert row["r_at_fill"] == 3.6842
+
+
+def test_a_close_records_whether_the_fill_was_believable(tmp_path):
+    """Without this the INTL row enters calibration as a clean +2.6R. See ``outcome``."""
+    path = tmp_path / "orders.jsonl"
+    store.record_close(path, CLOSE, REALIZED, QUALITY, network="paper",
+                       asset="INTL", entry_price=29.621233)
+    row = store.load(path)[0]
+    assert row["participation"] == 0.0851
+    assert row["paper"] is True
+    assert row["credible"] is False
+
+
+def test_a_reconstructed_close_says_so(tmp_path):
+    """``decisions.py``'s rule, carried here: a value derived after the fact must never be
+    presented as captured live."""
+    path = tmp_path / "orders.jsonl"
+    store.record_close(path, CLOSE, REALIZED, QUALITY, network="paper",
+                       asset="INTL", entry_price=29.621233, reconstructed=True)
+    assert store.load(path)[0]["reconstructed"] is True
+
+
+def test_a_close_captured_live_is_not_marked_reconstructed(tmp_path):
+    path = tmp_path / "orders.jsonl"
+    store.record_close(path, CLOSE, REALIZED, QUALITY, network="paper",
+                       asset="INTL", entry_price=29.621233)
+    assert store.load(path)[0]["reconstructed"] is False
+
+
+def test_a_close_records_the_holding_period_when_both_ends_are_known(tmp_path):
+    from datetime import UTC, datetime
+    path = tmp_path / "orders.jsonl"
+    entry_at = datetime(2026, 7, 29, 13, 34, 57, tzinfo=UTC)
+    exit_at = datetime(2026, 8, 7, 13, 39, 9, tzinfo=UTC)
+    store.record_close(path, replace(CLOSE, at=exit_at), REALIZED, QUALITY, network="paper",
+                       asset="INTL", entry_price=29.621233, entry_at=entry_at)
+    assert round(store.load(path)[0]["held_days"], 2) == 9.0
+
+
+def test_an_unknown_entry_time_leaves_the_holding_period_absent(tmp_path):
+    path = tmp_path / "orders.jsonl"
+    store.record_close(path, CLOSE, REALIZED, QUALITY, network="paper",
+                       asset="INTL", entry_price=29.621233)
+    assert store.load(path)[0]["held_days"] is None
