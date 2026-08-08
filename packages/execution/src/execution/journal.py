@@ -49,12 +49,11 @@ def line(row: dict) -> str:
         f"**${_money(row.get('pnl'))}** ({r})",
     ]
     if not row.get("credible"):
-        # Named with its cause, because "not evidence" alone invites the reader to dismiss the
-        # flag rather than the number.
-        why = "paper" if row.get("paper") else "above the participation ceiling"
-        participation = row.get("participation")
-        if isinstance(participation, (int, float)) and not row.get("paper"):
-            why = f"{participation:.2%} of a median session"
+        # Read from the row rather than re-derived. This used to reconstruct the cause from the
+        # numbers and could name only one of them, so a fill that failed on size AND on a
+        # collapsed stop reported whichever branch happened to be checked first.
+        reasons = row.get("not_evidence") or []
+        why = "; ".join(str(r) for r in reasons) if reasons else "not verifiable"
         parts.append(f"_NOT EVIDENCE — {why}_")
     parts.append(f"`{row.get('candidate_key') or '?'}`")
     return " · ".join(parts)

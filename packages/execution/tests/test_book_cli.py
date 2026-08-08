@@ -698,3 +698,35 @@ def test_a_reconciled_row_with_no_placement_does_not_crash_the_pass(tmp_path):
         "filled_qty": 5.0, "filled_avg_price": 10.0, "leg_statuses": ["new", "held"],
     })
     assert _close_out(path, ExitBroker(fills=_feed(EXIT_ACTIVITY))) == 0
+
+
+def test_a_gap_collapsed_trade_is_disqualified_on_its_own_merits(tmp_path):
+    """VRT's shape, on a LIVE network so paper cannot be doing the work. Planned entry 266.52
+    against a 241.18 stop; filled at 243.33, leaving 8.5% of the planned distance. The trade
+    that happened was not the trade that was approved."""
+    path = tmp_path / "orders.jsonl"
+    store._append(path, {
+        "at": "2026-07-29T04:00:31+00:00", "outcome": store.PLACED, "network": "live",
+        "candidate_key": "vrt1", "asset": "VRT", "coin": "VRT", "direction": "long",
+        "size": 39.0, "entry": 266.52, "stop": 241.18, "target": 379.93,
+        "risk": 988.26, "order_ids": ["vrtentry", "vrttp", "vrtsl"],
+    })
+    store._append(path, {
+        "at": "2026-07-29T20:00:00+00:00", "outcome": store.RECONCILED, "network": "live",
+        "candidate_key": "vrt1", "status": "filled", "failed": False,
+        "filled_qty": 39.0, "filled_avg_price": 243.33, "leg_statuses": ["new", "held"],
+    })
+    fills = _feed(
+        _activity("vrtentry", 39, 243.33, "2026-07-29T13:31:52Z", side="buy", symbol="VRT"),
+        _activity("vrtsl", 39, 243.44, "2026-07-29T13:32:41Z", symbol="VRT"),
+    )
+    # A liquid market, so participation cannot be the disqualifier either.
+    liquid = Depth(sessions=33, median_volume=2_000_000.0, median_trades=20_000.0,
+                   median_dollar_volume=500_000_000.0)
+    assert _close_out(path, ExitBroker(fills=fills, depth=liquid), network="live") == 1
+
+    row = next(r for r in store.load(path) if r["outcome"] == store.CLOSED)
+    assert row["paper"] is False
+    assert round(row["stop_survival"], 3) == 0.085
+    assert row["credible"] is False
+    assert any("stop distance" in r for r in row["not_evidence"])

@@ -179,8 +179,16 @@ def test_an_exit_larger_than_the_cap_is_flagged_as_not_credible():
 
 
 def test_an_ordinary_exit_is_credible():
-    q = outcome.fill_quality(qty=100.0, median_volume=5_358_410.0, ceiling=0.01, paper=False)
+    q = outcome.fill_quality(qty=100.0, median_volume=5_358_410.0, ceiling=0.01, paper=False,
+                             stop_survival=0.9)
     assert q.credible is True
+
+
+def test_an_unmeasured_stop_survival_leaves_credibility_unknown():
+    """Same asymmetry as an unmeasured market: a row this code cannot fully vet must not be
+    presented as vetted, even when nothing is positively wrong with it."""
+    q = outcome.fill_quality(qty=100.0, median_volume=5_358_410.0, ceiling=0.01, paper=False)
+    assert q.credible is None
 
 
 def test_a_paper_fill_is_never_credible_however_small():
@@ -287,3 +295,80 @@ def test_float_dust_still_counts_as_flat():
     """Perp sizes are fractional and the venue's own rounding can leave a remainder that no
     order will ever clear. An exact comparison would strand those trades open forever."""
     assert outcome.is_flat(exit_qty=0.3109999, entry_qty=0.311) is True
+
+
+# ── did the fill leave the trade that was approved? ─────────────────────────────────────────
+#
+# The third, independent reason a row is not evidence, and the one that survives going live.
+# A limit entry fills at the OPEN on a gapped session, not at the limit — so the entry walks
+# toward a stop that does not move with it and the planned risk distance collapses. VRT, 
+# 2026-07-29: planned 266.52 against a 241.18 stop (9.5% away), filled at 243.33 (0.9% away),
+# round-tripped flat in 49 seconds. See ``plan.build``'s note on the gapped open.
+
+def test_a_clean_fill_keeps_most_of_the_planned_stop_distance():
+    """INTL: planned 29.80, stop 29.19, filled 29.6212. 0.4312 of 0.61 survives."""
+    assert round(outcome.stop_survival(planned_entry=29.8, fill=29.621233, stop=29.19), 3) == 0.707
+
+
+def test_a_gapped_fill_destroys_the_planned_stop_distance():
+    """VRT, the real one. 2.15 of 25.34 left — 91% of the risk distance gone before it started."""
+    assert round(outcome.stop_survival(planned_entry=266.52, fill=243.33, stop=241.18), 3) == 0.085
+
+
+def test_a_better_entry_is_always_a_tighter_stop():
+    """The structural fact behind the whole check, and it holds in BOTH directions.
+
+    A limit only ever fills on the favourable side — a buy at or below its price, a sell at or
+    above — and the stop sits on the far side of the entry. So any improvement on the entry
+    closes distance to the stop that the size was never adjusted for. Survival is therefore
+    bounded above by 1.0 for any fill a limit order can produce; there is no benign case.
+    """
+    # Long, stop below: filling lower is a better entry and a tighter stop.
+    assert outcome.stop_survival(planned_entry=100.0, fill=99.0, stop=95.0) == 0.8
+    # Short, stop above: filling higher is a better entry and, again, a tighter stop.
+    assert outcome.stop_survival(planned_entry=100.0, fill=101.0, stop=105.0) == 0.8
+    # Filling exactly at the limit is the only way to keep the whole planned distance.
+    assert outcome.stop_survival(planned_entry=100.0, fill=100.0, stop=95.0) == 1.0
+
+
+def test_a_planned_entry_on_its_stop_leaves_survival_unmeasurable():
+    """A zero denominator. Undefined rather than infinite, and it must not raise inside the
+    nightly step."""
+    assert outcome.stop_survival(planned_entry=100.0, fill=99.0, stop=100.0) is None
+
+
+def test_an_unreadable_input_leaves_survival_unmeasurable():
+    assert outcome.stop_survival(planned_entry=None, fill=99.0, stop=95.0) is None
+
+
+def test_a_gap_collapsed_fill_is_not_evidence_even_on_real_money():
+    """The gap this closes. VRT is liquid enough to pass participation and, on a live account,
+    would have recorded as a credible +0.05R — a number describing a trade nobody approved."""
+    q = outcome.fill_quality(qty=39.0, median_volume=2_000_000.0, ceiling=0.01, paper=False,
+                             stop_survival=0.085)
+    assert q.credible is False
+    assert any("stop" in r for r in q.reasons)
+
+
+def test_a_clean_fill_on_real_money_is_evidence():
+    q = outcome.fill_quality(qty=39.0, median_volume=2_000_000.0, ceiling=0.01, paper=False,
+                             stop_survival=0.707)
+    assert q.credible is True
+    assert q.reasons == ()
+
+
+def test_every_disqualifying_reason_is_named():
+    """The flag is skimmed and the reasons are what make it actionable — "not evidence" alone
+    invites dismissing the flag rather than the number."""
+    q = outcome.fill_quality(qty=1639.0, median_volume=19_262.0, ceiling=0.01, paper=True,
+                             stop_survival=0.085)
+    assert q.credible is False
+    assert len(q.reasons) == 3
+
+
+def test_a_definite_disqualifier_beats_an_unmeasured_one():
+    """Paper is knowable without measuring anything, so an unmeasurable market must not soften
+    it to "unknown" — that would read as "might be fine"."""
+    q = outcome.fill_quality(qty=1.0, median_volume=None, ceiling=0.01, paper=True,
+                             stop_survival=None)
+    assert q.credible is False

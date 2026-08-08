@@ -106,10 +106,17 @@ class Realized:
 
 @dataclass(frozen=True)
 class FillQuality:
-    """Whether this fill is evidence. ``None`` means unmeasured, never measured-and-fine."""
+    """Whether this fill is evidence. ``None`` means unmeasured, never measured-and-fine.
+
+    ``reasons`` carries the disqualifiers in words. The flag alone invites a reader to dismiss
+    the flag rather than the number, and it is written to the row so every surface — the
+    listing, the vault note, a future calibration pass — says the same thing.
+    """
     participation: float | None
     paper: bool
     credible: bool | None
+    stop_survival: float | None = None
+    reasons: tuple[str, ...] = ()
 
 
 def parse_fills(activities) -> tuple[ExitFill, ...]:
@@ -286,26 +293,84 @@ def realized(*, direction: str, entry: float, exit_price: float, qty: float,
     )
 
 
-def fill_quality(*, qty: float, median_volume: float | None, ceiling: float,
-                 paper: bool) -> FillQuality:
-    """Is this fill evidence about the strategy, or an artefact of the simulator?
+# How much of the planned distance to the stop must survive the entry fill for the trade to be
+# the trade that was approved.
+#
+# MEASURED, on the only two closes that exist: INTL kept 0.707 and VRT kept 0.085. That is one
+# clear pass and one clear failure with nothing between them, so anything from about 0.15 to 0.6
+# separates the pair and the number is not tuned to either edge. 0.5 is chosen because it states
+# something — *half the intended risk distance is gone* — rather than because it fits two points.
+# Re-derive it once there are enough closes for the distribution to have a shape.
+MIN_STOP_SURVIVAL = 0.5
 
-    Two independent ways to fail, and either is disqualifying:
 
-    * **Size.** An exit above the participation ceiling did not have to compete for liquidity
-      in any market that would actually have made it compete. See ``participation``.
-    * **Venue.** Paper matches against the quote without consuming the book, so *every* paper
-      fill is a fill that was never tested. A small one is realistic by luck, and luck is not
-      a property worth recording as credibility.
+def stop_survival(*, planned_entry, fill, stop) -> float | None:
+    """What fraction of the planned distance-to-stop the fill left intact. ``None`` if unmeasurable.
 
-    ``median_volume=None`` yields ``credible=None`` — ``participation.check_depth``'s asymmetry
-    carried through to the record. Not measured must never read as measured-and-fine.
+    **A limit entry fills at the open, not at the limit.** On a gapped session the entry walks
+    toward a stop that does not move with it, and the position that results is not the position
+    that was sized: VRT was planned at 266.52 against a 241.18 stop — 9.5% away — filled at
+    243.33, leaving 0.9%, and round-tripped flat in 49 seconds. ``plan.build``'s note explains
+    why nothing at placement time can prevent this; this measures it afterwards.
+
+    **A better entry is always a tighter stop, and there is no benign direction.** A limit fills
+    only on its favourable side — a buy at or below its price, a sell at or above — and the stop
+    sits on the far side of the entry. So every improvement on the planned entry closes distance
+    to a stop the size was never adjusted for. Survival is bounded above by 1.0 for any fill a
+    limit order can produce, and 1.0 means the entry filled exactly at its limit.
+
+    That is why this is worth recording rather than assumed away: "we got a better price" and
+    "the trade now risks a fraction of what it was sized for" are the same event.
     """
-    if median_volume is None or median_volume <= 0:
-        return FillQuality(participation=None, paper=paper, credible=None)
-    participation = qty / median_volume
+    planned_entry, fill, stop = number(planned_entry), number(fill), number(stop)
+    if planned_entry is None or fill is None or stop is None:
+        return None
+    planned = abs(planned_entry - stop)
+    if planned <= 0:
+        return None
+    return abs(fill - stop) / planned
+
+
+def fill_quality(*, qty: float, median_volume: float | None, ceiling: float,
+                 paper: bool, stop_survival: float | None = None) -> FillQuality:
+    """Is this row evidence about the strategy, or an artefact? Three independent ways to fail.
+
+    * **Venue.** Paper matches against the quote without ever consuming the book, so every paper
+      fill is one that was never tested. A small one is realistic by luck, and luck is not a
+      property worth recording as credibility.
+    * **Size.** An exit above the participation ceiling did not have to compete for liquidity in
+      any market that would have made it compete. See ``participation``.
+    * **Plan integrity.** A gapped fill can leave the stop a fraction of its planned distance
+      away, and then the trade that happened is not the trade that was approved — however
+      honestly it filled. See ``stop_survival``; this is the only one of the three that still
+      bites on a real-money account, which is why it exists.
+
+    **A definite disqualifier beats an unmeasured one.** Paper is knowable without measuring
+    anything, so an unreadable market must not soften it to ``None`` — "unknown" reads as "might
+    be fine". Only a row with nothing against it *and* nothing unmeasured is ``True``.
+    """
+    participation = (qty / median_volume
+                     if median_volume is not None and median_volume > 0 else None)
+
+    reasons: list[str] = []
+    if paper:
+        reasons.append("paper — the simulator never consumed the book")
+    if participation is not None and participation > ceiling:
+        reasons.append(f"{participation:.2%} of a median session, ceiling {ceiling:.2%}")
+    if stop_survival is not None and stop_survival < MIN_STOP_SURVIVAL:
+        reasons.append(f"the fill left {stop_survival:.1%} of the planned stop distance")
+
+    if reasons:
+        credible = False
+    elif participation is None or stop_survival is None:
+        credible = None
+    else:
+        credible = True
+
     return FillQuality(
         participation=participation,
         paper=paper,
-        credible=(not paper) and participation <= ceiling,
+        credible=credible,
+        stop_survival=stop_survival,
+        reasons=tuple(reasons),
     )

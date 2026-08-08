@@ -188,6 +188,12 @@ def record_close(path, close, realized, quality, *, network: str, asset: str,
         "participation": quality.participation,
         "paper": quality.paper,
         "credible": quality.credible,
+        # What fraction of the planned distance-to-stop the entry fill left intact. The only
+        # disqualifier of the three that still bites on real money — see ``outcome.stop_survival``.
+        "stop_survival": quality.stop_survival,
+        # The disqualifiers in words, so every surface says the same thing and none of them has
+        # to re-derive the reasoning from the numbers.
+        "not_evidence": list(quality.reasons),
         "reconstructed": reconstructed,
     }
     _append(path, record)

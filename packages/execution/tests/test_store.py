@@ -438,3 +438,30 @@ def test_an_unknown_entry_time_leaves_the_holding_period_absent(tmp_path):
     store.record_close(path, CLOSE, REALIZED, QUALITY, network="paper",
                        asset="INTL", entry_price=29.621233)
     assert store.load(path)[0]["held_days"] is None
+
+
+def test_a_close_records_the_stop_survival_and_the_reasons(tmp_path):
+    """The two fields that make the third disqualifier readable. Without ``not_evidence`` every
+    surface has to re-derive the cause from the numbers, and the old ``journal`` code that did
+    so could only ever name one of them."""
+    path = tmp_path / "orders.jsonl"
+    quality = outcome.FillQuality(
+        participation=0.0851, paper=True, credible=False, stop_survival=0.085,
+        reasons=("paper — the simulator never consumed the book",
+                 "the fill left 9% of the planned stop distance"))
+    store.record_close(path, CLOSE, REALIZED, quality, network="paper",
+                       asset="INTL", entry_price=29.621233)
+    row = store.load(path)[0]
+    assert row["stop_survival"] == 0.085
+    assert len(row["not_evidence"]) == 2
+
+
+def test_a_credible_close_carries_no_reasons(tmp_path):
+    path = tmp_path / "orders.jsonl"
+    quality = outcome.FillQuality(participation=0.0001, paper=False, credible=True,
+                                  stop_survival=0.9, reasons=())
+    store.record_close(path, CLOSE, REALIZED, quality, network="live",
+                       asset="INTL", entry_price=29.621233)
+    row = store.load(path)[0]
+    assert row["not_evidence"] == []
+    assert row["credible"] is True

@@ -455,6 +455,10 @@ def close_out(broker, orders_path, *, network: str, max_participation: float | N
                 median_volume=depth.median_volume if depth is not None else None,
                 ceiling=max_participation if max_participation is not None else 1.0,
                 paper=not is_real_money(network),
+                # Measured against the entry the plan asked for, not the one it got — that
+                # difference IS the check. See ``outcome.stop_survival``.
+                stop_survival=outcome.stop_survival(
+                    planned_entry=entry.get("entry"), fill=entry_price, stop=stop),
             )
             row = store.record_close(orders_path, close, result, quality, network=network,
                                      asset=asset, entry_price=entry_price,
