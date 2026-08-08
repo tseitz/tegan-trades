@@ -35,8 +35,16 @@ of available commands, and `docs/ARCHITECTURE.md` groups them in pipeline order 
 
 ## The nightly job
 
-`scripts/nightly.sh` runs the whole cycle: `verify-roster` → `ingest-roster` → `ingest-x` →
-`distill-roster` → `fetch-prices` → `setups --list`. Awake, it takes 8–16 minutes.
+`scripts/nightly.sh` runs the whole cycle — refresh the corpus, re-price, settle yesterday's
+orders, rebuild the queue. Awake, it takes 8–16 minutes. Fourteen steps, roughly:
+
+`verify-roster` → `ingest-roster` → `ingest-x` → `distill-roster` → `brain-extract` →
+`brain-index` → `fetch-prices` → `fetch-funding` → `reconcile` (both venues) →
+`setups --list` → `fetch-tickers` → `canon-drift` → `backup`
+
+`./scripts/nightly.sh --list` prints them in order and is the authoritative list — this one is
+prose and will drift. A failing step does not abort the run; the exit code reflects the worst of
+them, so a partial night is visible rather than passing as a good one.
 
 **It runs when you open the laptop, not at a set time.** launchd starts the script every 120s;
 the script's gate decides in ~50ms whether to go and exits if not. It runs once a day, no

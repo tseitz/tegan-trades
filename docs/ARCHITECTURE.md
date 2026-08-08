@@ -150,7 +150,9 @@ packages. Every command below is run as `uv run <command>` **from the repo root*
 | `verify-roster` | 🟢 | Probes declared YouTube channels against the watchlist. No key, no proxy. Exits non-zero on disagreement. |
 | `scripts/nightly.sh` | 💸 + 🔴 | The whole cycle. ~$0.25 xAI + the day's distillation. Totals both and writes one line to `~/vault/Trading/Trade Logs/Nightly.md`. |
 | `execute` | 🟡 | Pre-flight only — reports network, equity and market availability. Structurally incapable of placing an order. |
-| `book` | 🟡 | What the account is holding: resting entries with ages, open positions, and what is left. Read-only. |
+| `book` | 🟡 | What the account is holding: resting entries with ages, open positions, and what is left. Read-only. `--venue` reaches the venue that is not the default. |
+| `book --reconcile` | 🟡 | Asks the venue what became of every order the log calls `placed`, then records how filled trades ENDED. Read-only **at the venue**; it does append `reconciled` and `closed` rows to the order log and one line per close to the vault. Runs nightly, once per venue. |
+| `book --closed` | 🟢 | The realised history — what each finished trade made, in R net of fees and funding. Reads the log only. |
 | `book --cancel` | 🟡 / 🔀 | Cancels **resting entries only**, never positions, and only ones you select and confirm. Reduces exposure, so it takes no typed phrase — but on `live` it is a real order cancellation. |
 | `setups --execute` | 🟢 / 🔀 **CAPITAL** | Free to run. On testnet it moves mock funds; on mainnet it moves **your money** — a different axis from the LLM/API costs above. See below. |
 
@@ -168,15 +170,21 @@ free, and what it puts at stake is the account balance.
   shown in full, and sent only on an explicit `y`. Anything else declines.
 - **Sizing is risk-based**: `risk_pct` of live account equity per trade, measured to the
   engine's own stop, capped at `max_notional_frac` leverage.
-- Orders and refusals both append to `data/execution/orders.jsonl`, which is the only record
-  linking a fill back to the candidate that caused it.
+- Orders, refusals, settlements and closes all append to `data/execution/orders.jsonl`, which is
+  the only record linking a fill back to the candidate that caused it — and on Hyperliquid the
+  only record linking it to a venue oid at all, since nothing sends a `cloid`.
+- **A closed trade's row is the only evidence any scorer can be calibrated against**, so it
+  carries what a P/L figure alone would hide: both R denominators (an entry can fill better than
+  planned, which tightens the stop it was sized against), fees and funding (0.36R on an 11-day
+  perp short), and a `credible` flag naming why a fill is not evidence — paper, above the
+  participation ceiling, or a gapped entry that left the stop a fraction of its planned distance.
 
 ### Stopping the nightly job
 
 ```bash
 touch data/nightly.pause     # stop everything; remove the file to resume
 touch data/nightly.no-x      # keep the free work, stop spending real money
-XAI_MONTHLY_CAP=5.00 …       # automatic backstop, default $15/month
+XAI_MONTHLY_CAP=5.00 …       # automatic backstop, default $20/month
 launchctl bootout gui/$(id -u)/com.tseitz.tegan-trades.nightly   # unschedule entirely
 ```
 
