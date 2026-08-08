@@ -80,3 +80,41 @@ def test_an_unreachable_vault_is_not_created(tmp_path):
     note = tmp_path / "no-such-dir" / "Closed Trades.md"
     journal.append(note, ROW, warn=lambda _: None)
     assert not note.parent.exists()
+
+
+# ── the note must show what the account KEPT ─────────────────────────────────────────────────
+
+SOL_ROW = {
+    "outcome": "closed", "network": "testnet", "candidate_key": "64bcf4f9ca01", "asset": "SOL",
+    "exit_reason": "manual", "exit_price": 75.887, "exit_qty": 3.81, "entry_price": 74.4,
+    "held_days": 10.95, "pnl": -5.66528, "fees": 0.172627, "funding": -3.43939,
+    "pnl_net": -9.2773, "r_at_fill": -0.5675, "r_net_at_fill": -0.9294,
+    "participation": None, "paper": True, "credible": False,
+    "not_evidence": ["paper — the simulator never consumed the book"], "reconstructed": True,
+}
+
+
+def test_the_line_reports_net_where_the_costs_are_known():
+    """The most-skimmed surface in the repo, and it was showing gross. The SOL short reads -5.67
+    on price and cost -9.28 to hold; a note claiming the first understates the loss by 0.36R in
+    the one place a human actually looks."""
+    line = journal.line(SOL_ROW)
+    assert "-9.28" in line
+    assert "-0.93R" in line
+    assert "-5.67" not in line
+
+
+def test_an_equity_row_reads_the_same_either_way():
+    """Gross and net are equal on a share, so nothing changes for the Alpaca history."""
+    line = journal.line({**ROW, "pnl_net": ROW["pnl"], "r_net_at_fill": ROW["r_at_fill"],
+                         "fees": 0.0, "funding": 0.0})
+    assert "+2,603.99" in line
+    assert "+3.68R" in line
+
+
+def test_a_row_predating_the_cost_fields_still_renders_gross():
+    """Older rows carry no ``pnl_net``. Falling back to gross beats rendering nothing, and the
+    suite has to keep proving the fallback works — this ran unattended for two nights."""
+    line = journal.line(ROW)
+    assert "+2,603.99" in line
+    assert "+3.68R" in line

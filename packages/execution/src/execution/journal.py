@@ -35,8 +35,15 @@ def line(row: dict) -> str:
     Every numeric field is rendered defensively — this runs inside a nightly step, and a
     formatting crash there would cost the whole run's tail for a cosmetic line.
     """
-    r_at_fill = row.get("r_at_fill")
-    r = f"{r_at_fill:+.2f}R" if isinstance(r_at_fill, (int, float)) else "?R"
+    # **Net where the venue's costs were readable, gross only as a fallback.** This is the
+    # most-skimmed surface in the repo and it showed gross, which is the one place that error
+    # does the most damage: the SOL short moved -5.67 and cost -9.28 to hold, so the note
+    # understated the loss by 0.36R exactly where a human glances and stops looking. Older rows
+    # predate these fields and still have to render, hence the fallback rather than a "?".
+    net_pnl, net_r = row.get("pnl_net"), row.get("r_net_at_fill")
+    kept = net_pnl if isinstance(net_pnl, (int, float)) else row.get("pnl")
+    r_value = net_r if isinstance(net_r, (int, float)) else row.get("r_at_fill")
+    r = f"{r_value:+.2f}R" if isinstance(r_value, (int, float)) else "?R"
     held = row.get("held_days")
     age = f"{held:.1f}d" if isinstance(held, (int, float)) else "?d"
     entry, exit_price = row.get("entry_price"), row.get("exit_price")
@@ -46,7 +53,7 @@ def line(row: dict) -> str:
         f"{float(entry or 0):,.2f} → {float(exit_price or 0):,.2f}",
         f"{float(row.get('exit_qty') or 0):g}",
         f"held {age}",
-        f"**${_money(row.get('pnl'))}** ({r})",
+        f"**${_money(kept)}** ({r})",
     ]
     if not row.get("credible"):
         # Read from the row rather than re-derived. This used to reconstruct the cause from the
