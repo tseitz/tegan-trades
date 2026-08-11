@@ -1007,7 +1007,7 @@ def cross_reference(
     family = _DIRECTION_FAMILY.get(direction)
     if family is None:
         return refuse("unknown_direction")
-    weekly_family = _family_of(context.weekly_trend)
+    weekly_family = family_of(context.weekly_trend)
     if weekly_family is not None and weekly_family != family:
         return refuse("weekly_disagrees")
     trend_alignment = ALIGNED if weekly_family == family else UNALIGNED
@@ -1030,7 +1030,7 @@ def cross_reference(
     # decision so that measurement becomes possible. No term and no weight changed, so no
     # candidate's score moves and ``SCORE_VERSION`` stays at 6 — §21's precedent.
     if weekly_family is not None:
-        daily_family = _family_of(context.daily_trend)
+        daily_family = family_of(context.daily_trend)
         if daily_family is not None and daily_family != family:
             return refuse("timeframe_conflict")
 
@@ -1223,7 +1223,7 @@ def cross_reference(
     )
 
 
-def _family_of(state: str) -> str | None:
+def family_of(state: str) -> str | None:
     """Which side a trend state permits. Ranging permits neither.
 
     A *failed* break is permissive, not disqualifying: "assume higher prices until breakout of

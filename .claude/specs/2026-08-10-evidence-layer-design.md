@@ -127,12 +127,15 @@ extra `exclusions.partition` call.
 
 ## Warming pass
 
-The samplable window is `warm_depth − structure_warmup − resolution_tail`:
+The samplable window is `warm_depth − structure_warmup − resolution_tail`. Designed against a
+**365d warmup guess**; the guess was wrong and `probe_price_cache` measured the real figure at
+**270d** (knee 180, plateau 270), which widens every row below:
 
 ```
-warm 1 year   →  365 − 365 − 90  =  negative. no window at all.
-warm 18 mo    →  548 − 365 − 90  =  93 days   ≈ 3 months, one regime
-warm 2 years  →  730 − 365 − 90  =  275 days  ≈ 9 months, multiple regimes
+                        as designed (365)        as measured (270)
+warm 1 year   →   365 − w − 90  =  negative              10 days
+warm 18 mo    →   548 − w − 90  =   93 days             188 days
+warm 2 years  →   730 − w − 90  =  275 days             370 days  ← shipped
 ```
 
 Two years is roughly the minimum that yields a usable window, and roughly where the sources cap
@@ -154,10 +157,15 @@ gets lookback before the earliest as-of date.
 - **Coinbase** tiles 300-candle pages
 - **Kraken** hard-caps at 720 candles (~2 years) — accepted ceiling, 20 series
 
-**Warmup length is measured, not assumed.** Sweep it and take the point where the
-`no_dealing_range` refusal rate flattens. 365d is the starting guess only. This mirrors
-`resample.straddles_the_split`, which measures the setup-rung split rather than assigning it by
-asset class.
+**Warmup length was measured, not assumed — and the assumption was wrong.** Swept against the
+backfilled cache: 90d yields a dealing range for 226 assets (69%), 180d for 316 (96%), 270d for
+319 (97%), and 365d/545d/730d for 319. The knee is 180 and the plateau 270, so `asof
+.DEFAULT_WARMUP_DAYS = 270` and the 365 this was designed around cost ~95 days of window for
+nothing. Mirrors `resample.straddles_the_split`, which measures the setup rung rather than
+assigning it by asset class.
+
+Re-run the sweep only against a deep cache. Measured *before* the backfill it also flattened
+after 180d — an identical-looking curve meaning only that no deeper bars existed.
 
 ### Audit pass
 
@@ -175,9 +183,10 @@ silently dropped.
 
 ## Grid and data flow
 
-~40 as-of dates, weekly on a fixed weekday, spanning ≈2025-08 → 2026-05 — corpus start 2024-07
-plus 365d warmup at the front, 90d resolution tail off today at the back. Roughly 2,400 corpus
-rows over multiple regimes. Weekly rather than daily because consecutive as-of dates share structure
+**~52 as-of dates**, weekly on a fixed weekday, spanning ≈2025-05 → 2026-05 — corpus start
+2024-07 plus the measured 270d warmup at the front, 90d resolution tail off today at the back.
+Roughly 3,000 corpus rows over multiple regimes. (Designed as ~40 dates against the 365d guess;
+the measurement bought ~12 more.) Weekly rather than daily because consecutive as-of dates share structure
 and theses almost entirely: daily sampling gives ~7× the rows and nearly the same information,
 shrinking naive CIs by √7 for free — which is not free, it is wrong.
 
@@ -240,9 +249,22 @@ emits no cross-arm score column.
 | today's routing map / canon | unavoidable — first commit is 2026-07-22, the window predates the repo. Identity check per `probe_replay`'s `IDENTITY_PAD` |
 | `exclusions.yaml` | off for primary arms |
 
-Defended by a **falsification test**: generate at `as_of = t` with the series truncated at `t`,
-then again with the full series, and assert the candidate sets are identical. If any later bar
-reaches anything, the sets differ and the test fails.
+Defended by a **falsification test** — with a correction to how it was specified here.
+
+Truncated-series against full-series is the wrong comparison: those legitimately differ, because
+`to_weekly` drops the trailing partial group and on a series cut at `as_of` the last *complete*
+week **is** that group. Pre-truncating therefore discards a week that was genuinely available —
+`ranging` where the engine reads `uptrend`. That is why `oracle.asof` has no truncate helper.
+
+What is implemented instead: append 20 weeks of violent reversal *after* `as_of` and require the
+Context not to move. Confirmed to have teeth by mutating each of the three `as_of` filters out of
+`build_context` in turn — all three go red. **The first fixture written for this passed with the
+guard removed** (a smooth trend reads the same either way), which is the argument for mutating
+the guard rather than trusting a green tick.
+
+The guard is sound for a reason worth stating: `to_weekly` stamps each weekly bar with its
+**last** constituent day, so a week straddling `as_of` is stamped after it and excluded whole.
+Stamped week-start, every historical run would silently read the future.
 
 **Survivorship** — corpus assets that no longer route are silently absent, and survivors did
 better. Unfixable, but **both P and U are drawn from today's routable set, so the bias is largely

@@ -4,7 +4,7 @@ The gate (``core/setups.py:793``) refuses when the **daily** trend contradicts t
 having already let the weekly through. Two facts about it are worth measuring rather than
 arguing:
 
-1. **It fires in two structurally different situations**, because ``_family_of(RANGING)`` is
+1. **It fires in two structurally different situations**, because ``family_of(RANGING)`` is
    ``None`` and the weekly check skips ``None``. So a thesis reaches the daily leg either
    because the weekly *agrees* (a genuine two-timeframe conflict) or because the weekly is
    **ranging** — no macro opinion at all, and then the daily alone kills it. That is the same
@@ -41,7 +41,7 @@ job; the defect was that a short-term reading was wired as a *veto* instead of a
 
 **745 of 761 genuine conflicts are one shape:** the daily retracing against the weekly, which is
 the textbook entry condition rather than a contradiction. The sharpest case is the 112
-``downtrend / uptrend_failed_breakout / short`` rows — ``_family_of`` maps failed breaks to the
+``downtrend / uptrend_failed_breakout / short`` rows — ``family_of`` maps failed breaks to the
 bullish family (correctly, for its own stated purpose) and that is what makes them "conflict"
 with a short. Its docstring argues against the use the gate put it to.
 
@@ -69,10 +69,10 @@ from core.setups import (
     WEEKLY,
     ZONE_TIMEFRAMES,
     NotASetup,
-    _family_of,
     build_context,
     collapse,
     cross_reference,
+    family_of,
 )
 from core.structure import (
     RANGING,
@@ -150,7 +150,7 @@ class Conflict:
     @property
     def weekly_ranging(self) -> bool:
         """True when no macro opinion existed for the daily to conflict *with*."""
-        return _family_of(self.weekly.state) is None
+        return family_of(self.weekly.state) is None
 
 
 def build_contexts(rows, *, as_of: date):
@@ -330,7 +330,7 @@ def candidates_under(rows, contexts, registry, *, release: bool):
     """Run the whole engine, optionally with the daily leg neutralised.
 
     ``daily_trend`` reaches exactly one decision — the gate at ``setups.py:791`` — and is
-    otherwise carried only for display, so forcing it to ``RANGING`` makes ``_family_of``
+    otherwise carried only for display, so forcing it to ``RANGING`` makes ``family_of``
     return ``None`` and skips that one check while leaving every other gate, the scorer and
     ``collapse`` untouched. That is a measurement of the gate's cost, **not** a proposed fix:
     deleting the daily leg outright is not what §27 is asking for.
@@ -382,7 +382,7 @@ def release_test(rows, contexts, registry) -> None:
     if len(new) > 25:
         print(f"  … and {len(new) - 25} more")
 
-    wk = Counter("weekly ranging" if _family_of(c.weekly_trend) is None
+    wk = Counter("weekly ranging" if family_of(c.weekly_trend) is None
                  else "weekly agrees" for c in new)
     print("\n  split by why they reached the daily leg:")
     for label, n in wk.most_common():
@@ -434,7 +434,7 @@ def depth_sweep(rows, contexts, registry, *, as_of: date,
             leg = read_leg(daily.bars, state, as_of=as_of, depth=depth)
             if leg.span_days is not None:
                 spans.append(leg.span_days)
-            if _family_of(state) is None:
+            if family_of(state) is None:
                 ranging += 1
             deepened[asset] = (daily, weekly, replace(ctx, daily_trend=state))
         cands, rej = candidates_under(rows, deepened, registry, release=False)

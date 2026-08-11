@@ -181,9 +181,24 @@ def build_candidates(
     config_dir: Path = CONFIG_DIR,
     funding_venue: str | None = carry.DEFAULT_VENUE,
     triggers_on: bool = True,
+    marks_index: dict | None = None,
+    series_cache: dict | None = None,
 ) -> tuple[tuple[Candidate, ...], BuildStats]:
     """Route every asset the corpus mentions, build one ``Context`` each, gate every row
-    against its asset's context, and collapse the outcome stream into candidates."""
+    against its asset's context, and collapse the outcome stream into candidates.
+
+    **The two injection points exist for replaying a past date**, and both default to the live
+    behaviour so nothing changes for a caller that ignores them.
+
+    ``marks_index`` — pass ``{}`` to skip the venue sweep. A mark fetched now says what an
+    instrument costs *today*; letting it contradict a route as that route stood a year ago is
+    not a check, it is an anachronism. Empty refuses nothing, which is already
+    ``oracle.confirm``'s contract when no venue answers.
+
+    ``series_cache`` — pre-seed ``{asset: PriceSeries}`` to supply bars instead of reading the
+    cache from disk. ``load_daily`` already consults this dict first, so seeding it is a
+    substitution rather than a second code path.
+    """
     table = load_routing_table(
         config_dir, [(r.asset, r.domain) for r in rows], listings=listings_map
     )
@@ -200,9 +215,10 @@ def build_candidates(
     # rather than read from the price cache on purpose: a source that shared our routing would
     # agree with us about `WTI` being W&T Offshore and confirm the collision instead of catching
     # it. Empty when no venue answers, which refuses nothing — see ``oracle.confirm``.
-    mark_index = marks_mod.index_marks(marks_mod.fetch_all())
+    mark_index = (marks_mod.index_marks(marks_mod.fetch_all())
+                  if marks_index is None else marks_index)
 
-    series_cache: dict = {}
+    series_cache = {} if series_cache is None else series_cache
     contexts: dict[str, tuple] = {}
     refs: dict[str, object] = {}
     unpriceable: Counter = Counter()
