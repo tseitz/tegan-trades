@@ -65,12 +65,12 @@ import argparse
 import json
 import random
 from collections import Counter
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 from statistics import median
 
 from core.canon import load_registry
-from oracle import cache, corpus, listings
+from oracle import cache, corpus, listings, replay
 from oracle.assemble import CONFIG_DIR, load_daily
 from oracle.route import Unpriceable, load_routing_table, route
 
@@ -78,17 +78,23 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DECISIONS = REPO_ROOT / "data" / "setups" / "decisions.jsonl"
 
 # ── outcome states ──────────────────────────────────────────────────────────
-
-TARGET = "target"
-STOP = "stop"
-AMBIGUOUS = "ambiguous"   # one bar touched both; daily data cannot order them
-OPEN = "open"             # filled, neither level reached yet
-NOFILL = "nofill"         # the limit was never traded through
-UNREPLAYABLE = "unreplayable"
-
-# States that represent a completed trade. ``AMBIGUOUS`` is resolved into ``STOP`` before any
-# rate is formed — see the module docstring — so it is settled, just not cleanly.
-RESOLVED = (TARGET, STOP, AMBIGUOUS)
+#
+# Re-exported from ``oracle.replay``, which owns the walk. They were defined here first; the
+# module exists because a generated candidate has to resolve through the same rules a recorded
+# decision does, and two copies of "what counts as a stop" would drift on exactly the subtle
+# points — fill ordering, same-bar stops, ambiguity — where drift is invisible.
+#
+# ``UNREPLAYABLE`` is this probe's own: it means the *row* could not be matched to bars at all,
+# which is a question about decision records, not about brackets.
+from oracle.replay import (  # noqa: E402
+    AMBIGUOUS,
+    NOFILL,
+    OPEN,
+    RESOLVED,
+    STOP,
+    TARGET,
+    UNREPLAYABLE,
+)
 
 # How far outside the local trading range the recorded decision-time spot may sit before the
 # row is treated as naming a different instrument than the one now cached.
@@ -198,64 +204,36 @@ def identity_ok(row: dict, series) -> bool | None:
     return low <= recorded <= high
 
 
-def _touches(bar, level: float, *, above: bool) -> bool:
-    return bar.high >= level if above else bar.low <= level
-
-
 def walk(row: dict, series, *, max_wait_days: int | None = None) -> dict:
-    """Classify one candidate by walking bars forward from the day after it was decided.
+    """One decision row -> the dict the report reads. The walk itself is ``replay.resolve``.
 
-    **Strictly after.** A decision was made partway through its own session, so that session's
-    high and low include ticks that had not happened when the entry was chosen. Including the
-    decision-day bar would let a target that was hit *before* the sitting count as a win — the
-    same look-ahead ``oracle.series`` opens by forbidding.
+    An adapter, deliberately thin. What lives here is the part specific to *decision rows* —
+    reading ``decided_at`` as the origin, and reporting ``through`` so a reader can see how
+    much of an unresolved row is maturity rather than a dead entry. What lives in
+    ``oracle.replay`` is every rule about fill ordering, ambiguity and look-ahead.
 
-    Fill and exit are evaluated in one pass. A bar that touches both the stop and the target is
-    ``ambiguous`` — daily data cannot order them — but a bar that *fills and then stops* is not:
-    a long's stop sits below its entry, so price had to trade through the entry to reach the
-    stop, and fill-then-stop is the only ordering available. It is recorded as ``same_bar``
-    rather than waved through, because a stop reached inside the fill session is a statement
-    about ``STOP_PAD_ATR`` — that the stop is inside one day's noise — and nothing else here
-    would surface it.
+    ``r`` from the Outcome is deliberately dropped: this probe values a row through its own
+    ``realized_r``, which returns None for an open trade rather than marking it to market.
+    The two conventions answer different questions and the difference is the point — see
+    ``replay.resolve``'s docstring on why the harness marks and this does not.
     """
     decided = datetime.fromisoformat(row["decided_at"]).date()
-    long = row["direction"] == "long"
-    entry, stop, target = row["entry"], row["stop"], row["target"]
-
-    forward = [b for b in series.bars if b.date > decided]
-    if not forward:
-        return {"state": OPEN, "detail": "no bars after the decision", "bars": 0}
-
-    filled_on: date | None = None
-    for i, bar in enumerate(forward):
-        if max_wait_days is not None and filled_on is None and i >= max_wait_days:
-            return {"state": NOFILL, "detail": f"not reached in {max_wait_days}d", "bars": i}
-
-        if filled_on is None:
-            # A long rests below the market and fills when price trades down to it.
-            if not _touches(bar, entry, above=not long):
-                continue
-            filled_on = bar.date
-
-        hit_target = _touches(bar, target, above=long)
-        hit_stop = _touches(bar, stop, above=not long)
-
-        same_bar = bar.date == filled_on
-        if hit_target and hit_stop:
-            return {"state": AMBIGUOUS, "filled_on": filled_on, "bars": i + 1,
-                    "same_bar": same_bar}
-        if hit_target:
-            return {"state": TARGET, "filled_on": filled_on, "bars": i + 1,
-                    "same_bar": same_bar}
-        if hit_stop:
-            return {"state": STOP, "filled_on": filled_on, "bars": i + 1,
-                    "same_bar": same_bar}
-
-    last = forward[-1].date
-    if filled_on is None:
-        return {"state": NOFILL, "detail": f"never traded through {entry:g}",
-                "bars": len(forward), "through": last}
-    return {"state": OPEN, "filled_on": filled_on, "bars": len(forward), "through": last}
+    out = replay.resolve(
+        entry=row["entry"], stop=row["stop"], target=row["target"],
+        direction=row["direction"], bars=series.bars, from_date=decided,
+        fill_within=max_wait_days,
+    )
+    result: dict = {"state": out.state, "bars": out.bars}
+    if out.detail is not None:
+        result["detail"] = out.detail
+    if out.filled_on is not None:
+        result["filled_on"] = out.filled_on
+        result["same_bar"] = out.same_bar
+    if out.state in (OPEN, NOFILL) and out.bars:
+        forward = [b for b in series.bars if b.date > decided]
+        if forward:
+            result["through"] = forward[-1].date
+    return result
 
 
 def classify(row: dict, load_series, *, max_wait_days: int | None = None) -> dict:
