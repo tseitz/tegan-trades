@@ -21,7 +21,7 @@ from core.setups import (
 )
 from core.structure import BULLISH, SWING_HIGH, SWING_LOW, Break, OrderBlock, Swing
 from core.trigger import Trigger
-from oracle import confirm, exclusions, queue, setups_cli, setups_render
+from oracle import assemble, confirm, exclusions, queue, setups_cli, setups_render
 from oracle.queue import build_queue
 from oracle.setups_cli import format_unpriced
 
@@ -1135,8 +1135,8 @@ def test_no_venue_symbol_argument_leaves_the_row_unchanged():
 # ── zones are drawn on the instrument an order can reach ─────────────────────
 
 def _empty_table():
-    """A table these tests never consult — `_load_daily` only routes for `DerivedRef` legs."""
-    return setups_cli.RoutingTable(
+    """A table these tests never consult — `assemble.load_daily` only routes for `DerivedRef` legs."""
+    return assemble.RoutingTable(
         curated={}, coinbase_symbols=frozenset(), kraken_symbols=frozenset(),
         domain_consensus={},
     )
@@ -1148,13 +1148,13 @@ def test_load_daily_reads_the_traded_instrument_not_the_priced_one(monkeypatch):
     reading ^DJI — see `score_cli._load_series`, which deliberately still uses `.symbol`."""
     asked = []
     monkeypatch.setattr(
-        setups_cli.cache, "load",
+        assemble.cache, "load",
         lambda source, symbol, **kw: asked.append((source, symbol)) or "series",
     )
-    ref = setups_cli.OracleRef(
+    ref = assemble.OracleRef(
         asset="DJI", source="yahoo", symbol="^DJI", curated=True, tradeable="DIA"
     )
-    series = setups_cli._load_daily(ref, table=_empty_table(), series_cache={})
+    series = assemble.load_daily(ref, table=_empty_table(), series_cache={})
     assert asked == [("yahoo", "DIA")]
     assert series == "series"
 
@@ -1163,11 +1163,11 @@ def test_load_daily_is_unchanged_for_an_asset_with_no_proxy(monkeypatch):
     """Every other asset in the corpus must take the identical path it took before."""
     asked = []
     monkeypatch.setattr(
-        setups_cli.cache, "load",
+        assemble.cache, "load",
         lambda source, symbol, **kw: asked.append((source, symbol)) or "series",
     )
-    ref = setups_cli.OracleRef(asset="BTC", source="coinbase", symbol="BTC-USD")
-    setups_cli._load_daily(ref, table=_empty_table(), series_cache={})
+    ref = assemble.OracleRef(asset="BTC", source="coinbase", symbol="BTC-USD")
+    assemble.load_daily(ref, table=_empty_table(), series_cache={})
     assert asked == [("coinbase", "BTC-USD")]
 
 

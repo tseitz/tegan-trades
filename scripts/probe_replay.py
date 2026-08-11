@@ -71,8 +71,8 @@ from statistics import median
 
 from core.canon import load_registry
 from oracle import cache, corpus, listings
+from oracle.assemble import CONFIG_DIR, load_daily
 from oracle.route import Unpriceable, load_routing_table, route
-from oracle.setups_cli import CONFIG_DIR, _load_daily
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DECISIONS = REPO_ROOT / "data" / "setups" / "decisions.jsonl"
@@ -148,7 +148,7 @@ def load_rows(path: Path) -> list[dict]:
 def build_series_loader():
     """``asset -> PriceSeries | None``, resolved exactly as ``setups`` resolves it.
 
-    Deliberately reuses ``setups_cli._load_daily`` rather than reimplementing the lookup. The
+    Deliberately reuses ``setups_cli.load_daily`` rather than reimplementing the lookup. The
     replay is only meaningful if it reads the same bars the candidate's stop was drawn on, and
     that function is the single place that knows to prefer ``trade_symbol`` over ``symbol``
     (RUT's zone is quoted on IWM). A second path from asset to price is the bug §32 and §44
@@ -166,7 +166,7 @@ def build_series_loader():
         resolved = route(asset, table)
         if isinstance(resolved, Unpriceable):
             return None, resolved.reason
-        series = _load_daily(resolved, table=table, series_cache=series_cache)
+        series = load_daily(resolved, table=table, series_cache=series_cache)
         return series, None if series else "no cached bars"
 
     return load

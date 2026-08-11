@@ -205,7 +205,7 @@ INTENTIONAL_SHARED_SYMBOLS = {
 
 def _curated_routes():
     import yaml
-    from oracle.setups_cli import CONFIG_DIR
+    from oracle.assemble import CONFIG_DIR
     raw = yaml.safe_load((CONFIG_DIR / "oracle_map.yaml").read_text())
     routes = raw.get("assets", raw)
     return {a: s for a, s in routes.items() if isinstance(s, dict) and "symbol" in s}

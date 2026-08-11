@@ -52,9 +52,9 @@ from core.exits import STRUCTURAL_KINDS
 from core.setups import BEARISH, BULLISH, build_context
 from core.structure import SWING_HIGH, SWING_LOW, confirmed_by, swings
 from oracle import cache, corpus, listings
+from oracle.assemble import CONFIG_DIR, build_candidates, load_daily
 from oracle.resample import to_weekly
 from oracle.route import DerivedRef, OracleRef, load_routing_table, route
-from oracle.setups_cli import CONFIG_DIR, _load_daily, build_candidates
 
 # How far from entry an opposing block must sit to count as an obstruction rather than as the
 # far side of the entry's own congestion. In risk units, so it scales with the zone.
@@ -152,7 +152,7 @@ def main() -> int:
         resolved = route(asset, table)
         if not isinstance(resolved, OracleRef | DerivedRef):
             continue
-        daily = _load_daily(resolved, table=table, series_cache=series_cache)
+        daily = load_daily(resolved, table=table, series_cache=series_cache)
         if daily is None:
             continue
         ctx = build_context(daily.bars, to_weekly(daily).bars, as_of=as_of)

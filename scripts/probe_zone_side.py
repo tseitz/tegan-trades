@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from core.canon import load_registry
 from core.setups import _DIRECTION_FAMILY, ARRIVAL, BULLISH
 from oracle import cache, corpus, listings
-from oracle.setups_cli import CONFIG_DIR, build_candidates
+from oracle.assemble import CONFIG_DIR, build_candidates
 
 # Where price sits relative to the zone it would be entered on.
 APPROACH = "approach"   # correct side, hasn't arrived — bullish: above; bearish: below

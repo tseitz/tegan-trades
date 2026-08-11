@@ -9,7 +9,7 @@ Two jobs the pure layers cannot do, kept together because they share every input
 
 **Bars are fetched for ``trade_symbol``, never ``symbol``.** ``^DJI`` is the Dow the roster's
 theses are about; ``DIA`` is the only Dow anyone can buy, and the zone, stop and trigger are all
-quoted on the thing an order reaches. ``setups_cli._load_daily`` already reads ``trade_symbol``
+quoted on the thing an order reaches. ``assemble.load_daily`` already reads ``trade_symbol``
 for exactly this reason; getting it wrong here would compute a trigger on one instrument and
 place it on another, which is the failure ``cfg/venue_map.yaml``'s header exists to prevent.
 

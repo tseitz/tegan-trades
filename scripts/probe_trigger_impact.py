@@ -53,8 +53,8 @@ from datetime import UTC, datetime
 from core import trigger
 from core.canon import load_registry
 from oracle import cache, corpus, listings, trigger_feed
+from oracle.assemble import CONFIG_DIR, build_candidates, is_inside_zone
 from oracle.route import Unpriceable, route, the_routing_table
-from oracle.setups_cli import CONFIG_DIR, build_candidates, is_inside_zone
 
 
 def main() -> int:

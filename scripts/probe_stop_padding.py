@@ -44,9 +44,9 @@ from core.setups import (
     cross_reference,
 )
 from oracle import cache, carry, corpus, listings
+from oracle.assemble import CONFIG_DIR, load_daily
 from oracle.resample import to_weekly
 from oracle.route import Unpriceable, load_routing_table, route
-from oracle.setups_cli import CONFIG_DIR, _load_daily
 
 # The motivating case, and the one worth being able to read line by line.
 WORKED_EXAMPLE = "GOOGL"
@@ -104,7 +104,7 @@ def build_contexts(rows, *, as_of: date):
         resolved = route(asset, table)
         if isinstance(resolved, Unpriceable):
             continue
-        daily = _load_daily(resolved, table=table, series_cache=series_cache)
+        daily = load_daily(resolved, table=table, series_cache=series_cache)
         if daily is None:
             continue
         ctx = build_context(daily.bars, to_weekly(daily).bars, as_of=as_of)

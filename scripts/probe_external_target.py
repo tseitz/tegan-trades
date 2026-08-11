@@ -68,9 +68,9 @@ from core.canon import load_registry
 from core.exits import RANGE_BOUND
 from core.setups import MIN_REWARD_RISK, build_context
 from oracle import cache, corpus, listings
+from oracle.assemble import CONFIG_DIR, build_candidates, load_daily
 from oracle.resample import to_weekly
 from oracle.route import DerivedRef, OracleRef, load_routing_table, route
-from oracle.setups_cli import CONFIG_DIR, _load_daily, build_candidates
 
 # Mayne's floor, against MIN_REWARD_RISK's current 1.0. Named here rather than imported
 # because the point of the probe is to measure the two side by side.
@@ -147,7 +147,7 @@ def main() -> int:
         resolved = route(asset, table)
         if not isinstance(resolved, OracleRef | DerivedRef):
             continue
-        daily = _load_daily(resolved, table=table, series_cache=series_cache)
+        daily = load_daily(resolved, table=table, series_cache=series_cache)
         if daily is None:
             continue
         ctx = build_context(daily.bars, to_weekly(daily).bars, as_of=as_of)

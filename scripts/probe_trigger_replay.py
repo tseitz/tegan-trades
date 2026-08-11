@@ -71,8 +71,8 @@ from statistics import median
 
 from core import trigger
 from oracle import trigger_feed
+from oracle.assemble import CONFIG_DIR
 from oracle.route import Unpriceable, route, the_routing_table
-from oracle.setups_cli import CONFIG_DIR
 from probe_replay import (
     MIN_RANGE_BARS,
     RANGE_LOOKBACK,

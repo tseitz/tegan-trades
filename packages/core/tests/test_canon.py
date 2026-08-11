@@ -138,7 +138,7 @@ def test_ticker_spellings_fold_into_one_asset(alias, canonical):
     in every number. Folding them here rather than in `oracle_map.yaml` is deliberate: the map
     would dedupe *prices* while leaving the corpus split across two keys, which leaves
     `collapse` grouping and the `agreement` count still divided."""
-    from oracle.setups_cli import CONFIG_DIR
+    from oracle.assemble import CONFIG_DIR
     registry = load_registry(CONFIG_DIR)
     assert resolve_asset(alias, registry)[0] == canonical
 
@@ -147,7 +147,7 @@ def test_a_currency_is_not_folded_into_its_pair():
     """The other half of that fix, and the reason it is not a blanket 'merge anything sharing a
     symbol' rule. `EUR` carries a EUR/GBP cross and `GBP` carries British Pound futures, so
     they are genuinely different objects from the dollar pairs and must stay split."""
-    from oracle.setups_cli import CONFIG_DIR
+    from oracle.assemble import CONFIG_DIR
     registry = load_registry(CONFIG_DIR)
     assert resolve_asset("EUR", registry)[0] != "EURUSD"
     assert resolve_asset("GBP", registry)[0] != "GBPUSD"
