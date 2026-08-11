@@ -64,11 +64,25 @@ def plan_fetches(
     today: date,
     pad_days: int = DEFAULT_PAD_DAYS,
     cached_spans: Mapping[tuple[str, str], tuple[date, date]] | None = None,
+    floor_start: date | None = None,
 ) -> tuple[list[FetchJob], list[Unpriceable]]:
     """-> (jobs to run, assets that cannot be priced and why).
 
     One job per *asset*, not per thesis, windowed to that asset's own earliest mention —
     an asset first discussed last month needs a month of history, not two years.
+
+    **``floor_start`` is the second requirement, and it points the other way.** The window
+    above serves *grading*, which reads bars FORWARD from a publish date, so opening at the
+    earliest mention is exactly right. Structure reads BACKWARD: weekly trend, dealing range
+    and order blocks all need lookback predating the first time anyone named the asset. No
+    series may start later than ``floor_start``, and because it is a floor rather than an
+    assignment, an asset discussed before it keeps its own earlier window — both requirements
+    are real and ``min`` satisfies both.
+
+    Default None, so every caller that does not ask for lookback plans exactly what it planned
+    before this existed. Measured 2026-08-10, before it did: 95 of 329 cached series held under
+    90 daily bars, and those assets refuse in ``core.setups`` as ``no_dealing_range`` — a
+    structure verdict standing in for "nobody fetched the history".
     """
     cached_spans = cached_spans or {}
 
@@ -103,6 +117,11 @@ def plan_fetches(
     jobs: list[FetchJob] = []
     skipped: list[Unpriceable] = []
     corpus_start = min(earliest.values()) - timedelta(days=pad_days) if earliest else None
+    # The floor reaches benchmarks too. A benchmark already spans the whole corpus; if the
+    # corpus itself is being deepened for structure, leaving the benchmark at the old span
+    # would make it the one series too short to measure the deepened ones against.
+    if floor_start is not None:
+        corpus_start = floor_start if corpus_start is None else min(corpus_start, floor_start)
 
     for asset in sorted(set(earliest) | undated_only):
         if asset not in earliest:
@@ -124,6 +143,8 @@ def plan_fetches(
             continue
 
         start = earliest[asset] - timedelta(days=pad_days)
+        if floor_start is not None:
+            start = min(start, floor_start)
         # A benchmark must span the whole corpus, not just its own mentions — every call
         # is measured against it, including ones made before anyone first named it.
         if (resolved.source, resolved.symbol) in benchmark_refs() and corpus_start:

@@ -31,8 +31,11 @@ def _asset_jobs(jobs):
 
 
 def test_start_date_is_per_asset_not_corpus_wide():
-    """An asset first mentioned recently doesn't need two years of history — fetching the
-    corpus-wide span for every symbol would multiply the backfill for no benefit."""
+    """Absent a floor, an asset first mentioned recently doesn't need two years of history —
+    fetching the corpus-wide span for every symbol would multiply the backfill for no benefit.
+
+    ``floor_start`` is what overrides this when structure lookback is wanted; see the tests
+    at the bottom of this file."""
     rows = _rows(("BTC", "2024-08-01"), ("ETH", "2026-06-01"))
     jobs, _ = plan_fetches(rows, _table(), today=TODAY, pad_days=0)
     by_asset = {j.ref.asset: j for j in jobs}
@@ -206,3 +209,54 @@ def test_an_already_cached_traded_leg_is_not_refetched():
         _rows(("DJI", "2026-02-17")), table, today=TODAY, pad_days=0, cached_spans=spans
     )
     assert {j.ref.symbol for j in _asset_jobs(jobs)} == {"^DJI"}
+
+
+# ── floor_start: history for structure, not just for grading ─────────────────
+#
+# The window this module planned was built for GRADING, which reads bars FORWARD from a
+# publish date — so opening at the earliest mention was right. Structure reads BACKWARD:
+# weekly trend, dealing range and order blocks all need lookback that predates the first
+# time anyone mentioned the asset. Measured 2026-08-10, before this existed: 95 of 329
+# cached series held under 90 daily bars, and those assets refuse as `no_dealing_range`
+# when the truth is that nobody fetched their history.
+
+def test_floor_start_deepens_a_recently_mentioned_asset():
+    """The whole point: an asset first mentioned last month still needs a year of bars
+    behind it, or its weekly structure cannot be read at all."""
+    rows = _rows(("TSLA", "2026-06-01"))
+    jobs, _ = plan_fetches(
+        rows, _table(), today=TODAY, pad_days=0, floor_start=date(2024, 8, 1)
+    )
+    assert _asset_jobs(jobs)[0].start == date(2024, 8, 1)
+
+
+def test_floor_start_never_narrows_an_asset_with_an_earlier_mention():
+    """A floor is a floor, not an assignment. An asset discussed before it keeps its own
+    earlier window — otherwise the grading span this module was built for would shrink."""
+    rows = _rows(("BTC", "2024-01-15"))
+    jobs, _ = plan_fetches(
+        rows, _table(), today=TODAY, pad_days=0, floor_start=date(2024, 8, 1)
+    )
+    assert _asset_jobs(jobs)[0].start == date(2024, 1, 15)
+
+
+def test_floor_start_refetches_a_series_whose_cache_is_too_shallow():
+    """A cached span that satisfied the old window must not satisfy the deeper one, or the
+    backfill silently no-ops on exactly the 95 series it exists to fix."""
+    rows = _rows(("BTC", "2026-06-01"))
+    cached = {("coinbase", "BTC-USD"): (date(2026, 5, 1), TODAY)}
+    jobs, _ = plan_fetches(
+        rows, _table(), today=TODAY, pad_days=0, cached_spans=cached,
+        floor_start=date(2024, 8, 1),
+    )
+    assert len(_asset_jobs(jobs)) == 1
+
+
+def test_omitting_floor_start_leaves_planning_exactly_as_it_was():
+    """Default-off. Every caller that does not ask for lookback plans the same window it
+    planned before this parameter existed."""
+    rows = _rows(("TSLA", "2026-06-01"))
+    without = plan_fetches(rows, _table(), today=TODAY, pad_days=0)[0]
+    explicit_none = plan_fetches(rows, _table(), today=TODAY, pad_days=0, floor_start=None)[0]
+    assert without == explicit_none
+    assert _asset_jobs(without)[0].start == date(2026, 6, 1)

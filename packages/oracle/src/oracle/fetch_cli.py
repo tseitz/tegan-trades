@@ -10,7 +10,7 @@ import argparse
 import collections
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from core.canon import load_registry
@@ -27,6 +27,18 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 CONFIG_DIR = REPO_ROOT / "cfg"
 
 _SOURCES = {"coinbase": coinbase, "kraken": kraken, "yahoo": yahoo}
+
+# Minimum daily history per series, back from today. Two years, chosen against the source
+# ceilings rather than against a structure requirement — Kraken hard-caps at 720 candles, so
+# past this the deepest source simply stops answering, and the corpus itself only starts
+# 2024-07. Yahoo serves multi-year spans in one request and Coinbase tiles 300-candle pages,
+# so asking for the maximum costs the same as asking for less.
+#
+# It is deliberately NOT derived from a warmup constant. How much lookback structure actually
+# needs is a measurement nobody can take until the deep series exist — see
+# ``scripts/probe_price_cache.py``, which sweeps it. Fetch the most that is available, then
+# measure what of it was needed.
+DEFAULT_HISTORY_DAYS = 730
 
 # Yahoo will resolve a bare ticker to *some* instrument; only these types are plausibly
 # the tradeable thing a transcript meant. Indices/futures/FX must be curated explicitly —
@@ -138,6 +150,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-intraday", action="store_true",
                         help="skip the hourly pass; `setups` then falls back to daily zones "
                              "for everything and shows no entry trigger")
+    parser.add_argument("--history-days", type=int, default=DEFAULT_HISTORY_DAYS,
+                        help="minimum daily history per series, in days back from today "
+                             f"(default {DEFAULT_HISTORY_DAYS}). Structure needs lookback that "
+                             "predates an asset's first mention; 0 restores the old "
+                             "mention-windowed behaviour")
     args = parser.parse_args(argv)
 
     registry = load_registry(CONFIG_DIR)
@@ -153,8 +170,11 @@ def main(argv: list[str] | None = None) -> int:
 
     table = load_routing_table(CONFIG_DIR, [(r.asset, r.domain) for r in rows], listings=known)
     today = datetime.now(UTC).date()
+    floor_start = (today - timedelta(days=args.history_days)
+                   if args.history_days > 0 else None)
     jobs, skipped = plan_fetches(
-        rows, table, today=today, cached_spans=_cached_spans(cache.DATA_ROOT)
+        rows, table, today=today, cached_spans=_cached_spans(cache.DATA_ROOT),
+        floor_start=floor_start,
     )
     if args.only:
         jobs = [j for j in jobs if j.ref.asset == args.only]
