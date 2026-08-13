@@ -54,6 +54,7 @@ from statistics import mean
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 from core.canon import load_registry  # noqa: E402
+from core.rank import parse_date  # noqa: E402
 from core.score import BOOTSTRAP_ITERATIONS, DEFAULT_SEED  # noqa: E402
 from oracle import cache, corpus, listings, replay  # noqa: E402
 from oracle.asof import (  # noqa: E402
@@ -70,6 +71,15 @@ from oracle.asof import (  # noqa: E402
 )
 from oracle.assemble import CONFIG_DIR, build_candidates, load_daily  # noqa: E402
 from oracle.route import Unpriceable, load_routing_table, route  # noqa: E402
+from oracle.series import PriceSeries  # noqa: E402
+
+# The cache audit's own screens, imported rather than reimplemented — a second opinion on what
+# counts as a corrupt bar is exactly the drift ``oracle.replay`` exists to prevent one layer up.
+from probe_price_cache import discontinuities, impossible  # noqa: E402
+
+# Below this, a series cannot carry 270 days of warmup plus a measurable window, so keeping it
+# only adds an asset that refuses on every date.
+MIN_USABLE_BARS = 60
 
 # Days of forward bars a candidate is measured over. A boundary on the MEASUREMENT, not a claim
 # that the trade ended — §2 wants the fixed horizons deleted and ``replay`` refuses to invent
@@ -126,6 +136,7 @@ def load_world():
 
     series_by_asset, unroutable = {}, Counter()
     cache_miss = 0
+    dropped: Counter = Counter()
     for asset in sorted({r.asset for r in rows}):
         resolved = route(asset, table)
         if isinstance(resolved, Unpriceable):
@@ -135,8 +146,42 @@ def load_world():
         if daily is None or not daily.bars:
             cache_miss += 1
             continue
-        series_by_asset[asset] = daily
-    return registry, rows, known, series_by_asset, unroutable, cache_miss
+        screened, why = screen(daily)
+        if screened is None:
+            dropped[why] += 1
+            continue
+        if why:
+            dropped[why] += 1
+        series_by_asset[asset] = screened
+    return registry, rows, known, series_by_asset, unroutable, cache_miss, dropped
+
+
+def screen(series):
+    """-> (usable series or None, what was done to it).
+
+    **The audit exists to be consulted, and the first run of this probe did not consult it.**
+    ``probe_price_cache`` reported ``AI16ZUSD`` holding one bar stamped 1970-01-01; nothing here
+    read that, so the grid start — a raw ``min`` over first bars — landed in 1970 and the run
+    burned 2,800 empty as-of dates. Screening here rather than special-casing that date is the
+    difference between fixing a symptom and closing the loop.
+
+    Bars are dropped, then series, and the two are counted apart because they mean different
+    things. A bar that cannot describe a session is corrupt. A series carrying an **adjustment
+    break** is worse than corrupt: every price either side is real, so the discontinuity resolves
+    trades against levels that never traded and nothing about it reads as an error. SOXS steps
+    ~18x mid-series because ``yahoo.parse_chart`` reads ``close``, not ``adjclose``.
+
+    The EURUSD-style ``o/c outside h/l`` rounding artifact deliberately does NOT disqualify: it
+    is ~2e-5 relative and dropping 118 bars over it would cost more than it saves.
+    """
+    if discontinuities(series):
+        return None, "adjustment_break"
+    clean = tuple(b for b in series.bars if impossible(b) is None)
+    if len(clean) < MIN_USABLE_BARS:
+        return None, "too_few_usable_bars"
+    if len(clean) == len(series.bars):
+        return series, ""
+    return PriceSeries(symbol=series.symbol, source=series.source, bars=clean), "bars_dropped"
 
 
 def arm_rows(universe, rule, *, as_of, corpus_rows, series_by_asset, seed):
@@ -322,10 +367,11 @@ def report(rows, gate_seen, gate_kept, *, ambiguity, world_stats, dates, out=pri
     out(f"  primary contrast (pre-registered): {PRIMARY[0]} vs {PRIMARY[1]}; the rest describe.")
     out(f"  as-of dates {len(dates)}  ({dates[0]} .. {dates[-1]}, weekly)"
         f"   tail {TAIL_DAYS}d   warmup {WARMUP}d")
-    unroutable, cache_miss = world_stats
+    unroutable, cache_miss, dropped = world_stats
     out(f"  BOUNDS — corpus assets that do not route today: {sum(unroutable.values())} "
         f"({dict(unroutable)})")
     out(f"           routable but absent from the price cache: {cache_miss}")
+    out(f"           dropped by the cache audit's screens: {dict(dropped) or 'none'}")
     out("           both are survivorship: assets that died are simply not here.")
 
     out(f"\n  {'arm':<10} {'n':>6} {'assets':>7} {'fill':>6} {'resolv':>7} {'ambig':>6} "
@@ -386,21 +432,28 @@ def main() -> int:
     WARMUP = args.warmup_days
 
     print("loading corpus, routing table and price cache ...", flush=True)
-    registry, corpus_rows, known, series_by_asset, unroutable, cache_miss = load_world()
+    (registry, corpus_rows, known, series_by_asset,
+     unroutable, cache_miss, dropped) = load_world()
     if not series_by_asset:
         print("no cached series — run `uv run fetch-prices` first", file=sys.stderr)
         return 1
 
     today = datetime.now(UTC).date()
-    earliest = min(b.date for s in series_by_asset.values() for b in s.bars[:1])
-    start = earliest + timedelta(days=WARMUP)
+    # Both sides have to support a date before it is worth generating on: bars for structure,
+    # and at least one published thesis or arm T is empty by construction. Taking the max of the
+    # two rather than a bare min over first bars is also what stops a single odd series from
+    # setting the origin — the 1970 stamp that produced 2,903 as-of dates on the first run.
+    earliest_bar = min(s.bars[0].date for s in series_by_asset.values())
+    published = [parse_date(getattr(r, "published_at", None)) for r in corpus_rows]
+    earliest_thesis = min((d for d in published if d is not None), default=earliest_bar)
+    start = max(earliest_bar, earliest_thesis) + timedelta(days=WARMUP)
     end = today - timedelta(days=args.tail_days)
     dates = grid(start, end)
     if args.weeks:
         dates = dates[-args.weeks:]
     if not dates:
         print(f"no as-of dates: warmup {WARMUP}d + tail {args.tail_days}d exceeds the cache "
-              f"(earliest bar {earliest})", file=sys.stderr)
+              f"(earliest usable bar {earliest_bar})", file=sys.stderr)
         return 1
 
     print(f"{len(series_by_asset)} priced assets, {len(corpus_rows)} corpus rows, "
@@ -413,7 +466,7 @@ def main() -> int:
             series_by_asset=series_by_asset, ambiguity=ambiguity,
         )
         report(rows, seen, kept, ambiguity=ambiguity,
-               world_stats=(unroutable, cache_miss), dates=dates)
+               world_stats=(unroutable, cache_miss, dropped), dates=dates)
     return 0
 
 
