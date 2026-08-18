@@ -6,7 +6,8 @@
 #
 #   1. verify-roster   free    catches a channel whose marker no longer matches reality
 #   2. ingest-roster   free    new YouTube transcripts
-#   3. ingest-x        $$      xAI — the ONLY step that spends real money
+#   3. ingest-x        $$      xAI — the ONLY step that spends real money. OFF by default
+#                              since 2026-08-18; see NIGHTLY_WITH_X for why and how to restore
 #   4. distill-roster  Max     LLM extraction, subscription-billed
 #   5. brain-extract   Max     LLM stance extraction — capped per night, see below
 #   6. brain-index     free    local embeddings; MUST follow brain-extract
@@ -76,6 +77,26 @@ NIGHTLY_MIN_BATTERY="${NIGHTLY_MIN_BATTERY:-30}"
 # by a few a night, at roughly $4.70 of allowance. Raise it deliberately, not by default.
 BRAIN_EXTRACT_LIMIT="${BRAIN_EXTRACT_LIMIT:-12}"
 
+# ── whether the nightly pulls X at all ───────────────────────────────────────────
+#
+# **Off since 2026-08-18, and this is the switch to flip when that changes.** `ingest-x` is the
+# only step billed in real dollars, and `scripts/probe_x_contribution.py` measured what the
+# money bought: X is 2.6% of the corpus and yields ~1.4 zones a month that YouTube did not also
+# find — about $13 each, with twelve of sixteen weekly builds showing none at all. That is a
+# defensible price for a live book and a poor one for a paper account, which is the actual
+# reason it is off rather than anything wrong with the ingest.
+#
+# A variable rather than `touch data/nightly.no-x`, deliberately. The file is the right shape
+# for "stop spending, I'll think about it" — it is local, immediate, and survives your
+# attention. It is the wrong shape for a decision: `data/` is gitignored, so the file records
+# no reason and no date, and a wipe of `data/` silently resumes spending. Both switches remain
+# and the file still wins where it applies.
+#
+# To turn it back on: set this to 1 (or run with `--with-x` for a single run). The step's own
+# resume behaviour means re-enabling does NOT lose the intervening days — `ingest-x` picks up
+# from the last capture, bounded by its own 7-day lookback, so a long pause resumes at a week.
+NIGHTLY_WITH_X="${NIGHTLY_WITH_X:-0}"
+
 mkdir -p "$REPO/data"
 
 # ── flags ────────────────────────────────────────────────────────────────────────
@@ -107,26 +128,33 @@ usage() {
 nightly.sh — the whole cycle: refresh the corpus, re-price, rebuild the queue.
 
   --force            run even if the time/battery/already-ran gate says no
-  --no-x             skip ingest-x for THIS run (the only step that spends real money)
+  --with-x           run ingest-x for THIS run (it is OFF by default — real money)
+  --no-x             skip ingest-x for THIS run
   --skip a,b         skip these steps
   --only a,b         run only these steps
   --list             print the steps in order and exit
   -h, --help         this
 
+ingest-x is the only step that spends real dollars, and it is OFF by default. Set
+NIGHTLY_WITH_X=1 in this script to re-enable it permanently; see the comment there for
+what it was measured to be worth.
+
 Examples
-  ./scripts/nightly.sh --force --no-x        # the usual manual run: everything, free
+  ./scripts/nightly.sh --force               # the usual manual run: everything, free
+  ./scripts/nightly.sh --force --with-x      # ...and pull X too, spending money
   ./scripts/nightly.sh --only setups         # just rebuild the queue
   ./scripts/nightly.sh --skip ingest-roster  # everything but the slow one
 
 Persistent switches, for the unattended run (launchd takes no arguments):
   data/nightly.pause   stop everything
-  data/nightly.no-x    stop ingest-x until removed
+  data/nightly.no-x    stop ingest-x until removed (redundant while it is off by default)
 USAGE
 }
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --force) FORCE=1 ;;
+    --with-x) NIGHTLY_WITH_X=1 ;;
     --no-x)  SKIP_STEPS="$SKIP_STEPS ingest-x" ;;
     --skip)  shift; SKIP_STEPS="$SKIP_STEPS ${1//,/ }" ;;
     --only)  shift; ONLY_STEPS="$ONLY_STEPS ${1//,/ }" ;;
@@ -303,6 +331,12 @@ step ingest-roster  uv run ingest-roster
 # a paused week is picked up on resume (up to its own 7-day lookback cap).
 if ! should_run ingest-x; then
   STATUS_LINES+=("  skip  ingest-x — deselected")
+# Naming the step explicitly is an explicit request, so `--only ingest-x` runs it without
+# `--with-x`. Anything else — a bare nightly, a `--skip` of something unrelated — is the
+# default path and stays free. The unattended launchd run can never reach this branch, which
+# is the point: the step that spends money now requires someone to have typed something.
+elif [ "$NIGHTLY_WITH_X" != "1" ] && [ -z "$ONLY_STEPS" ]; then
+  STATUS_LINES+=("  skip  ingest-x — off by default (--with-x, or NIGHTLY_WITH_X=1)")
 elif [ -f "$NO_X_FILE" ]; then
   STATUS_LINES+=("  skip  ingest-x — $NO_X_FILE exists")
 elif awk -v s="$SPENT_THIS_MONTH" -v c="$XAI_MONTHLY_CAP" 'BEGIN{exit !(s>=c)}'; then

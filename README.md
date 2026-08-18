@@ -38,7 +38,7 @@ of available commands, and `docs/ARCHITECTURE.md` groups them in pipeline order 
 `scripts/nightly.sh` runs the whole cycle — refresh the corpus, re-price, settle yesterday's
 orders, rebuild the queue. Awake, it takes 8–16 minutes. Fourteen steps, roughly:
 
-`verify-roster` → `ingest-roster` → `ingest-x` → `distill-roster` → `brain-extract` →
+`verify-roster` → `ingest-roster` → `ingest-x` *(off by default)* → `distill-roster` → `brain-extract` →
 `brain-index` → `fetch-prices` → `fetch-funding` → `reconcile` (both venues) →
 `setups --list` → `fetch-tickers` → `canon-drift` → `backup`
 
@@ -79,9 +79,10 @@ and so has to mean it. A forced run does not count as the day's run, so testing 
 leaves the automatic one still to come. Tune with `NIGHTLY_EARLIEST=0615` and
 `NIGHTLY_MIN_BATTERY=30`.
 
-**What it costs.** Roughly **$0.25/night of real money** (xAI, the `ingest-x` step — the only
-command in the repo billed in actual dollars) plus the day's distillation against the Max
-subscription. Both totals land in the log and in one line per night in
+**What it costs.** **Nothing in real money, as of 2026-08-18** — `ingest-x`, the only step
+billed in actual dollars, is off by default (`NIGHTLY_WITH_X` in the script says why, and
+`scripts/probe_x_contribution.py` is the measurement it rests on). What remains is the day's
+distillation against the Max subscription. Both totals land in the log and in one line per night in
 `~/vault/Trading/Trade Logs/Nightly.md`. **A missing line there is the signal** — a dead job
 and a quiet market look identical otherwise.
 
@@ -90,6 +91,7 @@ and a quiet market look identical otherwise.
 ```bash
 touch data/nightly.pause     # stop everything; delete the file to resume
 touch data/nightly.no-x      # keep the free work, stop spending real money
+                             # (redundant while ingest-x is off by default)
 XAI_MONTHLY_CAP=5.00         # automatic backstop (default $15/month)
 ```
 

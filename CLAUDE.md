@@ -37,7 +37,7 @@ Other:
 - `cfg/` — committed source of truth: `watchlist.yaml` (roster), `oracle_map.yaml` (price routing), `assets.yaml` + `tickers.json` (canon registry).
 - `data/` — machine-generated ore. **Gitignored, never committed.**
 - `docs/ARCHITECTURE.md` — data flow diagram + **which commands cost money**. Read before re-running anything.
-- **A launchd job runs the whole cycle once a day** (`scripts/nightly.sh`), triggered by the laptop being open and awake after 06:15 rather than by a clock — it polls every 120s and gates on lid/power/battery. It spends real money via `ingest-x`. `cat data/nightly.gate` says why it hasn't gone; `touch data/nightly.pause` stops it; see README for the rest. Assume the corpus may have moved since you last looked.
+- **A launchd job runs the whole cycle once a day** (`scripts/nightly.sh`), triggered by the laptop being open and awake after 06:15 rather than by a clock — it polls every 120s and gates on lid/power/battery. **It spends no real money by default** — `ingest-x` is off since 2026-08-18 (`NIGHTLY_WITH_X` in the script carries the measurement behind that); `--with-x` restores it. `cat data/nightly.gate` says why it hasn't gone; `touch data/nightly.pause` stops it; see README for the rest. Assume the corpus may have moved since you last looked.
 - `docs/superpowers/plans/` — implementation plans.
 
 ## Running things

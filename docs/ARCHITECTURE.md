@@ -146,9 +146,9 @@ packages. Every command below is run as `uv run <command>` **from the repo root*
 | `brain "<question>" --no-llm` | 🟢 | Structured + evidence legs only. Completely free. |
 | `brain-index` | 🟢 | Local embedding model (`BAAI/bge-small-en-v1.5`) on CPU. Slow first run (downloads weights), zero dollars. |
 | `ingest-roster` / `ingest-channel` | 🟡 | Needs the Webshare proxy for the caption endpoint. Idempotent; skips existing. |
-| `ingest-x` | 💸 **REAL MONEY** | The only command billed in actual dollars — see below. Measured ~$0.22–0.25/run with charts on the 11-handle digest. |
+| `ingest-x` | 💸 **REAL MONEY** | The only command billed in actual dollars — see below. Measured ~$0.22–0.25/run with charts on the 11-handle digest. **Off in the nightly by default since 2026-08-18**; still spends when run by hand. |
 | `verify-roster` | 🟢 | Probes declared YouTube channels against the watchlist. No key, no proxy. Exits non-zero on disagreement. |
-| `scripts/nightly.sh` | 💸 + 🔴 | The whole cycle. ~$0.25 xAI + the day's distillation. Totals both and writes one line to `~/vault/Trading/Trade Logs/Nightly.md`. |
+| `scripts/nightly.sh` | 🔴 | The whole cycle. The day's distillation only — `ingest-x` is off by default, so a nightly spends no real money. `--with-x` restores it and makes the run 💸. Totals both and writes one line to `~/vault/Trading/Trade Logs/Nightly.md`. |
 | `execute` | 🟡 | Pre-flight only — reports network, equity and market availability. Structurally incapable of placing an order. |
 | `book` | 🟡 | What the account is holding: resting entries with ages, open positions, and what is left. Read-only. `--venue` reaches the venue that is not the default. |
 | `book --reconcile` | 🟡 | Asks the venue what became of every order the log calls `placed`, then records how filled trades ENDED. Read-only **at the venue**; it does append `reconciled` and `closed` rows to the order log and one line per close to the vault. Runs nightly, once per venue. |
