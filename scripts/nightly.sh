@@ -423,6 +423,46 @@ if grep -q 'CIRCUIT BREAKER TRIPPED' "$LOG"; then
   [ $WORST -lt 1 ] && WORST=1
 fi
 
+# ── a step that fails every single item still exits 0 ───────────────────────────
+#
+# `ingest-roster`, `distill-roster` and `brain-extract` all catch per-item failures, record them
+# in their TOTAL line, and return 0. So `step` prints `ok`, the run exits 0, and the summary is
+# indistinguishable from a night that had nothing to do.
+#
+# Not hypothetical. 2026-08-17 and 08-18 each reported fourteen `ok` steps and `exit 0` while
+# EVERY LLM call failed on an expired OAuth token — 19 transcripts deep the first night, 28 the
+# second, plus 12 stances a night. Nothing in the summary said so; the only tell was
+# `claude $0.00 over 0 calls`, which reads exactly like a quiet night unless you already
+# suspect. Two full days of distillation and stance extraction were lost in silence, and the
+# corpus went on answering queries as though it were current.
+#
+# Read from the TOTAL line rather than the per-item `!` lines because TOTAL is the command's own
+# summary — it survives a change to how individual failures are formatted, and there is exactly
+# one of it per step.
+total_failed() {
+  grep -E "^TOTAL: [0-9]+ $1," "$LOG" | tail -1 | grep -oE '[0-9]+ failed' | cut -d' ' -f1
+}
+
+for pair in "ingest-roster:$(total_failed ingested)" \
+            "distill-roster:$(total_failed distilled)" \
+            "brain-extract:$(total_failed extracted)"; do
+  failed="${pair##*:}"
+  if [ "${failed:-0}" -gt 0 ]; then
+    STATUS_LINES+=("  WARN  ${pair%%:*} — ${failed} item(s) failed, see log")
+    [ $WORST -lt 1 ] && WORST=1
+  fi
+done
+
+# Called out separately from the counts above because it is a different instruction. A few
+# failed transcripts are a retry — the next night picks them up, since every LLM step is
+# resume-safe. This is every call failing identically and continuing to fail until someone runs
+# `claude /login` at a keyboard, which no amount of unattended retrying will accomplish. A night
+# that hits this has not fallen behind, it has stopped.
+if grep -q 'OAuth session expired' "$LOG"; then
+  STATUS_LINES+=("  WARN  claude auth expired — run \`claude /login\`, then re-run the LLM steps")
+  [ $WORST -lt 1 ] && WORST=1
+fi
+
 CANDIDATES=$(grep -oE '^[0-9]+ candidates' "$LOG" | tail -1 | cut -d' ' -f1)
 DROPPED=$(grep -oE '[0-9]+ theses dropped' "$LOG" | tail -1 | cut -d' ' -f1)
 
