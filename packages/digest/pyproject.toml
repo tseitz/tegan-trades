@@ -1,0 +1,51 @@
+[project]
+name = "digest"
+version = "0.1.0"
+description = "The nightly digest — a diff of what changed overnight, to the vault and to email."
+readme = "README.md"
+requires-python = ">=3.12"
+# Sits above the pipeline and reads down. `oracle` already depends on `execution`, so the book
+# comes along with it. Nothing in the repo imports `digest`; adding an edge into it would put
+# a reporting surface underneath the thing it reports on.
+dependencies = [
+    "brain",
+    "core",
+    "execution",
+    # The xAI spend ledger. Read through `ingestion.spend`, never by opening the JSON here:
+    # that module owns where the file lives, and the nightly's own gate calls it for exactly
+    # that reason — the two briefly disagreed about the path once, and the gate stopped firing.
+    "ingestion",
+    "llm",
+    "oracle",
+    "pyyaml>=6",
+]
+
+[project.scripts]
+digest = "digest.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+brain = { workspace = true }
+core = { workspace = true }
+execution = { workspace = true }
+ingestion = { workspace = true }
+llm = { workspace = true }
+oracle = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: hits the network; run explicitly",
+    # Needs a populated `data/` — machine-generated ore that is gitignored and never
+    # committed, so these pass locally and cannot pass anywhere else. Deliberately NOT
+    # folded into `integration`: that marker promises a network call, and a reader
+    # deciding whether to run these needs to know it is a missing *file* that stops them.
+    "needs_ore: reads cached ore from data/; run where the corpus exists",
+]

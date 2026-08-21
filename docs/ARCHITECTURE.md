@@ -131,7 +131,7 @@ measurements: `oracle/resample.py`, `core/trigger.py`, `scripts/probe_intraday_g
 
 ## Command cost table
 
-This is a **uv workspace**: one `.venv` and one `uv.lock` at the repo root cover all seven
+This is a **uv workspace**: one `.venv` and one `uv.lock` at the repo root cover all eight
 packages. Every command below is run as `uv run <command>` **from the repo root** — never
 `cd` into `packages/*/`, which would build a second, divergent environment.
 
@@ -154,6 +154,8 @@ packages. Every command below is run as `uv run <command>` **from the repo root*
 | `book --reconcile` | 🟡 | Asks the venue what became of every order the log calls `placed`, then records how filled trades ENDED. Read-only **at the venue**; it does append `reconciled` and `closed` rows to the order log and one line per close to the vault. Runs nightly, once per venue. |
 | `book --closed` | 🟢 | The realised history — what each finished trade made, in R net of fees and funding. Reads the log only. |
 | `book --cancel` | 🟡 / 🔀 | Cancels **resting entries only**, never positions, and only ones you select and confirm. Reduces exposure, so it takes no typed phrase — but on `live` it is a real order cancellation. |
+| `digest` | 🔴 | What changed overnight. One `claude -p` call for the roster section only — ~17s, trivial. Everything else is local file reads. |
+| `digest --no-llm` | 🟢 | Every section except the roster narration. Completely free. |
 | `setups --execute` | 🟢 / 🔀 **CAPITAL** | Free to run. On testnet it moves mock funds; on mainnet it moves **your money** — a different axis from the LLM/API costs above. See below. |
 
 ### 🔀 `setups --execute` risks capital, not dollars-per-call

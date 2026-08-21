@@ -121,7 +121,8 @@ ONLY_STEPS=""
 declare -a ORIGINAL_ARGS=("$@")
 
 ALL_STEPS="verify-roster ingest-roster ingest-x distill-roster brain-extract brain-index \
-fetch-prices fetch-funding reconcile reconcile-perps setups fetch-tickers canon-drift backup"
+fetch-prices fetch-funding reconcile reconcile-perps setups fetch-tickers canon-drift backup \
+digest"
 
 usage() {
   cat <<'USAGE'
@@ -274,7 +275,10 @@ mkdir -p "$LOG_DIR"
 # by hand reach it — they were most of the gap above. What stays invisible is a call that times
 # out: it bills at xAI and returns no response to read `cost_in_usd_ticks` from. See
 # `ingestion/spend.py`, which owns this and explains why that trade is accepted.
-XAI_MONTHLY_CAP="${XAI_MONTHLY_CAP:-20.00}"
+# Exported so `digest` sees the same ceiling this script gates on. It was a plain shell
+# variable, so the child process never inherited it and always fell back to its own
+# hardcoded default — the two could not agree, and raising one here changed nothing there.
+export XAI_MONTHLY_CAP="${XAI_MONTHLY_CAP:-20.00}"
 MONTH="$(date +%Y-%m)"
 # Asks `ingestion.spend` rather than reading a path, so the gate and the writer can never
 # disagree about where the ledger lives — which they briefly did when it moved out of
@@ -592,6 +596,28 @@ row = {
 with open(path, "a", encoding="utf-8") as fh:
     fh.write(json.dumps(row) + "\n")
 PY
+
+# ── the digest: what CHANGED, as opposed to what happened ──
+#
+# **Deliberately not a `step`.** It has to run after the history row above is written, because
+# that row is what it reads for the run-health line — as a step it would report the *previous*
+# night's health beside tonight's queue. By this point `STEP_RECORDS` is already serialised, so
+# a status recorded here could not reach the summary or the history row anyway.
+#
+# It IS in `ALL_STEPS` so `--only digest` and `--skip digest` work: that list is the selector,
+# not the summary.
+#
+# Runs last, after `backup`, so nothing it does can cost the night's ore. Both `--vault` and
+# `--email` warn rather than fail — a missing vault or an unset DIGEST_* setting is a surface
+# lost, not a run lost. A degraded run still exits 0, so the `||` branch below catches only an
+# unhandled crash; the survivable failures announce themselves in the digest's own body and
+# subject line instead, which is where a person will actually meet them.
+if should_run digest; then
+  echo "" | tee -a "$LOG"
+  echo "───── digest ─────" | tee -a "$LOG"
+  uv run digest --vault --email >>"$LOG" 2>&1 || \
+    echo "  WARN  digest — see log" | tee -a "$LOG"
+fi
 
 # One line per night somewhere it will actually be read. A nightly job that dies silently and a
 # quiet market look identical, so the point of this file is that a *missing* line is the signal.

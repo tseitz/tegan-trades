@@ -6,7 +6,7 @@ Personal signal/trading platform: ingest trusted people → distill theses → c
 
 - **Work directly on `main`. Do NOT create git worktrees.** This is a brand-new solo project — worktrees add friction with no benefit. If a skill (e.g. superpowers `using-git-worktrees`, `executing-plans`, `subagent-driven-development`) wants to create a worktree, **skip that step** and just commit to `main`. This intentionally overrides the global worktree convention in `~/.claude/rules/`.
 
-- **This is a uv workspace. Run everything from the repo root with `uv run <command>`. Do NOT `cd` into `packages/*/`.** The root `pyproject.toml` declares `[tool.uv.workspace]` over `packages/*`, so one `.venv` and one `uv.lock` at the root cover all seven packages and every console script. `cd packages/oracle && uv run setups` is wrong — it will try to build a second, divergent environment. There is no per-package `uv.lock` and no per-package `.venv`; do not create either. Adding a dependency means editing that member's `pyproject.toml` and running `uv sync` **from the root**.
+- **This is a uv workspace. Run everything from the repo root with `uv run <command>`. Do NOT `cd` into `packages/*/`.** The root `pyproject.toml` declares `[tool.uv.workspace]` over `packages/*`, so one `.venv` and one `uv.lock` at the root cover all eight packages and every console script. `cd packages/oracle && uv run setups` is wrong — it will try to build a second, divergent environment. There is no per-package `uv.lock` and no per-package `.venv`; do not create either. Adding a dependency means editing that member's `pyproject.toml` and running `uv sync` **from the root**.
 
 - **`docs/IMPROVEMENTS.md` is a backlog of ideas and feature requests.** Work you would *do*, not things you *learned*. Read it before starting new work; several entries are decisions already made but not yet executed. Delete entries when they're done.
 
@@ -22,22 +22,23 @@ Personal signal/trading platform: ingest trusted people → distill theses → c
 
 ## Repo layout
 
-Seven workspace members under `packages/`, in pipeline order:
+Eight workspace members under `packages/`, in pipeline order:
 
 - `ingestion/` — transcript pullers + raw-transcript store. CLIs: `ingest-roster`, `ingest-channel`, `ingest-x`. **`ingest-x` is the only command in the repo that spends real money** (xAI, metered) — every other cost in the repo bills against the Max subscription. Read `docs/ARCHITECTURE.md` before running it.
 - `distill/` — 🔴 LLM: transcripts → structured theses. CLIs: `distill-roster`, `distill-transcript`, `distill-canon`, `distill-triage`, `distill-migrate-ids`, `fetch-tickers`.
 - `brain/` — 🔴 LLM: narrative stance extraction, retrieval, synthesis. CLIs: `brain`, `brain-extract`, `brain-index`.
 - `oracle/` — price fetching, routing, grading, cross-reference. CLIs: `fetch-prices`, `fetch-funding`, `score-roster`, `setups`.
-- `execution/` — 🔀 **the only package that holds a private key and sends a signed write.** Everything else in the repo reads. Turns an approved `Candidate` into a resting bracket order (limit entry + TP + SL) on Hyperliquid. CLIs: `execute` (pre-flight only; cannot place), `book` (what the account is holding; `--cancel` retires resting entries you select — never positions; `--reconcile` settles what the venue did and records how finished trades ended; `--closed` is the realised history; `--venue` reaches the non-default venue). Reached from `setups --execute`, which is **off unless typed** — testnet by default, mainnet needs a typed confirmation. Risk settings in `cfg/execution.yaml`; the key lives in `.env` and nowhere else.
+- `execution/` — 🔀 **the only package that holds a private key and sends a signed write.** Everything else in the repo reads. Turns an approved `Candidate` into a resting bracket order (limit entry + TP + SL) on Hyperliquid. CLIs: `execute` (pre-flight only; cannot place), `book` (what the account is holding; `--cancel` retires resting entries you select — never positions; `--reconcile` settles what the venue did and records how finished trades ended; `--closed` is the realised history; `--venue` reaches the non-default venue). Reached from `setups --execute`, which is **off unless typed** — testnet by default, mainnet needs a typed confirmation. Risk settings in `cfg/execution.yaml`; the signing key lives in `.env` and nowhere else. **`.env` is no longer single-purpose** — it also holds the digest's `DIGEST_SMTP_*` mail credentials, which sign nothing.
+- `digest/` — **a diff, not a report.** What changed since last night: arrivals at the trigger, queue movement, book events, run health. Sits above the pipeline and reads down; nothing imports it. CLI: `digest` (stdout by default; `--vault` files a note, `--email` mails it — both warn rather than fail). `diff.py`/`render.py`/`book.py`/`roster.py`/`fmt.py` are pure; `cli.py` is the only module that *reads* pipeline state, and `vault.py`/`mail.py` only *write* the finished string.
 - `core/` — pure logic and shared schema. Zero I/O, no network, no LLM. Imported by everything, imports nothing local.
-- `llm/` — the **only** LLM boundary (`claude -p`, subscription auth). Exactly three call sites in the repo depend on it.
+- `llm/` — the **only** LLM boundary (`claude -p`, subscription auth). Exactly four call sites in the repo depend on it (`distill/extract.py`, `brain/extract.py`, `brain/synthesize.py`, `digest/narrate.py`).
 
 Other:
 
 - `cfg/` — committed source of truth: `watchlist.yaml` (roster), `oracle_map.yaml` (price routing), `assets.yaml` + `tickers.json` (canon registry).
 - `data/` — machine-generated ore. **Gitignored, never committed.**
 - `docs/ARCHITECTURE.md` — data flow diagram + **which commands cost money**. Read before re-running anything.
-- **A launchd job runs the whole cycle once a day** (`scripts/nightly.sh`), triggered by the laptop being open and awake after 06:15 rather than by a clock — it polls every 120s and gates on lid/power/battery. **It spends no real money by default** — `ingest-x` is off since 2026-08-18 (`NIGHTLY_WITH_X` in the script carries the measurement behind that); `--with-x` restores it. `cat data/nightly.gate` says why it hasn't gone; `touch data/nightly.pause` stops it; see README for the rest. Assume the corpus may have moved since you last looked.
+- **A launchd job runs the whole cycle once a day** (`scripts/nightly.sh`), triggered by the laptop being open and awake after 06:15 rather than by a clock — it polls every 120s and gates on lid/power/battery. **It spends no real money by default** — `ingest-x` is off since 2026-08-18 (`NIGHTLY_WITH_X` in the script carries the measurement behind that); `--with-x` restores it. `cat data/nightly.gate` says why it hasn't gone; `touch data/nightly.pause` stops it; see README for the rest. Assume the corpus may have moved since you last looked. The run ends with `digest`, which is **deliberately not a `step`** — it has to read the history row the step framework writes after the summary, so it can neither appear in that summary nor report on itself.
 - `docs/superpowers/plans/` — implementation plans.
 
 ## Running things
@@ -45,8 +46,8 @@ Other:
 Always from the repo root:
 
 ```bash
-uv sync                                # one venv, one lock, all seven packages
-uv run setups                          # any of the 20 console scripts
+uv sync                                # one venv, one lock, all eight packages
+uv run setups                          # any of the 21 console scripts
 uv run brain "where is my roster on ETH" --no-llm
 ./scripts/check.sh                     # THE GATE — ruff + the suite pre-commit runs. ~14s.
 uv run pytest packages/brain -q        # scope by path, not by --package

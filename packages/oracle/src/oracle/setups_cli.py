@@ -49,6 +49,7 @@ from oracle import (
     exclusions,
     execute,
     listings,
+    queue_snapshot,
     venue_map,
     venue_routing,
 )
@@ -906,6 +907,26 @@ def main(argv: list[str] | None = None) -> int:
 
     tiers = tuple(args.tiers) if args.tiers else None
     qualified = filter_candidates(undecided, min_score=args.min_score, tiers=tiers)
+
+    # Recorded here, off ``qualified`` — deliberately not off ``queue``, which is a
+    # date-seeded sample and differs every night by construction. See ``oracle.queue_snapshot``
+    # for why diffing samples would invent churn. Written before the empty-queue return below,
+    # because a night where nothing qualifies is exactly the delta the digest must report.
+    #
+    # **Suppressed on a scratch run AND on any ``--as-of`` replay.** Scratch for the same
+    # reason the vault mirror is: a rehearsal must not enter the real history. ``--as-of`` for a
+    # sharper reason — it appends a row stamped with a PAST ``as_of`` to the end of an
+    # append-only log the digest reads as "most recent". A replay of June would be taken as
+    # tonight's queue, and ``digest.diff.previous_nightly`` would then keep selecting it for
+    # nights afterwards, producing a large and entirely wrong set of arrivals and departures.
+    if not scratch and args.as_of is None:
+        queue_snapshot.append(
+            queue_snapshot.DEFAULT_PATH,
+            queue_snapshot.row(qualified, stats, as_of=as_of,
+                               run_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                               min_score=args.min_score, tiers=tiers),
+            warn=lambda msg: print(msg, file=sys.stderr))
+
     queue = build_queue(qualified, limit=None if args.limit == 0 else args.limit,
                         stratified=args.sample == queue_mod.STRATIFIED,
                         rng=queue_mod.rng_for(as_of))

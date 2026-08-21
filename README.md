@@ -8,7 +8,7 @@ Raw transcripts (the "ore") live in `data/` (gitignored, regenerable-but-protect
 
 ## Layout
 
-A **uv workspace** — seven packages under `packages/`, one `.venv` and one `uv.lock` at the root.
+A **uv workspace** — eight packages under `packages/`, one `.venv` and one `uv.lock` at the root.
 
 - `packages/ingestion` — transcript pullers + raw-transcript store
 - `packages/distill` — transcripts → structured theses (LLM)
@@ -25,8 +25,8 @@ A **uv workspace** — seven packages under `packages/`, one `.venv` and one `uv
 Run everything from the repo root — never `cd` into a package.
 
 ```bash
-uv sync                                # install all seven packages into ./.venv
-uv run setups                          # or any of the 20 console scripts
+uv sync                                # install all eight packages into ./.venv
+uv run setups                          # or any of the 21 console scripts
 uv run pytest -q -m "not integration"  # whole workspace
 ```
 
