@@ -157,3 +157,86 @@ def test_the_narration_payload_is_counts_and_names_only():
     assert payload[0]["flips"][0]["person"] == "Pierre"
     blob = str(payload)
     assert "rationale" not in blob and "transcript" not in blob
+
+
+# ── saying a thing once ───────────────────────────────────────────────────────
+#
+# The window is seven days wide, so an event published on Monday sits inside it until the
+# following Monday. Without a memory of what has already been sent, that is seven identical
+# emails about one video — which is what shipped, and what these cover.
+
+def test_an_event_already_reported_is_not_reported_again():
+    delta = _moved([stance("Benjamin Cowen", "ETH", "bullish", "2026-08-20")])
+    seen = roster.remember({}, roster.event_keys(delta), on=date(2026, 8, 21))
+    assert roster.unreported(delta, seen).moved == ()
+
+
+def test_an_event_that_has_not_been_reported_still_comes_through():
+    first = _moved([stance("Benjamin Cowen", "ETH", "bullish", "2026-08-20")])
+    seen = roster.remember({}, roster.event_keys(first), on=date(2026, 8, 21))
+
+    both = _moved([stance("Benjamin Cowen", "ETH", "bullish", "2026-08-20"),
+                   stance("krillin", "ETH", "bearish", "2026-08-21")],
+                  on=date(2026, 8, 22))
+    left = roster.unreported(both, seen)
+    assert [m.asset for m in left.moved] == ["ETH"]
+    assert left.moved[0].fresh_people == ("krillin",)
+
+
+def test_a_flip_and_a_new_horizon_are_remembered_apart():
+    """Three event kinds share one asset. Keying them together would let any one of them
+    silence the other two."""
+    delta = _moved([stance("Pierre", "ETH", "bearish", "2026-06-01"),
+                    stance("Pierre", "ETH", "bullish", "2026-08-20"),
+                    stance("Pierre", "ETH", "bullish", "2026-08-20", horizon="macro")])
+    move = delta.moved[0]
+    assert move.flips and move.new_views
+    keys = roster.event_keys(delta)
+    assert len(set(keys)) == len(move.flips) + len(move.fresh_people) + len(move.new_views)
+
+
+def test_the_standing_counts_survive_the_filter():
+    """``before``/``after`` are context for the narrator, not events. Dropping a reported event
+    must not restate the split as though those people vanished."""
+    both = _moved([stance("Benjamin Cowen", "ETH", "bullish", "2026-08-20"),
+                   stance("krillin", "ETH", "bearish", "2026-08-21")],
+                  on=date(2026, 8, 22))
+    seen = roster.remember({}, [roster.event_keys(both)[0]], on=date(2026, 8, 22))
+    left = roster.unreported(both, seen)
+    assert left.moved[0].after.counts == both.moved[0].after.counts
+
+
+def test_an_empty_memory_changes_nothing():
+    delta = _moved([stance("Benjamin Cowen", "ETH", "bullish", "2026-08-20")])
+    assert roster.unreported(delta, {}).moved == delta.moved
+
+
+def test_a_withheld_delta_passes_through_untouched():
+    """The abstention is the deliverable on a backfill night. Filtering it would turn an
+    explicit "I do not trust tonight's numbers" back into silence."""
+    delta = roster.RosterDelta(withheld="withheld — because")
+    assert roster.unreported(delta, {"anything": "2026-08-21"}).withheld is not None
+
+
+# ── the memory does not grow without bound ────────────────────────────────────
+
+def test_memory_older_than_it_can_matter_is_dropped():
+    """An event leaves the seven-day window seven days after publication. Twice that clears
+    anything still in play, so holding keys beyond it only grows the file."""
+    old = roster.remember({}, ("ETH|voice|Pierre",), on=date(2026, 8, 1))
+    kept = roster.remember(old, (), on=date(2026, 9, 1))
+    assert kept == {}
+
+
+def test_re_reporting_does_not_refresh_the_stamp():
+    """The stamp is when it was FIRST said. Refreshing it on every run would keep a key alive
+    forever and the file would never prune."""
+    first = roster.remember({}, ("ETH|voice|Pierre",), on=date(2026, 8, 1))
+    again = roster.remember(first, ("ETH|voice|Pierre",), on=date(2026, 8, 5))
+    assert again["ETH|voice|Pierre"] == "2026-08-01"
+
+
+def test_an_unreadable_stamp_is_forgotten_rather_than_kept():
+    """Fail toward saying it twice. A key with a stamp nothing can parse would otherwise
+    suppress its event for good, and a silent permanent loss is the worse failure."""
+    assert roster.remember({"ETH|voice|Pierre": "not-a-date"}, (), on=date(2026, 8, 21)) == {}

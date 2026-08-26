@@ -202,12 +202,24 @@ def test_the_llm_is_never_called_with_no_llm(tmp_path, today, monkeypatch):
     build(snaps, tmp_path, with_llm=False)
 
 
-def build(snapshots, tmp_path, *, orders=None, with_llm=False):
-    """``cli.build`` with an order log that exists but is empty unless a test supplies one."""
+def build(snapshots, tmp_path, *, orders=None, with_llm=False, state_path=None):
+    """``cli.build`` with an order log that exists but is empty unless a test supplies one.
+
+    Drops the memory ``cli.build`` returns third, so the many tests that only care about the
+    rendered text keep reading as ``subject, body``. ``build_with_memory`` is for the few that
+    are about the memory itself.
+    """
+    subject, body, _ = build_with_memory(snapshots, tmp_path, orders=orders, with_llm=with_llm,
+                                         state_path=state_path)
+    return subject, body
+
+
+def build_with_memory(snapshots, tmp_path, *, orders=None, with_llm=False, state_path=None):
     if orders is None:
         orders = tmp_path / "empty-orders.jsonl"
         orders.write_text("", encoding="utf-8")
-    return cli.build(snapshots_path=snapshots, orders_path=orders, with_llm=with_llm)
+    return cli.build(snapshots_path=snapshots, orders_path=orders, with_llm=with_llm,
+                     state_path=state_path)
 
 
 # ── the bootstrap warning must not cry wolf ───────────────────────────────────
@@ -230,3 +242,155 @@ def test_a_future_dated_snapshot_is_still_flagged(tmp_path, today):
                    _snap("2026-09-01", [_entry("a")]), _snap("2026-08-21", [_entry("a")]))
     _, body = build(snaps, tmp_path)
     assert "out-of-order" in body
+
+
+# ── the roster section says a thing once ──────────────────────────────────────
+#
+# The window is seven days wide, so one video sits inside it for seven nights. As shipped that
+# was seven near-identical emails about the same event — reworded each night, because the
+# narrator saw the same numbers and wrote fresh prose over them. These cover the memory that
+# cancels it, at the seam where it actually has to work.
+
+def _stance(person, asset, lean, published):
+    from core.stance import ExtractedStance, build_stance
+    from core.thesis import Source
+    return build_stance(
+        ExtractedStance.model_validate({"asset": asset, "lean": lean, "horizon": "swing",
+                                        "rationale": f"{person} on {asset}"}),
+        source=Source(person=person, platform="youtube",
+                      url=f"https://youtu.be/{person}{published}", published_at=published,
+                      transcript_ref=f"youtube/{person[:3]}{published}"),
+        model="m", extracted_at="2026-08-20T00:00:00+00:00")
+
+
+@pytest.fixture
+def narrated(monkeypatch):
+    """A narrator that records what it was asked to write about, so a test can assert on the
+    events that reached prose rather than on the prose itself."""
+    seen = []
+
+    def _narrate(payload, **_k):
+        seen.append(payload)
+        return "  BTC: someone spoke."
+
+    monkeypatch.setattr(cli.narrate, "narrate", _narrate)
+    return seen
+
+
+def _roster_night(tmp_path, monkeypatch, stances, state_path):
+    monkeypatch.setattr(cli, "load_all_stances", lambda *a, **k: stances)
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a", asset="BTC")]))
+    return build_with_memory(snaps, tmp_path, with_llm=True, state_path=state_path)
+
+
+def test_the_same_movement_is_not_reported_two_nights_running(tmp_path, today, monkeypatch,
+                                                              narrated):
+    stances = [_stance("Benjamin Cowen", "BTC", "bullish", "2026-08-20")]
+    path = tmp_path / "state.json"
+
+    _, first, memory = _roster_night(tmp_path, monkeypatch, stances, path)
+    assert "ROSTER MOVED" in first
+    assert len(narrated) == 1
+    cli.state.save(path, memory)
+
+    _, second, _ = _roster_night(tmp_path, monkeypatch, stances, path)
+    assert "Benjamin Cowen" not in second
+    # Not "no movement" — the roster did move, it was simply said last night, and those are
+    # different facts about the night.
+    assert "nothing new" in second and "earlier digest" in second
+    # The narrator is not merely ignored — it is not paid for.
+    assert len(narrated) == 1
+
+
+def test_movement_that_is_genuinely_new_still_arrives(tmp_path, today, monkeypatch, narrated):
+    """The guard must suppress repeats, not the section."""
+    path = tmp_path / "state.json"
+    _, _, memory = _roster_night(tmp_path, monkeypatch,
+                                 [_stance("Benjamin Cowen", "BTC", "bullish", "2026-08-20")],
+                                 path)
+    cli.state.save(path, memory)
+
+    _, second, _ = _roster_night(
+        tmp_path, monkeypatch,
+        [_stance("Benjamin Cowen", "BTC", "bullish", "2026-08-20"),
+         _stance("Pierre", "BTC", "bearish", "2026-08-21")], path)
+    assert "ROSTER MOVED" in second
+    assert [v["new_voices"] for v in narrated[-1]] == [["Pierre"]]
+
+
+def test_a_night_that_only_counted_the_movement_does_not_mark_it_told(tmp_path, today,
+                                                                     monkeypatch, narrated):
+    """`--no-llm` prints "N asset(s) moved", not the events. Recording them as told would drop
+    them for good — the section would simply never mention them again."""
+    stances = [_stance("Benjamin Cowen", "BTC", "bullish", "2026-08-20")]
+    path = tmp_path / "state.json"
+    monkeypatch.setattr(cli, "load_all_stances", lambda *a, **k: stances)
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a", asset="BTC")]))
+
+    _, body, memory = build_with_memory(snaps, tmp_path, with_llm=False, state_path=path)
+    assert "asset(s) moved" in body
+    assert memory[cli.state.ROSTER] == {}
+
+    cli.state.save(path, memory)
+    _, second, _ = _roster_night(tmp_path, monkeypatch, stances, path)
+    assert "ROSTER MOVED" in second
+
+
+def test_a_failed_narration_does_not_mark_the_movement_told(tmp_path, today, monkeypatch):
+    """Same trap: the count survives, the events did not reach the reader."""
+    monkeypatch.setattr(cli.narrate, "narrate",
+                        lambda *a, **k: (_ for _ in ()).throw(cli.narrate.NarrationFailed("no")))
+    _, body, memory = _roster_night(
+        tmp_path, monkeypatch, [_stance("Benjamin Cowen", "BTC", "bullish", "2026-08-20")],
+        tmp_path / "state.json")
+    assert "could not be generated" in body
+    assert memory[cli.state.ROSTER] == {}
+
+
+def test_no_state_path_means_no_memory_and_no_change_in_behaviour(tmp_path, today, monkeypatch,
+                                                                  narrated):
+    """``--subject-only`` takes this path. It must neither read nor write the memory."""
+    stances = [_stance("Benjamin Cowen", "BTC", "bullish", "2026-08-20")]
+    for _ in range(2):
+        _, body, memory = _roster_night(tmp_path, monkeypatch, stances, None)
+        assert "ROSTER MOVED" in body
+        assert memory is None
+
+
+# ── the spend line only speaks when the number moved ──────────────────────────
+
+def test_a_frozen_spend_total_stops_shouting(tmp_path, today, monkeypatch):
+    """`ingest-x` is off by default, so this number cannot move until the month rolls over. It
+    shouted on the identical figure four nights running, directly under the line that reports
+    real step failures."""
+    monkeypatch.setattr(cli.spend, "total", lambda *a, **k: 21.41)
+    monkeypatch.setenv("XAI_MONTHLY_CAP", "20.00")
+    history = tmp_path / "history.jsonl"
+    history.write_text(json.dumps({"run": "2026-08-21T06:00:00Z", "exit": 0,
+                                   "steps": [{"name": "setups", "status": "ok"}]}) + "\n",
+                       encoding="utf-8")
+    monkeypatch.setattr(cli, "HISTORY", history)
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
+    path = tmp_path / "state.json"
+
+    _, first, memory = build_with_memory(snaps, tmp_path, state_path=path)
+    assert "OVER the cap" in first
+    cli.state.save(path, memory)
+
+    _, second, _ = build_with_memory(snaps, tmp_path, state_path=path)
+    assert "OVER the cap" not in second
+    # The run line itself is untouched — that is what the section is for.
+    assert "RUN  clean" in second
+
+
+def test_a_quiet_roster_and_an_already_told_one_do_not_read_alike(tmp_path, today, monkeypatch,
+                                                                  narrated):
+    """Collapsing the two into one message is how this section stops being trusted — and the
+    "already told" wording is the only outward sign the memory is working at all."""
+    quiet_body = _roster_night(tmp_path, monkeypatch, [], tmp_path / "a.json")[1]
+    assert "no movement on the assets in play" in quiet_body
+
+    path = tmp_path / "b.json"
+    stances = [_stance("Benjamin Cowen", "BTC", "bullish", "2026-08-20")]
+    cli.state.save(path, _roster_night(tmp_path, monkeypatch, stances, path)[2])
+    assert "nothing new" in _roster_night(tmp_path, monkeypatch, stances, path)[1]

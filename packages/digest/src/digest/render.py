@@ -65,8 +65,8 @@ def subject(delta: diff.QueueDelta, book=None, *, stale_as_of: str | None = None
 
 def markdown(delta: diff.QueueDelta, *, run=None, book=None, roster: str | None = None,
              roster_withheld: str | None = None, xai_month: float | None = None,
-             xai_cap: float | None = None, stale_as_of: str | None = None,
-             problems=()) -> str:
+             xai_cap: float | None = None, xai_changed: bool = True,
+             stale_as_of: str | None = None, problems=()) -> str:
     """The digest body.
 
     ``roster`` is the one narrated section, passed in already written so this module keeps its
@@ -109,7 +109,8 @@ def markdown(delta: diff.QueueDelta, *, run=None, book=None, roster: str | None 
         out.append(roster)
 
     out.extend(_book_section(book))
-    out.extend(_run_section(run, xai_month=xai_month, xai_cap=xai_cap))
+    out.extend(_run_section(run, xai_month=xai_month, xai_cap=xai_cap,
+                            xai_changed=xai_changed))
     out.extend(_problems_section(problems))
     out.extend(_provenance(delta))
     return "\n".join(out).strip() + "\n"
@@ -245,11 +246,15 @@ def _provenance(delta: diff.QueueDelta) -> list[str]:
     return ["", f"     {delta.previous_run or '—'} → {delta.current_run or '—'}"]
 
 
-def _run_section(run, *, xai_month: float | None, xai_cap: float | None) -> list[str]:
+def _run_section(run, *, xai_month: float | None, xai_cap: float | None,
+                 xai_changed: bool = True) -> list[str]:
     """One line, unless something wants attention.
 
     Trends across runs are ``scripts/nightly_report.py``'s job and are deliberately not
     duplicated here — this answers only "did last night work".
+
+    ``xai_changed`` is whether the month total moved since it was last printed; see
+    ``state.xai_changed``. It gates only the spend line, never the step-health line above it.
     """
     if not run:
         return []
@@ -270,7 +275,13 @@ def _run_section(run, *, xai_month: float | None, xai_cap: float | None) -> list
     out = ["", line]
     # Spend only speaks up near the cap. Below it the number is knowable, unchanged in any
     # actionable way, and already in the nightly log.
-    if xai_month is not None and xai_cap and xai_month >= xai_cap * SPEND_LOUD_AT:
+    #
+    # And only when it MOVED. `ingest-x` is off by default, so the month total freezes and this
+    # line otherwise fires on the identical number every night until the month rolls over. That
+    # is an alarm nothing can clear, sitting directly under the step-health line — so it does
+    # not just waste a row, it teaches the reader to skip the row that reports real failures.
+    if (xai_changed and xai_month is not None and xai_cap
+            and xai_month >= xai_cap * SPEND_LOUD_AT):
         # "Near" and "over" are different facts and the second is the one that wants acting on.
         # Reading "near the cap" beside a number visibly above it teaches the eye to skip both.
         where = "OVER the cap" if xai_month >= xai_cap else "near the cap"

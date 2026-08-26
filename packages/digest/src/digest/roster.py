@@ -31,7 +31,7 @@ signal rather than as an error.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 
 from brain.retrieve import Split, fold_stances, summarize_split
@@ -41,7 +41,18 @@ from core.rank import parse_date
 # How far back "moved" reaches. Overnight is too tight to be useful — most of the roster does
 # not publish daily, so a one-day window would report nothing on most nights and the section
 # would read as broken rather than as quiet.
+#
+# The cost of a window this wide is that one event sits inside it for seven nights. That is
+# what ``unreported`` exists to cancel: the window decides what is RECENT, the memory decides
+# what is NEW, and a daily email needs both. Narrowing the window instead would empty the
+# section on most nights, which is the trade this number was chosen to avoid.
 WINDOW_DAYS = 7
+
+# How long a reported event is remembered. An event leaves the window ``WINDOW_DAYS`` after
+# publication and is first reported on or after publication, so twice the window clears
+# everything that could still be in play — with a week of slack for nights the digest did not
+# run. Beyond that a key can only suppress an event that the window has already dropped.
+MEMORY_DAYS = WINDOW_DAYS * 2
 
 # Publication span across one night's new extractions that means a backfill rather than a
 # night's videos. Two weeks is comfortably wider than any normal night and far narrower than a
@@ -215,6 +226,84 @@ def _backfill_reason(stances, *, extracted_since: str | None) -> str | None:
             f"publication dates ({dates[0].isoformat()} to {dates[-1].isoformat()}). That is a "
             f"backfill, not a night's videos, and a lean delta over it would report movement "
             f"that did not happen.")
+
+
+# ── saying a thing once ───────────────────────────────────────────────────────
+#
+# ``moved`` answers "what is recent". These answer "what have I not said yet", which is a
+# different question and the one a *daily* email asks. Without them a video published on Monday
+# produces an identical paragraph every morning until the following Monday, and the section
+# teaches the reader to skip it.
+#
+# The three key builders below are the contract. ``event_keys`` and ``unreported`` both go
+# through them, so the key written on Monday and the key checked on Tuesday cannot drift apart.
+
+
+def _flip_key(asset: str, flip: Flip) -> str:
+    return f"{asset}|flip|{flip.person}|{flip.horizon}|{flip.published_at}"
+
+
+def _voice_key(asset: str, person: str) -> str:
+    """No date in the key. A person is new to an asset exactly once, and the fold does not
+    carry which statement made them new — so the date would have to be invented."""
+    return f"{asset}|voice|{person}"
+
+
+def _view_key(asset: str, view: NewView) -> str:
+    return f"{asset}|horizon|{view.person}|{view.horizon}|{view.published_at}"
+
+
+def event_keys(delta: RosterDelta) -> tuple[str, ...]:
+    """Every reportable event in ``delta``, as stable strings. Pure."""
+    keys: list[str] = []
+    for move in delta.moved:
+        keys.extend(_flip_key(move.asset, f) for f in move.flips)
+        keys.extend(_voice_key(move.asset, p) for p in move.fresh_people)
+        keys.extend(_view_key(move.asset, v) for v in move.new_views)
+    return tuple(keys)
+
+
+def unreported(delta: RosterDelta, seen) -> RosterDelta:
+    """``delta`` with every event in ``seen`` removed, and any asset left empty dropped.
+
+    ``before`` and ``after`` are deliberately **not** recomputed. They are the standing split,
+    which is context the narrator needs to say what the change did — recomputing them against
+    the filtered events would describe a roster that never existed.
+
+    A withheld delta passes through untouched. The abstention is the deliverable on a backfill
+    night, and filtering it would turn an explicit "I do not trust tonight's numbers" back into
+    the silence it exists to replace.
+    """
+    if delta.withheld is not None or not seen:
+        return delta
+
+    moves = []
+    for move in delta.moved:
+        flips = tuple(f for f in move.flips if _flip_key(move.asset, f) not in seen)
+        fresh = tuple(p for p in move.fresh_people if _voice_key(move.asset, p) not in seen)
+        views = tuple(v for v in move.new_views if _view_key(move.asset, v) not in seen)
+        if not flips and not fresh and not views:
+            continue
+        moves.append(replace(move, flips=flips, fresh_people=fresh, new_views=views))
+    return replace(delta, moved=tuple(moves))
+
+
+def remember(seen: dict, keys, *, on, memory_days: int = MEMORY_DAYS) -> dict:
+    """``seen`` plus ``keys`` stamped ``on``, minus what is too old to matter. A new dict.
+
+    The stamp is when a key was FIRST said, never refreshed. Refreshing it on every run would
+    keep a key alive for as long as its event stayed in the window and the file would never
+    prune.
+
+    A stamp nothing can parse is **dropped, not kept**. Keeping it would suppress its event
+    permanently and silently, which is the worse of the two failures available here; dropping
+    it costs one repeated line and then self-heals on the next write.
+    """
+    cutoff = on - timedelta(days=memory_days)
+    kept = {key: stamp for key, stamp in seen.items()
+            if (d := parse_date(stamp)) is not None and d > cutoff}
+    today = on.isoformat()
+    return {**kept, **{key: today for key in keys if key not in kept}}
 
 
 def payload(delta: RosterDelta) -> list[dict]:

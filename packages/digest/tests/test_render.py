@@ -232,3 +232,28 @@ def test_being_over_the_cap_reads_differently_from_being_near_it():
     near = render.markdown(_quiet(), run={"exit": 0, "steps": []},
                            xai_month=19.0, xai_cap=20.0)
     assert "near the cap" in near
+
+
+def test_a_spend_total_that_did_not_move_stays_quiet():
+    """`ingest-x` is off by default, so the month total freezes and the cap line fires every
+    night on the same number until the month rolls over. Four identical red lines is how a
+    reader learns to skip the run-health section, which is where real failures show."""
+    frozen = render.markdown(_quiet(), run={"exit": 0, "steps": []},
+                             xai_month=21.41, xai_cap=20.0, xai_changed=False)
+    assert "OVER the cap" not in frozen
+    assert "21.41" not in frozen
+
+
+def test_spending_while_over_the_cap_still_speaks_up():
+    """Suppression is about a number that CANNOT move, never about one that did."""
+    moved = render.markdown(_quiet(), run={"exit": 0, "steps": []},
+                            xai_month=21.42, xai_cap=20.0, xai_changed=True)
+    assert "OVER the cap" in moved
+
+
+def test_the_run_line_itself_is_never_suppressed_by_a_quiet_spend():
+    """Only the spend line is conditional. Step health is the reason the section exists."""
+    body = render.markdown(_quiet(), run={"exit": 1, "steps": [
+        {"name": "verify-roster", "status": "warn"}]}, xai_month=21.41, xai_cap=20.0,
+        xai_changed=False)
+    assert "verify-roster" in body

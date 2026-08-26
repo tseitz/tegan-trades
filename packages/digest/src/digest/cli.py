@@ -5,6 +5,10 @@ that **reads** pipeline state; ``vault`` and ``mail`` only **write** the finishe
 split is what lets the interesting logic be tested against hand-written snapshots instead of a
 populated ``data/``.
 
+``state`` is the one exception, and it reads and writes the same small file — the digest's own
+memory of what it has already said. It is not pipeline state: nothing else in the repo writes
+it and nothing else reads it.
+
 ## Two rules this module exists to hold
 
 **A dropped section must say it was dropped.** Warnings used to go only to stderr, which the
@@ -38,12 +42,13 @@ from oracle import exclusions, queue_snapshot
 from oracle.decisions import load_decisions
 
 from digest import book as book_mod
-from digest import diff, mail, narrate, render, roster, vault
+from digest import diff, mail, narrate, render, roster, state, vault
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 CONFIG_DIR = REPO_ROOT / "cfg"
 DECISIONS = REPO_ROOT / "data" / "setups" / "decisions.jsonl"
 HISTORY = REPO_ROOT / "data" / "logs" / "nightly" / "history.jsonl"
+STATE = REPO_ROOT / "data" / "digest" / "state.json"
 
 # Most book events one digest will print. A normal night produces a handful, so this only ever
 # binds on the first run, where there is no previous run to bound the window and ``since``
@@ -173,9 +178,9 @@ def _open_assets(orders, orders_path, warn) -> set[str]:
     return {names[key] for key in keys if key in names}
 
 
-def _roster_section(current: dict, orders, orders_path, *, previous, with_llm: bool,
-                    warn) -> tuple[str | None, str | None]:
-    """``(narration, withheld)`` — at most one is set.
+def _roster_section(current: dict, orders, orders_path, *, previous, with_llm: bool, seen: dict,
+                    warn) -> tuple[str | None, str | None, tuple[str, ...]]:
+    """``(narration, withheld, reported)`` — at most one of the first two is set.
 
     Every outcome gets its own words. This returned a bare ``None`` for five different things —
     nothing in scope, corpus unreadable, roster genuinely still, narration broken, LLM disabled
@@ -185,11 +190,16 @@ def _roster_section(current: dict, orders, orders_path, *, previous, with_llm: b
 
     Scope is what you could act on: tonight's qualified candidates plus anything still held. A
     roster-wide sweep is a different feature and would be longer than the rest of the digest.
+
+    ``seen`` is what previous nights already said; see ``roster.unreported``. ``reported`` comes
+    back **non-empty only on the path where the events actually reached prose**. Every other
+    outcome shows a count or nothing, and marking events as told on those nights would drop
+    them silently — which is the one failure this section cannot surface.
     """
     assets = {row.get("asset") for row in current.get("rows", []) if row.get("asset")}
     assets |= _open_assets(orders, orders_path, warn)
     if not assets:
-        return None, None
+        return None, None, ()
 
     try:
         delta = roster.moved(
@@ -199,27 +209,48 @@ def _roster_section(current: dict, orders, orders_path, *, previous, with_llm: b
             extracted_since=previous.get("run") if previous else None)
     except _CONFIG_ERRORS as exc:
         warn(f"warning: could not read the stance corpus: {exc}")
-        return "  unavailable — the stance corpus could not be read", None
+        return "  unavailable — the stance corpus could not be read", None, ()
 
     # An abstention is the deliverable on a backfill night. Returned on its own channel so it
     # cannot be printed under a heading reading "ROSTER MOVED", which asserts the opposite.
     if delta.withheld is not None:
-        return None, f"  {delta.withheld}"
+        return None, f"  {delta.withheld}", ()
+
+    # The window is seven days wide, so this is where a week of repeats gets cancelled.
+    in_window = len(delta.moved)
+    delta = roster.unreported(delta, seen)
     if not delta.moved:
-        return "  no movement on the assets in play", None
+        # "Nobody spoke" and "everybody who spoke was in an earlier digest" are different facts
+        # about the night, and this package keeps re-learning that collapsing two outcomes into
+        # one message is how a section stops being trusted. The second one also tells you the
+        # memory is working, which is otherwise invisible from the outside.
+        if in_window:
+            return (f"  nothing new — the {in_window} asset(s) moving this week were in an "
+                    f"earlier digest", None, ())
+        return "  no movement on the assets in play", None, ()
     if not with_llm:
-        return f"  {len(delta.moved)} asset(s) moved — re-run without --no-llm to summarise", None
+        return (f"  {len(delta.moved)} asset(s) moved — re-run without --no-llm to summarise",
+                None, ())
 
     try:
-        return narrate.narrate(roster.payload(delta)), None
+        return narrate.narrate(roster.payload(delta)), None, roster.event_keys(delta)
     except narrate.NarrationFailed as exc:
         warn(f"warning: roster narration failed: {exc}")
         # The count survives even though the prose did not, so you still know to go and look.
-        return f"  {len(delta.moved)} asset(s) moved; the summary could not be generated", None
+        return (f"  {len(delta.moved)} asset(s) moved; the summary could not be generated",
+                None, ())
 
 
-def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True) -> tuple[str, str]:
-    """The digest, as ``(subject, body)``. Never raises on a missing or malformed input."""
+def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
+          state_path=None) -> tuple[str, str, dict | None]:
+    """The digest, as ``(subject, body, memory)``. Never raises on a missing or malformed input.
+
+    ``memory`` is what to write back once the digest has been delivered, or ``None`` when
+    ``state_path`` was not given. It is **returned rather than written here** so the caller can
+    persist it last. Writing it mid-build would mark tonight's roster movement as told before
+    the email had been attempted, and a night the mail failed would lose that movement for
+    good — the section would simply never mention it again.
+    """
     warn = _Warnings()
     today = datetime.now(UTC).date().isoformat()
 
@@ -228,7 +259,7 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True) -> tu
     if current is None:
         return ("no queue snapshot yet",
                 "No queue snapshot on disk. Run `uv run setups --list` at least once — the "
-                "digest diffs against what that records.\n")
+                "digest diffs against what that records.\n", None)
 
     previous = diff.previous_nightly(snapshots)
     # Bootstrap is a legitimate state, so a schema regression that hides every prior row would
@@ -256,17 +287,33 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True) -> tu
         limit=BOOK_EVENT_LIMIT,
         window_unknown=window is None and previous is not None)
 
-    narration, withheld = _roster_section(current, orders, orders_path or store.DEFAULT_PATH,
-                                          previous=previous, with_llm=with_llm, warn=warn)
+    memory = state.load(state_path, warn=warn) if state_path else {}
+    narration, withheld, reported = _roster_section(
+        current, orders, orders_path or store.DEFAULT_PATH, previous=previous,
+        with_llm=with_llm, seen=state.roster_seen(memory), warn=warn)
 
     # The one comparison that decides whether anything else can be believed.
     stale = current.get("as_of") if current.get("as_of") != today else None
 
+    xai_month = spend.total()
     body = render.markdown(delta, run=_run_row(today, warn), book=events, roster=narration,
-                           roster_withheld=withheld, xai_month=spend.total(),
-                           xai_cap=_xai_cap(), stale_as_of=stale, problems=warn.items)
+                           roster_withheld=withheld, xai_month=xai_month,
+                           xai_cap=_xai_cap(),
+                           xai_changed=state.xai_changed(memory, xai_month),
+                           stale_as_of=stale, problems=warn.items)
     subject = render.subject(delta, book=events, stale_as_of=stale, problems=len(warn.items))
-    return subject, body
+    return subject, body, _next_memory(memory, reported, xai_month) if state_path else None
+
+
+def _next_memory(memory: dict, reported, xai_month: float) -> dict:
+    """Tonight's memory. Pruned every run, not only on runs that reported something, so a quiet
+    week still clears keys that have aged out."""
+    return {
+        **memory,
+        state.ROSTER: roster.remember(state.roster_seen(memory), reported,
+                                      on=datetime.now(UTC).date()),
+        state.XAI: xai_month,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -298,8 +345,14 @@ def main(argv: list[str] | None = None) -> int:
     # ``--subject-only`` forces it off. The subject carries nothing from the roster section, so
     # narrating for it spends a `claude -p` call and can block for minutes on a flag whose whole
     # promise is one quick line.
-    subject, body = build(snapshots_path=args.snapshots, orders_path=args.orders,
-                          with_llm=not args.no_llm and not args.subject_only)
+    #
+    # It also gets **no memory**, for the same reason: a run that never renders the roster
+    # section must not record its events as told. `--no-llm` is safe to give a path to, because
+    # the section it prints is a count and ``_roster_section`` reports nothing on that path.
+    subject, body, memory = build(
+        snapshots_path=args.snapshots, orders_path=args.orders,
+        with_llm=not args.no_llm and not args.subject_only,
+        state_path=None if args.subject_only else STATE)
     if args.subject_only:
         print(subject)
         return 0
@@ -329,6 +382,12 @@ def main(argv: list[str] | None = None) -> int:
         else:
             if mail.send(config, subject, body, warn=lambda m: print(m, file=sys.stderr)):
                 print(f"emailed to {', '.join(config.to)}")
+
+    # Last, once the digest has actually reached its surfaces. Recording earlier would mark
+    # tonight's roster movement as told even on a night the delivery failed, and this section
+    # never repeats itself — so that movement would be lost rather than delayed.
+    if memory is not None:
+        state.save(STATE, memory, warn=lambda m: print(m, file=sys.stderr))
     return 0
 
 
