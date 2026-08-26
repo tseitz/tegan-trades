@@ -6,7 +6,10 @@ from core.score import (
     bootstrap_ci,
     fold_restatements,
     group_scores,
+    mix_baseline_returns,
     score_person,
+    stance_mix,
+    static_baseline_returns,
 )
 
 
@@ -267,3 +270,90 @@ def test_skill_edge_has_a_confidence_interval():
     grades = [_grade(signed=r, null=r, benchmark=0.0) for r in (0.1, -0.2, 0.3, 0.05)] * 10
     s = score_person("P", grades, min_sample=1)
     assert s.skill_edge_ci is not None and len(s.skill_edge_ci) == 2
+
+
+# ── stance-mix baseline (given their own bias, did they point it well?) ─────
+
+def test_stance_mix_is_the_persons_own_direction_shares():
+    grades = [_grade(signed=0.1, null=0.1, benchmark=0.0, direction="long") for _ in range(3)]
+    grades += [_grade(signed=-0.1, null=0.1, benchmark=0.0, direction="short")]
+    assert stance_mix(grades) == {"long": 0.75, "short": 0.25}
+
+
+def test_stance_mix_ignores_calls_the_benchmark_could_not_price():
+    """It feeds a baseline that only covers benchmarked calls, so it must be counted over
+    the same slate or the weights describe a different population than they are applied to."""
+    grades = [_grade(signed=0.1, null=0.1, benchmark=0.0, direction="long")]
+    grades += [_grade(signed=-0.1, null=0.1, benchmark=None, direction="short")]
+    assert stance_mix(grades) == {"long": 1.0}
+
+
+def test_stance_mix_is_empty_without_benchmarks():
+    assert stance_mix([_grade(signed=0.1)]) == {}
+
+
+def test_mix_baseline_matches_always_long_for_a_long_only_caller():
+    """With one stance in the mix the weighted draw collapses to that stance, so this
+    control is exactly the always-long robot — no approximation."""
+    grades = [_grade(signed=-0.1, null=-0.1, benchmark=-0.1, direction="long") for _ in range(4)]
+    assert mix_baseline_returns(grades) == pytest.approx(
+        static_baseline_returns(grades, "long")
+    )
+
+
+def test_selection_edge_does_not_penalise_a_long_only_caller_for_not_shorting():
+    """The reason this baseline exists. A long-only caller in a falling market is marked
+    down hard by ``skill_edge``, whose best fixed stance is a short robot the caller would
+    never have been. Their bias is already visible in ``long_share``; scoring it twice
+    measures style, not judgement."""
+    grades = [_grade(signed=-0.1, null=-0.1, benchmark=-0.1, direction="long") for _ in range(40)]
+    s = score_person("P", grades, min_sample=1)
+
+    assert s.benchmark_edge == pytest.approx(0.0)
+    assert s.best_static_direction == "short"
+    assert s.skill_edge == pytest.approx(-0.20)     # penalised for not inverting
+    assert s.selection_edge == pytest.approx(0.0)   # no selection shown, none punished
+
+
+def test_selection_edge_rewards_pointing_your_own_bias_at_the_right_calls():
+    """Same mix, but aimed correctly: long the thing that rose, short the thing that fell."""
+    grades = [
+        _grade(signed=0.2, null=0.2, benchmark=0.0, direction="long"),
+        _grade(signed=0.2, null=-0.2, benchmark=0.0, direction="short"),
+    ] * 20
+    s = score_person("P", grades, min_sample=1)
+    assert s.selection_edge == pytest.approx(0.20)
+
+
+def test_selection_edge_is_zero_when_direction_carried_no_information():
+    """Both stances used, but applied to identical moves — the mix earns what they earned."""
+    grades = [
+        _grade(signed=0.1, null=0.1, benchmark=0.0, direction="long"),
+        _grade(signed=-0.1, null=0.1, benchmark=0.0, direction="short"),
+    ] * 20
+    s = score_person("P", grades, min_sample=1)
+    assert s.selection_edge == pytest.approx(0.0)
+
+
+def test_selection_edge_none_without_benchmarks():
+    s = score_person("P", [_grade(signed=0.1)], min_sample=1)
+    assert s.selection_edge is None
+
+
+def test_selection_edge_has_a_confidence_interval():
+    grades = [_grade(signed=r, null=r, benchmark=0.0) for r in (0.1, -0.2, 0.3, 0.05)] * 10
+    s = score_person("P", grades, min_sample=1)
+    assert s.selection_edge_ci is not None and len(s.selection_edge_ci) == 2
+
+
+def test_selection_edge_is_structurally_zero_for_a_never_varying_caller():
+    """A caller who only ever goes one way has a mix of one, so the blind robot IS them and
+    the edge is zero by construction — not a measurement of anything. Pinned because a
+    reader would otherwise take TraderSZ's 0.0% as 'no skill' rather than 'not measurable
+    this way'."""
+    grades = [_grade(signed=r, null=r, benchmark=0.0, direction="long")
+              for r in (0.4, -0.3, 0.9, -0.1)] * 10
+    s = score_person("P", grades, min_sample=1)
+    assert s.long_share == 1.0
+    assert s.selection_edge == pytest.approx(0.0)
+    assert s.selection_edge_ci == pytest.approx((0.0, 0.0))

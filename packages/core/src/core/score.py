@@ -4,7 +4,7 @@ Pure and deterministic, like ``core.rank``. Everything is computed on a person's
 slate* of calls, never against a pooled average, so a roster where one voice trades BTC
 and another trades small-caps stays comparable.
 
-**Two edges, because one isn't enough.**
+**Three edges, because one isn't enough.**
 
 ``direction_edge`` (vs always-long the same asset) is structurally zero for a long call:
 being long *is* the null. On a corpus that is 65% long, this measures little except how
@@ -23,6 +23,29 @@ always-short / always-flat) evaluated on the person's own slate, so only call-by
 
 The best stance is chosen in hindsight on the same data, which biases ``skill_edge``
 downward. That is deliberate: it is the conservative direction for a claim of skill.
+
+``selection_edge`` is the same idea with the caller's *style* held constant, and it exists
+because ``skill_edge`` charges people twice for one bias. The best fixed stance on a falling
+corpus is a short robot, so a caller who is 78% long is marked down for not doing the
+opposite of what they always do. That is a fact about their stance, and ``long_share``
+already reports it. This control keeps their exact directional mix and destroys only the
+*pairing* between a direction and the asset it was aimed at, which leaves call-by-call
+selection and nothing else. A long-only caller is therefore compared against an always-long
+robot — the only honest control for someone who never shorts.
+
+Read the two together: ``skill_edge`` asks "did you beat the best stance available",
+``selection_edge`` asks "given the stance you actually take, did you aim it well". A feed
+that is strong on the second and weak on the first is a good analyst with a permanent bias,
+which is worth knowing rather than worth hiding.
+
+**``selection_edge`` is structurally zero for a caller who never varies direction**, and a
+0.0% there means "not measurable this way", NOT "no skill". With one direction in the mix
+the blind robot makes the identical call every time, so it *is* that person and the
+difference is zero by construction. It also loses power as a caller approaches one-sided:
+at 78% long there is little mixing left to destroy. This is the same shape of blind spot
+``direction_edge`` has, moved one step along — measuring a one-sided caller needs a
+*cross-sectional* control (did they pick the right assets to be long) rather than a
+directional one, and nothing here supplies that yet.
 
 **Why every number ships with a sample size and a CI.** Per-person graded counts here run
 from ~50 to ~600 and asset mixes are concentrated (BTC alone is over a quarter of the
@@ -64,6 +87,8 @@ class PersonScore:
     best_static_edge: float | None      # what that stance earned on this same slate
     skill_edge: float | None            # benchmark_edge - best_static_edge  <- headline
     skill_edge_ci: tuple[float, float] | None
+    selection_edge: float | None        # benchmark_edge - their own mix, aimed blind
+    selection_edge_ci: tuple[float, float] | None
     n_with_benchmark: int
     long_share: float       # context for reading direction_edge
     insufficient_sample: bool
@@ -128,6 +153,45 @@ def best_static_baseline(grades) -> tuple[str | None, float | None]:
     return max(scored, key=lambda pair: pair[1])
 
 
+def stance_mix(grades) -> dict[str, float]:
+    """What share of a person's own calls took each direction.
+
+    Counted over the benchmarked slate only. The mix weights a baseline that can only cover
+    benchmarked calls, so counting it over a wider population would describe one group and
+    apply it to another.
+    """
+    benchmarked = [g for g in grades if g.benchmark_return is not None]
+    if not benchmarked:
+        return {}
+    counts: dict[str, int] = {}
+    for grade_row in benchmarked:
+        counts[grade_row.direction] = counts.get(grade_row.direction, 0) + 1
+    return {direction: n / len(benchmarked) for direction, n in counts.items()}
+
+
+def mix_baseline_returns(grades) -> list[float]:
+    """Per-call excess of a robot holding this person's exact directional mix, aimed blind.
+
+    The robot takes the same share of longs and shorts they do, but picks which one without
+    looking at the asset. So it keeps their bias and throws away their judgement, and what
+    a person earns above it is selection alone.
+
+    The expected return of a random draw from the mix is a weighted sum, so this is a closed
+    form rather than a shuffle. Exact where a permutation would only approximate, and
+    deterministic without needing a seed.
+    """
+    mix = stance_mix(grades)
+    if not mix:
+        return []
+    return [
+        sum(share * signed_return_for(direction, g.market_return)
+            for direction, share in mix.items())
+        - g.benchmark_return
+        for g in grades
+        if g.benchmark_return is not None
+    ]
+
+
 def score_person(
     person: str,
     outcomes: Iterable,
@@ -159,6 +223,14 @@ def score_person(
         else []
     )
 
+    mix_baseline = mix_baseline_returns(grades)
+    selection_deltas = (
+        [g.excess_return - blind
+         for g, blind in zip(benchmarked, mix_baseline, strict=True)]
+        if mix_baseline
+        else []
+    )
+
     return PersonScore(
         person=person,
         n=len(grades),
@@ -176,6 +248,10 @@ def score_person(
         best_static_edge=static_edge,
         skill_edge=_mean(skill_deltas) if skill_deltas else None,
         skill_edge_ci=bootstrap_ci(skill_deltas, seed=seed) if skill_deltas else None,
+        selection_edge=_mean(selection_deltas) if selection_deltas else None,
+        selection_edge_ci=(
+            bootstrap_ci(selection_deltas, seed=seed) if selection_deltas else None
+        ),
         n_with_benchmark=len(excesses),
         long_share=_mean(1.0 if g.direction == "long" else 0.0 for g in grades),
         insufficient_sample=len(grades) < min_sample,

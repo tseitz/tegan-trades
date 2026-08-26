@@ -79,6 +79,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--by", choices=["asset", "timeframe", "direction"],
                         help="break a person's score down; use with --person")
     parser.add_argument("--person", help="restrict output to one canonical person")
+    parser.add_argument("--sort", choices=["skill", "selection"], default="skill",
+                        help="which edge orders the table (default: skill)")
     parser.add_argument("--horizon-sweep", action="store_true",
                         help="re-score at several horizon scalings to test rank stability")
     args = parser.parse_args(argv)
@@ -114,11 +116,11 @@ def main(argv: list[str] | None = None) -> int:
         key = {"asset": lambda o: o.asset, "timeframe": lambda o: o.timeframe,
                "direction": lambda o: o.direction}[args.by]
         scores = group_scores(outcomes, key=key, min_sample=args.min_sample)
-        _print_table(scores, label=args.by, min_sample=args.min_sample)
+        _print_table(scores, label=args.by, min_sample=args.min_sample, sort_by=args.sort)
         return 0
 
     scores = group_scores(outcomes, min_sample=args.min_sample)
-    _print_table(scores, label="person", min_sample=args.min_sample)
+    _print_table(scores, label="person", min_sample=args.min_sample, sort_by=args.sort)
 
     if args.horizon_sweep:
         _print_sweep(rows, table, today=today, series_cache=series_cache,
@@ -126,33 +128,42 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _print_table(scores, *, label, min_sample):
-    ranked = sorted(
-        scores.values(),
-        key=lambda s: (s.skill_edge if s.skill_edge is not None else -9e9),
-        reverse=True,
-    )
-    print(f"\n{label:<42} {'n':>5} {'hit':>7} {'skill edge':>11}  {'95% CI':<20} "
-          f"{'bench':>7} {'best stance':>12} {'long%':>6}")
-    print("─" * 122)
+def _print_table(scores, *, label, min_sample, sort_by="skill"):
+    def rank_key(s):
+        value = s.selection_edge if sort_by == "selection" else s.skill_edge
+        return value if value is not None else -9e9
+
+    ranked = sorted(scores.values(), key=rank_key, reverse=True)
+    print(f"\n{label:<32} {'n':>4} {'hit':>6} {'sel edge':>9} {'95% CI':<18} "
+          f"{'skill edge':>9} {'95% CI':<18} {'best stance':>11} {'long%':>5}")
+    print("─" * 120)
     for s in ranked:
         flag = "  ⚠ low-n" if s.insufficient_sample else ""
-        name = s.person[:40] + (f" {MULTI_AUTHOR_MARKER}" if "+" in s.person else "")
+        name = s.person[:30] + (f" {MULTI_AUTHOR_MARKER}" if "+" in s.person else "")
         stance = (f"{s.best_static_direction or '—'} {s.best_static_edge:+.1%}"
                   if s.best_static_edge is not None else "—")
-        print(f"{name:<42} {s.n:>5} {_fmt_pct(s.hit_rate)} "
-              f"{_fmt_pct(s.skill_edge, 11)}  {_fmt_ci(s.skill_edge_ci):<20} "
-              f"{_fmt_pct(s.benchmark_edge)} {stance:>12} {s.long_share:>6.0%}{flag}")
-    print(f"\n  skill edge  = benchmark edge − the BEST FIXED STANCE on that person's own "
-          f"slate. The headline.\n"
+        print(f"{name:<32} {s.n:>4} {_fmt_pct(s.hit_rate, 6)} "
+              f"{_fmt_pct(s.selection_edge, 9)} {_fmt_ci(s.selection_edge_ci):<18} "
+              f"{_fmt_pct(s.skill_edge, 9)} {_fmt_ci(s.skill_edge_ci):<18} "
+              f"{stance:>11} {s.long_share:>5.0%}{flag}")
+    print(f"\n  sorted by {'selection' if sort_by == 'selection' else 'skill'} edge "
+          f"(--sort to change). The two answer different questions:\n"
+          f"  sel edge    = edge over a robot with this person's OWN long/short mix, aimed "
+          f"blind.\n"
+          f"                Holds their bias constant, so a long-only caller is measured "
+          f"against an\n"
+          f"                always-long robot rather than the short one they would never "
+          f"have been.\n"
+          f"                Answers: given the stance you take, do you aim it well?\n"
+          f"  skill edge  = benchmark edge − the BEST FIXED STANCE on that person's own "
+          f"slate.\n"
           f"                A stance needs no judgement, so beating the market while losing "
           f"to one is\n"
-          f"                regime-matching bias, not a read. Chosen in hindsight, so this "
-          f"is conservative.\n"
-          f"  best stance = which fixed stance that was, and what it earned. Compare it to "
-          f"bench.\n"
-          f"  bench       = mean(call return − benchmark return). Confounded by directional "
-          f"bias; kept for context.\n"
+          f"                regime-matching bias. Chosen in hindsight, so this is "
+          f"conservative — and\n"
+          f"                it charges a one-sided caller for their style as well as their "
+          f"calls.\n"
+          f"  best stance = which fixed stance that was, and what it earned.\n"
           f"  ⚠ low-n     = fewer than {min_sample} graded calls; not rankable.\n"
           f"  {MULTI_AUTHOR_MARKER} = multi-author feed — the score covers the feed, not "
           f"one person.")
