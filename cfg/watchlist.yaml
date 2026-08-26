@@ -298,14 +298,26 @@ people:
 
   - name: "Capital Flows"
     handle: "@CapitalFlowsResearch"
-    status: active
+    # Dormant 2026-08-26, and the channel is EMPTY rather than gone: the handle still resolves,
+    # but every tab — videos, streams, podcasts, playlists — now 404s. They took the back
+    # catalogue down and moved to Substack. Last video we hold is 2026-08-19, which is when
+    # `verify-roster` started reporting BROKEN every night.
+    #
+    # Kept rather than deleted because the 42 videos already ingested are ours: 167 stances that
+    # YouTube deleting the source does not touch. Removing the person would orphan them and drop
+    # a macro voice out of every agreement count that already used it.
+    status: dormant
     domains: [macro, crypto]
     why: "Macro flows (rates/FX/equities) → leveraged/perps positioning. Explicit funding/perps + macro-catalyst (CPI/FOMC) lens."
-    channels: [{ platform: youtube, id: "@CapitalFlowsResearch", access: ok }]
+    # `access: dormant` is the marker that makes the nightly quiet again. `ok` asserts we can
+    # ingest this now, which is false, so `verify-roster` was right to shout. Dormant asserts we
+    # cannot — and it still shouts REVIVED if a *recent* video ever appears, so writing them off
+    # here is reversible by the check itself rather than by someone remembering to look.
+    channels: [{ platform: youtube, id: "@CapitalFlowsResearch", access: dormant }]
     # A daily livestream, so 20 videos is under a month of output and each is long. If this
     # voice earns its slot the cap should rise; if it doesn't, a month is plenty to tell.
     backfill: { max_videos: 20, max_age_days: 270 }
-    notes: "DISCOVERED. Daily livestream. Fills the flow-trader niche. Trial cohort 2026-07-26."
+    notes: "DISCOVERED. Daily livestream. Fills the flow-trader niche. Trial cohort 2026-07-26. Wiped YouTube and went Substack-only around 2026-08-19; no Substack path exists here yet, so this voice stops updating from that date."
 
   - name: "DataDash (Nicholas Merten)"
     handle: "@DataDash"
