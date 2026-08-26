@@ -179,3 +179,30 @@ def parse_placement(raw) -> Placement:
         error="; ".join(errors) or None,
         raw=raw,
     )
+
+
+def parse_cancel(raw) -> str | None:
+    """Why a cancel did NOT happen, or ``None`` when it did. Matches ``Broker.cancel``.
+
+    Shaped like ``parse_placement`` and deliberately not sharing its code: that function reads
+    ``resting``/``filled`` objects, and a cancel replies with the bare string ``"success"``,
+    which it would classify as an error. Two small readers beat one that has to branch on which
+    action it is looking at.
+
+    Anything unrecognised is a failure. The caller prints this next to an order it has just
+    told the reader is gone, so an unreadable reply must not be reported as a cancellation.
+    """
+    if not isinstance(raw, dict):
+        return f"unrecognised reply: {raw!r}"
+    if raw.get("status") != "ok":
+        return str(raw.get("response") or raw.get("status"))
+    statuses = ((raw.get("response") or {}).get("data") or {}).get("statuses")
+    if not statuses:
+        return "reply carried no cancel statuses"
+    for status in statuses:
+        if status == "success":
+            continue
+        if isinstance(status, dict) and "error" in status:
+            return str(status["error"])
+        return f"unrecognised status {status!r}"
+    return None

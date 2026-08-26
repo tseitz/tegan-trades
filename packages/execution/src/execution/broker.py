@@ -29,13 +29,25 @@ from hyperliquid.utils import constants
 from hyperliquid.utils.signing import OrderRequest
 
 from execution.account import Account
-from execution.book import OrderState, Position, RestingOrder
+from execution.book import (
+    OrderState,
+    Position,
+    RestingOrder,
+    parse_hl_positions,
+    parse_hl_resting,
+)
 from execution.book import is_live as order_is_live
 from execution.liquidity import Liquidity, parse_book, parse_context
 from execution.outcome import ExitFill, exit_leg_ids, number, parse_hl_fills
 from execution.participation import Depth
 from execution.plan import Market, OrderPlan
-from execution.wire import GROUPING, Placement, order_requests, parse_placement
+from execution.wire import (
+    GROUPING,
+    Placement,
+    order_requests,
+    parse_cancel,
+    parse_placement,
+)
 
 TESTNET = "testnet"
 MAINNET = "mainnet"
@@ -121,6 +133,27 @@ def margin_committed(perp_state) -> float:
     return total
 
 
+def opened_at_by_coin(fills) -> dict[str, datetime]:
+    """When each coin's position was most recently OPENED, from the fill feed. Pure.
+
+    ``assetPositions`` carries no timestamp, so a position's age has to come from the print
+    that started it. The venue's ``dir`` field states whether a print opened or closed, so a
+    close is dropped rather than inferred from the side — an earlier round trip's exit would
+    otherwise report a month-old position as opened today.
+
+    A print whose direction is unreadable is KEPT, matching ``book.filled_at_by_symbol``: the
+    newest opening fill wins either way, which reports a position as younger than it may be,
+    and nothing is ever retired on the strength of an age.
+    """
+    newest: dict[str, datetime] = {}
+    for fill in fills or []:
+        if fill.closing or fill.at is None or not fill.symbol:
+            continue
+        if fill.symbol not in newest or fill.at > newest[fill.symbol]:
+            newest[fill.symbol] = fill.at
+    return newest
+
+
 class Broker(Protocol):
     """What the triage loop needs. A fake implementing this is how the flow is tested."""
 
@@ -135,7 +168,12 @@ class Broker(Protocol):
 
     # Entries still resting at the venue, oldest first. ``None`` means the venue cannot be
     # asked; an empty tuple means it was asked and there are none. See ``book``.
-    def resting(self) -> tuple[RestingOrder, ...] | None: ...
+    #
+    # ``order_ids`` is ``store.order_ids_by_key`` and names the candidate each order belongs
+    # to. Optional because only Hyperliquid needs it: Alpaca sends ``candidate_key`` as the
+    # ``client_order_id``, so the venue hands the join straight back and the argument is
+    # accepted-and-ignored there.
+    def resting(self, order_ids=None) -> tuple[RestingOrder, ...] | None: ...
 
     # Positions currently open. Same None/empty distinction as ``resting``.
     def positions(self) -> tuple[Position, ...] | None: ...
@@ -336,24 +374,90 @@ class HyperliquidBroker:
         """
         return None
 
-    def resting(self) -> tuple[RestingOrder, ...] | None:
-        """Always ``None`` — not "no orders", but "cannot be asked".
+    def resting(self, order_ids=None) -> tuple[RestingOrder, ...] | None:
+        """Entries still working at the venue, oldest first. ``None`` if unreadable.
 
-        ``wire.order_requests`` sends no ``cloid``, so an order placed by this repo is known
-        to the venue only by an oid nothing here indexes. The same blocker that keeps
-        ``live_keys`` conservative. See ``states`` for what this venue CAN now answer.
+        **The old claim that this venue could not be asked was the same mistake ``states``
+        corrected.** It rested on the wire sending no ``cloid``, so the venue knows an order
+        only by an oid — but ``frontend_open_orders`` returns every open order regardless of
+        who placed it, and ``store.order_ids_by_key`` has the oid→candidate join. ``order_ids``
+        is that mapping, in the same shape ``states`` takes.
+
+        Every loaded dex is asked. A HIP-3 builder is its own book, so asking only the core dex
+        would hide margin held on another and under-report what is committed.
+
+        The filtering that keeps a live stop off the cancel menu is in ``parse_hl_resting``, and
+        it matters more here than at Alpaca: this reply lists each exit leg twice.
         """
-        return None
+        keys_by_oid = {str(oid): key
+                       for key, oids in (order_ids or {}).items()
+                       for oid in oids or []}
+        rows: list = []
+        try:
+            for dex in self.dexs:
+                reply = self._info.frontend_open_orders(self.account_address, dex=dex)
+                if not isinstance(reply, list):
+                    return None
+                rows.extend(reply)
+        except Exception:  # noqa: BLE001 - unreadable is not "nothing is resting"
+            return None
+        return parse_hl_resting(rows, keys_by_oid)
 
     def positions(self) -> tuple[Position, ...] | None:
-        """Always ``None``. Readable in principle from ``user_state.assetPositions``; unbuilt
-        because ``resting`` above cannot be answered, and half a book listing is worse than
-        none — it would show what is open while hiding what is committed."""
-        return None
+        """Open positions with their ages, largest first. ``None`` if unreadable.
+
+        Two reads, and only the first is allowed to fail the whole listing. ``user_state``
+        carries the positions; the fill feed carries nothing but their ages, so losing it costs
+        an age column rather than the answer to "what am I actually holding".
+        """
+        rows: list = []
+        try:
+            for dex in self.dexs:
+                state = self._info.user_state(self.account_address, dex=dex) or {}
+                rows.extend(state.get("assetPositions") or [])
+        except Exception:  # noqa: BLE001 - see ``resting``
+            return None
+        try:
+            opened = opened_at_by_coin(parse_hl_fills(self._info.user_fills(self.account_address)))
+        except Exception:  # noqa: BLE001 - an unreadable feed costs the ages, not the listing
+            opened = {}
+        return parse_hl_positions(rows, opened)
 
     def cancel(self, order_id: str) -> str | None:
-        """Refuses. Nothing here can produce an order id to pass in — see ``resting``."""
-        return f"cancelling is not implemented for {self.network}; cancel {order_id} by hand"
+        """Retire one resting order. Returns the reason it did not happen, or ``None``.
+
+        **The coin is re-read from the venue, not remembered.** ``Exchange.cancel`` takes
+        ``(coin, oid)`` because an oid selects an order only within one book, and ``Broker
+        .cancel`` is handed an id alone. Caching the pairing from a previous ``resting`` call
+        would make a cancel silently depend on the listing having run first in this process;
+        one extra round trip buys a method that is correct on its own.
+
+        An oid the venue no longer knows is refused rather than guessed at. Every failure comes
+        back as a string because ``book_cli.offer`` prints it beside that order and carries on
+        to the next — raising would abandon the rest of the batch.
+        """
+        try:
+            oid = int(order_id)
+        except (TypeError, ValueError):
+            return f"{order_id!r} is not a Hyperliquid order id"
+        coin = self._coin_of(oid)
+        if coin is None:
+            return f"the venue no longer knows order {order_id} — cancel it by hand"
+        try:
+            return parse_cancel(self._exchange.cancel(coin, oid))
+        except Exception as exc:  # noqa: BLE001 - a reason beats a traceback mid-batch
+            return f"{type(exc).__name__}: {exc}"
+
+    def _coin_of(self, oid: int) -> str | None:
+        """Which book an oid lives in. ``None`` when the venue cannot say."""
+        try:
+            reply = self._info.query_order_by_oid(self.account_address, oid)
+        except Exception:  # noqa: BLE001
+            return None
+        if not isinstance(reply, dict):
+            return None
+        detail = ((reply.get("order") or {}).get("order") or {})
+        return str(detail.get("coin") or "") or None
 
     def states(self, keys, order_ids=None) -> dict[str, OrderState | None]:
         """What became of each candidate's bracket, asked by its recorded oid.

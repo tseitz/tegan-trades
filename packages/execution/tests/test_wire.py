@@ -6,6 +6,7 @@ from execution.plan import OrderPlan
 from execution.wire import (
     TAKE_PROFIT_IS_MARKET,
     order_requests,
+    parse_cancel,
     parse_placement,
     stop_limit_price,
 )
@@ -160,3 +161,34 @@ def test_top_level_failure_is_not_ok():
 def test_unrecognised_replies_fail_closed(raw):
     """Never read an unparseable reply as success."""
     assert parse_placement(raw).ok is False
+
+
+# ── the cancel reply ────────────────────────────────────────────────────────────────────────
+
+def test_a_successful_cancel_reports_nothing():
+    """``None`` is the success value, because ``Broker.cancel`` returns the reason it failed."""
+    assert parse_cancel({"status": "ok",
+                         "response": {"type": "cancel", "data": {"statuses": ["success"]}}}) is None
+
+
+def test_a_refused_cancel_carries_the_venues_reason():
+    """The usual one: the order filled between the listing and the confirmation, so there is
+    nothing left to cancel and the reader now holds a position they did not a moment ago."""
+    error = parse_cancel({"status": "ok", "response": {"data": {
+        "statuses": [{"error": "Order was never placed, already canceled, or filled."}]}}})
+    assert error is not None and "already canceled" in error
+
+
+def test_a_top_level_failure_is_reported():
+    assert parse_cancel({"status": "err", "response": "rate limited"}) == "rate limited"
+
+
+@pytest.mark.parametrize("raw", [
+    None, "boom", {}, {"status": "ok"},
+    {"status": "ok", "response": {"data": {"statuses": []}}},
+    {"status": "ok", "response": {"data": {"statuses": ["somethingNew"]}}},
+])
+def test_an_unreadable_cancel_reply_is_never_read_as_done(raw):
+    """The caller has just printed the order as retired. An unparseable reply that returned
+    None would leave a live order behind a line saying it is gone."""
+    assert parse_cancel(raw) is not None

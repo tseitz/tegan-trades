@@ -597,7 +597,10 @@ def main(argv: list[str] | None = None, *, now: datetime | None = None,
             out(line)
         out("")
 
-    orders = broker.resting()
+    # The oid→candidate join, for the venue that cannot answer it itself. Scoped to this
+    # network, because the same candidate can have been placed on both and the other network's
+    # oids would name the wrong orders. Alpaca ignores it — see ``AlpacaBroker.resting``.
+    orders = broker.resting(store.order_ids_by_key(orders_path, network=config.network))
     positions = broker.positions()
     for line in render(orders, positions, account=broker.account(),
                        max_age=max_age, now=now):

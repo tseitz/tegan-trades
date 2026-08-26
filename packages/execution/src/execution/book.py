@@ -308,6 +308,120 @@ def parse_positions(payload, opened: dict[str, datetime] | None = None
     return tuple(sorted(positions, key=lambda p: -abs(p.market_value)))
 
 
+# ── Hyperliquid ─────────────────────────────────────────────────────────────────────────────
+#
+# The same two questions, a different reply, and two traps Alpaca does not have. Parsed here
+# rather than inside the broker so both venues' listings stay pure functions that a test can
+# hold a real captured payload against.
+
+# The venue's book notation. ``B`` is the bid side (a buy), ``A`` the ask (a sell). Matches
+# ``outcome.parse_hl_fills``, so one vocabulary is used everywhere in this repo.
+HL_SIDES = {"B": "buy", "A": "sell"}
+
+
+def _hl_timestamp(value) -> datetime | None:
+    """Hyperliquid stamps orders in milliseconds since the epoch, not RFC 3339."""
+    millis = _number(value)
+    if millis is None:
+        return None
+    try:
+        return datetime.fromtimestamp(millis / 1000, tz=UTC)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def parse_hl_resting(payload, keys_by_oid: dict[str, str] | None = None
+                     ) -> tuple[RestingOrder, ...]:
+    """Opening entries still working at Hyperliquid, oldest first.
+
+    **This venue lists each exit leg TWICE** — nested under its entry's ``children`` and again
+    as a top-level order of its own. Alpaca's ``nested=true`` hides them and this has no
+    equivalent, so the one ONDO bracket on testnet arrives as three cancellable-looking rows.
+    Filtering is therefore not tidiness: two of those three are the stop and the take-profit on
+    a live position, and cancelling one strips its protection while freeing no margin at all.
+
+    **An entry is identified positively, from two flags the venue sets itself.** An exit is
+    ``reduceOnly`` (it can only shrink a position) and ``isTrigger`` (it is armed at a price).
+    An entry is neither. A row that does not state both flags is DROPPED rather than assumed
+    to be an entry — the same rule ``parse_resting`` follows, for the same reason: an order
+    this code cannot positively identify as opening is one it must not offer to cancel.
+
+    Side is never read for this. A short opens by selling, so ``A`` means "close a long" and
+    "open a short" equally, and inferring intent from it would be exactly backwards.
+
+    ``keys_by_oid`` supplies the candidate each order belongs to. Nothing comes back from the
+    venue for this: ``wire.order_requests`` sends no ``cloid``, so the only copy of the join is
+    the order log's recorded oid (``store.order_ids_by_key``). An order missing from it is
+    still listed with an empty key — ``data/`` is gitignored and unbacked, and an order the log
+    can no longer name is still holding margin.
+    """
+    keys_by_oid = keys_by_oid or {}
+    orders: list[RestingOrder] = []
+    for raw in payload or []:
+        if not isinstance(raw, dict):
+            continue
+        if "reduceOnly" not in raw or "isTrigger" not in raw:
+            continue
+        if raw.get("reduceOnly") or raw.get("isTrigger"):
+            continue
+        qty = _number(raw.get("sz"))
+        limit_price = _number(raw.get("limitPx"))
+        oid = raw.get("oid")
+        if qty is None or limit_price is None or oid is None:
+            continue
+        order_id = str(oid)
+        orders.append(RestingOrder(
+            order_id=order_id,
+            candidate_key=keys_by_oid.get(order_id, ""),
+            symbol=str(raw.get("coin") or ""),
+            side=HL_SIDES.get(str(raw.get("side") or ""), ""),
+            qty=qty,
+            limit_price=limit_price,
+            submitted_at=_hl_timestamp(raw.get("timestamp")),
+            # An order the venue still lists as open is, by construction, still working. There
+            # is no per-order status field on this reply to read instead.
+            status="open",
+        ))
+    return tuple(sorted(orders, key=lambda o: (o.submitted_at is None,
+                                               o.submitted_at or datetime.max.replace(tzinfo=UTC))))
+
+
+def parse_hl_positions(payload, opened: dict[str, datetime] | None = None
+                       ) -> tuple[Position, ...]:
+    """Open perp positions from ``user_state.assetPositions``, largest first.
+
+    **Direction lives in the SIGN of ``szi``, not in a word.** There is no ``side`` field, and
+    ``positionValue`` is unsigned, so the sign is the only thing saying which way the trade
+    faces. A zero size is not a position — the venue keeps returning a coin briefly after it
+    goes flat, and listing that would report exposure nobody has.
+
+    ``opened`` supplies the ages, which nothing in this reply carries. Same shape as Alpaca's
+    and a different source: there it is the closed-order history, here the fill feed.
+    """
+    opened = opened or {}
+    positions: list[Position] = []
+    for raw in payload or []:
+        if not isinstance(raw, dict):
+            continue
+        held = raw.get("position")
+        if not isinstance(held, dict):
+            continue
+        coin = str(held.get("coin") or "")
+        size = _number(held.get("szi"))
+        value = _number(held.get("positionValue"))
+        if not coin or size is None or value is None or size == 0:
+            continue
+        positions.append(Position(
+            symbol=coin,
+            side="long" if size > 0 else "short",
+            qty=abs(size),
+            market_value=value,
+            unrealised_pl=_number(held.get("unrealizedPnl")) or 0.0,
+            opened_at=opened.get(coin),
+        ))
+    return tuple(sorted(positions, key=lambda p: -abs(p.market_value)))
+
+
 def stale(orders, max_age_days: float, now: datetime) -> tuple[RestingOrder, ...]:
     """The entries old enough to be worth retiring. An unknown age is never stale — it is
     unmeasured, and retiring an order on a missing timestamp is the wrong direction of error.

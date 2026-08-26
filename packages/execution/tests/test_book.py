@@ -14,6 +14,8 @@ from execution.book import (
     Position,
     RestingOrder,
     filled_at_by_symbol,
+    parse_hl_positions,
+    parse_hl_resting,
     parse_positions,
     parse_resting,
     stale,
@@ -254,3 +256,144 @@ def test_a_filled_entry_with_one_working_leg_is_live():
     state = book.OrderState(candidate_key="k", status="filled", filled_qty=1.0,
                             filled_avg_price=1.0, leg_statuses=("new", "held"))
     assert book.is_live(state) is True
+
+
+# ── Hyperliquid's book listing ───────────────────────────────────────────────────────────────
+#
+# The ONDO bracket exactly as testnet returned it on 2026-08-25. Two things differ from Alpaca
+# and both are traps:
+#
+# 1. ``frontend_open_orders`` returns each exit leg TWICE — nested under the entry's
+#    ``children`` and again as a top-level order of its own. Alpaca's ``nested=true`` hides
+#    them; this venue does not. So the flat list of three below is one cancellable entry, not
+#    three, and the filter has to work on the top-level rows.
+# 2. There is no ``position_intent`` and no ``client_order_id``. The entry is identified by the
+#    venue's own two flags (``reduceOnly`` and ``isTrigger``), and the candidate it belongs to
+#    is joined from the order log's recorded oid — see ``store.order_ids_by_key``.
+
+HL_ENTRY = {
+    "coin": "ONDO", "side": "B", "limitPx": "0.31213", "sz": "427.0", "oid": 57480565786,
+    "timestamp": 1785970217766, "triggerCondition": "N/A", "isTrigger": False,
+    "triggerPx": "0.0", "isPositionTpsl": False, "reduceOnly": False,
+    "orderType": "Limit", "origSz": "427.0", "tif": "Gtc", "cloid": None,
+}
+
+HL_TAKE_PROFIT = {
+    "coin": "ONDO", "side": "A", "limitPx": "0.4271", "sz": "427.0", "oid": 57480565787,
+    "timestamp": 1785970217766, "triggerCondition": "Price above 0.4271", "isTrigger": True,
+    "triggerPx": "0.4271", "isPositionTpsl": False, "reduceOnly": True,
+    "orderType": "Take Profit Limit", "origSz": "427.0", "tif": None, "cloid": None,
+    "children": [],
+}
+
+HL_STOP = {
+    "coin": "ONDO", "side": "A", "limitPx": "0.27466", "sz": "427.0", "oid": 57480565788,
+    "timestamp": 1785970217766, "triggerCondition": "Price below 0.28912", "isTrigger": True,
+    "triggerPx": "0.28912", "isPositionTpsl": False, "reduceOnly": True,
+    "orderType": "Stop Market", "origSz": "427.0", "tif": None, "cloid": None,
+    "children": [],
+}
+
+# The order the venue actually returned them in, with the entry carrying its own legs as well.
+HL_BOOK = [HL_STOP, HL_TAKE_PROFIT, {**HL_ENTRY, "children": [HL_TAKE_PROFIT, HL_STOP]}]
+
+
+def test_a_hyperliquid_entry_is_listed_with_what_it_reserves():
+    (order,) = parse_hl_resting(HL_BOOK)
+    assert order.order_id == "57480565786"
+    assert order.symbol == "ONDO"
+    assert order.side == "buy"
+    assert order.qty == pytest.approx(427.0)
+    assert order.notional == pytest.approx(427 * 0.31213)
+
+
+def test_a_hyperliquid_exit_leg_is_never_offered_for_cancellation():
+    """The load-bearing one, and sharper here than at Alpaca. This venue lists both exits as
+    top-level orders, so a listing that filtered nothing would put a live stop on a numbered
+    menu one keystroke away from ``all``."""
+    assert [o.order_id for o in parse_hl_resting(HL_BOOK)] == ["57480565786"]
+
+
+def test_a_hyperliquid_short_entry_is_not_mistaken_for_an_exit():
+    """A sell that opens exposure and a sell that closes it are the same ``side`` here. Only
+    ``reduceOnly`` tells them apart, which is why the side is never read for this."""
+    short = {**HL_ENTRY, "side": "A", "oid": 1}
+    (order,) = parse_hl_resting([short])
+    assert order.side == "sell"
+
+
+def test_a_hyperliquid_entry_joins_back_to_its_candidate():
+    """No ``cloid`` goes out, so the candidate comes from the oid the order log recorded."""
+    (order,) = parse_hl_resting(HL_BOOK, {"57480565786": "abc123"})
+    assert order.candidate_key == "abc123"
+
+
+def test_an_unrecorded_hyperliquid_entry_is_still_listed():
+    """``data/`` is gitignored and unbacked, so the join can genuinely be missing. An order the
+    log cannot name is still holding margin and must still be cancellable."""
+    (order,) = parse_hl_resting(HL_BOOK, {})
+    assert order.candidate_key == ""
+
+
+def test_hyperliquid_age_is_measured_from_its_millisecond_stamp():
+    (order,) = parse_hl_resting(HL_BOOK)
+    assert order.submitted_at == datetime(2026, 8, 5, 22, 50, 17, 766_000, tzinfo=UTC)
+
+
+def test_a_malformed_hyperliquid_order_is_skipped_not_fatal():
+    assert parse_hl_resting([None, {}, {"coin": "X"}, HL_ENTRY]) == parse_hl_resting([HL_ENTRY])
+
+
+def test_hyperliquid_orders_are_oldest_first():
+    newer = {**HL_ENTRY, "oid": 99, "timestamp": 1785970217766 + 86_400_000}
+    assert [o.order_id for o in parse_hl_resting([newer, HL_ENTRY])] == ["57480565786", "99"]
+
+
+# ── Hyperliquid positions ────────────────────────────────────────────────────────────────────
+#
+# ``assetPositions`` states size as a signed ``szi`` rather than a ``side`` word, and reports
+# ``positionValue`` unsigned. The sign is the only thing saying which way the trade is facing.
+
+HL_SHORT = {
+    "coin": "SOL", "szi": "-3.81", "entryPx": "74.4", "positionValue": "283.46",
+    "unrealizedPnl": "-1.94", "returnOnEquity": "-0.19", "marginUsed": "28.35",
+    "leverage": {"type": "cross", "value": 10}, "maxLeverage": 20,
+}
+
+HL_POSITION = {"type": "oneWay", "position": HL_SHORT}
+
+
+def test_a_hyperliquid_short_is_read_from_the_sign_of_its_size():
+    (position,) = parse_hl_positions([HL_POSITION])
+    assert position.side == "short"
+    assert position.qty == pytest.approx(3.81)
+    assert position.market_value == pytest.approx(283.46)
+    assert position.unrealised_pl == pytest.approx(-1.94)
+
+
+def test_a_hyperliquid_long_is_read_the_same_way():
+    long = {"position": {**HL_SHORT, "szi": "3.81"}}
+    (position,) = parse_hl_positions([long])
+    assert position.side == "long"
+    assert position.qty == pytest.approx(3.81)
+
+
+def test_a_flat_hyperliquid_row_is_not_a_position():
+    """The venue keeps returning a coin briefly after it goes flat. Zero size is no position,
+    and listing one would invite a cancel against nothing."""
+    flat = {"position": {**HL_SHORT, "szi": "0.0"}}
+    assert parse_hl_positions([flat]) == ()
+
+
+def test_hyperliquid_position_age_comes_from_the_opening_fill():
+    """Nothing in ``assetPositions`` carries a timestamp, so the age is joined from the fills —
+    the same shape as Alpaca's, with a different source."""
+    opened = {"SOL": datetime(2026, 7, 15, tzinfo=UTC)}
+    (position,) = parse_hl_positions([HL_POSITION], opened)
+    assert position.age_days(NOW) == pytest.approx(14.5, abs=0.01)
+
+
+def test_malformed_hyperliquid_positions_are_skipped():
+    assert parse_hl_positions([None, {}, {"position": {}}, HL_POSITION]) == parse_hl_positions(
+        [HL_POSITION]
+    )

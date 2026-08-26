@@ -133,13 +133,16 @@ def test_an_unrecognised_mode_is_not_treated_as_spot_collateralised():
 # Verified live on testnet 2026-08-08: all seven logged HL oids resolved.
 
 class FakeInfo:
-    """The two Info calls the close pass needs, canned."""
+    """The Info calls the close pass and the book listing need, canned."""
 
-    def __init__(self, orders=None, fills=None, funding=None):
+    def __init__(self, orders=None, fills=None, funding=None, open_orders=None, state=None):
         self.orders = orders or {}
         self._fills = fills if fills is not None else []
         self._funding = funding if funding is not None else []
+        self._open_orders = open_orders if open_orders is not None else []
+        self._state = state or {}
         self.asked = []
+        self.dexs_asked = []
 
     def query_order_by_oid(self, user, oid):
         self.asked.append(oid)
@@ -153,11 +156,37 @@ class FakeInfo:
         self.funding_window = (startTime, endTime)
         return self._funding
 
+    def frontend_open_orders(self, user, dex=""):
+        self.dexs_asked.append(dex)
+        return self._open_orders
 
-def _hl(info):
-    """A broker with no network in its constructor — only the two attributes these methods use."""
+    def user_state(self, user, dex=""):
+        self.dexs_asked.append(dex)
+        return self._state
+
+    def user_fills(self, user):
+        return self._fills
+
+
+class FakeExchange:
+    """Records what was sent to cancel, and replies with whatever it was given."""
+
+    def __init__(self, reply=None):
+        self.reply = reply if reply is not None else {
+            "status": "ok", "response": {"type": "cancel", "data": {"statuses": ["success"]}}}
+        self.cancelled = []
+
+    def cancel(self, name, oid):
+        self.cancelled.append((name, oid))
+        return self.reply
+
+
+def _hl(info, *, dexs=("",), exchange=None):
+    """A broker with no network in its constructor — only the attributes these methods use."""
     b = object.__new__(HyperliquidBroker)
     b._info = info
+    b._exchange = exchange or FakeExchange()
+    b.dexs = dexs
     b.account_address = "0xabc"
     return b
 
@@ -286,3 +315,150 @@ def test_an_open_ended_window_runs_to_now():
     info = FakeInfo(funding=[])
     _hl(info).funding_paid("SOL", start=datetime(2026, 7, 28, tzinfo=UTC), end=None)
     assert info.funding_window[1] is None
+
+
+# ── the book listing ────────────────────────────────────────────────────────────────────────
+#
+# ``resting`` and ``positions`` returned None for a long time on the grounds that the venue
+# could not be asked. It can: ``frontend_open_orders`` returns every open order and
+# ``user_state`` every open position. The oid→candidate join comes from the order log, the same
+# index ``states`` above already uses.
+
+# The ONDO bracket as testnet returned it on 2026-08-25 — entry plus both exits, flat.
+ONDO_ENTRY = {
+    "coin": "ONDO", "side": "B", "limitPx": "0.31213", "sz": "427.0", "oid": 57480565786,
+    "timestamp": 1785970217766, "isTrigger": False, "reduceOnly": False, "orderType": "Limit",
+}
+ONDO_TAKE_PROFIT = {**ONDO_ENTRY, "side": "A", "limitPx": "0.4271", "oid": 57480565787,
+                    "isTrigger": True, "reduceOnly": True, "orderType": "Take Profit Limit"}
+ONDO_STOP = {**ONDO_ENTRY, "side": "A", "limitPx": "0.27466", "oid": 57480565788,
+             "isTrigger": True, "reduceOnly": True, "orderType": "Stop Market"}
+ONDO_BOOK = [ONDO_STOP, ONDO_TAKE_PROFIT, ONDO_ENTRY]
+
+
+def test_the_listing_drops_the_exit_legs_this_venue_repeats():
+    orders = _hl(FakeInfo(open_orders=ONDO_BOOK)).resting()
+    assert orders is not None
+    assert [o.order_id for o in orders] == ["57480565786"]
+
+
+def test_the_listing_names_the_candidate_from_the_order_log():
+    """No ``cloid`` goes out, so this is the only copy of the join — see
+    ``store.order_ids_by_key``."""
+    orders = _hl(FakeInfo(open_orders=ONDO_BOOK)).resting(
+        {"64bcf4f9ca01": ["57480565786", "57480565787", "57480565788"]})
+    assert orders is not None
+    assert orders[0].candidate_key == "64bcf4f9ca01"
+
+
+def test_every_loaded_dex_is_asked_for_its_open_orders():
+    """A HIP-3 builder is its own book. Asking only the core dex would hide margin held on
+    another one and quietly under-report what is committed."""
+    info = FakeInfo(open_orders=[])
+    _hl(info, dexs=("", "xyz")).resting()
+    assert info.dexs_asked == ["", "xyz"]
+
+
+def test_an_unreadable_book_is_none_rather_than_empty():
+    """Empty reads as "nothing is resting" and is what the CLI prints. Unreadable must stay
+    distinguishable from it, or a failed call looks like a clean account."""
+    class Boom(FakeInfo):
+        def frontend_open_orders(self, user, dex=""):
+            raise RuntimeError("network")
+    assert _hl(Boom()).resting() is None
+
+
+def test_a_reply_that_is_not_a_list_is_unreadable():
+    assert _hl(FakeInfo(open_orders={"unexpected": True})).resting() is None
+
+
+# The SOL short as ``user_state`` reports it. ``szi`` carries the direction; there is no side.
+SOL_POSITION = {"type": "oneWay", "position": {
+    "coin": "SOL", "szi": "-3.81", "entryPx": "74.4", "positionValue": "283.46",
+    "unrealizedPnl": "-1.94", "marginUsed": "28.35",
+}}
+
+
+def test_positions_are_read_with_their_age_from_the_fill_feed():
+    """Nothing in ``assetPositions`` is dated, so the age comes from the opening print — the
+    venue's own ``dir`` says which prints those were."""
+    info = FakeInfo(
+        state={"assetPositions": [SOL_POSITION]},
+        fills=[{"coin": "SOL", "px": "74.4", "sz": "3.81", "oid": 1, "side": "A",
+                "time": 1785253286303, "dir": "Open Short", "fee": "0.02"}],
+    )
+    positions = _hl(info).positions()
+    assert positions is not None
+    (position,) = positions
+    assert position.side == "short"
+    assert position.opened_at == datetime(2026, 7, 28, 15, 41, 26, 303_000, tzinfo=UTC)
+
+
+def test_a_closing_print_does_not_date_a_position():
+    """An earlier round trip's exit would report a month-old position as opened today."""
+    info = FakeInfo(
+        state={"assetPositions": [SOL_POSITION]},
+        fills=[{"coin": "SOL", "px": "74.4", "sz": "3.81", "oid": 1, "side": "B",
+                "time": 1785253286303, "dir": "Close Short", "fee": "0.02"}],
+    )
+    positions = _hl(info).positions()
+    assert positions is not None and positions[0].opened_at is None
+
+
+def test_an_unreadable_fill_feed_costs_the_age_not_the_listing():
+    """The ages are decoration; the sizes are the point. Losing the feed must not blank a
+    listing that says what the account is actually holding."""
+    class NoFills(FakeInfo):
+        def user_fills(self, user):
+            raise RuntimeError("network")
+    positions = _hl(NoFills(state={"assetPositions": [SOL_POSITION]})).positions()
+    assert positions is not None
+    assert positions[0].symbol == "SOL" and positions[0].opened_at is None
+
+
+def test_unreadable_positions_are_none_rather_than_flat():
+    class Boom(FakeInfo):
+        def user_state(self, user, dex=""):
+            raise RuntimeError("network")
+    assert _hl(Boom()).positions() is None
+
+
+# ── cancelling ──────────────────────────────────────────────────────────────────────────────
+
+def test_a_cancel_sends_the_coin_the_venue_requires_with_the_oid():
+    """``Exchange.cancel`` takes ``(coin, oid)`` — an oid alone is not enough. The coin is
+    re-read from the venue rather than remembered from ``resting``, so a cancel is correct
+    even when nothing listed the book first."""
+    exchange = FakeExchange()
+    info = FakeInfo(orders={57480565786: {
+        "status": "order", "order": {"status": "open", "order": {"coin": "ONDO"}}}})
+    assert _hl(info, exchange=exchange).cancel("57480565786") is None
+    assert exchange.cancelled == [("ONDO", 57480565786)]
+
+
+def test_a_cancel_the_venue_cannot_place_refuses_rather_than_guessing():
+    """Guessing the coin would cancel a DIFFERENT order — the oid is only unique within the
+    venue, and the coin is what selects the book it is cancelled from."""
+    exchange = FakeExchange()
+    error = _hl(FakeInfo(), exchange=exchange).cancel("57480565786")
+    assert error is not None
+    assert exchange.cancelled == []
+
+
+def test_a_refused_cancel_carries_the_venues_reason():
+    exchange = FakeExchange(reply={"status": "ok", "response": {"data": {"statuses": [
+        {"error": "Order was never placed, already canceled, or filled."}]}}})
+    info = FakeInfo(orders={1: {"status": "order", "order": {"order": {"coin": "ONDO"}}}})
+    error = _hl(info, exchange=exchange).cancel("1")
+    assert error is not None and "already canceled" in error
+
+
+def test_a_cancel_that_raises_is_reported_not_propagated():
+    """``offer`` prints this beside the order and moves to the next one. An exception here
+    would abandon every remaining cancellation in the batch."""
+    class Boom(FakeExchange):
+        def cancel(self, name, oid):
+            raise RuntimeError("rate limited")
+    info = FakeInfo(orders={1: {"status": "order", "order": {"order": {"coin": "ONDO"}}}})
+    error = _hl(info, exchange=Boom()).cancel("1")
+    assert error is not None and "rate limited" in error

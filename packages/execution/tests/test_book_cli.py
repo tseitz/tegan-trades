@@ -38,8 +38,12 @@ class FakeBroker:
         self._orders, self._positions, self._account = orders, positions, account
         self._error = error
         self.cancelled: list[str] = []
+        self.joined = None
 
-    def resting(self):
+    def resting(self, order_ids=None):
+        # Recorded rather than ignored: the CLI is the only place that reads the order log for
+        # this, and passing it is what makes Hyperliquid's listing name its candidates.
+        self.joined = order_ids
         return self._orders
 
     def positions(self):

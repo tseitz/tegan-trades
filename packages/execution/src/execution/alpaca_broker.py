@@ -228,8 +228,12 @@ class AlpacaBroker:
         """
         return parse_account(self._transport("GET", "/v2/account"))
 
-    def resting(self) -> tuple[RestingOrder, ...] | None:
+    def resting(self, order_ids=None) -> tuple[RestingOrder, ...] | None:
         """Entries still working at the venue, oldest first. ``None`` if unreadable.
+
+        ``order_ids`` is accepted and ignored. This venue carries ``candidate_key`` out as the
+        ``client_order_id`` and hands it back on every order, so the join needs no local index
+        — and unlike Hyperliquid's it survives losing ``data/``.
 
         ``nested=true`` rolls a bracket's exits under their parent so they are not returned as
         top-level orders — but ``parse_resting`` filters on ``position_intent`` regardless,
