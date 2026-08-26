@@ -8,6 +8,7 @@ buried under them.
 from __future__ import annotations
 
 from core.trigger import ARMED, NO_TRIGGER, NO_ZONE_TAG
+from digest import book as diff_book
 from digest import diff, render
 
 
@@ -342,3 +343,52 @@ def test_a_stale_subject_is_not_relabelled_as_a_repeat():
     sent. Prefixing it would bury the one warning that invalidates everything below."""
     line = render.subject(_quiet(), repeat=True, stale_as_of="2026-08-20")
     assert line.startswith("STALE")
+
+
+# ── what the account is holding ───────────────────────────────────────────────
+
+def _held(asset="HOOD", **over):
+    kw = {"direction": "long", "qty": 63.0, "fill_price": 87.788413, "stop": 72.29,
+          "target": 117.0, "settled_at": "2026-08-05T03:10:27+00:00", "paper": True}
+    kw.update(over)
+    return diff_book.Holding(asset=asset, **kw)
+
+
+def test_an_open_position_is_named_with_its_stop():
+    """The BOOK section is a diff, so a position opened three weeks ago produces no line. On
+    2026-08-26 the account held META and HOOD and no digest had ever mentioned either."""
+    body = render.markdown(_quiet(), holding=(_held(),))
+    assert "HOLDING" in body
+    assert "HOOD" in body and "72.29" in body and "117" in body
+
+
+def test_holding_nothing_prints_no_section():
+    assert "HOLDING" not in render.markdown(_quiet(), holding=())
+
+
+def test_a_paper_position_is_labelled():
+    """A fill that never had to find a buyer reads exactly like a real one. Same rule the
+    closed line follows: the flag travels with the number."""
+    assert "paper" in render.markdown(_quiet(), holding=(_held(),)).lower()
+
+
+def test_a_live_position_is_not_labelled_paper():
+    body = render.markdown(_quiet(), holding=(_held(paper=False),))
+    assert "paper" not in body.lower()
+
+
+def test_a_position_missing_its_fill_still_prints_its_stop():
+    """Open either way, and the stop is the number worth reading."""
+    body = render.markdown(_quiet(), holding=(_held(qty=None, fill_price=None),))
+    assert "HOOD" in body and "72.29" in body
+
+
+def test_resting_entries_are_counted_not_listed():
+    """Five orders waiting at a price is worth knowing. Listing them would double the section
+    to say what `uv run book` says better."""
+    body = render.markdown(_quiet(), holding=(_held(),), resting=5)
+    assert "5" in body and "resting" in body
+
+
+def test_no_resting_entries_adds_nothing():
+    assert "resting" not in render.markdown(_quiet(), holding=(_held(),), resting=0)

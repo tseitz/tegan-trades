@@ -210,3 +210,73 @@ def test_an_unrecognised_outcome_is_surfaced_not_dropped():
     otherwise delete it from the digest permanently with nothing anywhere saying so."""
     events = _lines([_row("2026-08-20T06:00:00+00:00", "partially_filled", asset="SOL")])
     assert events and "SOL" in events[0] and "unrecognised" in events[0]
+
+
+# ── what the account is actually in ───────────────────────────────────────────
+#
+# Everything else in this module is a diff, so a position opened three weeks ago and still open
+# produces no line at all. On 2026-08-26 the account held META and HOOD and no digest had ever
+# mentioned either. Silence about an open position reads exactly like holding nothing.
+
+def test_a_position_is_built_from_the_placement_and_the_fill():
+    """Neither row is enough alone. ``record_reconciliation`` writes no asset, direction, stop
+    or target; the placement knows nothing about what actually filled."""
+    rows = [_row("2026-07-31T18:19:31+00:00", book.PLACED, asset="META", direction="long",
+                 entry=575.81, stop=516.07, target=800.0),
+            _row("2026-08-05T03:10:27+00:00", book.RECONCILED, asset=None,
+                 filled_qty=16.0, filled_avg_price=550.75)]
+    held = book.holdings(rows, {"k1"})
+    assert len(held) == 1
+    it = held[0]
+    assert it.asset == "META" and it.direction == "long"
+    assert it.qty == 16.0 and it.fill_price == 550.75
+    assert it.stop == 516.07 and it.target == 800.0
+    assert it.settled_at == "2026-08-05T03:10:27+00:00"
+
+
+def test_only_the_keys_asked_for_come_back():
+    """The caller decides what is open — it reads ``store.awaiting_exit_keys``, which knows
+    about exits this module cannot see from the placement rows alone."""
+    rows = [_row("2026-07-31T18:19:31+00:00", book.PLACED, key="open", asset="META"),
+            _row("2026-07-31T18:19:31+00:00", book.PLACED, key="shut", asset="SOL")]
+    assert [h.asset for h in book.holdings(rows, {"open"})] == ["META"]
+
+
+def test_a_paper_position_says_so():
+    """The same rule the closed line follows: the flag travels with the number. A paper fill
+    that never had to find a buyer reads exactly like a real one."""
+    rows = [_row("2026-07-31T18:19:31+00:00", book.PLACED, asset="META", network="paper")]
+    assert book.holdings(rows, {"k1"})[0].paper is True
+    live = [_row("2026-07-31T18:19:31+00:00", book.PLACED, asset="META", network="mainnet")]
+    assert book.holdings(live, {"k1"})[0].paper is False
+
+
+def test_a_position_with_no_fill_recorded_still_appears():
+    """It is open either way, and the stop is the number worth reading. Dropping it because one
+    field is missing would hide a real commitment."""
+    rows = [_row("2026-07-31T18:19:31+00:00", book.PLACED, asset="META", stop=516.07)]
+    it = book.holdings(rows, {"k1"})[0]
+    assert it.qty is None and it.fill_price is None
+    assert it.stop == 516.07
+
+
+def test_holdings_are_sorted_by_asset():
+    rows = [_row("2026-07-31T18:19:31+00:00", book.PLACED, key="a", asset="META"),
+            _row("2026-07-31T18:19:31+00:00", book.PLACED, key="b", asset="HOOD")]
+    assert [h.asset for h in book.holdings(rows, {"a", "b"})] == ["HOOD", "META"]
+
+
+def test_the_newest_fill_wins_when_a_key_reconciles_twice():
+    """The nightly reconciles every night, so a long-held position accumulates rows. An older
+    partial fill would understate the size."""
+    rows = [_row("2026-07-31T18:19:31+00:00", book.PLACED, asset="META"),
+            _row("2026-08-01T03:00:00+00:00", book.RECONCILED, asset=None, filled_qty=8.0,
+                 filled_avg_price=560.0),
+            _row("2026-08-05T03:10:27+00:00", book.RECONCILED, asset=None, filled_qty=16.0,
+                 filled_avg_price=550.75)]
+    it = book.holdings(rows, {"k1"})[0]
+    assert it.qty == 16.0 and it.fill_price == 550.75
+
+
+def test_nothing_open_is_an_empty_tuple_not_a_guess():
+    assert book.holdings([], set()) == ()

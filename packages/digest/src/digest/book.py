@@ -13,6 +13,8 @@ bury the rows that matter.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from execution.store import CLOSED, FAILED, PLACED, RECONCILED, REFUSED
 
 from digest.fmt import UNDATED, instant, num
@@ -23,10 +25,78 @@ __all__ = [
     "PLACED",
     "RECONCILED",
     "REFUSED",
+    "Holding",
     "asset_names",
+    "holdings",
     "lines",
     "since",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class Holding:
+    """One position the account is actually in.
+
+    Assembled from two rows because neither is enough alone: ``store.record_placement`` knows
+    the asset, direction, stop and target but nothing about what filled, and
+    ``store.record_reconciliation`` knows the fill and writes no asset at all.
+
+    Every field except ``asset`` may be ``None``. A position with a missing field is still a
+    position, and dropping it to keep the line tidy would hide a live commitment.
+    """
+    asset: str
+    direction: str | None = None
+    qty: float | None = None
+    fill_price: float | None = None
+    stop: float | None = None
+    target: float | None = None
+    settled_at: str | None = None
+    #: The fill never had to find a buyer. Travels with the position for the same reason it
+    #: travels with a closed trade's number — see ``_closed``.
+    paper: bool = False
+
+
+def holdings(all_rows, keys) -> tuple[Holding, ...]:
+    """What the account is in, for each key in ``keys``. Pure.
+
+    ``keys`` is supplied rather than derived here. Deciding what is still open means reading
+    exits, and ``store.awaiting_exit_keys`` already answers that against the same log — a
+    second, subtly different answer to a question the repo has answered once is exactly the
+    trap ``roster`` avoids by reusing ``brain.retrieve``.
+
+    **This is a standing state, not a diff**, which makes it the one exception in this module.
+    A position opened three weeks ago produces no event tonight, so a pure diff can never
+    mention it, and silence about an open position reads exactly like holding nothing.
+    """
+    wanted = set(keys)
+    if not wanted:
+        return ()
+
+    found: dict[str, dict] = {}
+    for row in sorted(all_rows, key=lambda r: (instant(r.get("at")) or UNDATED)):
+        key = row.get("candidate_key")
+        if key not in wanted:
+            continue
+        state = found.setdefault(key, {})
+        # Oldest first, so a later row wins on any field it carries. The nightly reconciles
+        # every night, so a long-held position accumulates rows and an older partial fill would
+        # otherwise understate the size.
+        for field in ("asset", "direction", "stop", "target", "network"):
+            if row.get(field) is not None:
+                state[field] = row.get(field)
+        if row.get("outcome") == RECONCILED and row.get("filled_qty") is not None:
+            state["qty"] = row.get("filled_qty")
+            state["fill_price"] = row.get("filled_avg_price")
+            state["settled_at"] = row.get("at")
+
+    return tuple(sorted(
+        (Holding(asset=state.get("asset") or "?", direction=state.get("direction"),
+                 qty=state.get("qty"), fill_price=state.get("fill_price"),
+                 stop=state.get("stop"), target=state.get("target"),
+                 settled_at=state.get("settled_at"),
+                 paper=state.get("network") == "paper")
+         for state in found.values()),
+        key=lambda h: h.asset))
 
 
 def asset_names(all_rows) -> dict:

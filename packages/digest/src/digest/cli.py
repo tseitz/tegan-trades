@@ -161,24 +161,33 @@ def _decided(warn) -> dict:
         return {}
 
 
-def _open_assets(orders, orders_path, warn) -> set[str]:
-    """Assets the book is still holding, by candidate key against the order log.
+def _open_keys(orders_path, warn) -> tuple[set[str], set[str]]:
+    """``(held, resting)`` — filled positions, and entries still waiting at a price.
+
+    Kept apart rather than unioned. They are different commitments: one is money in the market
+    with a stop under it, the other is an order that may never fill. The union is still what
+    roster scope wants, and ``_open_assets`` takes it there.
 
     Takes the path rather than reaching for ``store.DEFAULT_PATH``. It did reach, which made
     ``--orders`` half-apply: the BOOK section honoured the override while roster scope silently
     read the real production log. A flag that overrides some of its callers is worse than one
     that does not exist.
     """
-    names = book_mod.asset_names(orders)
     try:
-        keys = store.unsettled_keys(orders_path) | store.awaiting_exit_keys(orders_path)
+        return store.awaiting_exit_keys(orders_path), store.unsettled_keys(orders_path)
     except (OSError, ValueError) as exc:
-        warn(f"warning: could not read open positions, roster scope is candidates only: {exc}")
-        return set()
+        warn(f"warning: could not read open positions, so the HOLDING section is missing and "
+             f"roster scope is candidates only: {exc}")
+        return set(), set()
+
+
+def _open_assets(orders, keys: set[str]) -> set[str]:
+    """Assets behind ``keys``, for scoping the roster section."""
+    names = book_mod.asset_names(orders)
     return {names[key] for key in keys if key in names}
 
 
-def _roster_section(current: dict, orders, orders_path, *, previous, with_llm: bool, seen: dict,
+def _roster_section(current: dict, orders, open_keys, *, previous, with_llm: bool, seen: dict,
                     warn) -> tuple[str | None, str | None, tuple[str, ...]]:
     """``(narration, withheld, reported)`` — at most one of the first two is set.
 
@@ -197,7 +206,7 @@ def _roster_section(current: dict, orders, orders_path, *, previous, with_llm: b
     them silently — which is the one failure this section cannot surface.
     """
     assets = {row.get("asset") for row in current.get("rows", []) if row.get("asset")}
-    assets |= _open_assets(orders, orders_path, warn)
+    assets |= _open_assets(orders, open_keys)
     if not assets:
         return None, None, ()
 
@@ -287,9 +296,12 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
         limit=BOOK_EVENT_LIMIT,
         window_unknown=window is None and previous is not None)
 
+    held_keys, resting_keys = _open_keys(orders_path or store.DEFAULT_PATH, warn)
+    holding = book_mod.holdings(orders, held_keys)
+
     memory = state.load(state_path, warn=warn) if state_path else {}
     narration, withheld, reported = _roster_section(
-        current, orders, orders_path or store.DEFAULT_PATH, previous=previous,
+        current, orders, held_keys | resting_keys, previous=previous,
         with_llm=with_llm, seen=state.roster_seen(memory), warn=warn)
 
     # The one comparison that decides whether anything else can be believed.
@@ -300,6 +312,7 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
                            roster_withheld=withheld, xai_month=xai_month,
                            xai_cap=_xai_cap(),
                            xai_changed=state.xai_changed(memory, xai_month),
+                           holding=holding, resting=len(resting_keys),
                            stale_as_of=stale, problems=warn.items)
     subject = render.subject(delta, book=events, stale_as_of=stale, problems=len(warn.items),
                              repeat=state.is_repeat(memory, delta.previous_run))

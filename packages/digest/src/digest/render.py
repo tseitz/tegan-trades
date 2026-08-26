@@ -97,6 +97,7 @@ def subject(delta: diff.QueueDelta, book=None, *, stale_as_of: str | None = None
 def markdown(delta: diff.QueueDelta, *, run=None, book=None, roster: str | None = None,
              roster_withheld: str | None = None, xai_month: float | None = None,
              xai_cap: float | None = None, xai_changed: bool = True,
+             holding=(), resting: int = 0,
              stale_as_of: str | None = None, problems=()) -> str:
     """The digest body.
 
@@ -142,6 +143,9 @@ def markdown(delta: diff.QueueDelta, *, run=None, book=None, roster: str | None 
         out.append("ROSTER MOVED")
         out.append(roster)
 
+    # Above the book's events: what you are in outranks what the account did overnight, and on
+    # most nights the events are about orders that never became a position.
+    out.extend(_holding_section(holding, resting))
     out.extend(_book_section(book))
     out.extend(_run_section(run, xai_month=xai_month, xai_cap=xai_cap,
                             xai_changed=xai_changed))
@@ -256,6 +260,39 @@ def _last_state(gone: diff.Departure) -> str:
         return ""
     return (f" (was score {gone.row.get('score', 0):.2f} · "
             f"R:R {gone.row.get('reward_risk', 0):.2f})")
+
+
+def _holding_section(holding, resting: int) -> list[str]:
+    """What the account is in right now. The one standing state in a digest of diffs.
+
+    It has to be standing, and that is the whole point: a position opened three weeks ago
+    produces no event tonight, so every other section here is structurally incapable of
+    mentioning it. The account held META and HOOD for three weeks and no digest had ever named
+    either.
+
+    Resting entries are counted, not listed. Five orders waiting at a price is worth knowing;
+    listing them would double the section to say what ``uv run book`` says better.
+    """
+    if not holding:
+        return []
+
+    # Paper travels with the position for the reason it travels with a closed trade's number:
+    # a fill that never had to find a buyer reads exactly like a real one.
+    note = ", ".join(
+        part for part in (
+            f"{len(holding)} open",
+            f"{resting} entries resting" if resting else "",
+            "paper" if all(h.paper for h in holding) else "",
+        ) if part)
+
+    out = [f"HOLDING — {note}"]
+    for held in holding:
+        fill = (f"{held.qty:g} @ {num(held.fill_price)}"
+                if held.qty is not None and held.fill_price is not None else "fill not recorded")
+        since = f" · since {held.settled_at[:10]}" if held.settled_at else ""
+        out.append(f"  {held.asset:<8} {(held.direction or '?').upper():<6} {fill} · "
+                   f"stop {num(held.stop)} · target {num(held.target)}{since}")
+    return ["", *out]
 
 
 def _book_section(book) -> list[str]:
