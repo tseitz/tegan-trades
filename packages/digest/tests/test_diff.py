@@ -280,3 +280,83 @@ def test_a_candidate_that_was_here_last_night_is_not_new():
     delta = diff.compare(_snap("2026-08-19", [_entry("a", trigger_state=NO_ZONE_TAG)]),
                          _snap("2026-08-20", [_entry("a", trigger_state=ARMED)]))
     assert delta.arrived[0].new_tonight is False
+
+
+# ── one setup rolling to a new zone is one event, not two ─────────────────────
+#
+# The candidate key is content-addressed on the zone — asset, direction, block date, top and
+# bottom (``core.setups.Candidate.key``). So a setup that moves to a different order block
+# leaves under its old key and arrives under a new one, and the digest reported both: the same
+# asset in NEW IN QUEUE and in FELL OUT, in the same email, in the same direction. Read
+# literally that is a contradiction, and it happened on two of nine departures the night this
+# was written.
+
+def _pair(before_rows, after_rows, **kw):
+    return diff.compare(_snap("2026-08-20", before_rows), _snap("2026-08-21", after_rows), **kw)
+
+
+def test_a_setup_that_moved_to_a_new_zone_is_one_event():
+    delta = _pair([_entry("old", asset="JTO", entry=0.60)],
+                  [_entry("new", asset="JTO", entry=0.52)])
+    assert len(delta.rolled) == 1
+    roll = delta.rolled[0]
+    assert roll.asset == "JTO"
+    assert roll.was["entry"] == 0.60 and roll.now["entry"] == 0.52
+
+
+def test_a_rolled_zone_is_removed_from_both_of_the_other_lists():
+    """Leaving it in either would restate the same event as a second, contradictory one."""
+    delta = _pair([_entry("old", asset="JTO", entry=0.60)],
+                  [_entry("new", asset="JTO", entry=0.52)])
+    assert delta.entered == ()
+    assert delta.departed == ()
+
+
+def test_the_other_arrivals_and_departures_are_untouched(): 
+    delta = _pair([_entry("old", asset="JTO"), _entry("gone", asset="AI")],
+                  [_entry("new", asset="JTO", entry=0.52), _entry("fresh", asset="RKLB")])
+    assert [r["asset"] for r in delta.entered] == ["RKLB"]
+    assert [d.row["asset"] for d in delta.departed] == ["AI"]
+    assert [r.asset for r in delta.rolled] == ["JTO"]
+
+
+def test_the_same_asset_in_two_directions_is_not_a_roll():
+    """A long leaving and a short arriving is a reversal, which is a different and much louder
+    event than a zone moving. Pairing them would hide it."""
+    delta = _pair([_entry("old", asset="JTO", direction="long")],
+                  [_entry("new", asset="JTO", direction="short")])
+    assert delta.rolled == ()
+    assert len(delta.entered) == 1 and len(delta.departed) == 1
+
+
+def test_two_zones_leaving_and_two_arriving_is_refused_rather_than_guessed():
+    """Nothing says which replaced which, and inventing a pairing would print a confident wrong
+    "entry moved X to Y" beside a real event — the failure this module exists to avoid."""
+    delta = _pair([_entry("o1", asset="JTO", entry=0.60), _entry("o2", asset="JTO", entry=0.70)],
+                  [_entry("n1", asset="JTO", entry=0.52), _entry("n2", asset="JTO", entry=0.55)])
+    assert delta.rolled == ()
+    assert len(delta.entered) == 2 and len(delta.departed) == 2
+
+
+def test_a_departure_you_ruled_on_is_not_re_read_as_a_roll():
+    """You rejecting it is the better explanation, and it is the one you would act on. A new
+    zone arriving on the same asset does not undo the ruling."""
+    decided = {"old": {"decision": "rejected", "decided_at": "2026-08-21T01:00:00+00:00"}}
+    delta = _pair([_entry("old", asset="JTO")],
+                  [_entry("new", asset="JTO", entry=0.52)], decided=decided)
+    assert delta.rolled == ()
+    assert delta.departed[0].detail == "you marked it rejected"
+    assert len(delta.entered) == 1
+
+
+def test_an_excluded_asset_is_not_re_read_as_a_roll():
+    delta = _pair([_entry("old", asset="JTO")],
+                  [_entry("new", asset="JTO", entry=0.52)],
+                  excluded={"JTO": "I don't trade this"})
+    assert delta.rolled == ()
+    assert delta.departed[0].detail == "I don't trade this"
+
+
+def test_a_roll_does_not_count_as_quiet():
+    delta = _pair([_entry("old", asset="JTO")], [_entry("new", asset="JTO", entry=0.52)])
+    assert not delta.is_quiet

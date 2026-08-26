@@ -25,6 +25,7 @@ from pathlib import Path
 #: Sections, so a caller cannot typo a key into a silently empty memory.
 ROSTER = "roster_reported"
 XAI = "xai_reported"
+WINDOW = "last_window_start"
 
 
 def load(path: Path, *, warn=None) -> dict:
@@ -66,6 +67,22 @@ def roster_seen(state: dict) -> dict:
     """The reported-event map, keyed as ``roster.event_keys`` builds them."""
     seen = state.get(ROSTER)
     return seen if isinstance(seen, dict) else {}
+
+
+def is_repeat(state: dict, window_start: str | None) -> bool:
+    """Whether this digest diffs against the same baseline as the last one.
+
+    **Keyed on the window START, not on the current run.** Two digests went out on 2026-08-25
+    saying the same things; ``setups`` had run again between them, so their *current* stamps
+    differed and comparing those catches nothing. What they shared was the baseline — both
+    diffed against the 2026-08-23 run, which is what made the content identical.
+
+    A ``None`` baseline is the bootstrap night and never counts. Marking that "again" would be
+    wrong on the one run where the reader has least context to judge the header by.
+    """
+    if window_start is None:
+        return False
+    return state.get(WINDOW) == window_start
 
 
 def xai_changed(state: dict, month_total: float | None) -> bool:

@@ -301,11 +301,13 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
                            xai_cap=_xai_cap(),
                            xai_changed=state.xai_changed(memory, xai_month),
                            stale_as_of=stale, problems=warn.items)
-    subject = render.subject(delta, book=events, stale_as_of=stale, problems=len(warn.items))
-    return subject, body, _next_memory(memory, reported, xai_month) if state_path else None
+    subject = render.subject(delta, book=events, stale_as_of=stale, problems=len(warn.items),
+                             repeat=state.is_repeat(memory, delta.previous_run))
+    return (subject, body,
+            _next_memory(memory, reported, xai_month, delta.previous_run) if state_path else None)
 
 
-def _next_memory(memory: dict, reported, xai_month: float) -> dict:
+def _next_memory(memory: dict, reported, xai_month: float, window_start: str | None) -> dict:
     """Tonight's memory. Pruned every run, not only on runs that reported something, so a quiet
     week still clears keys that have aged out."""
     return {
@@ -313,6 +315,7 @@ def _next_memory(memory: dict, reported, xai_month: float) -> dict:
         state.ROSTER: roster.remember(state.roster_seen(memory), reported,
                                       on=datetime.now(UTC).date()),
         state.XAI: xai_month,
+        state.WINDOW: window_start,
     }
 
 

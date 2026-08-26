@@ -34,8 +34,12 @@ def _snap(as_of: str, rows, **over) -> dict:
     return snap
 
 
-def _quiet() -> diff.QueueDelta:
-    return diff.compare(_snap("2026-08-19", [_entry("a")]), _snap("2026-08-20", [_entry("a")]))
+def _quiet(**over) -> diff.QueueDelta:
+    """A night where nothing moved, with any one section pushed back in by keyword. Lets a test
+    about one section build exactly that section and nothing else."""
+    from dataclasses import replace
+    delta = diff.compare(_snap("2026-08-19", [_entry("a")]), _snap("2026-08-20", [_entry("a")]))
+    return replace(delta, **over) if over else delta
 
 
 # ── sections appear only when they have something to say ──────────────────────
@@ -257,3 +261,84 @@ def test_the_run_line_itself_is_never_suppressed_by_a_quiet_spend():
         {"name": "verify-roster", "status": "warn"}]}, xai_month=21.41, xai_cap=20.0,
         xai_changed=False)
     assert "verify-roster" in body
+
+
+# ── a zone moving, a departure's last state, and plain words for trigger states ──
+
+def _row(asset="JTO", **over):
+    row = {"key": over.pop("key", "k"), "asset": asset, "direction": "long", "score": 0.54,
+           "entry": 0.52, "stop": 0.46, "target": 0.80, "price": 0.55, "reward_risk": 6.05,
+           "zone_timeframe": "daily", "agreement": 2}
+    row.update(over)
+    return row
+
+
+def test_a_zone_that_moved_prints_both_sides():
+    """Reported as an arrival plus a departure this was the same asset in NEW IN QUEUE and in
+    FELL OUT of one email — a flat contradiction on the page."""
+    delta = _quiet(rolled=(diff.ZoneRoll(was=_row(entry=0.5971, reward_risk=3.93),
+                                         now=_row(entry=0.5165, reward_risk=6.05)),))
+    body = render.markdown(delta)
+    assert "ZONE MOVED" in body
+    assert "0.5971" in body and "0.5165" in body
+    assert "3.93" in body and "6.05" in body
+
+
+def test_a_zone_move_does_not_read_as_a_quiet_night():
+    body = render.markdown(_quiet(rolled=(diff.ZoneRoll(was=_row(), now=_row()),)))
+    assert "Quiet night" not in body
+
+
+def test_an_unexplained_departure_carries_what_it_last_was():
+    """"No longer qualifies" alone is the emptiest line in the digest. Nothing here claims a
+    cause — the numbers are what the row last recorded, which is the only honest thing
+    available and still tells you whether losing it mattered."""
+    delta = _quiet(departed=(diff.Departure(row=_row(asset="AI", score=0.44, reward_risk=2.66),
+                                            reason=diff.UNKNOWN),))
+    body = render.markdown(delta)
+    assert "no longer qualifies" in body
+    assert "0.44" in body and "2.66" in body
+
+
+def test_a_departure_with_a_real_cause_does_not_get_the_numbers():
+    """The cause is the point, and it is what you would act on. Padding it with score and R:R
+    buries the one word that matters."""
+    delta = _quiet(departed=(diff.Departure(row=_row(asset="QCOM"), reason=diff.DECIDED,
+                                            detail="you marked it approved"),))
+    body = render.markdown(delta)
+    assert "you marked it approved" in body
+    assert "0.54" not in body
+
+
+def test_a_trigger_state_is_printed_in_plain_words():
+    """`no_zone_tag` is an internal enum name. It reached the inbox unchanged."""
+    move = diff.TriggerMove(row=_row(), was=NO_ZONE_TAG, now=ARMED, kind=diff.TRIGGERED)
+    body = render.markdown(_quiet(arrived=(move,)))
+    assert "no_zone_tag" not in body
+    assert "price had not reached the zone" in body
+
+
+def test_an_unknown_trigger_state_is_printed_as_itself_rather_than_dropped():
+    """A state this map has not been taught is still a fact about the night. Printing the raw
+    value is ugly; silently printing nothing would hide that the map went stale."""
+    move = diff.TriggerMove(row=_row(), was="something_new", now=ARMED, kind=diff.TRIGGERED)
+    assert "something_new" in render.markdown(_quiet(arrived=(move,)))
+
+
+def test_a_repeat_says_so_on_the_subject_line():
+    """Two digests went out on 2026-08-25 with byte-identical subjects. Nothing in either said
+    it was the second."""
+    assert render.subject(_quiet(), repeat=True).startswith("again ·")
+
+
+def test_a_repeat_marker_does_not_displace_the_problem_marker():
+    """`!!` is the louder of the two and has to stay first, where the eye lands."""
+    line = render.subject(_quiet(), repeat=True, problems=2)
+    assert line.startswith("!!") and "again" in line
+
+
+def test_a_stale_subject_is_not_relabelled_as_a_repeat():
+    """STALE means the numbers describe the wrong night, which outranks how many times it was
+    sent. Prefixing it would bury the one warning that invalidates everything below."""
+    line = render.subject(_quiet(), repeat=True, stale_as_of="2026-08-20")
+    assert line.startswith("STALE")

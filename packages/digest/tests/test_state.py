@@ -89,3 +89,26 @@ def test_the_spend_line_speaks_only_on_a_change(recorded, now, expected):
 def test_an_unknown_spend_total_is_not_a_change():
     """`None` means the reader was never given a number, not that it held still."""
     assert state.xai_changed({state.XAI: 21.41}, None) is False
+
+
+# ── a second run against the same baseline is a repeat ───────────────────────
+
+def test_a_fresh_baseline_is_not_a_repeat():
+    assert state.is_repeat({state.WINDOW: "2026-08-23T17:49:46Z"}, "2026-08-25T13:01:03Z") is False
+
+
+def test_the_same_baseline_twice_is_a_repeat():
+    """Both Aug 25 digests diffed against the same Aug 23 run and said the same things. The
+    *current* stamp differed — `setups` had run again — so comparing that catches nothing."""
+    same = "2026-08-23T17:49:46Z"
+    assert state.is_repeat({state.WINDOW: same}, same) is True
+
+
+def test_a_first_ever_run_is_not_a_repeat():
+    assert state.is_repeat({}, "2026-08-25T13:01:03Z") is False
+
+
+def test_an_unknown_baseline_is_not_a_repeat():
+    """`None` is the bootstrap night. Marking it "again" would be wrong on the one run where
+    the reader most needs to trust the header."""
+    assert state.is_repeat({state.WINDOW: None}, None) is False

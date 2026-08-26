@@ -18,6 +18,8 @@ client, which means one renderer and nothing to drift.
 
 from __future__ import annotations
 
+from core.trigger import ARMED, FIRED, NO_TRIGGER, NO_ZONE_TAG, UNREADABLE
+
 from digest import diff
 from digest.fmt import num
 
@@ -26,9 +28,28 @@ from digest.fmt import num
 # anyone can act on. At 90% the remaining headroom is one or two nights and that is a decision.
 SPEND_LOUD_AT = 0.90
 
+# Trigger states in words a person reads at 06:30. These are internal enum values and
+# ``no_zone_tag`` reached the inbox unchanged for weeks — it is the *most common* previous state
+# in the arrivals section, so the one line that carries entry and stop levels was also the one
+# leaking a variable name.
+#
+# A state missing from this map prints as its raw value rather than as nothing. Ugly is
+# recoverable; silence would hide that the map went stale behind ``core.trigger``.
+_TRIGGER_WORDS = {
+    NO_ZONE_TAG: "price had not reached the zone",
+    NO_TRIGGER: "no break yet",
+    ARMED: "armed",
+    FIRED: "fired",
+    UNREADABLE: "too thin to read",
+}
+
+
+def _in_words(state: str | None) -> str:
+    return _TRIGGER_WORDS.get(state, state) if state else "unknown"
+
 
 def subject(delta: diff.QueueDelta, book=None, *, stale_as_of: str | None = None,
-            problems: int = 0) -> str:
+            problems: int = 0, repeat: bool = False) -> str:
     """The one line that has to work for someone who never opens the mail.
 
     Never empty. A blank or absent subject is indistinguishable from a job that did not run,
@@ -52,12 +73,22 @@ def subject(delta: diff.QueueDelta, book=None, *, stale_as_of: str | None = None
             parts.append(f"{len(delta.entered)} new")
         if delta.departed:
             parts.append(f"{len(delta.departed)} out")
+        if delta.rolled:
+            parts.append(f"{len(delta.rolled)} rezoned")
         parts.extend(_book_subject(book))
         if not parts:
             parts.append(f"quiet · {delta.qualified} qualified")
 
+    # Two digests went out on 2026-08-25 with byte-identical subjects and nothing in either
+    # said it was the second. Marked rather than suppressed: a digest that silently does not
+    # arrive is indistinguishable from a nightly that did not run, which is the failure the
+    # always-send cadence exists to avoid.
+    if repeat:
+        parts.insert(0, "again")
+
     # Appended to every shape, including bootstrap. A first run that half-failed is still a
-    # half-failed run, and the subject is where that has to show.
+    # half-failed run, and the subject is where that has to show. ``!!`` stays leftmost — it is
+    # the louder of the two markers and the eye lands there first.
     if problems:
         return f"!! {' · '.join(parts)} · {problems} problem(s)"
     return " · ".join(parts)
@@ -94,6 +125,9 @@ def markdown(delta: diff.QueueDelta, *, run=None, book=None, roster: str | None 
         out.extend(_caveats(delta))
         out.extend(_trigger_section(delta))
         out.extend(_entered_section(delta))
+        # Above the departures: a rolled zone is the reason an asset can look like it left, and
+        # a caveat under the rows it explains arrives after the reader has taken them as fact.
+        out.extend(_rolled_section(delta))
         out.extend(_departed_section(delta))
         if delta.is_quiet:
             out.append(f"Quiet night — {delta.qualified} qualified, "
@@ -129,7 +163,7 @@ def _trigger_section(delta: diff.QueueDelta) -> list[str]:
     for move in sorted(delta.arrived, key=lambda m: (m.kind != diff.TRIGGERED, m.asset)):
         row = move.row
         what = "armed" if move.kind == diff.TRIGGERED else "price reached the zone"
-        origin = "new tonight" if move.new_tonight else f"was {move.was}"
+        origin = "new tonight" if move.new_tonight else _in_words(move.was)
         out.append(f"  {row['asset']:<8} {row['direction'].upper():<6} "
                    f"{row.get('zone_timeframe', '?')} · entry {num(row.get('entry'))} · "
                    f"stop {num(row.get('stop'))} · target {num(row.get('target'))}")
@@ -172,15 +206,56 @@ def _caveats(delta: diff.QueueDelta) -> list[str]:
     return out
 
 
+def _rolled_section(delta: diff.QueueDelta) -> list[str]:
+    """One setup drawn against a different block. Its own section on purpose.
+
+    Printed as an arrival plus a departure this was the same asset, same direction, in NEW IN
+    QUEUE and FELL OUT of one email — which reads as the pipeline contradicting itself. Both
+    entries are shown because the whole point is that the levels moved.
+    """
+    if not delta.rolled:
+        return []
+    out = ["ZONE MOVED — same thesis, different block"]
+    for roll in sorted(delta.rolled, key=lambda r: r.asset):
+        # Entry and R:R only. The stop moved too, but it is derived from the block and adds a
+        # fourth and fifth number to a line whose job is "this got better or worse" — and under
+        # $1 ``num`` renders it to six significant figures, which is noise nobody acts on.
+        # Whether the trade improved is exactly what R:R says.
+        out.append(f"  {roll.asset:<8} {roll.direction.upper():<6} "
+                   f"entry {num(roll.was.get('entry'))} → {num(roll.now.get('entry'))} · "
+                   f"R:R {roll.was.get('reward_risk', 0):.2f} → "
+                   f"{roll.now.get('reward_risk', 0):.2f}")
+    out.append("")
+    return out
+
+
 def _departed_section(delta: diff.QueueDelta) -> list[str]:
     if not delta.departed:
         return []
     out: list[str] = ["FELL OUT"]
     for gone in sorted(delta.departed, key=lambda d: d.row["asset"]):
         out.append(f"  {gone.row['asset']:<8} {gone.row['direction'].upper():<6} "
-                   f"{gone.explanation}")
+                   f"{gone.explanation}{_last_state(gone)}")
     out.append("")
     return out
+
+
+def _last_state(gone: diff.Departure) -> str:
+    """What the row last recorded, for a departure with no knowable cause.
+
+    **Not a cause, and it must not be read as one.** Nothing here explains why the setup left;
+    ``queue_snapshot`` records the qualified population and never a per-row reason, and the
+    corpus-wide rejection counter cannot be attributed to a row. These are simply the numbers
+    the row carried the last time it qualified, and they answer the question the bare line
+    could not: whether losing this one mattered.
+
+    Withheld where a real cause exists. "You marked it approved" is the point of that line, and
+    padding it with score and R:R buries the one word worth reading.
+    """
+    if gone.reason != diff.UNKNOWN:
+        return ""
+    return (f" (was score {gone.row.get('score', 0):.2f} · "
+            f"R:R {gone.row.get('reward_risk', 0):.2f})")
 
 
 def _book_section(book) -> list[str]:

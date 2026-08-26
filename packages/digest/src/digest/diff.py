@@ -96,6 +96,30 @@ class Departure:
 
 
 @dataclass(frozen=True, slots=True)
+class ZoneRoll:
+    """One setup that moved to a different zone. Not a departure and an arrival.
+
+    ``core.setups.Candidate.key`` is content-addressed on the zone — asset, direction, block
+    date, top and bottom — so a setup rolling to a new order block leaves under its old key and
+    arrives under a new one. Reported as two events that is a flat contradiction on the page:
+    the same asset, same direction, in NEW IN QUEUE and in FELL OUT of the same email. It was
+    two of nine departures the night this was written.
+
+    The thesis did not change. The block it is drawn against did.
+    """
+    was: dict
+    now: dict
+
+    @property
+    def asset(self) -> str:
+        return self.now["asset"]
+
+    @property
+    def direction(self) -> str:
+        return self.now["direction"]
+
+
+@dataclass(frozen=True, slots=True)
 class QueueDelta:
     current_run: str
     previous_run: str | None
@@ -106,6 +130,9 @@ class QueueDelta:
     arrived: tuple[TriggerMove, ...] = ()
     entered: tuple[dict, ...] = ()
     departed: tuple[Departure, ...] = ()
+    #: Setups whose zone moved. Held apart from ``entered`` and ``departed`` — the rows are in
+    #: exactly one of the three, so a reader counting them cannot double-count the same setup.
+    rolled: tuple[ZoneRoll, ...] = ()
     rejection_delta: dict[str, int] = field(default_factory=dict)
     filters_changed: dict[str, tuple] = field(default_factory=dict)
     score_version_changed: tuple[int | None, int | None] | None = None
@@ -119,7 +146,7 @@ class QueueDelta:
     @property
     def is_quiet(self) -> bool:
         """Nothing a reader has to act on. The subject line still gets written; it just says so."""
-        return not (self.arrived or self.entered or self.departed)
+        return not (self.arrived or self.entered or self.departed or self.rolled)
 
 
 def current(snapshots) -> dict | None:
@@ -179,6 +206,7 @@ def compare(previous: dict | None, current: dict, *,
                   since=previous.get("run"))
         for key, row in before.items() if key not in after
     )
+    rolled, entered, departed = _rolls(entered, departed)
 
     return QueueDelta(
         current_run=current.get("run", ""),
@@ -188,6 +216,7 @@ def compare(previous: dict | None, current: dict, *,
         arrived=_arrivals(before, after),
         entered=entered,
         departed=departed,
+        rolled=rolled,
         rejection_delta=_counter_delta(previous.get("rejections", {}),
                                        current.get("rejections", {})),
         filters_changed=_changed(previous.get("filters", {}), current.get("filters", {})),
@@ -196,6 +225,46 @@ def compare(previous: dict | None, current: dict, *,
             if previous.get("score_version") != current.get("score_version") else None
         ),
     )
+
+
+def _rolls(entered, departed) -> tuple[tuple, tuple, tuple]:
+    """Pair each departure with the arrival that replaced it. Returns the three lists.
+
+    Paired on ``(asset, direction)`` and **only when exactly one of each side is available**.
+    Two zones leaving and two arriving on one asset gives nothing to say which replaced which,
+    and inventing a pairing would print a confident wrong "entry moved 0.60 to 0.52" beside a
+    real event — the failure this module exists to refuse. Ambiguity stays as separate rows,
+    which is noisier and correct.
+
+    A direction change is deliberately not a roll. A long leaving while a short arrives is a
+    reversal, which is a louder event than a zone moving, and folding it into one line would
+    hide the part worth reading.
+
+    Only ``UNKNOWN`` departures are eligible. If you ruled on it or the asset is excluded, that
+    is both the better explanation and the one you would act on — a new zone arriving does not
+    undo the ruling.
+    """
+    open_slots: dict[tuple, list] = {}
+    for row in entered:
+        open_slots.setdefault((row.get("asset"), row.get("direction")), []).append(row)
+
+    rolls, kept_departed, paired = [], [], set()
+    for gone in departed:
+        slot = (gone.row.get("asset"), gone.row.get("direction"))
+        matches = open_slots.get(slot, ())
+        # ``len(matches) == 1`` on its own is not enough: two departures against one arrival is
+        # equally ambiguous, so the departure side is counted too.
+        leaving = sum(1 for d in departed
+                      if (d.row.get("asset"), d.row.get("direction")) == slot
+                      and d.reason == UNKNOWN)
+        if gone.reason == UNKNOWN and len(matches) == 1 and leaving == 1:
+            rolls.append(ZoneRoll(was=gone.row, now=matches[0]))
+            paired.add(matches[0]["key"])
+        else:
+            kept_departed.append(gone)
+    return (tuple(rolls),
+            tuple(row for row in entered if row["key"] not in paired),
+            tuple(kept_departed))
 
 
 def _arrivals(before: dict, after: dict) -> tuple[TriggerMove, ...]:

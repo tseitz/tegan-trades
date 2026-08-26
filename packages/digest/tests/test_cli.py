@@ -394,3 +394,30 @@ def test_a_quiet_roster_and_an_already_told_one_do_not_read_alike(tmp_path, toda
     stances = [_stance("Benjamin Cowen", "BTC", "bullish", "2026-08-20")]
     cli.state.save(path, _roster_night(tmp_path, monkeypatch, stances, path)[2])
     assert "nothing new" in _roster_night(tmp_path, monkeypatch, stances, path)[1]
+
+
+def test_a_second_digest_against_the_same_baseline_is_marked(tmp_path, today):
+    """Two went out on 2026-08-25. `setups` had run again between them, so their *current*
+    stamps differed and only the shared baseline gives them away."""
+    path = tmp_path / "state.json"
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-20", [_entry("a")]),
+                   _snap("2026-08-21", [_entry("a")]))
+    first, _, memory = build_with_memory(snaps, tmp_path, state_path=path)
+    assert not first.startswith("again")
+    cli.state.save(path, memory)
+
+    # A fresh `setups` run lands, so the current stamp moves but the baseline does not.
+    _write(tmp_path / "q.jsonl", _snap("2026-08-20", [_entry("a")]),
+           _snap("2026-08-21", [_entry("a")]),
+           _snap("2026-08-21", [_entry("a")], run="2026-08-21T13:01:03Z"))
+    second, _, _ = build_with_memory(snaps, tmp_path, state_path=path)
+    assert second.startswith("again ·")
+
+
+def test_the_next_night_is_not_marked_as_a_repeat(tmp_path, today):
+    path = tmp_path / "state.json"
+    cli.state.save(path, {cli.state.WINDOW: "2026-08-19T06:20:00Z"})
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-20", [_entry("a")]),
+                   _snap("2026-08-21", [_entry("a")]))
+    subject, _ = build(snaps, tmp_path, state_path=path)
+    assert not subject.startswith("again")
