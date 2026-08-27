@@ -9,6 +9,7 @@ from pathlib import Path
 from core.env import load_env
 
 from ingestion import spend, verify, x_roster
+from ingestion.channel import TABS
 from ingestion.roster import (
     DEFAULT_MAX_AGE_DAYS,
     DEFAULT_MAX_VIDEOS,
@@ -49,6 +50,9 @@ def channel_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--person", default="ad-hoc", help="label stored in metadata.person")
     parser.add_argument("--max-videos", type=int, default=DEFAULT_MAX_VIDEOS)
     parser.add_argument("--max-age-days", type=int, default=DEFAULT_MAX_AGE_DAYS)
+    parser.add_argument("--tabs", nargs="+", choices=TABS, default=list(TABS),
+                        help="channel tabs to read (default: both). --max-videos is a "
+                             "PER-TAB cap, so both tabs read up to twice that many.")
     args = parser.parse_args(argv)
 
     target = ChannelTarget(
@@ -56,6 +60,7 @@ def channel_main(argv: list[str] | None = None) -> int:
         channel=args.channel,
         max_videos=args.max_videos,
         max_age_days=args.max_age_days,
+        tabs=tuple(args.tabs),
     )
     try:
         result = ingest_channel(target)

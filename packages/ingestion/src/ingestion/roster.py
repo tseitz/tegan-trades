@@ -105,6 +105,7 @@ class ChannelTarget:
     channel: str
     max_videos: int
     max_age_days: int
+    tabs: tuple[str, ...] = channel_mod.TABS
 
 
 def load_watchlist(path: Path = DEFAULT_WATCHLIST) -> dict:
@@ -126,8 +127,30 @@ def active_targets(watchlist: dict) -> list[ChannelTarget]:
                     channel=ch["id"],
                     max_videos=max_videos,
                     max_age_days=max_age_days,
+                    tabs=_tabs(ch, person["name"]),
                 ))
     return targets
+
+
+def _tabs(ch: dict, person: str) -> tuple[str, ...]:
+    """Which channel tabs to read, defaulting to both.
+
+    Raises on an unrecognised name rather than dropping it. A dropped tab still ingests
+    whatever is left, so `tabs: [video]` (a typo for `videos`) would look like a working
+    narrow config while quietly reading nothing — or, if it fell back to the default,
+    while quietly reading everything. Both failures are invisible in the run summary,
+    and the second one silently un-does the throttle the field was added to apply.
+    """
+    raw = ch.get("tabs")
+    if raw is None:
+        return channel_mod.TABS
+    unknown = [t for t in raw if t not in channel_mod.TABS]
+    if unknown:
+        raise ValueError(
+            f"{person} ({ch.get('id')}): unknown tab(s) {unknown}; "
+            f"valid tabs are {list(channel_mod.TABS)}"
+        )
+    return tuple(raw)
 
 
 @dataclass(frozen=True)
@@ -231,7 +254,7 @@ def ingest_channel(
         registry = deadletters.record(vid, reason, registry=registry, today=today)
         result.dead.append(vid)
 
-    for stub in resolve(target.channel, target.max_videos):
+    for stub in resolve(target.channel, target.max_videos, tabs=target.tabs):
         vid = stub.video_id
         if exists("youtube", vid):
             result.skipped.append(vid)

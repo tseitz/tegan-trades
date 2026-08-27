@@ -27,7 +27,7 @@ def tab_url(channel: str, tab: str) -> str:
     return f"{channel_base_url(channel)}/{tab}"
 
 
-_TABS = ("videos", "streams")
+TABS = ("videos", "streams")
 
 
 @dataclass(frozen=True)
@@ -61,12 +61,25 @@ def list_tab(channel: str, tab: str, limit: int, *, _entries=None) -> list[Video
     return stubs
 
 
-def resolve_recent(channel: str, max_videos: int, *, _list_entries=None) -> list[VideoStub]:
+def resolve_recent(
+    channel: str,
+    max_videos: int,
+    *,
+    tabs: tuple[str, ...] = TABS,
+    _list_entries=None,
+) -> list[VideoStub]:
     """Enumerate a channel's recent uploads and livestreams (newest-first),
-    merged and deduped by video id. Count cap applies per tab."""
+    merged and deduped by video id. Count cap applies per tab.
+
+    Per tab, not per channel — so the default reads up to ``2 * max_videos``. That surprise is
+    worth stating twice, because it is what ``tabs`` exists to control: a channel that also
+    runs a daily all-day livestream gets its whole trading day pulled in beside the clips, and
+    one of those transcripts is ~119k tokens against a ~9k corpus median. Narrow ``tabs`` when
+    the second feed is not the one you want.
+    """
     seen: set[str] = set()
     out: list[VideoStub] = []
-    for tab in _TABS:
+    for tab in tabs:
         try:
             stubs = list_tab(channel, tab, max_videos, _entries=_list_entries)
         except Exception as exc:  # noqa: BLE001 - a missing tab and a network fault look

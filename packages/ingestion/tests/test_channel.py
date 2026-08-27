@@ -75,6 +75,27 @@ def test_resolve_recent_merges_tabs_and_dedupes():
     assert any(s.tab == "streams" and s.video_id == "str00000001" for s in stubs)
 
 
+def test_resolve_recent_honours_an_explicit_tab_list():
+    entries = _fake_entries({
+        "videos": [{"id": "vid00000001", "title": "V1"}],
+        "streams": [{"id": "str00000001", "title": "S1"}],
+    })
+    stubs = resolve_recent("@x", max_videos=10, tabs=("videos",), _list_entries=entries)
+    assert [s.video_id for s in stubs] == ["vid00000001"]
+
+
+def test_resolve_recent_never_reads_a_tab_that_was_not_asked_for():
+    """The cap is per tab, so an unwanted tab doubles a run rather than being merely noisy."""
+    seen: list[str] = []
+
+    def entries(url, limit):
+        seen.append(url)
+        return [{"id": "vid00000001", "title": "V1"}]
+
+    resolve_recent("@x", max_videos=10, tabs=("videos",), _list_entries=entries)
+    assert seen == ["https://www.youtube.com/@x/videos"]
+
+
 def test_resolve_recent_tolerates_missing_streams_tab():
     def entries(url, limit):
         if url.endswith("/videos"):

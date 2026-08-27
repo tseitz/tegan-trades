@@ -62,6 +62,33 @@ def test_active_targets_applies_defaults_and_overrides(tmp_path):
     assert by_person["Bob"] == ChannelTarget("Bob", "UCbbbbbbbbbbbbbbbbbbbbbb", 10, 365)
 
 
+def test_active_targets_reads_a_per_channel_tab_list(tmp_path):
+    wl = load_watchlist(_write(tmp_path, """
+people:
+  - name: "Clips"
+    status: active
+    channels: [{ platform: youtube, id: "@clips", access: ok, tabs: [videos] }]
+  - name: "Both"
+    status: active
+    channels: [{ platform: youtube, id: "@both", access: ok }]
+"""))
+    by_person = {t.person: t for t in active_targets(wl)}
+    assert by_person["Clips"].tabs == ("videos",)
+    assert by_person["Both"].tabs == ("videos", "streams")
+
+
+def test_active_targets_rejects_an_unknown_tab_name(tmp_path):
+    """A typo must fail loudly. Silently ingesting both tabs is how a throttle stops throttling."""
+    wl = load_watchlist(_write(tmp_path, """
+people:
+  - name: "Typo"
+    status: active
+    channels: [{ platform: youtube, id: "@typo", access: ok, tabs: [video] }]
+"""))
+    with pytest.raises(ValueError, match="video"):
+        active_targets(wl)
+
+
 def _stub(vid, tab="videos"):
     return VideoStub(vid, f"title-{vid}", tab)
 
@@ -77,7 +104,7 @@ def test_ingest_channel_happy_path_saves_rich_metadata(tmp_path):
     result = ingest_channel(
         target,
         today=date(2026, 7, 22),
-        resolve=lambda ch, n: [_stub("vid00000001", "streams")],
+        resolve=lambda ch, n, tabs=None: [_stub("vid00000001", "streams")],
         hydrate=lambda vid: _meta(vid, "2026-07-01", was_live=True),
         fetch_transcript=lambda vid: f"text-{vid}",
         exists=lambda platform, vid: False,
@@ -101,7 +128,7 @@ def test_ingest_channel_skips_already_stored(tmp_path):
     result = ingest_channel(
         target,
         today=date(2026, 7, 22),
-        resolve=lambda ch, n: [_stub("have0000001")],
+        resolve=lambda ch, n, tabs=None: [_stub("have0000001")],
         hydrate=lambda vid: pytest.fail("should not hydrate a stored video"),
         fetch_transcript=lambda vid: "x",
         exists=lambda platform, vid: True,
@@ -116,7 +143,7 @@ def test_ingest_channel_buckets_stale_and_missing_date(tmp_path):
     result = ingest_channel(
         target,
         today=date(2026, 7, 22),
-        resolve=lambda ch, n: [_stub("old0000001"), _stub("nodate00001")],
+        resolve=lambda ch, n, tabs=None: [_stub("old0000001"), _stub("nodate00001")],
         hydrate=lambda vid: _meta(vid, "2019-01-01") if vid == "old0000001"
                             else _meta(vid, None),
         fetch_transcript=lambda vid: "x",
@@ -139,7 +166,7 @@ def test_ingest_channel_logs_transcript_failure_and_continues(tmp_path):
     result = ingest_channel(
         target,
         today=date(2026, 7, 22),
-        resolve=lambda ch, n: [_stub("bad0000001"), _stub("good000001")],
+        resolve=lambda ch, n, tabs=None: [_stub("bad0000001"), _stub("good000001")],
         hydrate=lambda vid: _meta(vid, "2026-07-01"),
         fetch_transcript=transcript,
         exists=lambda platform, vid: False,
@@ -178,7 +205,7 @@ def test_ingest_channel_aborts_run_on_block_preserving_partial(tmp_path):
         ingest_channel(
             target,
             today=date(2026, 7, 22),
-            resolve=lambda ch, n: [_stub("good000001"), _stub("blocked0001"), _stub("good000002")],
+            resolve=lambda ch, n, tabs=None: [_stub("good000001"), _stub("blocked0001"), _stub("good000002")],
             hydrate=lambda vid: _meta(vid, "2026-07-01"),
             fetch_transcript=transcript,
             exists=lambda platform, vid: False,
@@ -241,7 +268,7 @@ def test_captions_disabled_is_recorded_dead_rather_than_failed(tmp_path):
     result = ingest_channel(
         target,
         today=date(2026, 7, 27),
-        resolve=lambda ch, n: [_stub("nocaption01")],
+        resolve=lambda ch, n, tabs=None: [_stub("nocaption01")],
         hydrate=lambda vid: _meta(vid, "2026-07-01"),
         fetch_transcript=transcript,
         exists=lambda platform, vid: False,
@@ -267,7 +294,7 @@ def test_a_fresh_upload_without_captions_yet_is_pending_not_dead(tmp_path):
     result = ingest_channel(
         target,
         today=date(2026, 7, 27),
-        resolve=lambda ch, n: [_stub("Je7cd9HJUBE")],
+        resolve=lambda ch, n, tabs=None: [_stub("Je7cd9HJUBE")],
         hydrate=lambda vid: _meta(vid, "2026-07-27"),   # published today
         fetch_transcript=transcript,
         exists=lambda platform, vid: False,
@@ -286,7 +313,7 @@ def test_an_already_dead_video_is_not_re_fetched(tmp_path):
     result = ingest_channel(
         target,
         today=date(2026, 7, 27),
-        resolve=lambda ch, n: [_stub("nocaption01")],
+        resolve=lambda ch, n, tabs=None: [_stub("nocaption01")],
         hydrate=lambda vid: pytest.fail("should not hydrate a dead video"),
         fetch_transcript=lambda vid: pytest.fail("should not fetch a dead video"),
         exists=lambda platform, vid: False,
@@ -307,7 +334,7 @@ def test_a_dead_video_is_still_counted_rather_than_vanishing(tmp_path):
     result = ingest_channel(
         target,
         today=date(2026, 7, 27),
-        resolve=lambda ch, n: [_stub("nocaption01")],
+        resolve=lambda ch, n, tabs=None: [_stub("nocaption01")],
         hydrate=lambda vid: _meta(vid, "2026-07-20"),
         fetch_transcript=lambda vid: "x",
         exists=lambda platform, vid: False,
@@ -331,7 +358,7 @@ def test_a_deleted_video_is_pending_not_buried(tmp_path):
     result = ingest_channel(
         target,
         today=date(2026, 7, 27),
-        resolve=lambda ch, n: [_stub("gone0000001")],
+        resolve=lambda ch, n, tabs=None: [_stub("gone0000001")],
         hydrate=hydrate,
         fetch_transcript=lambda vid: pytest.fail("should not reach the transcript"),
         exists=lambda platform, vid: False,
@@ -353,7 +380,7 @@ def test_a_scheduled_livestream_is_pending_not_dead_and_not_failed(tmp_path):
     result = ingest_channel(
         target,
         today=date(2026, 7, 27),
-        resolve=lambda ch, n: [_stub("soon0000001")],
+        resolve=lambda ch, n, tabs=None: [_stub("soon0000001")],
         hydrate=hydrate,
         fetch_transcript=lambda vid: pytest.fail("should not reach the transcript"),
         exists=lambda platform, vid: False,
@@ -375,7 +402,7 @@ def test_an_unrecognised_error_stays_a_failure(tmp_path):
     result = ingest_channel(
         target,
         today=date(2026, 7, 27),
-        resolve=lambda ch, n: [_stub("weird000001")],
+        resolve=lambda ch, n, tabs=None: [_stub("weird000001")],
         hydrate=hydrate,
         fetch_transcript=lambda vid: pytest.fail("should not reach the transcript"),
         exists=lambda platform, vid: False,
@@ -397,7 +424,7 @@ def test_a_blocked_video_is_never_buried(tmp_path):
         ingest_channel(
             target,
             today=date(2026, 7, 27),
-            resolve=lambda ch, n: [_stub("blocked0001")],
+            resolve=lambda ch, n, tabs=None: [_stub("blocked0001")],
             hydrate=lambda vid: _meta(vid, "2026-07-20"),
             fetch_transcript=transcript,
             exists=lambda platform, vid: False,

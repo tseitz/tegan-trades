@@ -26,7 +26,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
-from ingestion.channel import _TABS, hydrate, list_tab
+from ingestion.channel import TABS, hydrate, list_tab
 
 # Verdicts. Ordered by how much they should worry you.
 BROKEN = "BROKEN"                        # claimed reachable, isn't
@@ -169,7 +169,7 @@ def probe_channel(person: str, channel: dict, *, limit: int = 5, _list_tab=None,
     tabs: dict[str, int] = {}
     newest_title, newest_id = "", ""
     errors: list[str] = []
-    for tab in _TABS:
+    for tab in TABS:
         try:
             stubs = lister(channel["id"], tab, limit)
         except Exception as exc:  # noqa: BLE001 - any failure is a finding, not a crash

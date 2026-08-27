@@ -328,6 +328,68 @@ people:
     backfill: { max_videos: 20, max_age_days: 270 }
     notes: "DISCOVERED. Swing-to-multimonth. Trial cohort 2026-07-26."
 
+  # ── Turned on 2026-08-26 as a second trial cohort ──
+  #
+  # Rates/macro and a first equities-options feed. Measured cadence before adding, because
+  # inflow is the binding constraint here and not cost: the whole roster was producing 29
+  # transcripts in 7 days (~4.1/day) and `brain-extract` takes 12 a night, so ~8/night of
+  # headroom was the budget these three had to fit inside. Bianco ~0.5/day and 42 Macro
+  # ~0.9/day fit easily; tastylive did not, which is what the throttle on it is about.
+  - name: "Jim Bianco (Bianco Research)"
+    handle: "@BiancoResearch"
+    aliases: ["Bianco Research", "Jim Bianco"]
+    status: active
+    domains: [macro, stock]
+    why: "Rates and the bond market — the lens no one else on the roster has. Fed reaction function, term premium, the long end. Where Cowen and Pal argue about cycle length, he argues about the discount rate underneath both."
+    channels: [{ platform: youtube, id: "@BiancoResearch", access: ok }]
+    backfill: { max_videos: 20, max_age_days: 270 }
+    notes: "Own show 'Rational Dissent' plus reposts of his guest spots (MacroVoices, Siegel). Both are his voice, so feed-level attribution is honest here. Trial cohort 2026-08-26."
+
+  - name: "42 Macro (Darius Dale)"
+    handle: "@42Macro"
+    aliases: ["Darius Dale", "42 Macro"]
+    status: active
+    domains: [macro, crypto, stock]
+    why: "Systematic macro regime framework (GRID / Macro Weather Model) applied across assets including BTC. Rules-based rather than discretionary, so his calls are falsifiable in a way most macro talk isn't."
+    channels: [{ platform: youtube, id: "@42Macro", access: ok }]
+    backfill: { max_videos: 20, max_age_days: 270 }
+    notes: "Most output is 'The Macro Minute' — 3-10 min dailies. Short transcripts, so expect fewer stances per video than the roster average. Trial cohort 2026-08-26."
+
+  - name: "tastylive"
+    handle: "@tastyliveshow"
+    # ATTRIBUTION HAZARD, and worse than the Real Vision row. This is a brokerage's daily
+    # programming network, not a person: Sosnoff, Knight, and a rotating guest bench
+    # (Cem Karsan, Shay Boloor, Jim Welsh…). `members` below is a SAMPLE, never a complete
+    # list, and it cannot be completed — the bench changes weekly. Attribution is feed-level,
+    # so any agreement count including this row is counting a network as one opinion. Treat
+    # consensus that leans on it as unproven.
+    members: ["Tom Sosnoff", "Tim Knight", "Cem Karsan", "Shay Boloor"]
+    status: active
+    domains: [stock, macro]
+    why: "First options/equities-flow feed on the roster — vol, skew, and positioning around known catalysts (earnings, Fed). Complements the ICT structure read rather than repeating it."
+    # `tabs: [videos]` is the load-bearing part of this row — WITHOUT IT THIS FEED IS THE
+    # LARGEST THING IN THE CORPUS. tastylive runs an all-day live show, and the streams tab
+    # carries it whole: measured 2026-08-27, seven streams of 457-513 minutes each = 49.1
+    # hours, against 2.6 hours for the ten edited clips beside them. One of those stream
+    # transcripts is 475 KB — about 119k tokens, where the corpus median is 9k — and
+    # `distill` does not chunk, so each becomes ONE call about 13x the normal size.
+    #
+    # The clips are the same people saying the same things once an editor has cut the ad
+    # reads and the chat. That is the part worth ingesting.
+    channels: [{ platform: youtube, id: "@tastyliveshow", access: ok, tabs: [videos] }]
+    # NOT the 20/270 the rest of the trial cohort uses. Measured 30 uploads in 6 days —
+    # ~5/day, more than the entire existing roster combined, and one 8-upload day in that
+    # window.
+    #
+    # Two things to know before raising either number. `max_videos` is a PER-TAB cap, so it
+    # doubles the moment a second tab comes back. And it caps what the resolver LOOKS AT, not
+    # what it stores: at 5/day a 10-video window is about two days deep, so if the nightly
+    # does not run for 3+ days the uploads in that gap fall off the window silently — no
+    # dead-letter, no gap report, nothing to notice. `data/nightly.gate` gates on lid/power,
+    # which makes multi-day pauses normal rather than exotic.
+    backfill: { max_videos: 10, max_age_days: 14 }
+    notes: "DISCOVERED. Trial cohort 2026-08-26, deliberately throttled. Judge it on signal density per video — a lot of the output is earnings-preview clip content, and the corpus already runs 5.26% signal."
+
 # CryptoCon removed 2026-07-26. `verify-roster` flagged @CryptoCon_ as recorded `access: ok`
 # and resolving to neither a videos nor a streams tab; @CryptoConComic (the `handle:` field),
 # @CryptoCon and @cryptocon_official all 404 as well. Every identifier the Phase 0 research
