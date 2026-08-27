@@ -131,3 +131,24 @@ def test_retries_back_off_rather_than_hammering(monkeypatch):
         narrate.narrate(PAYLOAD, client=_Client(error=OSError("flaky")), retries=3)
     assert slept and all(s > 0 for s in slept)
     assert slept == sorted(slept), "backoff should not shrink"
+
+
+def test_the_prompt_tells_the_model_what_a_stale_count_is():
+    """The count reaches the model either way. Without the rule it renders "12 to 3" as current
+    sentiment when a third of it is months old."""
+    system, _ = narrate.build_prompt([{"asset": "MSTR", "stale_now": 11}])
+    assert "stale_now" in system
+    assert "MUST" in system
+
+
+def test_the_stale_count_travels_in_the_user_message():
+    _, user = narrate.build_prompt([{"asset": "MSTR", "after": {"bearish": 12},
+                                     "stale_now": 11}])
+    assert '"stale_now": 11' in user
+
+
+def test_the_model_is_told_not_to_name_the_stale_people():
+    """It is given a count, not names. Attributing staleness to a person it picked would be
+    exactly the invented claim the payload shape exists to prevent."""
+    system, _ = narrate.build_prompt([])
+    assert "never say WHICH people are the stale ones" in system

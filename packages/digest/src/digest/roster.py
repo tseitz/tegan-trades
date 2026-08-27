@@ -34,6 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 
+from brain.report import is_stale
 from brain.retrieve import Split, fold_stances, summarize_split
 from core.canon import resolve_asset
 from core.rank import parse_date
@@ -103,6 +104,13 @@ class AssetMove:
     flips: tuple[Flip, ...] = ()
     fresh_people: tuple[str, ...] = ()
     new_views: tuple[NewView, ...] = ()
+    #: How many of the people counted in ``after`` last spoke past their own horizon.
+    #:
+    #: The counts are printed as context — "bearish leads 12 to 3" — and eleven of MSTR's
+    #: twenty-nine voices were stale on 2026-08-26, as was 41% of the corpus. The stale ones
+    #: are still *counted*: withholding them would silently redefine a number the reader has
+    #: been reading for weeks. What this adds is that the age travels with it.
+    stale_now: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,7 +152,8 @@ def moved(stances, registry, *, assets, on, window_days: int = WINDOW_DAYS,
 
     moves = []
     for asset in sorted(set(after) | set(before)):
-        move = _move_for(asset, before.get(asset, []), after.get(asset, []), cutoff=cutoff)
+        move = _move_for(asset, before.get(asset, []), after.get(asset, []),
+                         cutoff=cutoff, on=on)
         if move is not None:
             moves.append(move)
     return RosterDelta(moved=tuple(moves), window_days=window_days,
@@ -158,7 +167,7 @@ def _by_asset(folded) -> dict:
     return out
 
 
-def _move_for(asset: str, before_folded, after_folded, *, cutoff) -> AssetMove | None:
+def _move_for(asset: str, before_folded, after_folded, *, cutoff, on=None) -> AssetMove | None:
     """One asset's movement, or ``None`` if it held still.
 
     A restatement is not movement. Someone repeating a view they already held is the most
@@ -196,9 +205,11 @@ def _move_for(asset: str, before_folded, after_folded, *, cutoff) -> AssetMove |
 
     if not flips and not fresh and not new_views:
         return None
+    stale = sum(1 for f in after_folded
+                if is_stale(f.current.source.published_at, f.current.horizon, on))
     return AssetMove(asset=asset, before=summarize_split(before_folded),
                      after=summarize_split(after_folded), flips=flips, fresh_people=fresh,
-                     new_views=new_views)
+                     new_views=new_views, stale_now=stale)
 
 
 def _within(published_at, cutoff) -> bool:
@@ -318,6 +329,7 @@ def payload(delta: RosterDelta) -> list[dict]:
             "asset": move.asset,
             "before": dict(move.before.counts),
             "after": dict(move.after.counts),
+            "stale_now": move.stale_now,
             "people_now": {lean: names for lean, names in move.after.people.items() if names},
             "flips": [
                 {"person": f.person, "was": f.was, "now": f.now,

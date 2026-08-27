@@ -240,3 +240,51 @@ def test_an_unreadable_stamp_is_forgotten_rather_than_kept():
     """Fail toward saying it twice. A key with a stamp nothing can parse would otherwise
     suppress its event for good, and a silent permanent loss is the worse failure."""
     assert roster.remember({"ETH|voice|Pierre": "not-a-date"}, (), on=date(2026, 8, 21)) == {}
+
+
+# ── how much of a lean count is archaeology ──────────────────────────────────
+#
+# The narrator prints the standing split as context — "bearish leads 12 to 3". On 2026-08-26
+# eleven of the twenty-nine voices behind MSTR's count had last spoken past their own horizon,
+# and 41% of the whole corpus had. A count that old presented as current sentiment is the
+# "confident wrong number" this package refuses everywhere else.
+
+def test_a_recent_view_is_not_counted_stale():
+    delta = _moved([stance("Benjamin Cowen", "ETH", "bullish", "2026-08-20")])
+    assert delta.moved[0].stale_now == 0
+
+
+def test_a_view_past_its_horizon_is_counted():
+    """45 days for a swing view — ``brain.report.STALE_AFTER_DAYS``, not a second copy here."""
+    delta = _moved([stance("Pierre", "ETH", "bearish", "2026-01-01"),
+                    stance("Benjamin Cowen", "ETH", "bullish", "2026-08-20")])
+    assert delta.moved[0].stale_now == 1
+
+
+def test_the_horizon_decides_when_a_view_goes_stale():
+    """A four-month-old swing call is stale; a four-month-old macro call is not. One limit for
+    both would make the count meaningless on a macro-heavy asset."""
+    old = "2026-04-01"
+    swing = _moved([stance("Pierre", "ETH", "bearish", old, horizon="swing"),
+                    stance("Benjamin Cowen", "ETH", "bullish", "2026-08-20")])
+    macro = _moved([stance("Pierre", "ETH", "bearish", old, horizon="macro"),
+                    stance("Benjamin Cowen", "ETH", "bullish", "2026-08-20")])
+    assert swing.moved[0].stale_now == 1
+    assert macro.moved[0].stale_now == 0
+
+
+def test_the_stale_count_reaches_the_narrator():
+    """It is useless unless the line that prints the count also carries it."""
+    delta = _moved([stance("Pierre", "ETH", "bearish", "2026-01-01"),
+                    stance("Benjamin Cowen", "ETH", "bullish", "2026-08-20")])
+    entry = roster.payload(delta)[0]
+    assert entry["stale_now"] == 1
+    assert sum(entry["after"].values()) == 2
+
+
+def test_a_stale_view_still_counts_in_the_split():
+    """Withholding it would silently redefine the count the reader has been reading for weeks.
+    The number stays; what changes is that its age travels with it."""
+    delta = _moved([stance("Pierre", "ETH", "bearish", "2026-01-01"),
+                    stance("Benjamin Cowen", "ETH", "bullish", "2026-08-20")])
+    assert delta.moved[0].after.counts["bearish"] == 1

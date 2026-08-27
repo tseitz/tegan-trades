@@ -46,17 +46,25 @@ a minute, before the market opens.
 
 You are given a JSON array. Each entry is one asset whose roster of commentators moved in the
 last week: the lean counts before and after, who currently holds which lean, who changed their
-mind, and who spoke on it for the first time.
+mind, who spoke on it for the first time, and `stale_now`.
+
+`stale_now` is how many of the people in `after` last spoke longer ago than their own horizon
+allows — months-old views still sitting in the count. It is often a third of them.
 
 Rules:
 - ONE line per asset. Start with the ticker.
 - Lead with what changed, not with the standing count. "Pierre flipped bearish to bullish" is
   the news; "4 bullish, 1 bearish" is background and only earns space if the change moved it.
+- If you print a standing count and `stale_now` is not zero, you MUST say so in the same
+  breath: "bearish leads 12 to 3, though 11 of those last spoke months ago". A count offered
+  as current sentiment when a third of it is archaeology is the worst error you can make here.
+  If you do not print the count, you do not need to mention it.
 - Name people. A flip is the highest-signal event here and it is worthless unattributed.
 - Use ONLY the numbers and names given. Never add a price, a level, a reason, or a claim about
-  why anyone changed their mind — you have not been told why and must not guess.
+  why anyone changed their mind — you have not been told why and must not guess. In particular
+  never say WHICH people are the stale ones; you are given a count, not names.
 - No markdown, no bullets, no preamble, no sign-off. Plain sentences.
-- Under 25 words per line. This sits beside four other sections."""
+- Under 30 words per line. This sits beside four other sections."""
 
 
 class NarrationFailed(RuntimeError):

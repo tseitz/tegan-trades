@@ -22,15 +22,29 @@ STALE_AFTER_DAYS = {"scalp": 14, "swing": 45, "position": 240, "macro": 540}
 _DEFAULT_STALE_DAYS = 120
 
 
-def _staleness(published_at: str | None, horizon: str | None, today: date | None) -> str:
+def is_stale(published_at: str | None, horizon: str | None, today: date | None) -> bool:
+    """Whether a view has outlived its horizon. An undated view counts as stale.
+
+    Public because ``digest.roster`` needs the same verdict to say how much of a lean count is
+    archaeology. A second copy of these limits elsewhere would drift from this one.
+    """
     if today is None:
+        return False
+    published = parse_date(published_at)
+    if published is None:
+        return True
+    limit = STALE_AFTER_DAYS.get(horizon or "", _DEFAULT_STALE_DAYS)
+    return (today - published).days > limit
+
+
+def _staleness(published_at: str | None, horizon: str | None, today: date | None) -> str:
+    if today is None or not is_stale(published_at, horizon, today):
         return ""
     published = parse_date(published_at)
     if published is None:
         return "  [UNDATED]"
     age = (today - published).days
-    limit = STALE_AFTER_DAYS.get(horizon or "", _DEFAULT_STALE_DAYS)
-    return f"  [STALE — {age}d old, {horizon or 'no horizon'} view]" if age > limit else ""
+    return f"  [STALE — {age}d old, {horizon or 'no horizon'} view]"
 
 
 def format_passages(hits, *, query: str | None = None) -> str:
