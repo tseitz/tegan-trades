@@ -274,6 +274,58 @@ def cluster_bootstrap(rows, *, rounds=BOOTSTRAP_ROUNDS, seed=BOOTSTRAP_SEED):
     return lo, hi
 
 
+def kelly_inputs(rows):
+    """``p`` and ``b`` for the Kelly fraction, from RESOLVED rows only.
+
+    ``mean_r`` blends these two together and a sizing rule cannot use the blend: Kelly wants
+    how *often* you win apart from how *much*, because they move the bet in different ways.
+    A 20%/5R engine and a 50%/0.5R engine can share an expectancy and want very different
+    sizes.
+
+    **Resolved rows only, and that is a censoring choice with a direction.** A nofill never
+    became a trade; an open row has not finished being one. Both are dropped rather than
+    counted as losses, so ``p`` here is the win rate *among trades that ended*. Targets sit
+    ~7 daily ranges out and stops ~2, so winners take longer to resolve and this number reads
+    LOW while the tail matures. ``resolution_rate`` on the arm row is what says how much of
+    the sample is still out.
+
+    **A win is ``r > 0``, not ``state == TARGET``.** The ambiguity convention already moved
+    ``r`` for one-bar rows, so reading the sign inherits whichever convention this pass ran
+    under instead of silently contradicting it.
+
+    ``b`` is the payoff RATIO — mean winner over mean loser, not the mean winner alone.
+
+    **``mean_loss_r`` reads exactly -1.00R here, and that is the replay's convention rather
+    than a measurement.** ``oracle.replay`` fills a stop AT the stop, so a gap through it
+    costs nothing in this sample. Real stops slip, which makes the true ``b`` smaller and the
+    true Kelly fraction smaller again — so every ``f`` below is an OVERESTIMATE by an amount
+    nothing here bounds. ``scripts/probe_gap_cost.py`` is what measures the slippage; divide
+    by its number, do not assume -1R, before any of this reaches a live order.
+    """
+    resolved = [r for r in rows if r.resolved]
+    wins = [r.r for r in resolved if r.r > 0]
+    losses = [r.r for r in resolved if r.r <= 0]
+    if not resolved or not wins or not losses:
+        return None
+
+    mean_win = mean(wins)
+    mean_loss = mean(losses)
+    if mean_loss >= 0:
+        return None
+    p = len(wins) / len(resolved)
+    b = mean_win / abs(mean_loss)
+    return {
+        "resolved": len(resolved),
+        "wins": len(wins),
+        "p": p,
+        "mean_win_r": mean_win,
+        "mean_loss_r": mean_loss,
+        "b": b,
+        "breakeven_p": 1 / (1 + b),
+        "kelly": p - (1 - p) / b,
+    }
+
+
 def summarise(rows):
     if not rows:
         return None
@@ -290,6 +342,7 @@ def summarise(rows):
         "mean_r": mean(r.r for r in rows),
         "mean_r_filled": mean(r.r for r in filled) if filled else 0.0,
         "ci": cluster_bootstrap(rows),
+        "kelly": kelly_inputs(rows),
     }
 
 
@@ -354,6 +407,51 @@ def direction_agreement(rows_by_arm, a, b):
 
 # ── report ──────────────────────────────────────────────────────────────────
 
+# What a Kelly fraction is multiplied by before it reaches a real order. Quarter Kelly is not
+# caution for its own sake — betting DOUBLE the Kelly fraction drives the long-run growth rate
+# to exactly zero, while betting HALF of it still earns 75% of the maximum. Overbetting is a
+# cliff and underbetting is a slope, so the safe side is worth a lot and costs little. A
+# quarter leaves room for `p` itself being wrong, which on this sample it certainly is.
+KELLY_FRACTION = 0.25
+
+# The most any single trade may risk, whatever Kelly asks for. Kelly is unbounded as `b` grows
+# — a 20R target on a tight zone asks for a third of the account — and that arithmetic is
+# correct only if `b` is real. A stated target that far out is a forecast, not a fill.
+KELLY_CAP = 0.02
+
+
+def report_kelly(by_arm, *, out=print):
+    """The two numbers a sizing rule needs, which ``meanR`` cannot be decomposed back into.
+
+    Printed per arm rather than pooled because the arms have different `b` by construction:
+    a synthetic row carries no ``key_levels``, so its target is always structural, while a
+    thesis row can take a person's stated target. Pooling would average two different trades.
+
+    **Read ``breakeven p`` against ``p`` first.** Everything else here is downstream of whether
+    that comparison goes the right way, and when it does not, the Kelly column is only telling
+    you the same thing twice.
+    """
+    out(f"\n  {'arm':<10} {'resolved':>9} {'wins':>6} {'p':>7} {'mean win':>10} "
+        f"{'mean loss':>11} {'b':>7} {'break-even p':>13} {'Kelly f':>9} {'1/4 Kelly':>11}")
+    for label, _, _ in ARMS:
+        s = summarise(by_arm.get(label, []))
+        k = s and s["kelly"]
+        if not k:
+            out(f"  {label:<10} {'—':>9}   too few resolved rows to split wins from losses")
+            continue
+        sized = max(0.0, k["kelly"]) * KELLY_FRACTION
+        out(f"  {label:<10} {k['resolved']:>9} {k['wins']:>6} {k['p']:>6.1%} "
+            f"{k['mean_win_r']:>+9.2f}R {k['mean_loss_r']:>+10.2f}R {k['b']:>7.2f} "
+            f"{k['breakeven_p']:>12.1%} {k['kelly']:>+8.1%} "
+            f"{(f'{min(sized, KELLY_CAP):.2%}' if sized > 0 else 'no bet'):>11}")
+    out("\n  Kelly f = p - (1-p)/b, the fraction of equity RISKED. 1/4 Kelly is that quartered")
+    out(f"  and capped at {KELLY_CAP:.0%}. A NEGATIVE f is not a small bet, it is the formula")
+    out("  saying the edge points the other way — every arm below its break-even p is a")
+    out("  losing bet at ANY size, and no sizing rule rescues it.")
+    out("  p reads low while the sample matures: winners resolve slower than losers here")
+    out("  (targets ~7 daily ranges out, stops ~2), so unresolved rows are winner-weighted.")
+
+
 def report(rows, gate_seen, gate_kept, *, ambiguity, world_stats, dates, out=print):
     by_arm = defaultdict(list)
     for r in rows:
@@ -389,6 +487,8 @@ def report(rows, gate_seen, gate_kept, *, ambiguity, world_stats, dates, out=pri
             f"{s['mean_r']:>+8.3f} {ci:>18}")
     out("\n  no score column, by construction: the synthetic arms degenerate freshness,")
     out("  agreement and target_source, so a cross-arm score would compare different terms.")
+
+    report_kelly(by_arm, out=out)
 
     ambig_total = sum(1 for r in rows if r.state == replay.AMBIGUOUS)
     if not ambig_total:

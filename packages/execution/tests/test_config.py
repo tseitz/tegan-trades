@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from execution import config
+from execution import config, sizing
 from execution.broker import MAINNET, TESTNET
 
 # ── defaults ────────────────────────────────────────────────────────────────────────────────
@@ -140,3 +140,48 @@ def test_liquidity_floors_are_configurable(tmp_path):
     loaded = config.load(path)
     assert loaded.min_day_volume == 5_000_000
     assert loaded.min_open_interest == 2_000_000
+
+
+# ── Kelly ───────────────────────────────────────────────────────────────────
+
+def _cfg(tmp_path, body):
+    path = tmp_path / "execution.yaml"
+    path.write_text(body)
+    return config.load(path)
+
+
+def test_kelly_win_rate_is_absent_by_default(tmp_path):
+    """Kelly is OFF until somebody measures a win rate, and absence is how it stays off. A
+    default of 0.0 would read as "measured, and it never wins" — a claim nobody made."""
+    assert config.load(tmp_path / "absent.yaml").kelly_win_rate is None
+
+
+def test_a_measured_win_rate_loads(tmp_path):
+    assert _cfg(tmp_path, "kelly_win_rate: 0.31").kelly_win_rate == 0.31
+
+
+@pytest.mark.parametrize("value", [-0.01, 1.01, 31])
+def test_a_win_rate_outside_zero_to_one_is_refused(tmp_path, value):
+    """31 for "31%" is the likely typo, and it would size every order at the cap."""
+    with pytest.raises(ValueError, match="kelly_win_rate"):
+        _cfg(tmp_path, f"kelly_win_rate: {value}")
+
+
+def test_kelly_fraction_and_cap_default_to_the_sizing_constants(tmp_path):
+    """One definition, not two. A second copy here drifts from the reasoning written beside
+    the constant in ``sizing``."""
+    loaded = config.load(tmp_path / "absent.yaml")
+    assert loaded.kelly_fraction == sizing.KELLY_FRACTION
+    assert loaded.kelly_cap == sizing.KELLY_CAP
+
+
+def test_kelly_fraction_and_cap_load(tmp_path):
+    loaded = _cfg(tmp_path, "kelly_fraction: 0.5\nkelly_cap: 0.03")
+    assert (loaded.kelly_fraction, loaded.kelly_cap) == (0.5, 0.03)
+
+
+@pytest.mark.parametrize("body", ["kelly_fraction: 0", "kelly_fraction: 1.5",
+                                  "kelly_cap: 0", "kelly_cap: 1.5"])
+def test_a_fraction_or_cap_outside_its_range_is_refused(tmp_path, body):
+    with pytest.raises(ValueError):
+        _cfg(tmp_path, body)

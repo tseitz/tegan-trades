@@ -12,6 +12,8 @@ from execution.sizing import (
     CAP_CONCENTRATION,
     CAP_LEVERAGE,
     apply_caps,
+    breakeven_win_rate,
+    kelly_risk_pct,
     notional_ceiling,
     risk_of,
     size_for_risk,
@@ -128,3 +130,86 @@ def test_risk_of_is_the_inverse_of_sizing():
     shows — after rounding, the realised risk is no longer exactly the budget."""
     size = size_for_risk(equity=10_000, risk_pct=0.01, entry=3_200, stop=3_050)
     assert risk_of(size, entry=3_200, stop=3_050) == pytest.approx(100)
+
+
+# ── Kelly ───────────────────────────────────────────────────────────────────
+#
+# These pin the ARITHMETIC, not the edge. Every `p` here is a fixture chosen to sit on a
+# named side of break-even; none of them is a claim about what this engine wins. The measured
+# figure lives in `cfg/execution.yaml` and is produced by `scripts/probe_evidence.py`.
+
+def test_kelly_is_zero_when_the_edge_is_absent():
+    """The case that matters most today. Below break-even, Kelly returns no bet — never a
+    small one. A negative fraction means the bet is backwards, and quartering a negative
+    number to make it "safe" would size a trade the formula just refused."""
+    assert kelly_risk_pct(win_rate=0.115, reward_risk=3.08) == 0.0
+
+
+def test_break_even_is_where_kelly_crosses_zero():
+    """`p = 1/(1+b)` is the definition, so it must land exactly on zero rather than near it."""
+    assert kelly_risk_pct(win_rate=1 / (1 + 3.0), reward_risk=3.0) == pytest.approx(0.0)
+
+
+def test_a_real_edge_sizes_and_is_quartered():
+    """p=0.40, b=3.0 -> f = 0.40 - 0.60/3.0 = 0.20; a quarter of that is 5%."""
+    full = kelly_risk_pct(win_rate=0.40, reward_risk=3.0, fraction=1.0, cap=1.0)
+    assert full == pytest.approx(0.20)
+    assert kelly_risk_pct(win_rate=0.40, reward_risk=3.0, fraction=0.25, cap=1.0) == pytest.approx(0.05)
+
+
+def test_the_cap_binds_before_a_large_payoff_runs_away():
+    """Kelly is unbounded as `b` grows, and a 20R target is a forecast rather than a fill.
+    Without the cap this asks for 9.4% of equity on one trade."""
+    assert kelly_risk_pct(win_rate=0.40, reward_risk=20.0, fraction=0.25, cap=0.02) == 0.02
+
+
+def test_a_bigger_payoff_earns_a_bigger_bet_at_the_same_win_rate():
+    """The whole reason Kelly replaces a flat percentage: `b` is the input we actually know
+    per candidate, so it is what must move the size."""
+    lean = kelly_risk_pct(win_rate=0.40, reward_risk=2.0, cap=1.0)
+    rich = kelly_risk_pct(win_rate=0.40, reward_risk=5.0, cap=1.0)
+    assert rich > lean > 0
+
+
+def test_a_higher_win_rate_earns_a_bigger_bet_at_the_same_payoff():
+    assert (kelly_risk_pct(win_rate=0.50, reward_risk=3.0, cap=1.0)
+            > kelly_risk_pct(win_rate=0.35, reward_risk=3.0, cap=1.0) > 0)
+
+
+@pytest.mark.parametrize("win_rate", [-0.01, 1.01])
+def test_a_win_rate_outside_zero_to_one_is_refused(win_rate):
+    """A caller passing 40 for "40%" has a bug, and clamping it would size a real order."""
+    with pytest.raises(ValueError):
+        kelly_risk_pct(win_rate=win_rate, reward_risk=3.0)
+
+
+@pytest.mark.parametrize("reward_risk", [0.0, -1.0])
+def test_a_non_positive_payoff_is_refused(reward_risk):
+    """`b <= 0` makes the formula divide by zero or invert; both are caller bugs."""
+    with pytest.raises(ValueError):
+        kelly_risk_pct(win_rate=0.4, reward_risk=reward_risk)
+
+
+def test_certainty_is_capped_rather_than_betting_everything():
+    """p=1 sends full Kelly to 1.0 — bet the account. Nothing is certain, so the cap is what
+    stands between a bad `p` estimate and the whole balance."""
+    assert kelly_risk_pct(win_rate=1.0, reward_risk=3.0, fraction=1.0, cap=0.02) == 0.02
+
+
+def test_breakeven_win_rate_is_the_point_kelly_crosses_zero():
+    """The two functions must agree, or the queue could show a break-even a trade clears
+    while the sizer refuses it."""
+    for b in (1.83, 2.23, 3.0, 6.62):
+        assert kelly_risk_pct(win_rate=breakeven_win_rate(b), reward_risk=b) == 0.0
+        assert kelly_risk_pct(win_rate=breakeven_win_rate(b) + 0.05, reward_risk=b) > 0
+
+
+def test_a_bigger_payoff_needs_a_lower_win_rate():
+    assert breakeven_win_rate(1.0) == pytest.approx(0.5)
+    assert breakeven_win_rate(3.0) == pytest.approx(0.25)
+
+
+@pytest.mark.parametrize("reward_risk", [0.0, -1.0])
+def test_breakeven_refuses_a_non_positive_payoff(reward_risk):
+    with pytest.raises(ValueError):
+        breakeven_win_rate(reward_risk)

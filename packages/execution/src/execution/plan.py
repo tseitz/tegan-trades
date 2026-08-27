@@ -20,17 +20,20 @@ from dataclasses import dataclass
 from execution import budget as budget_module
 from execution import guards
 from execution import portfolio as portfolio_module
+from execution import sizing as sizing_module
 from execution.participation import Depth, check_depth, max_shares
 from execution.rounding import round_price, round_size
 from execution.shares import round_share_price, round_shares
 from execution.sizing import (
     CAP_BUDGET,
     CAP_CONCENTRATION,
+    CAP_KELLY,
     CAP_LEVERAGE,
     CAP_PARTICIPATION,
     CAP_PORTFOLIO,
     CAP_VENUE_LEVERAGE,
     apply_caps,
+    kelly_risk_pct,
     notional_ceiling,
     risk_of,
     size_for_risk,
@@ -137,6 +140,9 @@ def build(
     headroom: float | None = None,
     book: portfolio_module.Book | None = None,
     min_budget_fill: float = budget_module.MIN_BUDGET_FILL,
+    kelly_win_rate: float | None = None,
+    kelly_fraction: float = sizing_module.KELLY_FRACTION,
+    kelly_cap: float = sizing_module.KELLY_CAP,
     can_short: bool | None = None,
     min_notional: float = guards.MIN_ORDER_NOTIONAL_USD,
     min_volume: float = guards.MIN_DAY_VOLUME_USD,
@@ -206,7 +212,31 @@ def build(
     # shrink, and the fraction it is judged against has to be measured after the other three
     # have had their say — otherwise a thin market's participation cut would be counted again
     # as a budget shortfall and the order refused for the wrong reason.
+    # What the edge supports, priced off THIS order's own levels. ``candidate.reward_risk`` is
+    # computed before the venue's grid moves all three prices, so it can describe a payoff the
+    # resting order does not have; the rounded numbers are the ones that will actually trade.
+    #
+    # Absent when Kelly asks for no bet, and that fallback is a CHOICE rather than arithmetic:
+    # a win rate under break-even makes Kelly refuse every trade, which would turn the engine
+    # off. The flat budget stands instead. The cost is that sizing is not monotone in the win
+    # rate — just under break-even gets the full budget, just over it gets a sliver — and that
+    # is worth revisiting once a measured rate clears break-even. ``None`` here means "no
+    # opinion", which is the same idiom every other ceiling uses.
+    kelly_ceiling = None
+    if kelly_win_rate is not None:
+        kelly_pct = kelly_risk_pct(
+            win_rate=kelly_win_rate,
+            reward_risk=abs(target - entry) / abs(entry - stop),
+            fraction=kelly_fraction,
+            cap=kelly_cap,
+        )
+        if kelly_pct > 0:
+            kelly_ceiling = size_for_risk(
+                equity=equity, risk_pct=kelly_pct, entry=entry, stop=stop
+            )
+
     allowed, reason = apply_caps(wanted, (
+        (CAP_KELLY, kelly_ceiling),
         (CAP_LEVERAGE, notional_ceiling(equity=equity, entry=entry, frac=max_notional_frac)),
         # The venue's own overnight limit, beside the configured one rather than folded into it,
         # because the two call for different responses: ``max_notional_frac`` is a setting that

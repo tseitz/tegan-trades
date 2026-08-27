@@ -97,6 +97,52 @@ max_portfolio_risk: 0.05
 # that needs shrunk orders to exist first. 0 means "always shrink"; 1 means "never shrink".
 min_budget_fill: 0.5
 
+# ── Kelly sizing ─────────────────────────────────────────────────────────────────────────
+#
+# The engine's measured win rate. UNSET means nobody has measured it, and while it is unset
+# Kelly is off and every order takes the flat `risk_pct` above. Deliberately not `0.0`: a zero
+# would read as "measured, and it never wins", which is a far stronger claim than silence.
+#
+# WHAT IT BUYS. `risk_pct` charges every trade the same 1% however good it looks, which is why
+# 5% / 1% = exactly five positions fit the book, always. Kelly prices a trade by its own payoff
+# instead — `f = p - (1-p)/b`, where `b` is this candidate's reward:risk, known exactly before
+# the order goes out. Weak trades then stop paying full rent for a slot.
+#
+# WHY `p` IS ONE NUMBER AND NOT ONE PER CANDIDATE. Nothing in this repo predicts which
+# individual setup wins: `scripts/probe_replay.py` puts the score's AUC against outcomes at
+# 0.29, which is worse than chance and pointing backwards. A per-candidate `p` would therefore
+# be invented. `b` is the opposite — measured per candidate, exactly — so `b` does the
+# per-trade work and `p` is one engine-wide figure you update as the engine improves.
+#
+# MEASURED, and it is why this is still unset. `scripts/probe_evidence.py` over 57 as-of dates
+# spanning 14 months, 591 resolved candidates on the thesis arm:
+#
+#   p 11.5%   b 3.08   break-even p 24.5%   Kelly f -17.2%
+#
+# Every arm came out negative, including a 5,021-row random-direction arm at 12.4%. So this
+# engine currently needs to more than double its hit rate before Kelly would size anything.
+# Re-run that probe and read the `break-even p` column before setting a number here.
+#
+# TWO CAVEATS THAT BOTH MAKE THE REAL NUMBER WORSE. `oracle.replay` fills a stop AT the stop,
+# so gaps cost nothing in that sample and the true `b` is smaller than 3.08 — divide by
+# `scripts/probe_gap_cost.py`'s slippage before trusting it. And `p` is measured on resolved
+# rows only, which is winner-weighted censoring in the other direction; read `resolv` on the
+# arm table to see how much is still open.
+# kelly_win_rate: 0.31
+
+# Multiplier on the Kelly fraction. 1.0 is full Kelly. The default 0.25 is not caution for its
+# own sake — the asymmetry is exact: betting DOUBLE the Kelly fraction drives the long-run
+# growth rate to exactly zero, while betting HALF still earns 75% of the maximum. Overbetting
+# is a cliff and underbetting is a slope, so a quarter buys a wide margin for `p` being wrong.
+# Full Kelly also carries a 50% chance of the account halving at some point, which is a
+# property of the growth optimum rather than a tail event.
+# kelly_fraction: 0.25
+
+# The most any one trade may risk however good it looks. Kelly is unbounded as `b` grows — a
+# 20R target on a tight zone asks for roughly a tenth of the account — and that arithmetic is
+# only right if a 20R target is a thing that happens rather than a level someone drew.
+# kelly_cap: 0.02
+
 # Days a resting entry may sit before `uv run book` flags it as stale. Nothing is cancelled
 # automatically — an unfilled entry is a live intention, and a weekly zone taking a month to
 # be reached is the ordinary case, so a sweep would retire the patient trades first.

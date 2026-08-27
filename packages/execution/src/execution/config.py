@@ -15,7 +15,7 @@ from pathlib import Path
 import yaml
 from core.env import load_env
 
-from execution import budget, guards, participation, portfolio, venues
+from execution import budget, guards, participation, portfolio, sizing, venues
 from execution.alpaca_broker import AlpacaCredentials
 from execution.broker import MAINNET, TESTNET, Credentials
 
@@ -56,6 +56,14 @@ class Config:
     # losing 2% of one person's money. See ``portfolio`` — 0.05 is ``max_position_frac``
     # restated in risk terms rather than an independent choice.
     max_portfolio_risk: float | None = portfolio.MAX_PORTFOLIO_RISK
+    # The engine's measured win rate, and the switch for Kelly sizing. ``None`` means NOBODY
+    # HAS MEASURED IT, which is why it is not 0.0 — a zero would read as "measured, and it
+    # never wins", a far stronger claim than the absence of a number. Produced by
+    # ``scripts/probe_evidence.py``; see ``sizing.kelly_risk_pct`` for what it is used for and
+    # why it is one engine-wide figure rather than a per-candidate one.
+    kelly_win_rate: float | None = None
+    kelly_fraction: float = sizing.KELLY_FRACTION
+    kelly_cap: float = sizing.KELLY_CAP
     # Smallest share of the intended size a budget-shrunk order may still be sent at. See
     # ``budget`` — this is the one number in this file that is chosen rather than measured.
     # Reused by the pooled risk ceiling: the question is identical, and a second knob nobody
@@ -136,6 +144,26 @@ class Config:
                 f"max_portfolio_risk {self.max_portfolio_risk} is below risk_pct "
                 f"{self.risk_pct}; no single order could ever fit the book"
             )
+        # Bounded to [0, 1] and NOT (0, 1]: a measured win rate of exactly zero is a real
+        # measurement, unlike the absent default. The likely typo is 31 for "31%", which
+        # would clear any looser check and then size every order at the cap.
+        if self.kelly_win_rate is not None and not 0 <= self.kelly_win_rate <= 1:
+            raise ValueError(
+                f"kelly_win_rate must be in [0, 1], got {self.kelly_win_rate} — it is the "
+                f"engine's measured win rate, so 31% is 0.31. Leave it unset to keep Kelly "
+                f"sizing off; see scripts/probe_evidence.py for where the number comes from."
+            )
+        if not 0 < self.kelly_fraction <= 1:
+            raise ValueError(
+                f"kelly_fraction must be in (0, 1], got {self.kelly_fraction} — 1.0 is full "
+                f"Kelly. Above 1.0 is not aggression, it is the far side of the growth "
+                f"optimum: at 2.0 the long-run growth rate is exactly zero."
+            )
+        if not 0 < self.kelly_cap <= 1:
+            raise ValueError(
+                f"kelly_cap must be in (0, 1], got {self.kelly_cap} — it is the most one "
+                f"trade may risk, so 2% is 0.02."
+            )
         if not 0 <= self.min_budget_fill <= 1:
             raise ValueError(
                 f"min_budget_fill must be in [0, 1], got {self.min_budget_fill} — 0 means "
@@ -172,7 +200,7 @@ def load(path=DEFAULT_PATH) -> Config:
     fields = ("network", "risk_pct", "max_notional_frac", "max_position_frac", "venue",
               "min_day_volume", "min_open_interest", "enforce_liquidity",
               "max_participation", "min_budget_fill", "max_order_age_days",
-              "max_portfolio_risk")
+              "max_portfolio_risk", "kelly_win_rate", "kelly_fraction", "kelly_cap")
     known = {f: doc[f] for f in fields if f in doc}
     unknown = set(doc) - set(fields)
     if unknown:

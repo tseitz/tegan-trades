@@ -8,7 +8,12 @@ from execution import guards, portfolio
 from execution.liquidity import Liquidity
 from execution.plan import SHARE_GRID, Market, OrderPlan, build
 from execution.portfolio import Book, combine
-from execution.sizing import CAP_PORTFOLIO, CAP_VENUE_LEVERAGE
+from execution.sizing import (
+    CAP_KELLY,
+    CAP_PORTFOLIO,
+    CAP_VENUE_LEVERAGE,
+    kelly_risk_pct,
+)
 
 # ── stubs ───────────────────────────────────────────────────────────────────────────────────
 # The candidate is read structurally (see ``plan``'s docstring), so this stands in for
@@ -480,3 +485,61 @@ def test_the_portfolio_refusal_compares_risk_against_risk():
     refused = _build(TIGHT, book=_book(499.0), enforce_liquidity=False)
     assert isinstance(refused, guards.Refusal)
     assert "of risk against the $100.00 this order wants" in refused.detail, refused.detail
+
+
+# ── Kelly ───────────────────────────────────────────────────────────────────
+#
+# StubCandidate is entry 3200 / stop 3050 / target 3900, so b = 700/150 = 4.667 and its
+# break-even win rate is 1/(1+4.667) = 17.6%. Every win rate below is placed relative to
+# that, and none of them is a claim about what this engine actually wins.
+
+def test_an_unmeasured_win_rate_leaves_sizing_alone():
+    """Kelly OFF is the default and must be byte-identical to the flat budget, or enabling
+    the feature later would be indistinguishable from a sizing regression."""
+    assert _build(kelly_win_rate=None).size == _build().size
+
+
+def test_a_win_rate_below_break_even_falls_back_to_the_flat_budget():
+    """CHOSEN, and it is the one discontinuity in this file. A win rate under break-even makes
+    Kelly ask for NO bet, and honouring that would turn the engine off entirely — so the flat
+    budget stands instead. The cost is that sizing is not monotone in the win rate: a trade
+    just under break-even gets the full 1%, while one just over it gets a sliver. Revisit once
+    the measured rate clears break-even; until then this keeps Kelly inert rather than fatal."""
+    plan = _build(kelly_win_rate=0.10)
+    assert plan.size == _build().size
+    assert plan.cap_reason is None
+
+
+def test_a_win_rate_just_above_break_even_shrinks_the_order_and_says_so():
+    """p=0.19 against b=4.667 gives full Kelly 1.64%, quartered to 0.41% — under the flat 1%,
+    so it binds and the preview must name it."""
+    plan = _build(kelly_win_rate=0.19)
+    assert plan.cap_reason == CAP_KELLY
+    assert plan.risk < _build().risk
+    assert plan.risk == pytest.approx(10_000 * 0.0041071, rel=1e-3)
+
+
+def test_a_healthy_win_rate_does_not_shrink_the_order():
+    """Kelly is wired as a CEILING, so it can only ever cut. At p=0.31 it would allow 2% and
+    the flat 1% is already under that, which is not a cap and must not be named as one."""
+    plan = _build(kelly_win_rate=0.31)
+    assert plan.cap_reason is None
+    assert plan.size == _build().size
+
+
+def test_the_payoff_is_priced_off_the_rounded_levels():
+    """The order's real b is the one its own prices imply, and a coarse grid moves all three.
+
+    Rounding entry 3200.4 -> 3200 and target 3899.6 -> 3899 changes b from 4.658 to 4.660,
+    which changes the Kelly ceiling. Sizing against the unrounded payoff would budget for a
+    trade whose resting prices are not those.
+    """
+    coarse = Market(coin="ETH", sz_decimals=4)
+    skewed = StubCandidate(entry=3_200.4, stop=3_050.0, target=3_899.6)
+    plan = _build(skewed, market=coarse, kelly_win_rate=0.19)
+    assert isinstance(plan, OrderPlan)
+    assert plan.cap_reason == CAP_KELLY
+
+    b_rounded = abs(plan.target - plan.entry) / abs(plan.entry - plan.stop)
+    expected = kelly_risk_pct(win_rate=0.19, reward_risk=b_rounded)
+    assert plan.risk == pytest.approx(10_000 * expected, rel=1e-3)

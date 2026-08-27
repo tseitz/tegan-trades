@@ -37,6 +37,85 @@ CAP_VENUE_LEVERAGE = "venue_leverage"
 # What the whole book has left to risk, ACROSS venues — see ``portfolio``. The only one of the
 # five that is not a fact about this venue: a position on the other venue can bind it.
 CAP_PORTFOLIO = "portfolio"
+# What the EDGE supports, as opposed to what the account can carry. The other six ceilings all
+# answer "can this position fit"; this one answers "is this trade worth its budget", and the
+# remedy is neither a setting nor a different market — it is a better trade, or a better
+# engine. See ``kelly_risk_pct``.
+CAP_KELLY = "kelly"
+
+
+# Kelly asks for a bet that maximises long-run GROWTH, which is not the same objective as
+# surviving a drawdown you chose in advance. Two constants convert one into the other.
+#
+# The multiplier is the important one, and the asymmetry behind it is exact rather than
+# cautious: betting DOUBLE the Kelly fraction drives the long-run growth rate to exactly
+# zero, while betting HALF still earns 75% of the maximum. Overbetting is a cliff and
+# underbetting is a slope. A quarter buys a wide margin for `p` being wrong, which on any
+# sample this engine has produced it certainly is.
+KELLY_FRACTION = 0.25
+
+# The ceiling on what one trade may risk however good it looks. Kelly is unbounded in `b`, so
+# a 20R target on a tight zone asks for roughly a tenth of the account — arithmetic that is
+# only correct if a 20R target is a thing that happens. It is a forecast, not a fill.
+KELLY_CAP = 0.02
+
+# Below this, a Kelly fraction is float noise and not a bet. `p - (1-p)/b` is EXACTLY zero at
+# break-even in arithmetic but not in binary: b=1.83 and b=2.23 both leave 5.55e-17 behind,
+# which is positive, so a plain `> 0` test sizes a trade the formula just refused. Any real
+# bet is at least 1e-4 of equity, so this sits far below anything meaningful and far above the
+# residue. Deleting it silently re-admits break-even trades.
+KELLY_EPSILON = 1e-12
+
+
+def kelly_risk_pct(*, win_rate: float, reward_risk: float,
+                   fraction: float = KELLY_FRACTION, cap: float = KELLY_CAP) -> float:
+    """Fraction of equity to RISK on one trade, from ``f = p - (1-p)/b``.
+
+    A drop-in for the flat ``risk_pct``, and it is the same unit: what a stopped-out trade
+    costs, not what the position is worth. So ``size_for_risk`` takes this result unchanged.
+
+    **Below break-even this returns 0.0, and that is a refusal rather than a small bet.** A
+    negative ``f`` does not mean "bet a little", it means the bet is pointed the wrong way —
+    the trade loses money at every size, so there is no size that rescues it. Quartering a
+    negative number would turn that verdict into a real order, which is why the clamp happens
+    before the multiplier and not after.
+
+    ``win_rate`` is a property of the ENGINE, measured across many trades by
+    ``scripts/probe_evidence.py``. It is deliberately not a per-candidate input: nothing in
+    this repo predicts which individual setup wins — the score's AUC against outcomes is
+    below chance — so a per-trade ``p`` would be an invention. ``reward_risk`` is the opposite
+    case and is why Kelly is worth having here at all: it is known exactly, per candidate,
+    before the order goes out.
+
+    Both bounds are raises rather than clamps. A caller passing ``40`` for "40%" has a typo,
+    and a helpful substitution would place a real order on it.
+    """
+    if not 0 <= win_rate <= 1:
+        raise ValueError(f"win_rate must be in [0, 1], got {win_rate}")
+    if reward_risk <= 0:
+        raise ValueError(f"reward_risk must be positive, got {reward_risk}")
+    if not 0 < fraction <= 1:
+        raise ValueError(f"fraction must be in (0, 1], got {fraction}")
+    if not 0 < cap <= 1:
+        raise ValueError(f"cap must be in (0, 1], got {cap}")
+
+    full = win_rate - (1 - win_rate) / reward_risk
+    if full <= KELLY_EPSILON:
+        return 0.0
+    return min(full * fraction, cap)
+
+
+def breakeven_win_rate(reward_risk: float) -> float:
+    """The ``p`` at which a payoff of ``b`` stops losing money: ``1 / (1 + b)``.
+
+    Separate from ``kelly_risk_pct`` because it answers the question a person asks *before*
+    sizing — "could this ever work?" — and it answers it without needing a win rate at all.
+    A 1.83 R:R trade must win more than a third of the time; that is a fact about the zone
+    the engine drew, available the moment it is drawn.
+    """
+    if reward_risk <= 0:
+        raise ValueError(f"reward_risk must be positive, got {reward_risk}")
+    return 1 / (1 + reward_risk)
 
 
 def size_for_risk(*, equity: float, risk_pct: float, entry: float, stop: float) -> float:
