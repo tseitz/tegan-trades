@@ -20,8 +20,9 @@ from __future__ import annotations
 
 from core.rank import parse_date
 from core.trigger import ARMED, FIRED, NO_TRIGGER, NO_ZONE_TAG, UNREADABLE
+from review.render import roster_text, where_text
 
-from digest import diff
+from digest import diff, holdings
 from digest.fmt import num
 
 # How close to the monthly xAI cap before spend is worth a reader's attention. Below this the
@@ -68,7 +69,7 @@ def _view_age(row: dict, as_of: str | None) -> str:
 
 
 def subject(delta: diff.QueueDelta, book=None, *, stale_as_of: str | None = None,
-            problems: int = 0, repeat: bool = False) -> str:
+            problems: int = 0, repeat: bool = False, holdings_deltas=()) -> str:
     """The one line that has to work for someone who never opens the mail.
 
     Never empty. A blank or absent subject is indistinguishable from a job that did not run,
@@ -95,6 +96,7 @@ def subject(delta: diff.QueueDelta, book=None, *, stale_as_of: str | None = None
         if delta.rolled:
             parts.append(f"{len(delta.rolled)} rezoned")
         parts.extend(_book_subject(book))
+        parts.extend(holdings_subject(holdings_deltas))
         if not parts:
             parts.append(f"quiet · {delta.qualified} qualified")
 
@@ -116,7 +118,7 @@ def subject(delta: diff.QueueDelta, book=None, *, stale_as_of: str | None = None
 def markdown(delta: diff.QueueDelta, *, run=None, book=None, roster: str | None = None,
              roster_withheld: str | None = None, xai_month: float | None = None,
              xai_cap: float | None = None, xai_changed: bool = True,
-             holding=(), resting: int = 0,
+             holding=(), resting: int = 0, holdings_deltas=(),
              stale_as_of: str | None = None, problems=()) -> str:
     """The digest body.
 
@@ -166,6 +168,10 @@ def markdown(delta: diff.QueueDelta, *, run=None, book=None, roster: str | None 
     # most nights the events are about orders that never became a position.
     out.extend(_holding_section(holding, resting))
     out.extend(_book_section(book))
+    # Below the trading book on purpose. Everything above is time-sensitive — a zone reached
+    # this morning, a fill overnight. A long-horizon account moves on a scale where one day
+    # rarely matters, so it reads after the things that do.
+    out.extend(_holdings_section(holdings_deltas))
     out.extend(_run_section(run, xai_month=xai_month, xai_cap=xai_cap,
                             xai_changed=xai_changed))
     out.extend(_problems_section(problems))
@@ -312,6 +318,68 @@ def _holding_section(holding, resting: int) -> list[str]:
         out.append(f"  {held.asset:<8} {(held.direction or '?').upper():<6} {fill} · "
                    f"stop {num(held.stop)} · target {num(held.target)}{since}")
     return ["", *out]
+
+
+def _holdings_section(deltas) -> list[str]:
+    """Verdict movement on the accounts you already hold — one block per portfolio.
+
+    Prints when something moved **or** when an action is standing. The second condition is
+    the interesting one: the diff correctly goes quiet on night two, but a TRIM you have not
+    acted on is still a decision you owe. A count keeps it visible without a repeated
+    paragraph, which is the thing that would teach the eye to skip this block entirely.
+
+    A departure gets a mention, not a line with levels on it. It is asking nothing of you now;
+    the fact worth carrying is only that it stopped asking.
+    """
+    out: list[str] = []
+    for d in deltas:
+        standing_loud = {v: n for v, n in d.standing.items() if v in holdings.LOUD and n}
+        if not d.changed and not standing_loud and not d.unpriced:
+            continue
+
+        # PORTFOLIO, not HOLDINGS: `_holding_section` above already prints "HOLDING", and the
+        # two sections are about different accounts entirely — one is the trading book, this is
+        # the long-term money. A one-letter difference between two headings is not a difference.
+        head = f"PORTFOLIO — {d.portfolio}"
+        if d.bootstrap:
+            # Eight arrivals on night one is not eight things that happened today, and without
+            # this the first digest after wiring up an account reads as a violent Tuesday.
+            head += " · first look, nothing to compare against yet"
+        out += ["", head]
+
+        for change in d.changed:
+            verdict = change.reading.verdict
+            was = "new to the file" if change.before is None else f"was {change.before}"
+            if verdict in holdings.LOUD:
+                out.append(f"  {verdict:<5} {change.ticker} — {was} · "
+                           f"{roster_text(change.reading)} · {where_text(change.reading)}")
+            else:
+                out.append(f"  {'':<5} {change.ticker} — no longer {change.before}, "
+                           f"now {verdict}")
+
+        counts = " · ".join(f"{n} {v}" for v, n in sorted(standing_loud.items()))
+        watching = d.standing.get("WATCH", 0)
+        tail = [counts] if counts else []
+        if watching:
+            tail.append(f"{watching} WATCH")
+        tail.append(f"{d.positions} positions")
+        out.append(f"  {' · '.join(tail)} standing")
+
+        if d.unpriced:
+            # Above nothing and below everything, but present: a portfolio quietly short a few
+            # rows reads as a portfolio, and `review`'s whole contract is that it never does.
+            out.append(f"  no price for {', '.join(d.unpriced)} — "
+                       f"run `fetch-prices --portfolio {d.portfolio}`")
+    return out
+
+
+def holdings_subject(deltas) -> list[str]:
+    """The subject fragment. Counts positions that moved, never the standing total — a
+    subject that said "5 TRIM" every morning for a week would stop being read on day two."""
+    moved = sum(len(d.changed) for d in deltas)
+    if not moved:
+        return []
+    return [f"{moved} holding{'' if moved == 1 else 's'} moved"]
 
 
 def _book_section(book) -> list[str]:

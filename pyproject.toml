@@ -23,6 +23,7 @@ dependencies = [
     "ingestion",
     "llm",
     "oracle",
+    "review",
 ]
 
 [dependency-groups]
@@ -47,6 +48,7 @@ execution = { workspace = true }
 ingestion = { workspace = true }
 llm = { workspace = true }
 oracle = { workspace = true }
+review = { workspace = true }
 
 [tool.ruff]
 # One config at the root, like the lockfile: members inherit it, so a rule cannot mean one thing

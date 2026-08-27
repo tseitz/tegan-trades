@@ -385,7 +385,10 @@ step brain-extract  uv run brain-extract --limit "$BRAIN_EXTRACT_LIMIT"
 # cost is CPU, which is why it has no cap the way brain-extract does.
 step brain-index    uv run brain-index
 
-step fetch-prices   uv run fetch-prices
+# `--all-portfolios` rather than a list of names: this script cannot know about an account
+# added to data/portfolios/ after it was written, and a hardcoded name would quietly stop
+# warming the new one. `review` would then print it unpriced every night with nothing failing.
+step fetch-prices   uv run fetch-prices --all-portfolios
 
 # Ordered before `setups` deliberately — the queue reads this log to price each candidate's
 # carry, so running it after would cost the queue a day of freshness for no reason.

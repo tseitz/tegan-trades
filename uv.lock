@@ -17,6 +17,7 @@ members = [
     "ingestion",
     "llm",
     "oracle",
+    "review",
     "tegan-trades",
 ]
 
@@ -571,6 +572,7 @@ dependencies = [
     { name = "llm" },
     { name = "oracle" },
     { name = "pyyaml" },
+    { name = "review" },
 ]
 
 [package.dev-dependencies]
@@ -587,6 +589,7 @@ requires-dist = [
     { name = "llm", editable = "packages/llm" },
     { name = "oracle", editable = "packages/oracle" },
     { name = "pyyaml", specifier = ">=6" },
+    { name = "review", editable = "packages/review" },
 ]
 
 [package.metadata.requires-dev]
@@ -1831,6 +1834,33 @@ wheels = [
 ]
 
 [[package]]
+name = "review"
+version = "0.1.0"
+source = { editable = "packages/review" }
+dependencies = [
+    { name = "brain" },
+    { name = "core" },
+    { name = "oracle" },
+    { name = "pyyaml" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "brain", editable = "packages/brain" },
+    { name = "core", editable = "packages/core" },
+    { name = "oracle", editable = "packages/oracle" },
+    { name = "pyyaml", specifier = ">=6" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.1.1" }]
+
+[[package]]
 name = "rlp"
 version = "4.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2002,6 +2032,7 @@ dependencies = [
     { name = "ingestion" },
     { name = "llm" },
     { name = "oracle" },
+    { name = "review" },
 ]
 
 [package.dev-dependencies]
@@ -2020,6 +2051,7 @@ requires-dist = [
     { name = "ingestion", editable = "packages/ingestion" },
     { name = "llm", editable = "packages/llm" },
     { name = "oracle", editable = "packages/oracle" },
+    { name = "review", editable = "packages/review" },
 ]
 
 [package.metadata.requires-dev]

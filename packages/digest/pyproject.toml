@@ -18,6 +18,10 @@ dependencies = [
     "llm",
     "oracle",
     "pyyaml>=6",
+    # The standing read on positions you already hold. `digest` reduces it to a diff; it does
+    # not reimplement the grid. Acyclic — `review` reads brain and oracle and imports nothing
+    # here, exactly as this package imports and is imported by nothing.
+    "review",
 ]
 
 [project.scripts]
@@ -34,6 +38,7 @@ execution = { workspace = true }
 ingestion = { workspace = true }
 llm = { workspace = true }
 oracle = { workspace = true }
+review = { workspace = true }
 
 [dependency-groups]
 dev = [

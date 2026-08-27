@@ -1,0 +1,40 @@
+[project]
+name = "review"
+version = "0.1.0"
+description = "What to do about the positions you already hold"
+requires-python = ">=3.12"
+dependencies = [
+    # The roster's current stances, and the fold that turns many statements into one view
+    # per person. Read through `brain`, never by opening `data/stances/` here — the same
+    # reason `digest` depends on it rather than reimplementing the fold.
+    "brain",
+    "core",
+    # Price, routing and weekly structure. Together with `brain` above this is the whole
+    # reason `review` is its own member: it reads down into both halves of the pipeline,
+    # and neither half has any business importing the other.
+    "oracle",
+    "pyyaml>=6",
+]
+
+[project.scripts]
+review = "review.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+brain = { workspace = true }
+core = { workspace = true }
+oracle = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: hits the network; run explicitly",
+    "needs_ore: reads cached ore from data/; run where the corpus exists",
+]

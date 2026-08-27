@@ -38,11 +38,12 @@ from core.canon import load_registry
 from core.env import load_env
 from execution import store
 from ingestion import spend
-from oracle import exclusions, queue_snapshot
+from oracle import exclusions, portfolios, queue_snapshot
 from oracle.decisions import load_decisions
+from review.cli import readings_for
 
 from digest import book as book_mod
-from digest import diff, mail, narrate, render, roster, state, vault
+from digest import diff, holdings, mail, narrate, render, roster, state, vault
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 CONFIG_DIR = REPO_ROOT / "cfg"
@@ -307,20 +308,63 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
     # The one comparison that decides whether anything else can be believed.
     stale = current.get("as_of") if current.get("as_of") != today else None
 
+    holdings_deltas, holdings_memory = _holdings(
+        memory, registry=load_registry(CONFIG_DIR), as_of=datetime.now(UTC).date(), warn=warn)
+
     xai_month = spend.total()
     body = render.markdown(delta, run=_run_row(today, warn), book=events, roster=narration,
                            roster_withheld=withheld, xai_month=xai_month,
                            xai_cap=_xai_cap(),
                            xai_changed=state.xai_changed(memory, xai_month),
                            holding=holding, resting=len(resting_keys),
+                           holdings_deltas=holdings_deltas,
                            stale_as_of=stale, problems=warn.items)
     subject = render.subject(delta, book=events, stale_as_of=stale, problems=len(warn.items),
-                             repeat=state.is_repeat(memory, delta.previous_run))
+                             repeat=state.is_repeat(memory, delta.previous_run),
+                             holdings_deltas=holdings_deltas)
     return (subject, body,
-            _next_memory(memory, reported, xai_month, delta.previous_run) if state_path else None)
+            _next_memory(memory, reported, xai_month, delta.previous_run, holdings_memory)
+            if state_path else None)
 
 
-def _next_memory(memory: dict, reported, xai_month: float, window_start: str | None) -> dict:
+def _holdings(memory: dict, *, registry, as_of, warn) -> tuple[tuple, dict]:
+    """``(deltas, what to remember)`` for every portfolio on disk.
+
+    **Never raises.** A portfolio file with a typo in it, a price cache that is not there, a
+    registry that failed to load — none of those may take down a digest whose other six
+    sections are fine. Every failure degrades to no section plus a warning that reaches the
+    body, which is this package's standing contract.
+
+    Returns the *previous* memory unchanged on failure rather than an empty one. Writing back
+    an empty memory would make tomorrow's run report all 77 positions as new, turning one bad
+    night into two bad nights.
+    """
+    previous = state.holdings_seen(memory)
+    try:
+        names = portfolios.available()
+        if not names:
+            return (), previous
+        books = []
+        for name in names:
+            try:
+                books.append(portfolios.load(name))
+            except portfolios.PortfolioError as exc:
+                warn(f"warning: portfolio {name!r} was skipped — {exc}")
+        if not books:
+            return (), previous
+
+        deltas, remembered = [], dict(previous)
+        for book, readings in readings_for(books, as_of=as_of, registry=registry):
+            deltas.append(holdings.delta(book.name, readings, previous.get(book.name, {})))
+            remembered[book.name] = holdings.remember(readings)
+        return tuple(deltas), remembered
+    except Exception as exc:  # noqa: BLE001 - one bad account must not cost the whole digest
+        warn(f"warning: the portfolio section was dropped — {type(exc).__name__}: {exc}")
+        return (), previous
+
+
+def _next_memory(memory: dict, reported, xai_month: float, window_start: str | None,
+                 holdings_memory: dict) -> dict:
     """Tonight's memory. Pruned every run, not only on runs that reported something, so a quiet
     week still clears keys that have aged out."""
     return {
@@ -329,6 +373,7 @@ def _next_memory(memory: dict, reported, xai_month: float, window_start: str | N
                                       on=datetime.now(UTC).date()),
         state.XAI: xai_month,
         state.WINDOW: window_start,
+        state.HOLDINGS: holdings_memory,
     }
 
 

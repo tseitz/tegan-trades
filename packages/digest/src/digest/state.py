@@ -7,6 +7,8 @@ Two sections use it, for the same reason:
 
 - ``roster_reported`` — the roster window is seven days wide, so one video produces a move for
   seven nights. See ``roster.unreported``.
+- ``holdings_verdicts`` — a portfolio verdict is a standing answer, not an event. Without last
+  night's copy there is nothing to subtract and all 77 would report as new every morning.
 - ``xai_reported`` — the monthly spend total only moves when ``ingest-x`` runs, and that is off
   by default. A number that cannot change is not a diff, and shouting it nightly trains the eye
   to skip the run-health line it sits under.
@@ -24,6 +26,10 @@ from pathlib import Path
 
 #: Sections, so a caller cannot typo a key into a silently empty memory.
 ROSTER = "roster_reported"
+#: ``{portfolio: {ticker: verdict}}`` as of last night. The third section that needs a memory,
+#: and for the sharpest version of the same reason: a verdict is a *standing* answer, so
+#: without yesterday's copy every night would report all of them as new.
+HOLDINGS = "holdings_verdicts"
 XAI = "xai_reported"
 WINDOW = "last_window_start"
 
@@ -97,3 +103,10 @@ def xai_changed(state: dict, month_total: float | None) -> bool:
     if not isinstance(recorded, (int, float)):
         return True
     return round(float(recorded), 4) != round(float(month_total), 4)
+
+
+def holdings_seen(state: dict) -> dict:
+    """Last night's ``{portfolio: {ticker: verdict}}``. Degrades to an empty memory like every
+    other reader here — the cost is one repeated section, never a dropped one."""
+    seen = state.get(HOLDINGS)
+    return seen if isinstance(seen, dict) else {}

@@ -1,0 +1,38 @@
+# Example portfolio for `uv run review`. Copy, don't edit in place:
+#
+#   cp cfg/portfolio.example.yaml data/portfolios/retirement.yaml
+#
+# The real files go under `data/portfolios/`, which is gitignored. This repo is public and
+# share counts are not configuration — nothing with a position size in it belongs in `cfg/`.
+# Same reason `.env.example` is committed and `.env` is not.
+#
+# Kept by hand on purpose. M1 has no API, and an account like this changes a few times a
+# year, so a file you edit twice a year is the right size of tool rather than a workaround.
+
+# Shown in the report header. Defaults to the filename.
+account: retirement
+
+# Carried, not yet acted on — a retirement account and a day-trading account want different
+# answers to the same chart. Here so the format needn't change when that lands.
+horizon: long
+
+# What routing should assume these assets are. `crypto` is the only value treated specially
+# (Coinbase/Kraken); everything else routes to Yahoo. The roster's corpus answers this for
+# anything it discusses; this file answers it for the index funds nobody has ever mentioned.
+domain: stock
+
+positions:
+  # `shares` is required and must be positive. A closed position is deleted, not zeroed.
+  # `cost` is the average price paid and is OPTIONAL — it only adds a profit/loss column,
+  # and changes no verdict.
+  - ticker: VTI
+    shares: 42.5
+    cost: 210.40
+
+  - ticker: QQQ
+    shares: 18
+
+  # Override the file-level domain per row when one account mixes both.
+  - ticker: BTC
+    shares: 0.35
+    domain: crypto

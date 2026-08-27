@@ -1,0 +1,168 @@
+"""`review` — what to do about the positions you already hold.
+
+Reads down into both halves of the pipeline and writes to neither. The roster's current
+stances come from ``brain``; price, routing and weekly structure come from ``oracle``;
+``core.review`` pairs them. Nothing here decides anything — it fetches the two readings and
+hands them to the grid.
+
+**Nothing in this command spends money and nothing places an order.** It reads the price
+cache and refuses rather than fetching: warming a symbol is ``fetch-prices --portfolio``'s
+job, and a review that silently went to the network would make "run it again" an unpredictable
+cost. A holding with no cached price comes back as a row saying so.
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from collections import defaultdict
+from datetime import UTC, date, datetime
+from pathlib import Path
+
+from brain.retrieve import fold_stances
+from brain.stance_store import load_all_stances
+from core.canon import load_registry, resolve_asset
+from core.review import review
+from core.setups import build_context
+from oracle import cache, corpus, listings, portfolios
+from oracle.assemble import load_daily
+from oracle.resample import to_weekly
+from oracle.route import Priceable, load_routing_table, route
+
+from review.render import render
+
+CONFIG_DIR = Path(__file__).resolve().parents[4] / "cfg"
+
+
+def canonical_rows(book, registry) -> list[tuple[str, str]]:
+    """``(canonical asset, domain)`` per position, for the routing table.
+
+    Canonicalised here and not in ``oracle.portfolios``: the file reader deliberately holds no
+    opinion about asset names, so that the registry stays the only place aliases are resolved.
+    ``build_readings`` resolves the same way, which is what keeps the domain a holding
+    contributes and the asset it later routes as from being two different strings.
+    """
+    return [(resolve_asset(p.holding.ticker, registry)[0], p.domain) for p in book.positions]
+
+
+def build_readings(book, *, registry, table, folded_by_asset, as_of: date,
+                   series_cache=None):
+    """One ``Reading`` per position, **in file order and never fewer**.
+
+    A holding that cannot be routed, or that nothing has fetched yet, still comes back — with
+    no price and an ``UNREADABLE`` location. Dropping it would leave a position you own out of
+    a review of what you own, which is the one answer this command must never give by accident.
+
+    The ``Holding`` keeps the ticker as you wrote it while routing and the roster lookup both
+    use the canonical asset. You need to find your own row; they need the registry's name.
+
+    Ranking is deliberately left to the renderer. Sorting here as well would put two places in
+    charge of what you look at first, and they would drift.
+    """
+    series_cache = {} if series_cache is None else series_cache
+    readings = []
+    for position in book.positions:
+        holding = position.holding
+        asset = resolve_asset(holding.ticker, registry)[0]
+        resolved = route(asset, table)
+        context = None
+        if isinstance(resolved, Priceable):
+            daily = load_daily(resolved, table=table, series_cache=series_cache)
+            if daily is not None:
+                context = build_context(daily.bars, to_weekly(daily).bars, as_of=as_of)
+        readings.append(review(
+            holding, context,
+            folded=folded_by_asset.get(asset, ()), as_of=as_of,
+        ))
+    return readings
+
+
+def _fold_by_asset(registry) -> dict[str, list]:
+    """Every person's current view, grouped by the asset it is about.
+
+    Folded once for the whole run rather than per holding: folding is O(corpus) and a
+    portfolio asks the same question of it a dozen times.
+    """
+    stances = load_all_stances()
+    grouped: dict[str, list] = defaultdict(list)
+    for item in fold_stances(stances, registry):
+        grouped[item.asset_canonical].append(item)
+    return grouped
+
+
+def readings_for(books, *, as_of: date, registry=None):
+    """``[(Portfolio, [Reading, ...]), ...]`` for several accounts at once.
+
+    **One routing table and one stance fold for all of them.** Both are O(corpus) — a full walk
+    of ``data/theses/`` and a full fold of ``data/stances/`` — and doing either per portfolio
+    would multiply the most expensive part of this command by the number of accounts you keep.
+    The price cache is shared for the same reason: two accounts holding NVDA read its bars once.
+
+    This is the seam ``digest`` calls. It exists so the path from a portfolio name to a reading
+    lives in exactly one place; a second copy in the nightly would be free to drift from what
+    ``uv run review`` prints, and the two would quietly stop agreeing.
+    """
+    books = list(books)
+    if not books:
+        return []
+    registry = load_registry(CONFIG_DIR) if registry is None else registry
+
+    # The corpus supplies domain consensus for everything the roster discusses; the files
+    # supply it for everything else. Both, never one — see `Portfolio.domain_rows` for why a
+    # file's single row cannot outvote a discussed asset's hundreds.
+    rows = [(r.asset, r.domain) for r in corpus.iter_rows(registry)]
+    for book in books:
+        rows += canonical_rows(book, registry)
+    table = load_routing_table(
+        CONFIG_DIR, rows,
+        listings=listings.load_or_fetch(cache.DATA_ROOT / "_listings.json"),
+    )
+
+    folded = _fold_by_asset(registry)
+    series_cache: dict = {}
+    return [
+        (book, build_readings(book, registry=registry, table=table,
+                              folded_by_asset=folded, as_of=as_of,
+                              series_cache=series_cache))
+        for book in books
+    ]
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Check what you hold against where the roster stands and where the "
+                    "weekly sits. Reads only; places nothing.")
+    parser.add_argument("portfolio", nargs="?", default="retirement",
+                        help="which file under data/portfolios/ to read (default: retirement)")
+    parser.add_argument("--list", action="store_true",
+                        help="name the portfolios on disk and stop")
+    parser.add_argument("--as-of", type=date.fromisoformat,
+                        help="review as at a past date (YYYY-MM-DD), for replay")
+    args = parser.parse_args(argv)
+
+    if args.list:
+        known = portfolios.available()
+        print("\n".join(known) if known else
+              f"no portfolios yet — write one at {portfolios.DATA_ROOT}/<name>.yaml")
+        return 0
+
+    try:
+        book = portfolios.load(args.portfolio)
+    except portfolios.PortfolioError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
+    as_of = args.as_of or datetime.now(UTC).date()
+    [(book, readings)] = readings_for([book], as_of=as_of)
+    print(render(readings, portfolio=book.name, as_of=as_of))
+
+    missing = [r.holding.ticker for r in readings if r.price is None]
+    if missing:
+        # Pointed at the exact command that fixes it. A portfolio holds things the roster has
+        # never mentioned, so `fetch-prices` on its own will not have warmed them.
+        print(f"\n  no cached price for {', '.join(missing)} — "
+              f"run `uv run fetch-prices --portfolio {args.portfolio}`", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

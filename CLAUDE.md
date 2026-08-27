@@ -6,7 +6,7 @@ Personal signal/trading platform: ingest trusted people → distill theses → c
 
 - **Work directly on `main`. Do NOT create git worktrees.** This is a brand-new solo project — worktrees add friction with no benefit. If a skill (e.g. superpowers `using-git-worktrees`, `executing-plans`, `subagent-driven-development`) wants to create a worktree, **skip that step** and just commit to `main`. This intentionally overrides the global worktree convention in `~/.claude/rules/`.
 
-- **This is a uv workspace. Run everything from the repo root with `uv run <command>`. Do NOT `cd` into `packages/*/`.** The root `pyproject.toml` declares `[tool.uv.workspace]` over `packages/*`, so one `.venv` and one `uv.lock` at the root cover all eight packages and every console script. `cd packages/oracle && uv run setups` is wrong — it will try to build a second, divergent environment. There is no per-package `uv.lock` and no per-package `.venv`; do not create either. Adding a dependency means editing that member's `pyproject.toml` and running `uv sync` **from the root**.
+- **This is a uv workspace. Run everything from the repo root with `uv run <command>`. Do NOT `cd` into `packages/*/`.** The root `pyproject.toml` declares `[tool.uv.workspace]` over `packages/*`, so one `.venv` and one `uv.lock` at the root cover all nine packages and every console script. `cd packages/oracle && uv run setups` is wrong — it will try to build a second, divergent environment. There is no per-package `uv.lock` and no per-package `.venv`; do not create either. Adding a dependency means editing that member's `pyproject.toml` and running `uv sync` **from the root**.
 
 - **`docs/IMPROVEMENTS.md` is a backlog of ideas and feature requests.** Work you would *do*, not things you *learned*. Read it before starting new work; several entries are decisions already made but not yet executed. Delete entries when they're done.
 
@@ -22,14 +22,15 @@ Personal signal/trading platform: ingest trusted people → distill theses → c
 
 ## Repo layout
 
-Eight workspace members under `packages/`, in pipeline order:
+Nine workspace members under `packages/`, in pipeline order:
 
 - `ingestion/` — transcript pullers + raw-transcript store. CLIs: `ingest-roster`, `ingest-channel`, `ingest-x`. **`ingest-x` is the only command in the repo that spends real money** (xAI, metered) — every other cost in the repo bills against the Max subscription. Read `docs/ARCHITECTURE.md` before running it.
 - `distill/` — 🔴 LLM: transcripts → structured theses. CLIs: `distill-roster`, `distill-transcript`, `distill-canon`, `distill-triage`, `distill-migrate-ids`, `fetch-tickers`.
 - `brain/` — 🔴 LLM: narrative stance extraction, retrieval, synthesis. CLIs: `brain`, `brain-extract`, `brain-index`.
 - `oracle/` — price fetching, routing, grading, cross-reference. CLIs: `fetch-prices`, `fetch-funding`, `score-roster`, `setups`.
 - `execution/` — 🔀 **the only package that holds a private key and sends a signed write.** Everything else in the repo reads. Turns an approved `Candidate` into a resting bracket order (limit entry + TP + SL) on Hyperliquid. CLIs: `execute` (pre-flight only; cannot place), `book` (what the account is holding; `--cancel` retires resting entries you select — never positions; `--reconcile` settles what the venue did and records how finished trades ended; `--closed` is the realised history; `--venue` reaches the non-default venue). Reached from `setups --execute`, which is **off unless typed** — testnet by default, mainnet needs a typed confirmation. Risk settings in `cfg/execution.yaml`; the signing key lives in `.env` and nowhere else. **`.env` is no longer single-purpose** — it also holds the digest's `DIGEST_SMTP_*` mail credentials, which sign nothing.
-- `digest/` — **a diff, not a report.** What changed since last night: arrivals at the trigger, queue movement, book events, run health. Sits above the pipeline and reads down; nothing imports it. CLI: `digest` (stdout by default; `--vault` files a note, `--email` mails it — both warn rather than fail). `diff.py`/`render.py`/`book.py`/`roster.py`/`fmt.py` are pure; `cli.py` is the only module that *reads* pipeline state, and `vault.py`/`mail.py` only *write* the finished string. `state.py` is the exception — it reads and writes the digest's own memory of what it already said, which is what stops a seven-day roster window producing seven identical emails.
+- `digest/` — **a diff, not a report.** What changed since last night: arrivals at the trigger, queue movement, book events, run health. Sits above the pipeline and reads down; nothing imports it. CLI: `digest` (stdout by default; `--vault` files a note, `--email` mails it — both warn rather than fail). `diff.py`/`render.py`/`book.py`/`roster.py`/`holdings.py`/`fmt.py` are pure; `cli.py` is the only module that *reads* pipeline state, and `vault.py`/`mail.py` only *write* the finished string. `state.py` is the exception — it reads and writes the digest's own memory of what it already said, which is what stops a seven-day roster window producing seven identical emails. **`holdings.py` reduces `review` to a diff and does not reimplement it** — only `ADD` and `TRIM` count as movement, and a standing action survives as a count once its paragraph stops printing.
+- `review/` — **the mirror image of `setups`.** That queue asks *should I open this*; `review` asks *should I keep what I already hold*. Reads a hand-kept list of positions and pairs two readings per holding — where the roster currently stands, and where price sits on the weekly — against a grid in `core/review.py`. Sits above the pipeline and reads down, like `digest` — which is the one package that imports it, for the nightly's `PORTFOLIO` section. CLI: `review` (free, reads the price cache, places nothing). `readings_for()` is the seam `digest` calls — one routing table and one stance fold for every account, so the nightly and the terminal can never disagree about a verdict. The portfolio files live in `data/portfolios/*.yaml`, **gitignored because this repo is public and share counts are not configuration**. There is no M1 API, so they are edited by hand; the accounts barely move, which is why that is the right size of tool rather than a workaround. Warm their prices with `fetch-prices --portfolio <name>` — a portfolio holds assets nobody on the roster has ever mentioned, so the corpus pass alone never reaches them.
 - `core/` — pure logic and shared schema. Zero I/O, no network, no LLM. Imported by everything, imports nothing local.
 - `llm/` — the **only** LLM boundary (`claude -p`, subscription auth). Exactly four call sites in the repo depend on it (`distill/extract.py`, `brain/extract.py`, `brain/synthesize.py`, `digest/narrate.py`).
 
@@ -46,8 +47,8 @@ Other:
 Always from the repo root:
 
 ```bash
-uv sync                                # one venv, one lock, all eight packages
-uv run setups                          # any of the 21 console scripts
+uv sync                                # one venv, one lock, all nine packages
+uv run setups                          # any of the 22 console scripts
 uv run brain "where is my roster on ETH" --no-llm
 ./scripts/check.sh                     # THE GATE — ruff + the suite pre-commit runs. ~14s.
 uv run pytest packages/brain -q        # scope by path, not by --package

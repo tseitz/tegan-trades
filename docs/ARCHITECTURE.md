@@ -154,8 +154,9 @@ packages. Every command below is run as `uv run <command>` **from the repo root*
 | `book --reconcile` | 🟡 | Asks the venue what became of every order the log calls `placed`, then records how filled trades ENDED. Read-only **at the venue**; it does append `reconciled` and `closed` rows to the order log and one line per close to the vault. Runs nightly, once per venue. |
 | `book --closed` | 🟢 | The realised history — what each finished trade made, in R net of fees and funding. Reads the log only. |
 | `book --cancel` | 🟡 / 🔀 | Cancels **resting entries only**, never positions, and only ones you select and confirm. Reduces exposure, so it takes no typed phrase — but on `live` it is a real order cancellation. |
-| `digest` | 🔴 | What changed overnight. One `claude -p` call for the roster section only — ~17s, trivial. Everything else is local file reads. |
+| `digest` | 🔴 | What changed overnight. One `claude -p` call for the roster section only — ~17s, trivial. Everything else is local file reads, now including a `review` pass over every portfolio in `data/portfolios/` (free; a portfolio that fails to load costs a warning, not the digest). |
 | `digest --no-llm` | 🟢 | Every section except the roster narration. Completely free. |
+| `review [name]` | 🟢 | What to do about positions you already hold, from `data/portfolios/<name>.yaml`. Reads the price cache and the stance store; no LLM, no network, places nothing. A holding with no cached price prints a row saying so rather than vanishing. |
 | `setups --execute` | 🟢 / 🔀 **CAPITAL** | Free to run. On testnet it moves mock funds; on mainnet it moves **your money** — a different axis from the LLM/API costs above. See below. |
 
 ### 🔀 `setups --execute` risks capital, not dollars-per-call
@@ -206,6 +207,7 @@ The cap is a **trailing** check: spend is recorded after a run, so the run that 
 line completes and the *next* one is skipped. Overshoot is bounded by one run, ~$0.25.
 | `fetch-prices` | 🟡 | Free public APIs. Cached to `data/prices/`. **Two passes**: daily for every routed leg, then hourly for each *tradeable* instrument (~300 extra requests, deduped so a proxied asset warms `DIA` once rather than `^DJI` too). `--no-intraday` skips the second. |
 | `score-roster` | 🟢 | Reads ore, writes a report. Never mutates `data/theses/`. |
+| `fetch-prices --portfolio <name>` | 🟡 | Same run, plus the tickers you hold. A portfolio holds assets nobody on the roster mentions, so the corpus pass alone never reaches them and `review` prints them unpriced forever. Repeatable; pair with `--only <TICKER>` to warm one without re-walking ~300 corpus jobs. |
 | `setups` | 🟢 | Cross-reference over cached prices + theses. Reads the hourly cache to pick each asset's setup rung, then refreshes hourly bars for **candidates only** — a few dozen requests, not ~300. `--no-triggers` skips both. |
 | `distill-canon` | 🟢 | Explicitly deterministic, no LLM (says so in its docstring). |
 | `distill-triage` | 🟢 | Explicitly deterministic, no LLM. |

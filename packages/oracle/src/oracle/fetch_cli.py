@@ -16,7 +16,7 @@ from pathlib import Path
 from core.canon import load_registry
 from core.identity import DIFFERS
 
-from oracle import cache, confirm, corpus, listings, trigger_feed
+from oracle import cache, confirm, corpus, listings, portfolios, trigger_feed
 from oracle import marks as marks_mod
 from oracle.plan import FetchJob, plan_fetches
 from oracle.route import load_routing_table
@@ -147,6 +147,14 @@ def main(argv: list[str] | None = None) -> int:
                         help="refetch which symbols each exchange carries")
     parser.add_argument("--concurrency", type=int, default=6)
     parser.add_argument("--only", help="fetch a single canonical asset (debugging)")
+    parser.add_argument("--portfolio", action="append", default=[], metavar="NAME",
+                        help="also warm the tickers held in data/portfolios/NAME.yaml. A "
+                             "portfolio holds things nobody on the roster has ever mentioned, "
+                             "so the corpus pass alone never reaches them. Repeatable.")
+    parser.add_argument("--all-portfolios", action="store_true",
+                        help="warm every file in data/portfolios/. What the nightly uses — a "
+                             "shell script cannot enumerate accounts added after it was "
+                             "written, and a hardcoded name would stop warming them silently.")
     parser.add_argument("--no-intraday", action="store_true",
                         help="skip the hourly pass; `setups` then falls back to daily zones "
                              "for everything and shows no entry trigger")
@@ -168,12 +176,35 @@ def main(argv: list[str] | None = None) -> int:
         listings_path.unlink()
     known = listings.load_or_fetch(listings_path)
 
-    table = load_routing_table(CONFIG_DIR, [(r.asset, r.domain) for r in rows], listings=known)
     today = datetime.now(UTC).date()
     floor_start = (today - timedelta(days=args.history_days)
                    if args.history_days > 0 else None)
+
+    # Held assets are planned alongside the corpus, never instead of it. They contribute a
+    # domain where the corpus has none — which is the whole reason a retirement ETF can be
+    # routed at all — and one row cannot outvote the hundreds a discussed asset carries.
+    held_rows = []
+    wanted = portfolios.names_to_load(args.portfolio, every=args.all_portfolios)
+    for name in wanted:
+        try:
+            book = portfolios.load(name)
+        except portfolios.PortfolioError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        held_rows += portfolios.fetch_rows(
+            portfolios.canonical_domain_rows(book, registry),
+            since=floor_start or today,
+        )
+    if held_rows:
+        print(f"  + {len(held_rows)} held asset(s) from {', '.join(wanted)}")
+
+    table = load_routing_table(
+        CONFIG_DIR,
+        [(r.asset, r.domain) for r in rows] + [(r.asset, r.domain) for r in held_rows],
+        listings=known,
+    )
     jobs, skipped = plan_fetches(
-        rows, table, today=today, cached_spans=_cached_spans(cache.DATA_ROOT),
+        rows + held_rows, table, today=today, cached_spans=_cached_spans(cache.DATA_ROOT),
         floor_start=floor_start,
     )
     if args.only:
