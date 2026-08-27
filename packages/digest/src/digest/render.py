@@ -396,14 +396,23 @@ def _run_section(run, *, xai_month: float | None, xai_cap: float | None,
     # rather than present-and-failed — so a truncated run and a clean one both read as "clean",
     # differing only in a step count the reader has no baseline for.
     code = run.get("exit", 0)
+    # A step's status comes from its exit code, and several commands report a failure while
+    # exiting 0 — `ingest-roster` aborting on a YouTube IP block is the case that prompted
+    # this. The nightly catches those separately and records WHY here, because the step list
+    # alone cannot say. Empty on rows written before the field existed, which is why the
+    # can't-say wording below still has to exist.
+    reasons = [r for r in (run.get("reasons") or []) if r]
     if bad:
         line = f"RUN  exit {code} · {len(bad)} step(s) not ok: {', '.join(bad)}"
+    elif code and reasons:
+        line = f"RUN  exit {code} · {len(steps)} steps"
     elif code:
         line = f"RUN  exit {code} · {len(steps)} steps, none individually flagged — see the log"
     else:
         line = f"RUN  clean · {len(steps)} steps"
 
     out = ["", line]
+    out += [f"    {r}" for r in reasons]
     # Spend only speaks up near the cap. Below it the number is knowable, unchanged in any
     # actionable way, and already in the nightly log.
     #

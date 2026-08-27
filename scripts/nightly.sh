@@ -294,6 +294,22 @@ declare -a STATUS_LINES
 # row at the end. The pretty lines above answer "what happened last night"; this answers "is
 # distill getting slower", which no single run's log can. See scripts/nightly_report.py.
 declare -a STEP_RECORDS
+# Reasons the run is not clean that NO step status can carry. A step is marked from its exit
+# code, and several commands report a failure while exiting 0 — `ingest-roster` aborting on a
+# YouTube IP block is the one that exposed this. Others belong to no step at all (`claude`
+# auth expiring, the xAI cap). Before this existed those raised WORST while every step stayed
+# `ok`, so the run exited 1 and the morning mail could only say "none individually flagged".
+# Keep it parallel to STATUS_LINES: the log gets the pretty line, this survives into
+# history.jsonl and therefore into the mail.
+declare -a REASONS
+
+# Raise the run to at least WARN and say why, in both places.
+flag() {
+  STATUS_LINES+=("  WARN  $1")
+  REASONS+=("$1")
+  [ $WORST -lt 1 ] && WORST=1
+  return 0
+}
 
 step() {
   local name="$1"; shift
@@ -344,8 +360,7 @@ elif [ "$NIGHTLY_WITH_X" != "1" ] && [ -z "$ONLY_STEPS" ]; then
 elif [ -f "$NO_X_FILE" ]; then
   STATUS_LINES+=("  skip  ingest-x — $NO_X_FILE exists")
 elif awk -v s="$SPENT_THIS_MONTH" -v c="$XAI_MONTHLY_CAP" 'BEGIN{exit !(s>=c)}'; then
-  STATUS_LINES+=("  skip  ingest-x — \$$SPENT_THIS_MONTH spent this month, cap \$$XAI_MONTHLY_CAP")
-  [ $WORST -lt 1 ] && WORST=1
+  flag "ingest-x skipped — \$$SPENT_THIS_MONTH spent this month, cap \$$XAI_MONTHLY_CAP"
 else
   step ingest-x     uv run ingest-x
 fi
@@ -457,8 +472,7 @@ BRAIN_INDEXED=$(grep -oE '^[0-9]+ transcripts indexed' "$LOG" | tail -1 | cut -d
 # The circuit breaker means a usage cap was hit and the rest were never attempted. They cost
 # nothing and are retryable, but a night that hits it has NOT kept up and should say so.
 if grep -q 'CIRCUIT BREAKER TRIPPED' "$LOG"; then
-  STATUS_LINES+=("  WARN  brain-extract — circuit breaker tripped, see log")
-  [ $WORST -lt 1 ] && WORST=1
+  flag "brain-extract — circuit breaker tripped, see log"
 fi
 
 # ── a step that fails every single item still exits 0 ───────────────────────────
@@ -486,8 +500,7 @@ for pair in "ingest-roster:$(total_failed ingested)" \
             "brain-extract:$(total_failed extracted)"; do
   failed="${pair##*:}"
   if [ "${failed:-0}" -gt 0 ]; then
-    STATUS_LINES+=("  WARN  ${pair%%:*} — ${failed} item(s) failed, see log")
-    [ $WORST -lt 1 ] && WORST=1
+    flag "${pair%%:*} — ${failed} item(s) failed, see log"
   fi
 done
 
@@ -497,8 +510,7 @@ done
 # `claude /login` at a keyboard, which no amount of unattended retrying will accomplish. A night
 # that hits this has not fallen behind, it has stopped.
 if grep -q 'OAuth session expired' "$LOG"; then
-  STATUS_LINES+=("  WARN  claude auth expired — run \`claude /login\`, then re-run the LLM steps")
-  [ $WORST -lt 1 ] && WORST=1
+  flag "claude auth expired — run \`claude /login\`, then re-run the LLM steps"
 fi
 
 CANDIDATES=$(grep -oE '^[0-9]+ candidates' "$LOG" | tail -1 | cut -d' ' -f1)
@@ -528,8 +540,7 @@ CLOSED=$(grep -oE '[0-9]+ close\(s\) recorded' "$LOG" \
 FUNDING=$(grep -oE '^[0-9]+ observations logged' "$LOG" | tail -1 | cut -d' ' -f1)
 FUNDING_FAILED=$(grep -cE '^  ! (hyperliquid|lighter|aster)' "$LOG" || true)
 if [ "${FUNDING_FAILED:-0}" -gt 0 ]; then
-  STATUS_LINES+=("  WARN  fetch-funding — ${FUNDING_FAILED} venue(s) unreachable, see log")
-  [ $WORST -lt 1 ] && WORST=1
+  flag "fetch-funding — ${FUNDING_FAILED} venue(s) unreachable, see log"
 fi
 
 # Read only. `ingest-x` writes the ledger itself now (`ingestion.spend`) — this script used to,
@@ -563,11 +574,19 @@ print(f'{spend.total():.2f}')" 2>/dev/null || echo "$XAI_COST")
 # how often does ingest-x fail, is the corpus still growing. Appended rather than rotated —
 # it is ~400 bytes a night, so a decade costs about a megabyte, and the trend IS the value.
 # Read it with `uv run python scripts/nightly_report.py`.
+# One newline-joined argument rather than a second trailing array: two variable-length arrays
+# in one argv cannot be told apart on the receiving side. Reasons are single-line by
+# construction (they come straight from `flag`), so a newline is a safe separator.
+REASONS_BLOB=""
+if [ "${#REASONS[@]}" -gt 0 ]; then
+  REASONS_BLOB=$(printf '%s\n' "${REASONS[@]}")
+fi
+
 uv run python - "$LOG_DIR/history.jsonl" "$WORST" "$RUN_STARTED" "$XAI_COST" "$CLAUDE_COST" \
-  "$CLAUDE_CALLS" "$CANDIDATES" "$FUNDING" "$BRAIN_EXTRACTED" "$BRAIN_INDEXED" \
+  "$CLAUDE_CALLS" "$CANDIDATES" "$FUNDING" "$BRAIN_EXTRACTED" "$BRAIN_INDEXED" "$REASONS_BLOB" \
   "${STEP_RECORDS[@]}" <<'PY' 2>/dev/null || true
 import json, sys, time
-path, worst, started, xai, claude, calls, cands, funding, bx, bi, *steps = sys.argv[1:]
+path, worst, started, xai, claude, calls, cands, funding, bx, bi, reasons, *steps = sys.argv[1:]
 
 def num(v, cast=float, default=0):
     try:
@@ -585,6 +604,9 @@ row = {
         {"name": n, "status": s, "seconds": num(sec, int)}
         for n, s, sec in (rec.split("|") for rec in steps)
     ],
+    # Why the run is not clean, when no step's own status can say — see `flag` above. Omitted
+    # entirely when empty so a clean row keeps its old shape.
+    **({"reasons": [r for r in reasons.split("\n") if r.strip()]} if reasons.strip() else {}),
     "cost": {"xai": num(xai), "claude": num(claude), "claude_calls": num(calls, int)},
     "output": {
         "candidates": num(cands, int),

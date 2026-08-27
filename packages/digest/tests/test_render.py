@@ -434,3 +434,45 @@ def test_the_trigger_section_carries_the_age_too():
         _snap("2026-08-20", [_entry("a", asset="RKLB", trigger_state=ARMED,
                                     newest_at="2026-06-06")]))
     assert "75d" in render.markdown(delta)
+
+
+# ── run health names the reason, not just the exit code ──────────────────────
+
+def _run(exit_code, *, steps=None, reasons=None):
+    row = {"run": "2026-08-27T13:29:48Z", "exit": exit_code,
+           "steps": steps if steps is not None else [{"name": "setups", "status": "ok"}]}
+    if reasons is not None:
+        row["reasons"] = reasons
+    return row
+
+
+def _health(row):
+    return [ln for ln in render._run_section(row, xai_month=None, xai_cap=None) if ln.strip()]
+
+
+def test_a_clean_run_stays_one_line():
+    assert _health(_run(0)) == ["RUN  clean · 1 steps"]
+
+
+def test_a_reason_is_printed_when_no_step_carries_the_blame():
+    """The 2026-08-27 shape: ingest-roster aborted on a YouTube block but exits 0, so every
+    step read ``ok`` while the run exited 1 — and the mail could only say "see the log"."""
+    lines = _health(_run(1, reasons=["ingest-roster — 1 item(s) failed, see log"]))
+    assert lines[0] == "RUN  exit 1 · 1 steps"
+    assert lines[1].strip() == "ingest-roster — 1 item(s) failed, see log"
+
+
+def test_reasons_are_printed_alongside_a_flagged_step():
+    """Both can be true in one night; reporting only the step would hide the other."""
+    lines = _health(_run(1,
+                         steps=[{"name": "verify-roster", "status": "warn"}],
+                         reasons=["claude auth expired — run `claude /login`"]))
+    assert "verify-roster" in lines[0]
+    assert any("claude auth expired" in ln for ln in lines[1:])
+
+
+def test_an_exit_without_reasons_still_admits_it_does_not_know():
+    """Older rows predate the field. Silence must not read as a clean run."""
+    lines = _health(_run(1))
+    assert "exit 1" in lines[0]
+    assert "see the log" in lines[0]
