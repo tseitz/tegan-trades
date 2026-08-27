@@ -174,7 +174,8 @@ def main(argv: list[str] | None = None) -> int:
 
     as_of = args.as_of or datetime.now(UTC).date()
     [(book, readings, contexts)] = readings_for([book], as_of=as_of)
-    print(render(readings, portfolio=book.name, as_of=as_of))
+    print(render(readings, portfolio=book.name, as_of=as_of,
+                 age_days=book.age_days(on=as_of), stale=book.is_stale(on=as_of)))
 
     pairs = [
         (reading, levels_near(context, kinds=book.level_kinds) if context is not None else ())

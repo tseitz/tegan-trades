@@ -334,8 +334,7 @@ def _holdings_section(deltas) -> list[str]:
     out: list[str] = []
     for d in deltas:
         standing_loud = {v: n for v, n in d.standing.items() if v in holdings.LOUD and n}
-        if not d.changed and not standing_loud and not d.unpriced and not d.arrived \
-                and not d.left:
+        if not (d.changed or standing_loud or d.unpriced or d.arrived or d.left or d.stale):
             continue
 
         # PORTFOLIO, not HOLDINGS: `_holding_section` above already prints "HOLDING", and the
@@ -347,6 +346,13 @@ def _holdings_section(deltas) -> list[str]:
             # this the first digest after wiring up an account reads as a violent Tuesday.
             head += " · first look, nothing to compare against yet"
         out += ["", head]
+
+        # First, above every row, because it decides whether any of them can be believed —
+        # the same placement rule the queue's own STALE banner follows. Worse here than in the
+        # terminal: nobody reading an email is looking at the file it came from.
+        if d.stale:
+            out.append(f"  STALE — written down {d.age_days} days ago. Anything traded since "
+                       f"is missing from everything below.")
 
         for change in d.changed:
             verdict = change.reading.verdict
@@ -404,6 +410,10 @@ def holdings_subject(deltas) -> list[str]:
     reached = sum(len(d.arrived) for d in deltas)
     if reached:
         parts.append(f"{reached} at a level")
+    # Last, and unconditional on there being any movement: a stale account that produced no
+    # diff is exactly the case worth saying out loud, because silence there is ambiguous
+    # between "nothing happened" and "we are reading a file from two months ago".
+    parts += [f"{d.portfolio} stale" for d in deltas if d.stale]
     return parts
 
 

@@ -371,6 +371,7 @@ def _holdings(memory: dict, *, registry, as_of, warn) -> tuple[tuple, tuple[dict
                 book.name, readings, previous.get(book.name, {}),
                 on_levels=on_levels,
                 remembered_levels=previous_levels.get(book.name),
+                stale=book.is_stale(on=as_of), age_days=book.age_days(on=as_of),
             ))
             remembered[book.name] = holdings.remember(readings)
             remembered_levels[book.name] = holdings.remember_levels(on_levels)

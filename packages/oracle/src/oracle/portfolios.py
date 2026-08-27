@@ -17,17 +17,21 @@ answer it must never give by accident.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
 import yaml
 from core.nearby import ALL_KINDS
 from core.review import Holding
+from core.setups import DEFAULT_HALF_LIFE
 
 DATA_ROOT = Path(__file__).resolve().parents[4] / "data" / "portfolios"
 
-DEFAULT_HORIZON = "long"
+# `core.thesis.Timeframe`, reused rather than restated. A fifth word here would be a second
+# vocabulary for one idea, and `HalfLife` below already keys off these four.
+HORIZONS = ("scalp", "swing", "position", "macro")
+DEFAULT_HORIZON = "position"
 
 # What routing assumes an asset is when the file does not say. `crypto` is the only value
 # `oracle.route` treats specially — everything else lands on Yahoo — so "stock" is both the
@@ -68,6 +72,26 @@ class Portfolio:
     horizon: str
     positions: tuple[Position, ...]
     level_kinds: tuple[str, ...] = DEFAULT_LEVEL_KINDS
+    # When these positions were last true. Taken from the file's `updated:` line if it has
+    # one, otherwise from its mtime — you edited the file when you edited the file, and a
+    # date you have to remember to bump is the first thing that goes stale.
+    updated: date | None = None
+    stale_after: int = DEFAULT_HALF_LIFE.position
+
+    def age_days(self, *, on: date) -> int | None:
+        return None if self.updated is None else (on - self.updated).days
+
+    def is_stale(self, *, on: date) -> bool:
+        """Past the point where these positions probably no longer describe the account.
+
+        **A hand-kept file is a snapshot pretending to be a feed.** That is fine on an account
+        that changes twice a year and dangerous on one that changes weekly: every verdict here
+        is computed against holdings that may not exist any more, and a confidently wrong
+        answer is worse than no answer. Reported rather than refused — you are the one who
+        knows whether you have traded.
+        """
+        age = self.age_days(on=on)
+        return age is not None and age > self.stale_after
 
     @property
     def holdings(self) -> tuple[Holding, ...]:
@@ -172,12 +196,45 @@ def load(name: str, *, root: Path = DATA_ROOT) -> Portfolio:
             domain=str(row.get("domain") or fallback_domain),
         ))
 
+    horizon = str(doc.get("horizon") or DEFAULT_HORIZON)
+    if horizon not in HORIZONS:
+        raise PortfolioError(f"{path}: unknown `horizon` {horizon!r} — "
+                             f"pick from {', '.join(HORIZONS)}")
+
+    stale_after = doc.get("stale_after")
     return Portfolio(
         name=str(doc.get("account") or name),
-        horizon=str(doc.get("horizon") or DEFAULT_HORIZON),
+        horizon=horizon,
         positions=tuple(positions),
         level_kinds=_level_kinds(doc.get("levels"), path=path),
+        updated=_updated(doc.get("updated"), path=path),
+        # The view half-lives reused as a starting point, not a measurement of how fast a
+        # portfolio file rots. They are the right shape — a scalper's book turns over in days
+        # and a retirement book in years — but an actively traded account goes wrong far
+        # sooner than its horizon suggests, which is what `stale_after:` is for.
+        stale_after=(DEFAULT_HALF_LIFE.days_for(horizon) if stale_after is None
+                     else int(stale_after)),
     )
+
+
+def _updated(raw, *, path: Path) -> date:
+    """When the positions were last true.
+
+    An unparseable date raises rather than falling back to the mtime. The fallback would
+    report a freshly-saved file as current at the exact moment you were trying to tell it the
+    positions were six months old — the wrong direction to be wrong in.
+    """
+    if raw is None:
+        # UTC to match every `as_of` in the repo. A file saved late in the evening
+        # local time then dates to tomorrow, which costs at most a day against
+        # thresholds measured in weeks — and a local date could read as negative age.
+        return datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).date()
+    if isinstance(raw, date):
+        return raw
+    try:
+        return date.fromisoformat(str(raw)[:10])
+    except ValueError as exc:
+        raise PortfolioError(f"{path}: `updated` is not a date: {raw!r}") from exc
 
 
 def _level_kinds(raw, *, path: Path) -> tuple[str, ...]:

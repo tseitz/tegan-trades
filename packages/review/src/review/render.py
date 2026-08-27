@@ -69,15 +69,33 @@ KIND_LABEL = {
 LEVEL_HEADERS = ("TICKER", "PRICE", "SIDE", "LEVEL", "WHAT", "", "ROSTER", "")
 
 
-def render(readings, *, portfolio: str, as_of) -> str:
+def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
+           stale: bool = False) -> str:
     """The whole report. ``as_of`` is passed in rather than read from a clock so a replay of
-    a past date prints that date, not today's."""
-    head = f"{portfolio} · {len(readings)} position(s) · as of {as_of.isoformat()}"
+    a past date prints that date, not today's.
+
+    ``age_days`` is how long ago the positions were written down, and it prints every run
+    rather than only when it is bad. A hand-kept file is a snapshot pretending to be a feed;
+    every verdict below is computed against holdings that may no longer exist, and the only
+    thing standing between that and a confidently wrong answer is the reader knowing how old
+    the input is.
+    """
+    written = ""
+    if age_days is not None:
+        written = f" · written {'today' if age_days == 0 else f'{age_days} days ago'}"
+    head = f"{portfolio} · {len(readings)} position(s) · as of {as_of.isoformat()}{written}"
     if not readings:
         return f"{head}\n\n  no positions — nothing to review"
 
     ranked = sorted(readings, key=_rank)
-    lines = [head, "", *_table(ranked)]
+    lines = [head, ""]
+    if stale:
+        # Above the table, never below it. Under the rows it reads as a footnote about
+        # something else, and by then the reader has taken every verdict as fact.
+        lines += [f"  STALE — these positions were written down {age_days} days ago. "
+                  f"Anything traded since is missing, and every verdict below is computed "
+                  f"against holdings that may no longer exist.", ""]
+    lines += _table(ranked)
 
     total = sum(r.market_value for r in ranked if r.market_value is not None)
     unpriced = [r for r in ranked if r.price is None]

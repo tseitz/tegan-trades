@@ -1,10 +1,12 @@
+from datetime import UTC, date, datetime
+
 import pytest
 from core.nearby import ALL_KINDS, RANGE_EDGE, WEEKLY_ZONE
 from oracle.portfolios import PortfolioError, available, load, names_to_load
 
 GOOD = """\
 account: retirement
-horizon: long
+horizon: macro
 positions:
   - ticker: VTI
     shares: 42.5
@@ -24,7 +26,7 @@ def test_loads_a_portfolio(tmp_path):
     root = _write(tmp_path, "retirement", GOOD)
     book = load("retirement", root=root)
     assert book.name == "retirement"
-    assert book.horizon == "long"
+    assert book.horizon == "macro"
     assert [h.ticker for h in book.holdings] == ["VTI", "BTC"]
     assert book.holdings[0].cost == 210.40
     assert book.holdings[1].cost is None
@@ -157,3 +159,69 @@ def test_an_unknown_level_kind_is_refused_rather_than_matching_nothing(tmp_path)
                   "levels: [weekly]\npositions:\n  - {ticker: VTI, shares: 1}\n")
     with pytest.raises(PortfolioError, match="weekly"):
         load("p", root=root)
+
+
+# ── how old is what you wrote down ─────────────────────────────────────────
+
+
+def test_horizon_uses_the_repos_own_vocabulary(tmp_path):
+    """`scalp | swing | position | macro` is what `core.thesis` and `HalfLife` already speak.
+    A fifth word here would be a second vocabulary for one idea."""
+    root = _write(tmp_path, "p", "horizon: swing\npositions:\n  - {ticker: VTI, shares: 1}\n")
+    assert load("p", root=root).horizon == "swing"
+
+
+def test_an_invented_horizon_is_refused(tmp_path):
+    root = _write(tmp_path, "p", "horizon: long\npositions:\n  - {ticker: VTI, shares: 1}\n")
+    with pytest.raises(PortfolioError, match="horizon"):
+        load("p", root=root)
+
+
+def test_the_file_dates_itself_from_its_mtime_when_it_does_not_say(tmp_path):
+    """No bookkeeping to forget. You edited the file when you edited the file, and an
+    `updated:` line you have to remember to bump is exactly the thing that goes stale first."""
+    root = _write(tmp_path, "p", GOOD)
+    assert load("p", root=root).updated == datetime.now(UTC).date()
+
+
+def test_an_explicit_updated_date_wins_over_the_mtime(tmp_path):
+    """So a file restored from a backup, or one you touched for an unrelated reason, can
+    still say when the positions were actually true."""
+    root = _write(tmp_path, "p", "updated: 2026-01-15\npositions:\n  - {ticker: V, shares: 1}\n")
+    assert load("p", root=root).updated == date(2026, 1, 15)
+
+
+def test_an_unreadable_updated_date_is_refused_rather_than_ignored(tmp_path):
+    """Falling back to the mtime would silently report a fresh file when you meant to say it
+    was six months old — the wrong direction to be wrong in."""
+    root = _write(tmp_path, "p", "updated: last tuesday\npositions:\n  - {ticker: V, shares: 1}\n")
+    with pytest.raises(PortfolioError, match="updated"):
+        load("p", root=root)
+
+
+def test_stale_after_defaults_to_the_horizons_half_life(tmp_path):
+    root = _write(tmp_path, "p", "horizon: swing\npositions:\n  - {ticker: V, shares: 1}\n")
+    assert load("p", root=root).stale_after == 21
+
+    root = _write(tmp_path, "m", "horizon: macro\npositions:\n  - {ticker: V, shares: 1}\n")
+    assert load("m", root=root).stale_after == 360
+
+
+def test_stale_after_can_be_set_per_account(tmp_path):
+    """An actively traded account goes wrong in days, whatever its horizon says about how
+    long you intend to hold. The default is a starting point, not a measurement."""
+    root = _write(tmp_path, "p",
+                  "horizon: macro\nstale_after: 14\npositions:\n  - {ticker: V, shares: 1}\n")
+    assert load("p", root=root).stale_after == 14
+
+
+def test_a_fresh_file_is_not_stale_and_an_old_one_is(tmp_path):
+    root = _write(tmp_path, "p", "stale_after: 30\npositions:\n  - {ticker: V, shares: 1}\n")
+    book = load("p", root=root)
+    assert book.age_days(on=datetime.now(UTC).date()) == 0
+    assert book.is_stale(on=datetime.now(UTC).date()) is False
+
+    old = load("o", root=_write(tmp_path, "o",
+                                "updated: 2026-01-01\nstale_after: 30\n"
+                                "positions:\n  - {ticker: V, shares: 1}\n"))
+    assert old.is_stale(on=date(2026, 3, 1)) is True

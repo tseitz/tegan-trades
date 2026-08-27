@@ -121,7 +121,8 @@ from digest import render  # noqa: E402
 
 def _delta(**kw):
     base = {"portfolio": "retirement", "changed": (), "standing": {}, "positions": 0,
-            "unpriced": (), "bootstrap": False, "arrived": (), "left": ()}
+            "unpriced": (), "bootstrap": False, "arrived": (), "left": (),
+            "stale": False, "age_days": None}
     base.update(kw)
     return holdings.HoldingsDelta(**base)
 
@@ -193,7 +194,9 @@ def test_the_portfolio_section_is_not_silently_swallowed_by_its_own_safety_net(m
     """
     from digest import cli
 
-    book = SimpleNamespace(name="retirement")
+    book = SimpleNamespace(name="retirement", level_kinds=(),
+                           is_stale=lambda *, on: False,
+                           age_days=lambda *, on: 0)
     monkeypatch.setattr(cli.portfolios, "available", lambda: ("retirement",))
     monkeypatch.setattr(cli.portfolios, "load", lambda name: book)
     monkeypatch.setattr(
@@ -285,3 +288,30 @@ def test_a_night_with_no_level_movement_prints_no_level_lines():
 def test_level_arrivals_reach_the_subject_line():
     d = _delta(arrived=(_spot("COST"),))
     assert render.holdings_subject([d]) == ["1 at a level"]
+
+
+# ── a stale file must not mail confident advice ────────────────────────────
+
+
+def test_a_stale_portfolio_is_called_out_above_its_rows():
+    """Worse in the email than in the terminal: you are not looking at the file, so nothing
+    else tells you the positions it advises on may not exist any more."""
+    d = _delta(stale=True, age_days=63, changed=(holdings.Change(
+        ticker="WULF", before=HOLD, reading=_reading("WULF", ADD)),), positions=12)
+    lines = render._holdings_section([d])
+    assert any("STALE" in line for line in lines)
+    warning = next(i for i, text in enumerate(lines) if "STALE" in text)
+    row = next(i for i, text in enumerate(lines) if "WULF" in text)
+    assert warning < row
+    assert any("63" in line for line in lines)
+
+
+def test_a_fresh_portfolio_says_nothing_about_its_age():
+    d = _delta(standing={TRIM: 1}, positions=5)
+    assert not any("STALE" in line for line in render._holdings_section([d]))
+
+
+def test_a_stale_portfolio_reaches_the_subject_line():
+    """It changes whether the rest of the line can be believed, which is the same reason
+    `stale_as_of` is hoisted into the subject for the queue."""
+    assert render.holdings_subject([_delta(stale=True, age_days=63)]) == ["retirement stale"]

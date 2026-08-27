@@ -180,3 +180,39 @@ def test_totals_line_sums_what_it_can_price():
         portfolio="p", as_of=AS_OF,
     )
     assert "230" in out            # 200 + 30
+
+
+# ── how old the file is ────────────────────────────────────────────────────
+
+
+def test_the_header_says_how_old_the_positions_are():
+    """A hand-kept file is a snapshot pretending to be a feed. Printing its age every run is
+    what stops it quietly becoming fiction."""
+    out = render([_reading()], portfolio="p", as_of=AS_OF, age_days=3)
+    assert "written 3 days ago" in out
+
+
+def test_a_file_written_today_says_today_rather_than_zero_days():
+    out = render([_reading()], portfolio="p", as_of=AS_OF, age_days=0)
+    assert "today" in out
+    assert "0 days" not in out
+
+
+def test_a_stale_file_is_called_out_above_the_table():
+    """Under the rows it reads as a footnote about something else — the reader has already
+    taken the verdicts as fact by then. Same rule the digest's caveats follow."""
+    out = render([_reading()], portfolio="p", as_of=AS_OF, age_days=40, stale=True)
+    lines = out.splitlines()
+    assert any("STALE" in line for line in lines)
+    warning = next(i for i, text in enumerate(lines) if "STALE" in text)
+    first_row = next(i for i, text in enumerate(lines) if "BTC" in text)
+    assert warning < first_row
+
+
+def test_a_fresh_file_gets_no_warning():
+    out = render([_reading()], portfolio="p", as_of=AS_OF, age_days=2)
+    assert "STALE" not in out
+
+
+def test_age_is_optional_so_a_caller_without_one_still_renders():
+    assert "BTC" in render([_reading()], portfolio="p", as_of=AS_OF)

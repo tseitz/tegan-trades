@@ -54,6 +54,11 @@ class HoldingsDelta:
     # merely omitted it would describe a portfolio you do not own.
     unpriced: tuple[str, ...] = ()
     bootstrap: bool = False
+    # How old the hand-kept file is, and whether that is past what the account tolerates.
+    # Carried on the delta rather than looked up at render time because this module is the
+    # only one that has the `Portfolio` in scope, and the renderer stays pure.
+    stale: bool = False
+    age_days: int | None = None
 
     @property
     def is_quiet(self) -> bool:
@@ -83,7 +88,8 @@ def remember_levels(on_levels) -> dict[str, str]:
 
 
 def delta(portfolio: str, readings, remembered: dict[str, str], *,
-          on_levels=(), remembered_levels: dict[str, str] | None = None) -> HoldingsDelta:
+          on_levels=(), remembered_levels: dict[str, str] | None = None,
+          stale: bool = False, age_days: int | None = None) -> HoldingsDelta:
     """Tonight's movement for one account.
 
     ``remembered`` is last night's ``{ticker: verdict}``. Empty means a first run — every
@@ -129,6 +135,8 @@ def delta(portfolio: str, readings, remembered: dict[str, str], *,
         positions=len(readings),
         unpriced=tuple(unpriced),
         bootstrap=not remembered,
+        stale=stale,
+        age_days=age_days,
     )
 
 

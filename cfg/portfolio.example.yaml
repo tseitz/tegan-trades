@@ -12,9 +12,22 @@
 # Shown in the report header. Defaults to the filename.
 account: retirement
 
-# Carried, not yet acted on — a retirement account and a day-trading account want different
-# answers to the same chart. Here so the format needn't change when that lands.
-horizon: long
+# scalp | swing | position | macro — `core.thesis`'s own vocabulary, not a new one. It sets
+# the default staleness tolerance below; a retirement book is `macro`, an actively traded
+# account is `swing` or `scalp`.
+horizon: macro
+
+# When these positions were last true. OPTIONAL — without it the file's own modified time is
+# used, which needs no bookkeeping and is usually what you meant. Set it explicitly when the
+# mtime would lie (a file restored from backup, or touched for an unrelated edit).
+# updated: 2026-08-27
+
+# Days before `review` shouts that this file no longer describes the account. Defaults to the
+# horizon's view half-life (scalp 3, swing 21, position 120, macro 360), which is the right
+# shape but the wrong number for an account you actually trade — an active book goes wrong in
+# days however long you intend to hold. Set it low there:
+#
+#   stale_after: 7
 
 # What routing should assume these assets are. `crypto` is the only value treated specially
 # (Coinbase/Kraken); everything else routes to Yahoo. The roster's corpus answers this for
