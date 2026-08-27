@@ -392,3 +392,45 @@ def test_resting_entries_are_counted_not_listed():
 
 def test_no_resting_entries_adds_nothing():
     assert "resting" not in render.markdown(_quiet(), holding=(_held(),), resting=0)
+
+
+# ── how old the agreement is ─────────────────────────────────────────────────
+
+def _aged(newest_at, **over):
+    return diff.compare(
+        _snap("2026-08-19", []),
+        _snap("2026-08-20", [_entry("a", asset="RKLB", newest_at=newest_at, **over)]))
+
+
+def test_a_new_row_says_how_old_its_newest_view_is():
+    """`agreement 3` reads as three people agreeing. On 2026-08-26 RKLB showed agreement 3 and
+    every one of those views was months old."""
+    body = render.markdown(_aged("2026-06-06"))
+    assert "agreement 2" in body and "75d" in body
+
+
+def test_the_age_is_measured_against_the_snapshot_not_the_clock():
+    """`render` is pure and has no clock. Measuring against today would make a stale snapshot's
+    ages drift every time the digest re-ran over it."""
+    body = render.markdown(_aged("2026-08-18"))
+    assert "2d" in body
+
+
+def test_a_row_with_no_recorded_view_date_says_nothing():
+    """Snapshots written before this field existed. Absent is not zero."""
+    body = render.markdown(_aged(None))
+    assert "0d" not in body and "d ·" not in body
+
+
+def test_an_unparseable_view_date_says_nothing_rather_than_guessing():
+    assert "d" not in render.markdown(_aged("not-a-date")).split("agreement 2")[1].split("\n")[0]
+
+
+def test_the_trigger_section_carries_the_age_too():
+    """The one section with entry and stop levels on it is the one where a dead consensus costs
+    the most."""
+    delta = diff.compare(
+        _snap("2026-08-19", [_entry("a", trigger_state=NO_ZONE_TAG)]),
+        _snap("2026-08-20", [_entry("a", asset="RKLB", trigger_state=ARMED,
+                                    newest_at="2026-06-06")]))
+    assert "75d" in render.markdown(delta)

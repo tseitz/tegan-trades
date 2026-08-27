@@ -18,6 +18,7 @@ client, which means one renderer and nothing to drift.
 
 from __future__ import annotations
 
+from core.rank import parse_date
 from core.trigger import ARMED, FIRED, NO_TRIGGER, NO_ZONE_TAG, UNREADABLE
 
 from digest import diff
@@ -46,6 +47,24 @@ _TRIGGER_WORDS = {
 
 def _in_words(state: str | None) -> str:
     return _TRIGGER_WORDS.get(state, state) if state else "unknown"
+
+
+def _view_age(row: dict, as_of: str | None) -> str:
+    """How old the newest thesis behind a row is, as `` · newest Nd``. Empty when unknown.
+
+    ``agreement`` is a bare count: three people who last spoke in March render exactly like
+    three who spoke yesterday. On 2026-08-26 RKLB showed ``agreement 3`` and all three views
+    were months old. Printed unconditionally rather than past a threshold — a threshold is a
+    decision that a row was not worth mentioning, and 40% of the voices behind that night's
+    queue were stale by ``brain.report``'s own horizon-aware rule.
+
+    Measured against the snapshot's own ``as_of``, never a clock. This module is pure, and a
+    stale snapshot re-rendered tomorrow must not report different ages than it did today.
+    """
+    newest, taken = parse_date(row.get("newest_at")), parse_date(as_of)
+    if newest is None or taken is None:
+        return ""
+    return f" · newest {(taken - newest).days}d"
 
 
 def subject(delta: diff.QueueDelta, book=None, *, stale_as_of: str | None = None,
@@ -172,7 +191,7 @@ def _trigger_section(delta: diff.QueueDelta) -> list[str]:
                    f"{row.get('zone_timeframe', '?')} · entry {num(row.get('entry'))} · "
                    f"stop {num(row.get('stop'))} · target {num(row.get('target'))}")
         out.append(f"           {what} ({origin}) · R:R {row.get('reward_risk', 0):.2f} · "
-                   f"agreement {row.get('agreement', 0)}")
+                   f"agreement {row.get('agreement', 0)}{_view_age(row, delta.as_of)}")
     out.append("")
     return out
 
@@ -184,7 +203,7 @@ def _entered_section(delta: diff.QueueDelta) -> list[str]:
     for row in sorted(delta.entered, key=lambda r: -r.get("score", 0)):
         out.append(f"  {row['asset']:<8} {row['direction'].upper():<6} "
                    f"score {row.get('score', 0):.2f} · R:R {row.get('reward_risk', 0):.2f} · "
-                   f"agreement {row.get('agreement', 0)}")
+                   f"agreement {row.get('agreement', 0)}{_view_age(row, delta.as_of)}")
     out.append("")
     return out
 

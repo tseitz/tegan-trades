@@ -34,7 +34,7 @@ def _block():
                       confirmed_at=confirmed_at, bos=bos, invalidation=90.0)
 
 
-def _candidate(asset: str = "BTC", score: float = 0.5) -> Candidate:
+def _candidate(asset: str = "BTC", score: float = 0.5, **over) -> Candidate:
     return Candidate(
         asset=asset, direction="long", block=_block(),
         entry=110.0, entry_top=110.0, entry_bottom=100.0,
@@ -44,8 +44,8 @@ def _candidate(asset: str = "BTC", score: float = 0.5) -> Candidate:
         weekly_trend="uptrend", daily_trend="uptrend", zone="discount",
         zone_timeframe=DAILY, tier=TIER_MAJOR,
         freshness=1.0, trend_alignment=1.0,
-        views=(View(person="Mayne", published_at="2026-07-20"),), thesis_ids=("t1",),
-        score=score,
+        views=over.pop("views", (View(person="Mayne", published_at="2026-07-20"),)),
+        thesis_ids=("t1",), score=score, **over,
     )
 
 
@@ -225,3 +225,18 @@ def test_a_readable_snapshot_is_untouched(tmp_path):
     warned: list[str] = []
     assert queue_snapshot.load(path, warn=warned.append)[0]["rows"] == [good]
     assert not warned
+
+
+def test_the_date_of_the_newest_view_is_carried():
+    """``agreement`` is a bare count, so three people who last spoke in March render exactly
+    like three who spoke yesterday. The digest cannot recompute this — the views live on the
+    ``Candidate``, which no longer exists by the time it reads the snapshot."""
+    entry = _row(candidates=[_candidate()])["rows"][0]
+    assert entry["newest_at"] == _candidate().newest_at
+
+
+def test_a_candidate_with_no_views_carries_no_date_rather_than_an_empty_string():
+    """``Candidate.newest_at`` returns ``""`` when there are no views. Written through as-is it
+    would render as an age of "today", which is the one reading that is certainly wrong."""
+    entry = _row(candidates=[_candidate(views=())])["rows"][0]
+    assert entry["newest_at"] is None

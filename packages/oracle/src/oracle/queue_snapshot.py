@@ -124,6 +124,18 @@ def _entry(candidate, trigger) -> dict:
         "reward_risk": candidate.reward_risk,
         "zone_timeframe": candidate.zone_timeframe,
         "agreement": candidate.agreement,
+        # ``agreement`` is a bare count, so three people who last spoke in March render exactly
+        # like three who spoke yesterday. The digest cannot recompute this: the dated views live
+        # on the ``Candidate``, which is gone by the time it reads the snapshot.
+        #
+        # Newest rather than oldest, matching ``core.setups.collapse``'s own reasoning about
+        # freshness — a zone one person called yesterday and three called last year is a live
+        # idea with old corroboration, not a stale one.
+        #
+        # ``None`` and not ``""``. ``Candidate.newest_at`` returns an empty string when there
+        # are no views, and an empty date read as an age renders as "today", which is the one
+        # answer that is certainly wrong.
+        "newest_at": candidate.newest_at or None,
         # **None means the trigger pass never ran for this candidate** — `--no-triggers`, or an
         # asset with no intraday series. It is NOT `no_zone_tag`, which is the pass running and
         # finding price never reached the zone. Collapsing the two would make the digest
