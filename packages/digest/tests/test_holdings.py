@@ -121,7 +121,7 @@ from digest import render  # noqa: E402
 
 def _delta(**kw):
     base = {"portfolio": "retirement", "changed": (), "standing": {}, "positions": 0,
-            "unpriced": (), "bootstrap": False}
+            "unpriced": (), "bootstrap": False, "arrived": (), "left": ()}
     base.update(kw)
     return holdings.HoldingsDelta(**base)
 
@@ -201,7 +201,87 @@ def test_the_portfolio_section_is_not_silently_swallowed_by_its_own_safety_net(m
         lambda books, *, as_of, registry: [(book, [_reading("WULF", ADD)], (None,))])
 
     warnings = []
-    deltas, memory = cli._holdings({}, registry=object(), as_of=AS_OF, warn=warnings.append)
+    deltas, (verdicts, levels) = cli._holdings(
+        {}, registry=object(), as_of=AS_OF, warn=warnings.append)
     assert warnings == []
     assert [c.ticker for c in deltas[0].changed] == ["WULF"]
-    assert memory == {"retirement": {"WULF": ADD}}
+    assert verdicts == {"retirement": {"WULF": ADD}}
+    # No context, so no levels — but the key must exist, or tomorrow reads as a first run.
+    assert levels == {"retirement": {}}
+
+
+# ── levels reached overnight ───────────────────────────────────────────────
+
+from core.nearby import RESISTANCE, SUPPORT, WEEKLY_ZONE, Level  # noqa: E402
+from core.setups import WEEKLY  # noqa: E402
+from review.levels import Spotlight  # noqa: E402
+
+
+def _spot(ticker, *, side=SUPPORT, kind=WEEKLY_ZONE, top=99.0, bottom=95.0):
+    return Spotlight(
+        reading=_reading(ticker, HOLD),
+        level=Level(kind=kind, timeframe=WEEKLY, side=side, top=top, bottom=bottom,
+                    distance=0.0),
+        others=0,
+    )
+
+
+def test_a_holding_newly_standing_on_a_level_is_an_arrival():
+    d = holdings.delta("p", [], {}, on_levels=[_spot("COST")], remembered_levels={})
+    assert [s.reading.holding.ticker for s in d.arrived] == ["COST"]
+
+
+def test_standing_on_the_same_level_as_last_night_is_not_news():
+    """The zone's edges drift a little every week as new bars close. Keying on the prices
+    would fire an arrival every single night for a position that has not moved."""
+    remembered = holdings.remember_levels([_spot("COST", top=99.0, bottom=95.0)])
+    later = [_spot("COST", top=99.4, bottom=94.6)]      # same zone, redrawn
+    d = holdings.delta("p", [], {}, on_levels=later, remembered_levels=remembered)
+    assert d.arrived == ()
+
+
+def test_moving_from_support_to_resistance_is_an_arrival():
+    remembered = holdings.remember_levels([_spot("HOOD", side=SUPPORT)])
+    d = holdings.delta("p", [], {}, on_levels=[_spot("HOOD", side=RESISTANCE)],
+                       remembered_levels=remembered)
+    assert [s.reading.holding.ticker for s in d.arrived] == ["HOOD"]
+
+
+def test_leaving_a_level_is_reported_with_what_it_left():
+    remembered = holdings.remember_levels([_spot("TSLA", side=SUPPORT)])
+    d = holdings.delta("p", [], {}, on_levels=[], remembered_levels=remembered)
+    assert d.left == (("TSLA", f"{WEEKLY_ZONE}:{SUPPORT}"),)
+
+
+def test_the_first_run_reports_no_level_arrivals():
+    """Every holding is standing on something on night one. Reporting all of them as
+    arrivals would say a quiet Tuesday was the busiest night on record."""
+    d = holdings.delta("p", [], {}, on_levels=[_spot("A"), _spot("B")], remembered_levels=None)
+    assert d.arrived == ()
+    assert d.left == ()
+
+
+def test_remember_levels_keys_on_kind_and_side_only():
+    stored = holdings.remember_levels([_spot("COST", side=RESISTANCE)])
+    assert stored == {"COST": f"{WEEKLY_ZONE}:{RESISTANCE}"}
+
+
+def test_level_moves_render_under_the_portfolio_heading():
+    d = _delta(arrived=(_spot("COST", side=RESISTANCE),),
+               left=(("TSLA", f"{WEEKLY_ZONE}:{SUPPORT}"),),
+               standing={HOLD: 2}, positions=2)
+    out = "\n".join(render._holdings_section([d]))
+    assert "reached a level" in out
+    assert "COST" in out and "resistance" in out
+    assert "left one" in out
+    assert "TSLA" in out
+
+
+def test_a_night_with_no_level_movement_prints_no_level_lines():
+    out = "\n".join(render._holdings_section([_delta(standing={TRIM: 1}, positions=5)]))
+    assert "reached a level" not in out
+
+
+def test_level_arrivals_reach_the_subject_line():
+    d = _delta(arrived=(_spot("COST"),))
+    assert render.holdings_subject([d]) == ["1 at a level"]

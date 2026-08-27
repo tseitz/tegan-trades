@@ -42,6 +42,12 @@ class Change:
 class HoldingsDelta:
     portfolio: str
     changed: tuple[Change, ...] = ()
+    # Positions that started standing on a level since last night, and ones that stopped.
+    # Kept apart from ``changed`` because they answer a different question: that one is "has
+    # the advice moved", these are "has price arrived somewhere". A verdict can sit still for
+    # weeks while price walks onto a weekly block, and vice versa.
+    arrived: tuple = ()
+    left: tuple[tuple[str, str], ...] = ()
     standing: dict[str, int] = field(default_factory=dict)
     positions: int = 0
     # Named rather than counted. A holding with no price gets no verdict, and a section that
@@ -51,7 +57,7 @@ class HoldingsDelta:
 
     @property
     def is_quiet(self) -> bool:
-        return not self.changed
+        return not self.changed and not self.arrived and not self.left
 
 
 def _loud(verdict: str | None) -> str | None:
@@ -60,30 +66,66 @@ def _loud(verdict: str | None) -> str | None:
     return verdict if verdict in LOUD else None
 
 
-def delta(portfolio: str, readings, remembered: dict[str, str]) -> HoldingsDelta:
+def level_key(level) -> str:
+    """A level's identity across nights: what kind it is and which side of price it is on.
+
+    **Deliberately not its prices.** A zone's edges are redrawn as new bars close, so keying on
+    them would report an arrival every single night for a position that has not moved an inch.
+    Kind-and-side is the granularity a nightly can honestly carry: "it is on weekly resistance"
+    is either true or it is not, and it changes when something actually happened.
+    """
+    return f"{level.kind}:{level.side}"
+
+
+def remember_levels(on_levels) -> dict[str, str]:
+    """``{ticker: level_key}`` for everything price is standing on tonight."""
+    return {spot.reading.holding.ticker: level_key(spot.level) for spot in on_levels}
+
+
+def delta(portfolio: str, readings, remembered: dict[str, str], *,
+          on_levels=(), remembered_levels: dict[str, str] | None = None) -> HoldingsDelta:
     """Tonight's movement for one account.
 
     ``remembered`` is last night's ``{ticker: verdict}``. Empty means a first run — every
     action today is reported, and ``bootstrap`` says why so the reader can tell "eight new
     calls" from "we have never looked before".
+
+    ``on_levels`` is the **uncapped** standing group from ``review.levels.shortlist``. It has
+    to be uncapped: the display cap is about how much fits on a screen, and a level arrival
+    that happened to rank thirteenth still happened.
     """
     changed: list[Change] = []
-    standing: dict[str, int] = {}
+    counts: dict[str, int] = {}
     unpriced: list[str] = []
 
     for reading in readings:
         ticker = reading.holding.ticker
-        standing[reading.verdict] = standing.get(reading.verdict, 0) + 1
+        counts[reading.verdict] = counts.get(reading.verdict, 0) + 1
         if reading.price is None:
             unpriced.append(ticker)
         before = remembered.get(ticker)
         if _loud(before) != _loud(reading.verdict):
             changed.append(Change(ticker=ticker, before=before, reading=reading))
 
+    # None means no memory at all — a first run. Every holding is standing on something on
+    # night one, and reporting all of them as arrivals would make a quiet Tuesday read as the
+    # busiest night on record. An empty dict is different: it is a memory that happens to be
+    # empty, and an arrival against it is real.
+    now = {spot.reading.holding.ticker: spot for spot in on_levels}
+    if remembered_levels is None:
+        arrived, left = (), ()
+    else:
+        arrived = tuple(spot for ticker, spot in now.items()
+                        if remembered_levels.get(ticker) != level_key(spot.level))
+        left = tuple((ticker, was) for ticker, was in sorted(remembered_levels.items())
+                     if ticker not in now)
+
     return HoldingsDelta(
         portfolio=portfolio,
         changed=tuple(changed),
-        standing=standing,
+        arrived=arrived,
+        left=left,
+        standing=counts,
         positions=len(readings),
         unpriced=tuple(unpriced),
         bootstrap=not remembered,

@@ -36,11 +36,13 @@ import yaml
 from brain.stance_store import load_all_stances
 from core.canon import load_registry
 from core.env import load_env
+from core.nearby import levels_near
 from execution import store
 from ingestion import spend
 from oracle import exclusions, portfolios, queue_snapshot
 from oracle.decisions import load_decisions
 from review.cli import readings_for
+from review.levels import shortlist
 
 from digest import book as book_mod
 from digest import diff, holdings, mail, narrate, render, roster, state, vault
@@ -308,7 +310,7 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
     # The one comparison that decides whether anything else can be believed.
     stale = current.get("as_of") if current.get("as_of") != today else None
 
-    holdings_deltas, holdings_memory = _holdings(
+    holdings_deltas, holdings_memories = _holdings(
         memory, registry=load_registry(CONFIG_DIR), as_of=datetime.now(UTC).date(), warn=warn)
 
     xai_month = spend.total()
@@ -323,11 +325,11 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
                              repeat=state.is_repeat(memory, delta.previous_run),
                              holdings_deltas=holdings_deltas)
     return (subject, body,
-            _next_memory(memory, reported, xai_month, delta.previous_run, holdings_memory)
+            _next_memory(memory, reported, xai_month, delta.previous_run, *holdings_memories)
             if state_path else None)
 
 
-def _holdings(memory: dict, *, registry, as_of, warn) -> tuple[tuple, dict]:
+def _holdings(memory: dict, *, registry, as_of, warn) -> tuple[tuple, tuple[dict, dict]]:
     """``(deltas, what to remember)`` for every portfolio on disk.
 
     **Never raises.** A portfolio file with a typo in it, a price cache that is not there, a
@@ -335,15 +337,16 @@ def _holdings(memory: dict, *, registry, as_of, warn) -> tuple[tuple, dict]:
     sections are fine. Every failure degrades to no section plus a warning that reaches the
     body, which is this package's standing contract.
 
-    Returns the *previous* memory unchanged on failure rather than an empty one. Writing back
+    Returns the *previous* memories unchanged on failure rather than empty ones. Writing back
     an empty memory would make tomorrow's run report all 77 positions as new, turning one bad
     night into two bad nights.
     """
     previous = state.holdings_seen(memory)
+    previous_levels = state.holdings_levels_seen(memory)
     try:
         names = portfolios.available()
         if not names:
-            return (), previous
+            return (), (previous, previous_levels)
         books = []
         for name in names:
             try:
@@ -351,20 +354,34 @@ def _holdings(memory: dict, *, registry, as_of, warn) -> tuple[tuple, dict]:
             except portfolios.PortfolioError as exc:
                 warn(f"warning: portfolio {name!r} was skipped — {exc}")
         if not books:
-            return (), previous
+            return (), (previous, previous_levels)
 
-        deltas, remembered = [], dict(previous)
-        for book, readings, _contexts in readings_for(books, as_of=as_of, registry=registry):
-            deltas.append(holdings.delta(book.name, readings, previous.get(book.name, {})))
+        deltas = []
+        remembered, remembered_levels = dict(previous), dict(previous_levels)
+        for book, readings, contexts in readings_for(books, as_of=as_of, registry=registry):
+            # Uncapped on purpose. The display cap is about screen space; a level arrival that
+            # happened to rank thirteenth still happened, and a diff that missed it would be
+            # silently wrong rather than merely short.
+            on_levels, _, _ = shortlist(
+                [(r, levels_near(c, kinds=book.level_kinds) if c is not None else ())
+                 for r, c in zip(readings, contexts, strict=True)],
+                limit=None,
+            )
+            deltas.append(holdings.delta(
+                book.name, readings, previous.get(book.name, {}),
+                on_levels=on_levels,
+                remembered_levels=previous_levels.get(book.name),
+            ))
             remembered[book.name] = holdings.remember(readings)
-        return tuple(deltas), remembered
+            remembered_levels[book.name] = holdings.remember_levels(on_levels)
+        return tuple(deltas), (remembered, remembered_levels)
     except Exception as exc:  # noqa: BLE001 - one bad account must not cost the whole digest
         warn(f"warning: the portfolio section was dropped — {type(exc).__name__}: {exc}")
-        return (), previous
+        return (), (previous, previous_levels)
 
 
 def _next_memory(memory: dict, reported, xai_month: float, window_start: str | None,
-                 holdings_memory: dict) -> dict:
+                 holdings_memory: dict, holdings_levels: dict) -> dict:
     """Tonight's memory. Pruned every run, not only on runs that reported something, so a quiet
     week still clears keys that have aged out."""
     return {
@@ -374,6 +391,7 @@ def _next_memory(memory: dict, reported, xai_month: float, window_start: str | N
         state.XAI: xai_month,
         state.WINDOW: window_start,
         state.HOLDINGS: holdings_memory,
+        state.HOLDINGS_LEVELS: holdings_levels,
     }
 
 

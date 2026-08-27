@@ -30,6 +30,10 @@ ROSTER = "roster_reported"
 #: and for the sharpest version of the same reason: a verdict is a *standing* answer, so
 #: without yesterday's copy every night would report all of them as new.
 HOLDINGS = "holdings_verdicts"
+#: ``{portfolio: {ticker: "kind:side"}}`` — which level each position was standing on last
+#: night. Separate from the verdicts because they move independently: price can walk onto a
+#: weekly block while the roster says nothing new for a month.
+HOLDINGS_LEVELS = "holdings_levels"
 XAI = "xai_reported"
 WINDOW = "last_window_start"
 
@@ -109,4 +113,10 @@ def holdings_seen(state: dict) -> dict:
     """Last night's ``{portfolio: {ticker: verdict}}``. Degrades to an empty memory like every
     other reader here — the cost is one repeated section, never a dropped one."""
     seen = state.get(HOLDINGS)
+    return seen if isinstance(seen, dict) else {}
+
+
+def holdings_levels_seen(state: dict) -> dict:
+    """Last night's ``{portfolio: {ticker: level key}}``, or an empty memory."""
+    seen = state.get(HOLDINGS_LEVELS)
     return seen if isinstance(seen, dict) else {}

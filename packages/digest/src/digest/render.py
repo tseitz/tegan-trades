@@ -334,7 +334,8 @@ def _holdings_section(deltas) -> list[str]:
     out: list[str] = []
     for d in deltas:
         standing_loud = {v: n for v, n in d.standing.items() if v in holdings.LOUD and n}
-        if not d.changed and not standing_loud and not d.unpriced:
+        if not d.changed and not standing_loud and not d.unpriced and not d.arrived \
+                and not d.left:
             continue
 
         # PORTFOLIO, not HOLDINGS: `_holding_section` above already prints "HOLDING", and the
@@ -357,6 +358,17 @@ def _holdings_section(deltas) -> list[str]:
                 out.append(f"  {'':<5} {change.ticker} — no longer {change.before}, "
                            f"now {verdict}")
 
+        # Price arriving somewhere is the most time-sensitive thing this section knows, so it
+        # sits above the standing counts — those describe a state that was already true.
+        if d.arrived:
+            out.append("  reached a level overnight")
+            out += [f"    {_arrival(spot)}" for spot in d.arrived]
+        if d.left:
+            out.append("  left one")
+            for ticker, was in d.left:
+                kind, _, side = was.partition(":")
+                out.append(f"    {ticker:<6} was on {kind.replace('_', ' ')} {side}")
+
         counts = " · ".join(f"{n} {v}" for v, n in sorted(standing_loud.items()))
         watching = d.standing.get("WATCH", 0)
         tail = [counts] if counts else []
@@ -373,13 +385,26 @@ def _holdings_section(deltas) -> list[str]:
     return out
 
 
+def _arrival(spot) -> str:
+    """One holding that walked onto a level since last night."""
+    level = spot.level
+    band = (num(level.bottom) if level.top == level.bottom
+            else f"{num(level.bottom)}–{num(level.top)}")
+    return (f"{spot.reading.holding.ticker:<6} {num(spot.reading.price):>10}  "
+            f"{level.timeframe} {level.side} {band}  {roster_text(spot.reading)}")
+
+
 def holdings_subject(deltas) -> list[str]:
     """The subject fragment. Counts positions that moved, never the standing total — a
     subject that said "5 TRIM" every morning for a week would stop being read on day two."""
+    parts = []
     moved = sum(len(d.changed) for d in deltas)
-    if not moved:
-        return []
-    return [f"{moved} holding{'' if moved == 1 else 's'} moved"]
+    if moved:
+        parts.append(f"{moved} holding{'' if moved == 1 else 's'} moved")
+    reached = sum(len(d.arrived) for d in deltas)
+    if reached:
+        parts.append(f"{reached} at a level")
+    return parts
 
 
 def _book_section(book) -> list[str]:
