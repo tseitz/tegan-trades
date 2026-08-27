@@ -39,7 +39,7 @@ DISPLACEMENT_MULTIPLE = 1.5
 
 __all__ = [
     "ATR_LOOKBACK", "BEARISH", "BULLISH", "DISPLACEMENT_MULTIPLE",
-    "Gap", "atr", "fair_value_gaps", "is_displacement", "true_range",
+    "Gap", "atr", "fair_value_gaps", "is_displacement", "live_gaps", "true_range",
 ]
 
 
@@ -134,3 +134,43 @@ def fair_value_gaps(bars, *, multiple: float = DISPLACEMENT_MULTIPLE,
                           index=i, middle_index=i - 1))
 
     return tuple(found)
+
+
+def live_gaps(bars, *, as_of=None, multiple: float = DISPLACEMENT_MULTIPLE,
+              lookback: int = ATR_LOOKBACK) -> tuple[Gap, ...]:
+    """The gaps that are still voids — every one price has not traded clean through.
+
+    ``fair_value_gaps`` returns the whole history, which is right for its callers: ``trigger``
+    wants the gap belonging to one specific break, whenever it happened. A caller asking "what
+    levels are near price" wants the opposite, and handing it a gap from 2024 that price has
+    since crossed twice would point at a level that is not there.
+
+    **Trading back INTO a gap does not spend it; going through does.** This is deliberate and
+    it is the whole reason the rule is stated on the far edge. Price sitting inside the void is
+    precisely the reading worth surfacing, so a "touched it" rule would delete every gap at the
+    exact moment it became interesting. It mirrors ``structure.invalidated_on``, where a zone
+    survives a wick into it and dies on a close beyond it.
+
+    ``as_of`` follows the same look-ahead discipline as ``Swing.confirmed_at``: a gap is not
+    knowable until its third candle closes, so a replay of an earlier date is never shown one.
+    """
+    from core.structure import on_or_before
+
+    if as_of is not None:
+        bars = [bar for bar in bars if on_or_before(bar.date, as_of)]
+    found = fair_value_gaps(bars, multiple=multiple, lookback=lookback)
+    return tuple(gap for gap in found if not _spent(bars, gap))
+
+
+def _spent(bars, gap: Gap) -> bool:
+    """Has price gone clean through ``gap`` since it formed?
+
+    The window opens at ``index + 1``: candle 3 is what *created* the void, so measuring its
+    own extreme against it would spend most gaps on the bar that made them.
+    """
+    window = bars[gap.index + 1:]
+    if not window:
+        return False
+    if gap.kind == BULLISH:
+        return any(bar.low < gap.bottom for bar in window)
+    return any(bar.high > gap.top for bar in window)

@@ -1,4 +1,5 @@
 from datetime import date
+from types import SimpleNamespace
 
 from core.review import (
     ADD,
@@ -180,3 +181,27 @@ def test_the_subject_counts_holdings_that_moved():
     change = holdings.Change(ticker="WULF", before=HOLD, reading=_reading("WULF", ADD))
     assert render.holdings_subject([_delta(changed=(change,))]) == ["1 holding moved"]
     assert render.holdings_subject([_delta()]) == []
+
+
+def test_the_portfolio_section_is_not_silently_swallowed_by_its_own_safety_net(monkeypatch):
+    """`_holdings` catches everything so one bad account cannot cost the whole digest. That
+    net also swallows a signature change in `review.readings_for` — which happened: the seam
+    grew a third return value and the section became a warning nobody would have read.
+
+    This asserts the happy path produces a delta and no warning, so the contract between the
+    two packages is held by a failing test rather than by a log line.
+    """
+    from digest import cli
+
+    book = SimpleNamespace(name="retirement")
+    monkeypatch.setattr(cli.portfolios, "available", lambda: ("retirement",))
+    monkeypatch.setattr(cli.portfolios, "load", lambda name: book)
+    monkeypatch.setattr(
+        cli, "readings_for",
+        lambda books, *, as_of, registry: [(book, [_reading("WULF", ADD)], (None,))])
+
+    warnings = []
+    deltas, memory = cli._holdings({}, registry=object(), as_of=AS_OF, warn=warnings.append)
+    assert warnings == []
+    assert [c.ticker for c in deltas[0].changed] == ["WULF"]
+    assert memory == {"retirement": {"WULF": ADD}}

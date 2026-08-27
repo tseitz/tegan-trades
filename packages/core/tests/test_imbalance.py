@@ -11,6 +11,7 @@ from core.imbalance import (
     atr,
     fair_value_gaps,
     is_displacement,
+    live_gaps,
     true_range,
 )
 
@@ -154,3 +155,52 @@ def test_gap_is_immutable():
     gap = Gap(kind=BULLISH, top=105, bottom=101, date=START, index=4, middle_index=3)
     with pytest.raises(dataclasses.FrozenInstanceError):
         gap.top = 999
+
+
+# ── which gaps are still worth calling a level ────────────────────────────
+
+# c1.high is 101 and c3.low is 105, so the void runs 101–105. Every test below leans on
+# those two numbers rather than re-deriving them.
+def _bullish_gap_bars():
+    return [
+        *_flat_history(),
+        _bar(3, 105, 116, 104, 115),   # c2: displacement
+        _bar(4, 120, 125, 105, 122),   # c3: low 105 > c1.high 101
+    ]
+
+
+def test_a_gap_price_has_not_returned_through_is_live():
+    found = live_gaps(_bullish_gap_bars(), lookback=3)
+    assert [(g.bottom, g.top) for g in found] == [(101, 105)]
+
+
+def test_a_bullish_gap_dies_once_price_trades_below_its_far_side():
+    """The same discipline `structure.invalidated_on` applies to an order block: price going
+    clean through the level is what ends it. A void price has fully traded back through is
+    history, and printing it as support would point at a level that is not there."""
+    bars = [*_bullish_gap_bars(), _bar(5, 104, 106, 100.5, 102)]   # low 100.5 < bottom 101
+    assert live_gaps(bars, lookback=3) == ()
+
+
+def test_a_gap_price_has_only_dipped_into_survives():
+    """Partial trade-back is not a fill. Price inside the void is the reading this whole
+    section exists to surface — killing the gap there would delete it exactly when it matters."""
+    bars = [*_bullish_gap_bars(), _bar(5, 104, 106, 102, 103)]     # low 102, inside 101–105
+    assert len(live_gaps(bars, lookback=3)) == 1
+
+
+def test_a_bearish_gap_dies_on_a_high_above_its_far_side():
+    bars = [
+        *_flat_history(),
+        _bar(3, 98, 99, 88, 89),       # c2: displacement down
+        _bar(4, 88, 95, 85, 87),       # c3: high 95 < c1.low 99 -> bearish void 95–99
+    ]
+    assert len(live_gaps(bars, lookback=3)) == 1
+    assert live_gaps([*bars, _bar(5, 96, 99.5, 96, 99)], lookback=3) == ()
+
+
+def test_as_of_refuses_to_see_a_gap_that_had_not_formed_yet():
+    """Same look-ahead discipline as `Swing.confirmed_at`: a gap is not knowable until its
+    third candle closes, so a replay of an earlier date must not be shown one."""
+    assert live_gaps(_bullish_gap_bars(), lookback=3, as_of=date(2025, 1, 3)) == ()
+    assert len(live_gaps(_bullish_gap_bars(), lookback=3, as_of=date(2025, 1, 5))) == 1

@@ -22,6 +22,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import yaml
+from core.nearby import ALL_KINDS
 from core.review import Holding
 
 DATA_ROOT = Path(__file__).resolve().parents[4] / "data" / "portfolios"
@@ -32,6 +33,12 @@ DEFAULT_HORIZON = "long"
 # `oracle.route` treats specially — everything else lands on Yahoo — so "stock" is both the
 # common case for an account like this and the safe one to be wrong about.
 DEFAULT_DOMAIN = "stock"
+
+# Which level sources a portfolio counts, when the file does not narrow them. All four by
+# default: start wide and cut back once you know which ones you actually read. The knob is
+# here rather than on a CLI flag because the answer belongs to the account — a decade-horizon
+# retirement book and a swing account want different sources from the same code.
+DEFAULT_LEVEL_KINDS = ALL_KINDS
 
 
 class PortfolioError(Exception):
@@ -60,6 +67,7 @@ class Portfolio:
     name: str
     horizon: str
     positions: tuple[Position, ...]
+    level_kinds: tuple[str, ...] = DEFAULT_LEVEL_KINDS
 
     @property
     def holdings(self) -> tuple[Holding, ...]:
@@ -168,7 +176,27 @@ def load(name: str, *, root: Path = DATA_ROOT) -> Portfolio:
         name=str(doc.get("account") or name),
         horizon=str(doc.get("horizon") or DEFAULT_HORIZON),
         positions=tuple(positions),
+        level_kinds=_level_kinds(doc.get("levels"), path=path),
     )
+
+
+def _level_kinds(raw, *, path: Path) -> tuple[str, ...]:
+    """Validated against ``ALL_KINDS`` rather than passed through.
+
+    An unknown name would silently match nothing, so ``levels: [weekly]`` — the obvious typo
+    for ``weekly_zone`` — would produce an empty section that looks exactly like an account
+    with no levels near it. Refusing names the mistake instead.
+    """
+    if raw is None:
+        return DEFAULT_LEVEL_KINDS
+    if not isinstance(raw, list) or not all(isinstance(k, str) for k in raw):
+        raise PortfolioError(f"{path}: `levels` must be a list of names from "
+                             f"{', '.join(ALL_KINDS)}")
+    unknown = [k for k in raw if k not in ALL_KINDS]
+    if unknown:
+        raise PortfolioError(f"{path}: unknown level kind(s) {', '.join(unknown)} — "
+                             f"pick from {', '.join(ALL_KINDS)}")
+    return tuple(raw)
 
 
 def _holding(row, *, index: int, path: Path) -> Holding:

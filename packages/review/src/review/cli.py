@@ -17,10 +17,12 @@ import sys
 from collections import defaultdict
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import NamedTuple
 
 from brain.retrieve import fold_stances
 from brain.stance_store import load_all_stances
 from core.canon import load_registry, resolve_asset
+from core.nearby import levels_near
 from core.review import review
 from core.setups import build_context
 from oracle import cache, corpus, listings, portfolios
@@ -28,9 +30,22 @@ from oracle.assemble import load_daily
 from oracle.resample import to_weekly
 from oracle.route import Priceable, load_routing_table, route
 
-from review.render import render
+from review.levels import SHOWN, shortlist
+from review.render import render, render_levels
 
 CONFIG_DIR = Path(__file__).resolve().parents[4] / "cfg"
+
+
+class Read(NamedTuple):
+    """One reading per position, plus the structure each was drawn from.
+
+    The contexts ride along because scanning for levels needs them and rebuilding structure is
+    the expensive half of the loop. They are **not** folded onto ``Reading``: a verdict is a
+    conclusion, and hanging a bar series off it would make the pure grid in ``core.review``
+    carry the chart it was derived from.
+    """
+    readings: list
+    contexts: tuple
 
 
 def canonical_rows(book, registry) -> list[tuple[str, str]]:
@@ -60,6 +75,7 @@ def build_readings(book, *, registry, table, folded_by_asset, as_of: date,
     """
     series_cache = {} if series_cache is None else series_cache
     readings = []
+    contexts = []
     for position in book.positions:
         holding = position.holding
         asset = resolve_asset(holding.ticker, registry)[0]
@@ -73,7 +89,8 @@ def build_readings(book, *, registry, table, folded_by_asset, as_of: date,
             holding, context,
             folded=folded_by_asset.get(asset, ()), as_of=as_of,
         ))
-    return readings
+        contexts.append(context)
+    return Read(readings=readings, contexts=tuple(contexts))
 
 
 def _fold_by_asset(registry) -> dict[str, list]:
@@ -120,9 +137,9 @@ def readings_for(books, *, as_of: date, registry=None):
     folded = _fold_by_asset(registry)
     series_cache: dict = {}
     return [
-        (book, build_readings(book, registry=registry, table=table,
-                              folded_by_asset=folded, as_of=as_of,
-                              series_cache=series_cache))
+        (book, *build_readings(book, registry=registry, table=table,
+                               folded_by_asset=folded, as_of=as_of,
+                               series_cache=series_cache))
         for book in books
     ]
 
@@ -137,6 +154,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="name the portfolios on disk and stop")
     parser.add_argument("--as-of", type=date.fromisoformat,
                         help="review as at a past date (YYYY-MM-DD), for replay")
+    parser.add_argument("--levels", action="store_true",
+                        help="print every level near every holding, not the shortlist. "
+                             "The section is capped by default because the raw scan finds "
+                             "~230 levels on a 77-position account.")
     args = parser.parse_args(argv)
 
     if args.list:
@@ -152,8 +173,16 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     as_of = args.as_of or datetime.now(UTC).date()
-    [(book, readings)] = readings_for([book], as_of=as_of)
+    [(book, readings, contexts)] = readings_for([book], as_of=as_of)
     print(render(readings, portfolio=book.name, as_of=as_of))
+
+    pairs = [
+        (reading, levels_near(context, kinds=book.level_kinds) if context is not None else ())
+        for reading, context in zip(readings, contexts, strict=True)
+    ]
+    standing, closing, suppressed = shortlist(pairs, limit=None if args.levels else SHOWN)
+    print()
+    print(render_levels(standing, closing, suppressed, kinds=book.level_kinds))
 
     missing = [r.holding.ticker for r in readings if r.price is None]
     if missing:

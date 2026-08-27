@@ -57,7 +57,7 @@ from core.exits import (
     select_target,
 )
 from core.funding import FundingOutlook, carry_adjusted_rr
-from core.imbalance import atr
+from core.imbalance import Gap, atr, live_gaps
 from core.levels import read_target
 from core.rank import agreement_signal, parse_date
 from core.structure import (
@@ -457,6 +457,15 @@ class Zone:
 
 
 @dataclass(frozen=True, slots=True)
+class GapZone:
+    """A live fair value gap plus the bar series it was read from. Mirrors ``Zone`` exactly,
+    and for the same reason: a weekly void and a daily void are different facts about
+    different timeframes, and a consumer has to be able to tell them apart."""
+    gap: Gap
+    timeframe: str = DAILY
+
+
+@dataclass(frozen=True, slots=True)
 class Context:
     """Structure for one asset as of one date. Reusable across every thesis on that asset.
 
@@ -469,6 +478,11 @@ class Context:
     daily_trend: str
     dealing_range: DealingRange | None
     zones: tuple[Zone, ...]
+    # Live fair value gaps from the same two series the zones come from. Defaulted so every
+    # caller and hand-built fixture that predates them keeps its meaning. Computed here rather
+    # than by the one consumer that reads them, because this is the module that owns "structure
+    # for one asset as of one date" and a second place deriving it would be free to disagree.
+    gaps: tuple[GapZone, ...] = ()
     # Daily ATR at ``as_of``, the yardstick for whether a stated target is plausible. None when
     # there is too little history to judge, in which case the check is skipped rather than
     # guessed at.
@@ -922,6 +936,10 @@ def build_context(setup, weekly, *, as_of: date,
             _zones_from(weekly, timeframe=WEEKLY, as_of=as_of, width=width)
             + _zones_from(setup, timeframe=setup_timeframe, as_of=as_of, width=width)
         ),
+        gaps=(
+            _gaps_from(weekly, timeframe=WEEKLY, as_of=as_of)
+            + _gaps_from(setup, timeframe=setup_timeframe, as_of=as_of)
+        ),
         atr=atr(upto, len(upto) - 1),
     )
 
@@ -936,6 +954,12 @@ def _zones_from(bars, *, timeframe: str, as_of: date, width: int) -> tuple[Zone,
         for block in order_blocks(bars, as_of=as_of, width=width)
         if invalidated_on(block, upto) is None
     )
+
+
+def _gaps_from(bars, *, timeframe: str, as_of: date) -> tuple[GapZone, ...]:
+    """Live voids from one bar series, tagged with the series they were read from."""
+    return tuple(GapZone(gap=gap, timeframe=timeframe)
+                 for gap in live_gaps(bars, as_of=as_of))
 
 
 def _extreme_since(bars, block: OrderBlock) -> float | None:

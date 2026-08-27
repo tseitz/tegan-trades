@@ -354,7 +354,7 @@ def _holdings(memory: dict, *, registry, as_of, warn) -> tuple[tuple, dict]:
             return (), previous
 
         deltas, remembered = [], dict(previous)
-        for book, readings in readings_for(books, as_of=as_of, registry=registry):
+        for book, readings, _contexts in readings_for(books, as_of=as_of, registry=registry):
             deltas.append(holdings.delta(book.name, readings, previous.get(book.name, {})))
             remembered[book.name] = holdings.remember(readings)
         return tuple(deltas), remembered

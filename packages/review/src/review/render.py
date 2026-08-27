@@ -15,6 +15,7 @@ Pure: strings in, one string out. Nothing here reads a file or a clock.
 """
 from __future__ import annotations
 
+from core.nearby import DAILY_ZONE, GAP, RANGE_EDGE, RESISTANCE, WEEKLY_ZONE
 from core.review import (
     ABOVE_RANGE,
     ADD,
@@ -55,6 +56,17 @@ WHERE_LABEL = {
 }
 
 HEADERS = ("TICKER", "SHARES", "PRICE", "VALUE", "P&L", "ROSTER", "WEEKLY", "")
+
+# What each level is, in words. A weekly gap and a daily gap are both "gap"; the timeframe is
+# printed beside it rather than baked in, so one entry covers every series a kind can come from.
+KIND_LABEL = {
+    WEEKLY_ZONE: "zone",
+    DAILY_ZONE: "zone",
+    GAP: "gap",
+    RANGE_EDGE: "range edge",
+}
+
+LEVEL_HEADERS = ("TICKER", "PRICE", "SIDE", "LEVEL", "WHAT", "", "ROSTER", "")
 
 
 def render(readings, *, portfolio: str, as_of) -> str:
@@ -172,3 +184,86 @@ def _num(value: float) -> str:
     """Trailing zeros trimmed. A share count is 0.35 or 42.5, and padding both to a fixed
     precision makes a crypto position and an ETF position hard to tell apart at a glance."""
     return f"{value:,.8f}".rstrip("0").rstrip(".")
+
+
+def _kind_phrase(kind: str) -> str:
+    """A level kind named in full, for the header line.
+
+    ``KIND_LABEL`` deliberately gives weekly and daily zones the same word, because the rows
+    print the timeframe in its own column next to it. The header has no such column, so
+    without this it reads "counting zone, daily zone" — and one of those is not a thing.
+    """
+    if kind == WEEKLY_ZONE:
+        return "weekly zone"
+    if kind == DAILY_ZONE:
+        return "daily zone"
+    return KIND_LABEL.get(kind, kind)
+
+
+def render_levels(standing, closing, suppressed: int, *, kinds=()) -> str:
+    """The chart's own section: what price is at, whatever the roster is doing.
+
+    Deliberately independent of the verdict grid above it. On the live account 30 holdings sat
+    on a weekly level and 14 of those had a silent roster — the grid correctly refuses to
+    advise there, and refusing to *report* it as well threw away the most concrete thing the
+    pipeline knew about them.
+    """
+    counted = ", ".join(_kind_phrase(k) for k in kinds) or "nothing"
+    head = (f"LEVELS — {len(standing)} standing on one · {len(closing)} closing in "
+            f"· counting {counted}")
+    if not standing and not closing:
+        return f"{head}\n\n  nothing near a level"
+
+    # Widths come from the data rows alone. A group label in a cell would pad every side below
+    # it to the width of a phrase that is not a side.
+    rows = [_level_row(spot) for spot in (*standing, *closing)]
+    widths = [max(len(cell) for cell in column)
+              for column in zip(LEVEL_HEADERS, *rows, strict=True)]
+
+    def line(cells):
+        return "  " + "  ".join(c.ljust(w) for c, w in zip(cells, widths, strict=True)).rstrip()
+
+    out = [head, "", line(LEVEL_HEADERS)]
+    cursor = 0
+    for label, group in (("standing on it", standing), ("closing in", closing)):
+        if not group:
+            continue
+        out.append(f"  {label}")
+        out += [line(row) for row in rows[cursor:cursor + len(group)]]
+        cursor += len(group)
+
+    if suppressed:
+        # Never a silent cap. A truncated list that says nothing reads as the complete picture,
+        # which about a portfolio is the one thing it must not imply.
+        out += ["", f"  {suppressed} more not shown — `--levels` prints every one"]
+    return "\n".join(out)
+
+
+def _level_row(spot) -> list[str]:
+    level = spot.level
+    band = (_money(level.bottom) if level.top == level.bottom
+            else f"{_money(level.bottom)}–{_money(level.top)}")
+    what = f"{level.timeframe} {KIND_LABEL.get(level.kind, level.kind)}".strip()
+
+    if level.inside:
+        # Where the level dies is only meaningful for something price is already in — it is the
+        # answer to "and if this fails?". **The direction follows the side**: a resistance zone
+        # is built on a swing high, so it dies when price gets ABOVE it. Printing `dies <` on
+        # one of those points at the wrong half of the market.
+        arrow = "<" if level.side != RESISTANCE else ">"
+        note = (f"dies {arrow}{_money(level.invalidation)}"
+                if level.invalidation is not None else "")
+    else:
+        band = _money(level.near_edge)
+        note = f"{'+' if level.side == RESISTANCE else '-'}{level.distance:.1%}"
+
+    return [
+        spot.reading.holding.ticker,
+        _money(spot.reading.price),
+        level.side,
+        band,
+        what,
+        note,
+        roster_text(spot.reading),
+        f"+{spot.others} more" if spot.others else "",
+    ]

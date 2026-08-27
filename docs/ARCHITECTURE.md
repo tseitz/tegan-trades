@@ -156,7 +156,7 @@ packages. Every command below is run as `uv run <command>` **from the repo root*
 | `book --cancel` | 🟡 / 🔀 | Cancels **resting entries only**, never positions, and only ones you select and confirm. Reduces exposure, so it takes no typed phrase — but on `live` it is a real order cancellation. |
 | `digest` | 🔴 | What changed overnight. One `claude -p` call for the roster section only — ~17s, trivial. Everything else is local file reads, now including a `review` pass over every portfolio in `data/portfolios/` (free; a portfolio that fails to load costs a warning, not the digest). |
 | `digest --no-llm` | 🟢 | Every section except the roster narration. Completely free. |
-| `review [name]` | 🟢 | What to do about positions you already hold, from `data/portfolios/<name>.yaml`. Reads the price cache and the stance store; no LLM, no network, places nothing. A holding with no cached price prints a row saying so rather than vanishing. |
+| `review [name]` | 🟢 | What to do about positions you already hold, from `data/portfolios/<name>.yaml`. Reads the price cache and the stance store; no LLM, no network, places nothing. A holding with no cached price prints a row saying so rather than vanishing. Ends with a LEVELS section — what price is standing on and closing in on — which is independent of the roster and capped; `--levels` prints the uncapped scan. |
 | `setups --execute` | 🟢 / 🔀 **CAPITAL** | Free to run. On testnet it moves mock funds; on mainnet it moves **your money** — a different axis from the LLM/API costs above. See below. |
 
 ### 🔀 `setups --execute` risks capital, not dollars-per-call

@@ -1,4 +1,5 @@
 import pytest
+from core.nearby import ALL_KINDS, RANGE_EDGE, WEEKLY_ZONE
 from oracle.portfolios import PortfolioError, available, load, names_to_load
 
 GOOD = """\
@@ -133,3 +134,26 @@ def test_names_to_load_keeps_a_name_that_is_not_on_disk(tmp_path):
     """So the caller reports "no portfolio \'typo\'" rather than silently warming nothing —
     the same reason `load` names what exists instead of returning empty."""
     assert names_to_load(["typo"], every=True, root=tmp_path) == ("typo",)
+
+
+def test_level_kinds_default_to_all_four(tmp_path):
+    root = _write(tmp_path, "p", GOOD)
+    assert load("p", root=root).level_kinds == ALL_KINDS
+
+
+def test_level_kinds_can_be_narrowed_in_the_file(tmp_path):
+    """The scale-back knob. A decade-horizon account eventually wants the daily blocks gone,
+    and that is a fact about the account rather than about the code."""
+    root = _write(tmp_path, "p",
+                  "levels: [weekly_zone, range_edge]\npositions:\n  - {ticker: VTI, shares: 1}\n")
+    assert load("p", root=root).level_kinds == (WEEKLY_ZONE, RANGE_EDGE)
+
+
+def test_an_unknown_level_kind_is_refused_rather_than_matching_nothing(tmp_path):
+    """`levels: [weekly]` is the obvious typo for `weekly_zone`. Passed through it would match
+    nothing and print an empty section, which looks identical to an account with no levels
+    near it — a wrong answer that cannot be told from a right one."""
+    root = _write(tmp_path, "p",
+                  "levels: [weekly]\npositions:\n  - {ticker: VTI, shares: 1}\n")
+    with pytest.raises(PortfolioError, match="weekly"):
+        load("p", root=root)

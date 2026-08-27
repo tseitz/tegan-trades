@@ -49,7 +49,7 @@ def _folded(person, lean, *, published_at="2025-06-01"):
 
 
 def test_a_priced_holding_gets_a_price_and_a_weekly_trend():
-    readings = build_readings(
+    readings, _ = build_readings(
         _book("VTI"), registry=REGISTRY, table=_table(VTI="stock"), folded_by_asset={}, as_of=AS_OF,
         series_cache={"VTI": _series()},
     )
@@ -61,7 +61,7 @@ def test_a_priced_holding_gets_a_price_and_a_weekly_trend():
 def test_an_unroutable_holding_is_reported_not_dropped():
     """Silently skipping it would leave a position you own out of a review of what you own —
     the one failure this whole command exists to prevent."""
-    readings = build_readings(
+    readings, _ = build_readings(
         _book("VTI"), registry=REGISTRY, table=_table(), folded_by_asset={}, as_of=AS_OF, series_cache={},
     )
     assert [r.holding.ticker for r in readings] == ["VTI"]
@@ -72,7 +72,7 @@ def test_an_unroutable_holding_is_reported_not_dropped():
 def test_a_routable_but_uncached_holding_is_also_reported():
     """'Nobody has fetched this yet' and 'this is not an instrument' are opposite problems
     with opposite fixes, and both end here as a row with no price rather than as no row."""
-    readings = build_readings(
+    readings, _ = build_readings(
         _book("VTI"), registry=REGISTRY, table=_table(VTI="stock"), folded_by_asset={}, as_of=AS_OF,
         series_cache={"VTI": None},
     )
@@ -80,7 +80,7 @@ def test_a_routable_but_uncached_holding_is_also_reported():
 
 
 def test_the_roster_split_reaches_the_reading():
-    readings = build_readings(
+    readings, _ = build_readings(
         _book("VTI"), registry=REGISTRY, table=_table(VTI="stock"), as_of=AS_OF,
         folded_by_asset={"VTI": [_folded("A", "bearish"), _folded("B", "bearish")]},
         series_cache={"VTI": _series()},
@@ -89,7 +89,7 @@ def test_the_roster_split_reaches_the_reading():
 
 
 def test_an_asset_with_no_stances_reads_as_silent_not_as_an_error():
-    readings = build_readings(
+    readings, _ = build_readings(
         _book("VTI"), registry=REGISTRY, table=_table(VTI="stock"), folded_by_asset={}, as_of=AS_OF,
         series_cache={"VTI": _series()},
     )
@@ -99,8 +99,20 @@ def test_an_asset_with_no_stances_reads_as_silent_not_as_an_error():
 def test_readings_come_back_in_file_order():
     """Ranking is the renderer's job. Reordering here too would give two places that decide
     what you look at first, and they would drift."""
-    readings = build_readings(
+    readings, _ = build_readings(
         _book("AAA", "BBB", "CCC"), registry=REGISTRY, table=_table(), folded_by_asset={}, as_of=AS_OF,
         series_cache={},
     )
     assert [r.holding.ticker for r in readings] == ["AAA", "BBB", "CCC"]
+
+
+def test_the_structure_each_reading_was_drawn_from_comes_back_alongside_it():
+    """Scanning for levels needs it, and rebuilding structure is the expensive half of the
+    loop. One entry per position, aligned with the readings, `None` where nothing priced."""
+    result = build_readings(
+        _book("VTI", "NOPE"), registry=REGISTRY, table=_table(VTI="stock"),
+        folded_by_asset={}, as_of=AS_OF, series_cache={"VTI": _series()},
+    )
+    assert len(result.contexts) == len(result.readings) == 2
+    assert result.contexts[0] is not None
+    assert result.contexts[1] is None
