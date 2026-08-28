@@ -7,8 +7,9 @@
 # file via yaml.safe_dump and will not preserve these comments.
 
 # ── crypto: spelling/format variants (canonical is the CoinGecko-known ticker) ──
-BTC: [Bitcoin, "Bitcoin (BTC)", "BTC/USD", "Bitcoin (BTC) - long-term"]
-ETH: [Ethereum, "Ethereum (ETH)", "ETH/USD"]
+BTC: [Bitcoin, "Bitcoin (BTC)", "BTC/USD", "Bitcoin (BTC) - long-term", SolvBTC]
+ETH: [Ethereum, "Ethereum (ETH)", "ETH/USD", WETH]
+AAVE: [stkAAVE]
 HYPE: ["HYPE (Hyperliquid)", "Hyperliquid (HYPE)"]
 ZEC: ["Zcash (ZEC)", "ZEC (Zcash)"]
 CRV: ["Curve (CRV)"]

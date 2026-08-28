@@ -11,10 +11,11 @@
 #   4. distill-roster  Max     LLM extraction, subscription-billed
 #   5. brain-extract   Max     LLM stance extraction — capped per night, see below
 #   6. brain-index     free    local embeddings; MUST follow brain-extract
-#   7. fetch-prices    free
-#   8. fetch-funding   free    what holding a position costs — must precede setups
-#   9. reconcile       free    settle what the venue did with yesterday's orders
-#  10. setups --list   free    the queue you actually read
+#   7. wallet-sync     free    what your public wallet addresses hold, straight off chain
+#   8. fetch-prices    free
+#   9. fetch-funding   free    what holding a position costs — must precede setups
+#  10. reconcile       free    settle what the venue did with yesterday's orders
+#  11. setups --list   free    the queue you actually read
 #
 # **A failing step does not abort the run.** A YouTube outage should not cost you the price
 # refresh, and a bad roster marker should not cost you the whole night. Every step's status is
@@ -121,7 +122,8 @@ ONLY_STEPS=""
 declare -a ORIGINAL_ARGS=("$@")
 
 ALL_STEPS="verify-roster ingest-roster ingest-x distill-roster brain-extract brain-index \
-plaid-sync fetch-prices fetch-funding reconcile reconcile-perps setups fetch-tickers \
+plaid-sync wallet-sync fetch-prices fetch-funding reconcile reconcile-perps setups \
+fetch-tickers \
 canon-drift backup digest"
 
 usage() {
@@ -389,6 +391,11 @@ step brain-index    uv run brain-index
 # Only touches accounts that have a Plaid token; a hand-kept file is left exactly alone, which
 # is why this can fail without costing the run anything downstream.
 step plaid-sync     uv run plaid-sync
+
+# The same job for self-custodied crypto, and free for the same reason: reading a public
+# address costs nothing. Only touches files carrying a `wallets:` block, so a Plaid-filled or
+# hand-kept account is left exactly alone.
+step wallet-sync    uv run wallet-sync
 
 # `--all-portfolios` rather than a list of names: this script cannot know about an account
 # added to data/portfolios/ after it was written, and a hardcoded name would quietly stop

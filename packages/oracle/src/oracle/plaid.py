@@ -24,13 +24,13 @@ import os
 import re
 import time
 import urllib.request
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.error import HTTPError
 
-import yaml
 from core.env import load_env
+
+from oracle import portfolios
 
 HOST = "https://production.plaid.com"
 
@@ -56,28 +56,12 @@ class PlaidError(Exception):
 INVESTMENT = "investment"
 
 
-@dataclass(frozen=True, slots=True)
-class Row:
-    """One position, in the shape ``portfolios.load`` will read back."""
-    ticker: str
-    shares: float
-    cost: float | None
-    domain: str
-    # The broker's own identity and price for this holding. Neither is used to fetch anything —
-    # they exist to be disagreed with. Every price in this repo is fetched *by ticker*, so a
-    # wrong ticker is a confident wrong answer; the broker arrived at its mark from the security
-    # the shares actually sit in, which makes it the one independent check available.
-    figi: str | None = None
-    mark: float | None = None
+# The row shapes and the file writer live in `portfolios`, beside the reader that parses them
+# back. Re-exported under the old names so this module still reads as the Plaid adapter.
+Row = portfolios.Row
+Skipped = portfolios.Skipped
 
-
-@dataclass(frozen=True, slots=True)
-class Skipped:
-    """A holding that could not become a row, and why. Never silently dropped: an account
-    review that omits a position tells you it is fine, which is the one answer it must never
-    give by accident."""
-    what: str
-    why: str
+SOURCE = portfolios.Source(name="Plaid", command="plaid-sync")
 
 
 def env_key(portfolio: str) -> str:
@@ -272,87 +256,6 @@ def cash_from(payload: dict, *, accounts: tuple[str, ...] = ()
     by = {str(a.get("name") or a["account_id"]): float(a["balances"]["available"])
           for a in seen}
     return float(sum(by.values())), by
-
-
-def _number(value: float) -> str:
-    """Trimmed, so a share count reads like a share count and not like float arithmetic."""
-    return f"{value:.8f}".rstrip("0").rstrip(".") or "0"
-
-
-def _default_domain(doc: dict) -> str:
-    return str(doc.get("domain") or "stock")
-
-
-HEADER = """\
-# {name}. Written by `uv run plaid-sync {name}` — edit the settings above `positions:` freely,
-# but anything you add to the list itself is overwritten on the next sync.
-#
-# Gitignored: this repo is public and share counts are not configuration.
-account: {name}
-
-horizon: {horizon}
-
-domain: stock
-"""
-
-
-# What this module wrote last time, stripped from the preserved half before rewriting. The
-# `cash:` line matters most: left in place it would appear twice in one document, and PyYAML
-# resolves a duplicate key silently by taking the last one. A settings file that quietly
-# ignores a line you edited is worse than one that refuses it. The banner is here for the same
-# reason at a smaller scale — nightly syncs would otherwise stack a comment per night forever.
-_GENERATED = re.compile(
-    r"^(cash:.*|cash_by_account:.*(?:\n[ \t]+\S.*)*|# Synced from Plaid .*)$\n?",
-    re.MULTILINE)
-
-
-def write_positions(path: Path, rows, *, horizon: str = "position",
-                    cash: float | None = None, cash_by: dict[str, float] | None = None) -> None:
-    """Replace the ``positions:`` block, keeping every line above it exactly as written.
-
-    The settings and comments in a portfolio file are yours — ``levels:``, ``stale_after:``,
-    the note about why a number is what it is. A sync that rewrote the whole document would
-    delete them nightly, so it rewrites only the generated half. ``updated:`` is deliberately
-    not written: the mtime moves when this writes, and a date the code has to remember to bump
-    is the first thing to go stale.
-    """
-    doc = {}
-    if path.exists():
-        text = path.read_text(encoding="utf-8")
-        doc = yaml.safe_load(text) or {}
-        head, marker, _ = text.partition("\npositions:")
-        prefix = (head + "\n") if marker else text.rstrip("\n") + "\n\n"
-    else:
-        prefix = HEADER.format(name=path.stem, horizon=horizon)
-
-    fallback = _default_domain(doc if isinstance(doc, dict) else {})
-    lines = [_GENERATED.sub("", prefix).rstrip("\n"), "",
-             f"# Synced from Plaid {datetime.now(UTC).date().isoformat()}."]
-    if cash is not None:
-        lines.append(f"cash: {cash:.2f}")
-    # Only when a file covers more than one account. On a single-account book the split would
-    # restate the total under a second name, and a report that says the same number twice
-    # trains the eye past both.
-    if cash_by and len(cash_by) > 1:
-        lines.append("cash_by_account:")
-        lines += [f"  {name}: {value:.2f}" for name, value in sorted(cash_by.items())]
-    lines.append("positions:")
-    for row in rows:
-        lines.append(f"  - ticker: {row.ticker}")
-        lines.append(f"    shares: {_number(row.shares)}")
-        if row.cost is not None:
-            lines.append(f"    cost: {_number(row.cost)}")
-        if row.domain != fallback:
-            lines.append(f"    domain: {row.domain}")
-        # Written for the reader's benefit as much as the code's: `figi` is what lets you settle
-        # by hand which instrument a row really is, when the mark check says two prices disagree.
-        if row.figi:
-            lines.append(f"    figi: {row.figi}")
-        if row.mark is not None:
-            lines.append(f"    mark: {_number(row.mark)}")
-        lines.append("")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
 
 
 def remember_token(portfolio: str, token: str, *, env: Path) -> str:

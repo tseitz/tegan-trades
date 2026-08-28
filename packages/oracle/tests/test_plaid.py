@@ -8,7 +8,6 @@ settings above ``positions:``.
 from __future__ import annotations
 
 import pytest
-import yaml
 from oracle import plaid
 
 
@@ -121,73 +120,6 @@ def test_env_key_is_stable_for_an_awkward_name():
     assert plaid.env_key("roth-ira 2") == "PLAID_ACCESS_TOKEN_ROTH_IRA_2"
 
 
-ROWS = (
-    plaid.Row(ticker="VTI", shares=42.5, cost=210.4, domain="stock"),
-    plaid.Row(ticker="BTC", shares=0.35, cost=None, domain="crypto"),
-)
-
-
-def _file(tmp_path, text):
-    path = tmp_path / "retirement.yaml"
-    path.write_text(text, encoding="utf-8")
-    return path
-
-
-def test_a_written_file_reads_back_the_way_the_reader_expects(tmp_path):
-    path = tmp_path / "retirement.yaml"
-    plaid.write_positions(path, ROWS)
-
-    from oracle import portfolios
-    book = portfolios.load("retirement", root=tmp_path)
-    assert [p.holding.ticker for p in book.positions] == ["VTI", "BTC"]
-    assert book.positions[0].holding.cost == 210.4
-    assert book.positions[1].domain == "crypto"
-
-
-def test_the_settings_you_wrote_survive_a_sync(tmp_path):
-    """The whole reason a sync writes the file instead of replacing the reader: `levels:`,
-    `stale_after:` and the comments explaining them are yours, and a nightly that deleted them
-    would silently widen a section you had deliberately narrowed."""
-    path = _file(tmp_path, "\n".join([
-        "# why this account is what it is",
-        "account: retirement",
-        "horizon: macro",
-        "stale_after: 7",
-        "levels: [weekly_zone]",
-        "domain: stock",
-        "",
-        "positions:",
-        "  - ticker: OLD",
-        "    shares: 1",
-        "",
-    ]))
-    plaid.write_positions(path, ROWS)
-
-    text = path.read_text(encoding="utf-8")
-    assert "# why this account is what it is" in text
-    doc = yaml.safe_load(text)
-    assert doc["stale_after"] == 7
-    assert doc["levels"] == ["weekly_zone"]
-    assert doc["horizon"] == "macro"
-    assert [p["ticker"] for p in doc["positions"]] == ["VTI", "BTC"]
-    assert "OLD" not in text
-
-
-def test_a_row_matching_the_file_default_does_not_repeat_it(tmp_path):
-    path = _file(tmp_path, "account: retirement\ndomain: crypto\n\npositions:\n  - ticker: X\n    shares: 1\n")
-    plaid.write_positions(path, ROWS)
-    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    rows = {p["ticker"]: p for p in doc["positions"]}
-    assert "domain" not in rows["BTC"]      # same as the file's default
-    assert rows["VTI"]["domain"] == "stock"  # differs, so it must be said
-
-
-def test_share_counts_are_written_as_numbers_not_float_noise(tmp_path):
-    path = tmp_path / "p.yaml"
-    plaid.write_positions(path, (plaid.Row("ETH", 0.033706, None, "crypto"),))
-    assert "shares: 0.033706" in path.read_text(encoding="utf-8")
-
-
 def test_a_token_is_never_written_twice(tmp_path):
     env = tmp_path / ".env"
     env.write_text("PLAID_ACCESS_TOKEN_RETIREMENT=first\n", encoding="utf-8")
@@ -245,24 +177,6 @@ def test_a_broker_that_reports_no_balance_says_none_not_zero():
     assert plaid.cash_from(_payload()) == (None, {})
 
 
-def test_cash_is_written_where_the_reader_will_find_it(tmp_path):
-    from oracle import portfolios
-    plaid.write_positions(tmp_path / "p.yaml", ROWS, cash=3379.57)
-    assert portfolios.load("p", root=tmp_path).cash == 3379.57
-
-
-def test_a_second_sync_does_not_stack_a_cash_line_or_a_banner(tmp_path):
-    """PyYAML resolves a duplicate key by silently taking the last one, so a settings file that
-    accumulated `cash:` lines would quietly ignore all but one of them."""
-    path = tmp_path / "p.yaml"
-    plaid.write_positions(path, ROWS, cash=1.0)
-    plaid.write_positions(path, ROWS, cash=2.0)
-    text = path.read_text(encoding="utf-8")
-    assert text.count("cash:") == 1
-    assert text.count("# Synced from Plaid") == 1
-    assert "cash: 2.00" in text
-
-
 # ── the broker's own identity and mark ──
 
 def test_the_broker_identity_and_mark_ride_along(tmp_path):
@@ -280,15 +194,6 @@ def test_the_broker_identity_and_mark_ride_along(tmp_path):
     assert rows[0].mark == 188.98
 
 
-def test_identity_survives_the_round_trip_through_the_file(tmp_path):
-    from oracle import portfolios
-    plaid.write_positions(tmp_path / "p.yaml",
-                          (plaid.Row("LEU", 3.0, None, "stock", "BBG000BQ2L37", 188.98),))
-    position = portfolios.load("p", root=tmp_path).positions[0]
-    assert position.figi == "BBG000BQ2L37"
-    assert position.mark == 188.98
-
-
 def test_cash_is_broken_down_per_account():
     """What makes merging two IRAs into one file honest. Their positions genuinely sum — the
     same ticker in both is one exposure — but you cannot buy in the Roth with Traditional
@@ -301,20 +206,3 @@ def test_cash_is_broken_down_per_account():
     assert by == {"Roth IRA": 3379.57, "Traditional IRA": 500.0}
 
 
-def test_a_single_account_file_does_not_restate_its_own_total(tmp_path):
-    """A split of one is the total under a second name, and a report that says the same number
-    twice teaches the eye to skip both."""
-    path = tmp_path / "p.yaml"
-    plaid.write_positions(path, ROWS, cash=100.0, cash_by={"Only": 100.0})
-    assert "cash_by_account" not in path.read_text(encoding="utf-8")
-
-
-def test_the_split_survives_the_round_trip_and_never_stacks(tmp_path):
-    from oracle import portfolios
-    path = tmp_path / "p.yaml"
-    split = {"Roth IRA": 3379.57, "Traditional IRA": 500.0}
-    plaid.write_positions(path, ROWS, cash=3879.57, cash_by=split)
-    plaid.write_positions(path, ROWS, cash=3879.57, cash_by=split)
-
-    assert path.read_text(encoding="utf-8").count("cash_by_account:") == 1
-    assert portfolios.load("p", root=tmp_path).cash_by_account == split

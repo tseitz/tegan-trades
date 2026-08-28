@@ -1,4 +1,8 @@
-"""Read a hand-kept list of what you actually own.
+"""Read a hand-kept list of what you actually own — and write the half a sync owns.
+
+**Reading and writing live together on purpose.** ``plaid-sync`` and ``wallet-sync`` both fill
+these files, and a second module that laid out the same YAML would be free to drift from the
+reader below. One writer, one reader, one format.
 
 **These files live under ``data/``, which is gitignored, and that placement is the point.**
 Everything else this package reads from ``cfg/`` is committed — routing, the roster, the
@@ -16,6 +20,7 @@ answer it must never give by accident.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -321,3 +326,135 @@ def _number(value, *, field: str, where: str) -> float | None:
         return float(value)
     except (TypeError, ValueError) as exc:
         raise PortfolioError(f"{where}: `{field}` is not a number: {value!r}") from exc
+
+
+# ─── writing ─────────────────────────────────────────────────────────────────────────────
+# What a sync puts back. Only the generated half of the document is ever replaced; see
+# `write_positions`.
+
+
+@dataclass(frozen=True, slots=True)
+class Source:
+    """Who fills a portfolio file. Named by the module that does the filling, never here.
+
+    Only ``domain`` reaches the reader — the other two appear in comments, so a file says out
+    loud which command owns its ``positions:`` block and will overwrite anything typed there.
+    """
+    name: str        # how the banner spells it, e.g. "Plaid"
+    command: str     # what to re-run, e.g. "plaid-sync"
+    domain: str = DEFAULT_DOMAIN
+
+
+@dataclass(frozen=True, slots=True)
+class Row:
+    """One position, in the shape ``load`` will read back."""
+    ticker: str
+    shares: float
+    cost: float | None
+    domain: str
+    # The source's own identity and price for this holding. Neither is used to fetch anything —
+    # they exist to be disagreed with. Every price in this repo is fetched *by ticker*, so a
+    # wrong ticker is a confident wrong answer; the broker or the chain arrived at its mark from
+    # the instrument the units actually sit in, which makes it the one independent check there
+    # is. `figi` is the broker's security id; on a wallet it is the token contract address.
+    figi: str | None = None
+    mark: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Skipped:
+    """A holding that could not become a row, and why. Never silently dropped: an account
+    review that omits a position tells you it is fine, which is the one answer it must never
+    give by accident.
+
+    ``kind`` groups drops so a caller can print the handful that were judgement calls and count
+    the rest. A wallet drops several hundred airdropped tokens per chain, and a report nobody
+    can read to the end has failed in the same way as one that said nothing.
+    """
+    what: str
+    why: str
+    kind: str = ""
+
+
+HEADER = """\
+# {name}. Written by `uv run {command} {name}` — edit the settings above `positions:` freely,
+# but anything you add to the list itself is overwritten on the next sync.
+#
+# Gitignored: this repo is public and share counts are not configuration.
+account: {name}
+
+horizon: {horizon}
+
+domain: {domain}
+"""
+
+
+# What a sync wrote last time, stripped from the preserved half before rewriting. The `cash:`
+# line matters most: left in place it would appear twice in one document, and PyYAML resolves a
+# duplicate key silently by taking the last one. A settings file that quietly ignores a line you
+# edited is worse than one that refuses it. The banner is here for the same reason at a smaller
+# scale — nightly syncs would otherwise stack a comment per night forever. `\\S+` rather than a
+# literal source name so a file keeps being recognised if it changes hands between syncs.
+_GENERATED = re.compile(
+    r"^(cash:.*|cash_by_account:.*(?:\n[ \t]+\S.*)*|# Synced from \S+ .*)$\n?",
+    re.MULTILINE)
+
+
+def _trimmed(value: float) -> str:
+    """So a share count reads like a share count and not like float arithmetic."""
+    return f"{value:.8f}".rstrip("0").rstrip(".") or "0"
+
+
+def write_positions(path: Path, rows, *, source: Source, horizon: str = DEFAULT_HORIZON,
+                    cash: float | None = None,
+                    cash_by: dict[str, float] | None = None) -> None:
+    """Replace the ``positions:`` block, keeping every line above it exactly as written.
+
+    The settings and comments in a portfolio file are yours — ``levels:``, ``stale_after:``,
+    the note about why a number is what it is. A sync that rewrote the whole document would
+    delete them nightly, so it rewrites only the generated half. ``updated:`` is deliberately
+    not written: the mtime moves when this writes, and a date the code has to remember to bump
+    is the first thing to go stale.
+    """
+    doc = {}
+    if path.exists():
+        text = path.read_text(encoding="utf-8")
+        doc = yaml.safe_load(text) or {}
+        head, marker, _ = text.partition("\npositions:")
+        prefix = (head + "\n") if marker else text.rstrip("\n") + "\n\n"
+    else:
+        prefix = HEADER.format(name=path.stem, command=source.command, horizon=horizon,
+                               domain=source.domain)
+
+    # The file's own `domain:` and not the source's: a per-row `domain:` is written only where
+    # it differs from what this document already declares. Reading the source here instead
+    # would stamp every row of a hand-started file that says `domain: crypto` with a redundant
+    # line, or worse, omit the line that makes a row route correctly.
+    fallback = str((doc if isinstance(doc, dict) else {}).get("domain") or DEFAULT_DOMAIN)
+    lines = [_GENERATED.sub("", prefix).rstrip("\n"), "",
+             f"# Synced from {source.name} {datetime.now(UTC).date().isoformat()}."]
+    if cash is not None:
+        lines.append(f"cash: {cash:.2f}")
+    # Only when a file covers more than one account. On a single-account book the split would
+    # restate the total under a second name, and a report that says the same number twice
+    # trains the eye past both.
+    if cash_by and len(cash_by) > 1:
+        lines.append("cash_by_account:")
+        lines += [f"  {name}: {value:.2f}" for name, value in sorted(cash_by.items())]
+    lines.append("positions:")
+    for row in rows:
+        lines.append(f"  - ticker: {row.ticker}")
+        lines.append(f"    shares: {_trimmed(row.shares)}")
+        if row.cost is not None:
+            lines.append(f"    cost: {_trimmed(row.cost)}")
+        if row.domain != fallback:
+            lines.append(f"    domain: {row.domain}")
+        # Written for the reader's benefit as much as the code's: `figi` is what lets you settle
+        # by hand which instrument a row really is, when the mark check says two prices disagree.
+        if row.figi:
+            lines.append(f"    figi: {row.figi}")
+        if row.mark is not None:
+            lines.append(f"    mark: {_trimmed(row.mark)}")
+        lines.append("")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")

@@ -122,8 +122,8 @@ def sync(argv: list[str] | None = None) -> int:
 
         verb = "would write" if args.dry_run else "wrote"
         if not args.dry_run:
-            plaid.write_positions(path, rows, horizon=_horizon(name), cash=cash,
-                                  cash_by=cash_by)
+            portfolios.write_positions(path, rows, source=plaid.SOURCE,
+                                       horizon=_horizon(name), cash=cash, cash_by=cash_by)
         money = "" if cash is None else f", {cash:,.2f} cash"
         print(f"{name}: {verb} {len(rows)} position(s) from "
               f"{len(accounts)} account(s){money} -> {path}")
