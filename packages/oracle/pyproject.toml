@@ -16,6 +16,8 @@ fetch-prices = "oracle.fetch_cli:main"
 fetch-funding = "oracle.funding_cli:main"
 score-roster = "oracle.score_cli:main"
 setups = "oracle.setups_cli:main"
+plaid-link = "oracle.plaid_cli:link"
+plaid-sync = "oracle.plaid_cli:sync"
 
 [build-system]
 requires = ["uv_build>=0.10.4,<0.11.0"]

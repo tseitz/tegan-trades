@@ -27,7 +27,7 @@ Run everything from the repo root — never `cd` into a package.
 
 ```bash
 uv sync                                # install all nine packages into ./.venv
-uv run setups                          # or any of the 22 console scripts
+uv run setups                          # or any of the 24 console scripts
 uv run pytest -q -m "not integration"  # whole workspace
 ```
 

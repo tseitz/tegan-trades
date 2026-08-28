@@ -121,8 +121,8 @@ ONLY_STEPS=""
 declare -a ORIGINAL_ARGS=("$@")
 
 ALL_STEPS="verify-roster ingest-roster ingest-x distill-roster brain-extract brain-index \
-fetch-prices fetch-funding reconcile reconcile-perps setups fetch-tickers canon-drift backup \
-digest"
+plaid-sync fetch-prices fetch-funding reconcile reconcile-perps setups fetch-tickers \
+canon-drift backup digest"
 
 usage() {
   cat <<'USAGE'
@@ -384,6 +384,11 @@ step brain-extract  uv run brain-extract --limit "$BRAIN_EXTRACT_LIMIT"
 # Free — local `fastembed` (BAAI/bge-small-en-v1.5), no API, no LLM, no network. The only
 # cost is CPU, which is why it has no cap the way brain-extract does.
 step brain-index    uv run brain-index
+
+# Before `fetch-prices`, so a position bought today is warmed the same night it appears.
+# Only touches accounts that have a Plaid token; a hand-kept file is left exactly alone, which
+# is why this can fail without costing the run anything downstream.
+step plaid-sync     uv run plaid-sync
 
 # `--all-portfolios` rather than a list of names: this script cannot know about an account
 # added to data/portfolios/ after it was written, and a hardcoded name would quietly stop

@@ -6,8 +6,10 @@
 # share counts are not configuration — nothing with a position size in it belongs in `cfg/`.
 # Same reason `.env.example` is committed and `.env` is not.
 #
-# Kept by hand on purpose. M1 has no API, and an account like this changes a few times a
-# year, so a file you edit twice a year is the right size of tool rather than a workaround.
+# Two ways to fill `positions:`. By hand is fine and always works. Or link the broker once
+# with `uv run plaid-link <name>` and let `uv run plaid-sync` rewrite the list every night —
+# a sync replaces only the `positions:` block, so every setting and comment above it survives.
+# The two are interchangeable: nothing downstream can tell which wrote the file.
 
 # Shown in the report header. Defaults to the filename.
 account: retirement
@@ -44,6 +46,12 @@ domain: stock
 # rather than ignored, because a typo would match nothing and print an empty section that
 # looks exactly like an account with no levels near it.
 # levels: [weekly_zone, daily_zone, gap, range_edge]
+
+# Which accounts inside one Plaid connection this file covers. All of them when absent, which
+# is the right default — a broker that later opens a second sleeve should appear, not vanish.
+# Narrow it when one login reaches a Roth and a taxable account that want separate reviews.
+# `plaid-link` prints the ids and masks it found.
+# plaid_accounts: [abc123]
 
 positions:
   # `shares` is required and must be positive. A closed position is deleted, not zeroed.
