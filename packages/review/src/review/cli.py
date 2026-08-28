@@ -23,7 +23,7 @@ from brain.retrieve import fold_stances
 from brain.stance_store import load_all_stances
 from core.canon import load_registry, resolve_asset
 from core.nearby import levels_near
-from core.review import review
+from core.review import mark_disagrees, review
 from core.setups import build_context
 from oracle import cache, corpus, listings, portfolios
 from oracle.assemble import load_daily
@@ -91,6 +91,23 @@ def build_readings(book, *, registry, table, folded_by_asset, as_of: date,
         ))
         contexts.append(context)
     return Read(readings=readings, contexts=tuple(contexts))
+
+
+def mismatched(book, readings) -> tuple[tuple[str, float, float], ...]:
+    """``(ticker, our price, the broker's mark)`` wherever the two disagree.
+
+    Zipped strictly, which is safe because ``build_readings`` promises one reading per position
+    in file order and never fewer. A silent misalignment here would pair one holding's price
+    with another's mark and invent a mismatch on two correct rows.
+
+    Public because ``digest`` should eventually say this too: a wrong instrument makes every
+    verdict about that row wrong, and the nightly is where a person actually looks.
+    """
+    return tuple(
+        (p.holding.ticker, r.price, p.mark)
+        for p, r in zip(book.positions, readings, strict=True)
+        if mark_disagrees(r.price, p.mark)
+    )
 
 
 def _fold_by_asset(registry) -> dict[str, list]:
@@ -175,7 +192,8 @@ def main(argv: list[str] | None = None) -> int:
     as_of = args.as_of or datetime.now(UTC).date()
     [(book, readings, contexts)] = readings_for([book], as_of=as_of)
     print(render(readings, portfolio=book.name, as_of=as_of,
-                 age_days=book.age_days(on=as_of), stale=book.is_stale(on=as_of)))
+                 age_days=book.age_days(on=as_of), stale=book.is_stale(on=as_of),
+                 cash=book.cash, mismatched=mismatched(book, readings)))
 
     pairs = [
         (reading, levels_near(context, kinds=book.level_kinds) if context is not None else ())

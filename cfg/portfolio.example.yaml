@@ -53,13 +53,27 @@ domain: stock
 # `plaid-link` prints the ids and masks it found.
 # plaid_accounts: [abc123]
 
+# Money that could go into a position today. WRITTEN BY `plaid-sync` — do not hand-edit it,
+# the next sync overwrites it. Absent on a hand-kept file, which is not the same as zero: the
+# report says nothing rather than telling you there is no room to add.
+# cash: 3379.57
+
 positions:
   # `shares` is required and must be positive. A closed position is deleted, not zeroed.
   # `cost` is the average price paid and is OPTIONAL — it only adds a profit/loss column,
   # and changes no verdict.
+  #
+  # `figi` and `mark` are written by `plaid-sync` and are the broker's own answer to "which
+  # instrument is this, and what is it worth". `mark` is never used as a price — it is there to
+  # be disagreed with. Every price in this repo is fetched by TICKER, so a wrong ticker returns
+  # a confident wrong price and nothing downstream can tell; the broker priced the security the
+  # shares actually sit in. When the two are far apart, `review` says so and `figi` is how you
+  # settle which one is right.
   - ticker: VTI
     shares: 42.5
     cost: 210.40
+    figi: BBG000BHTMY2
+    mark: 318.44
 
   - ticker: QQQ
     shares: 18

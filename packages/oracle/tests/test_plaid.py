@@ -203,3 +203,86 @@ def test_a_new_token_is_appended_without_disturbing_the_rest(tmp_path):
     text = env.read_text(encoding="utf-8")
     assert "HL_PRIVATE_KEY=abc" in text
     assert "PLAID_ACCESS_TOKEN_RETIREMENT=tok-123" in text
+
+
+# ── cash, and which accounts count as cash ──
+
+def _account(aid, *, kind="investment", available=100.0, name="An Account"):
+    return {"account_id": aid, "type": kind, "name": name, "mask": "1111",
+            "balances": {"available": available, "current": 9999.0}}
+
+
+def test_cash_is_what_you_could_deploy_not_what_the_account_is_worth():
+    """`current` on a brokerage account is every security in it. Reporting that as cash would
+    tell a $115k retirement book it has $115k to spend."""
+    assert plaid.cash_from(_payload(accounts=[_account("a", available=3379.57)])) == 3379.57
+
+
+def test_a_savings_account_reached_by_the_same_login_is_not_buying_power():
+    """One SoFi connection arrives with Checking, Savings and Self-directed together. Only the
+    last one holds money that can enter a position."""
+    got = plaid.cash_from(_payload(accounts=[
+        _account("brokerage", available=6979.55),
+        _account("savings", kind="depository", available=44611.10),
+        _account("card", kind="credit", available=7209.0),
+    ]))
+    assert got == 6979.55
+
+
+def test_naming_accounts_narrows_the_cash_too():
+    got = plaid.cash_from(_payload(accounts=[
+        _account("roth", available=3379.57), _account("taxable", available=1000.0),
+    ]), accounts=("roth",))
+    assert got == 3379.57
+
+
+def test_a_broker_that_reports_no_balance_says_none_not_zero():
+    """"We do not know" and "you have nothing to spend" are different facts, and only one of
+    them should ever be printed as a number."""
+    assert plaid.cash_from(_payload(accounts=[
+        {"account_id": "a", "type": "investment", "name": "x", "balances": {}}])) is None
+    assert plaid.cash_from(_payload()) is None
+
+
+def test_cash_is_written_where_the_reader_will_find_it(tmp_path):
+    from oracle import portfolios
+    plaid.write_positions(tmp_path / "p.yaml", ROWS, cash=3379.57)
+    assert portfolios.load("p", root=tmp_path).cash == 3379.57
+
+
+def test_a_second_sync_does_not_stack_a_cash_line_or_a_banner(tmp_path):
+    """PyYAML resolves a duplicate key by silently taking the last one, so a settings file that
+    accumulated `cash:` lines would quietly ignore all but one of them."""
+    path = tmp_path / "p.yaml"
+    plaid.write_positions(path, ROWS, cash=1.0)
+    plaid.write_positions(path, ROWS, cash=2.0)
+    text = path.read_text(encoding="utf-8")
+    assert text.count("cash:") == 1
+    assert text.count("# Synced from Plaid") == 1
+    assert "cash: 2.00" in text
+
+
+# ── the broker's own identity and mark ──
+
+def test_the_broker_identity_and_mark_ride_along(tmp_path):
+    """Neither is used to fetch anything. They exist so `core.review.mark_disagrees` has a
+    second opinion to check our ticker-fetched price against."""
+    rows, _, _ = plaid.rows_from(_payload(
+        _holding("s1", 3.0),
+        securities=[{**_security("s1", "LEU"), "figi": "BBG000BQ2L37"}],
+    ))
+    assert rows[0].figi == "BBG000BQ2L37"
+    assert rows[0].mark is None          # this holding carried no institution_price
+
+    priced = dict(_holding("s1", 3.0), institution_price=188.98)
+    rows, _, _ = plaid.rows_from(_payload(priced, securities=[_security("s1", "LEU")]))
+    assert rows[0].mark == 188.98
+
+
+def test_identity_survives_the_round_trip_through_the_file(tmp_path):
+    from oracle import portfolios
+    plaid.write_positions(tmp_path / "p.yaml",
+                          (plaid.Row("LEU", 3.0, None, "stock", "BBG000BQ2L37", 188.98),))
+    position = portfolios.load("p", root=tmp_path).positions[0]
+    assert position.figi == "BBG000BQ2L37"
+    assert position.mark == 188.98

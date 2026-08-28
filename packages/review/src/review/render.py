@@ -70,7 +70,7 @@ LEVEL_HEADERS = ("TICKER", "PRICE", "SIDE", "LEVEL", "WHAT", "", "ROSTER", "")
 
 
 def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
-           stale: bool = False) -> str:
+           stale: bool = False, cash: float | None = None, mismatched=()) -> str:
     """The whole report. ``as_of`` is passed in rather than read from a clock so a replay of
     a past date prints that date, not today's.
 
@@ -83,7 +83,9 @@ def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
     written = ""
     if age_days is not None:
         written = f" · written {'today' if age_days == 0 else f'{age_days} days ago'}"
-    head = f"{portfolio} · {len(readings)} position(s) · as of {as_of.isoformat()}{written}"
+    money = "" if cash is None else f" · {_money(cash)} cash"
+    head = (f"{portfolio} · {len(readings)} position(s){money} "
+            f"· as of {as_of.isoformat()}{written}")
     if not readings:
         return f"{head}\n\n  no positions — nothing to review"
 
@@ -95,6 +97,7 @@ def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
         lines += [f"  STALE — these positions were written down {age_days} days ago. "
                   f"Anything traded since is missing, and every verdict below is computed "
                   f"against holdings that may no longer exist.", ""]
+    lines += _mismatch_block(mismatched)
     lines += _table(ranked)
 
     total = sum(r.market_value for r in ranked if r.market_value is not None)
@@ -108,8 +111,36 @@ def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
 
     notes = [_note(r) for r in ranked if r.verdict in LOUD]
     if notes:
-        lines += ["", *notes]
+        adds = sum(1 for r in ranked if r.verdict == ADD)
+        # Beside the decisions rather than only in the header, and reported rather than acted
+        # on. What an ADD is worth is not something this file knows, so turning cash into a
+        # gate would invent a position size nobody chose. Saying the number where the ADDs are
+        # is enough for the one judgement it supports: whether there is room to act at all.
+        if cash is not None and adds:
+            lines += ["", f"  {_money(cash)} cash to fund {adds} ADD(s)"]
+        else:
+            lines.append("")
+        lines += notes
     return "\n".join(lines)
+
+
+def _mismatch_block(mismatched) -> list[str]:
+    """The broker disagreeing with our own price for the same holding.
+
+    **First thing on the page when it fires, and it should almost never fire.** A price this
+    far out means the ticker probably resolved to a different instrument, in which case the
+    verdict, the level and the P&L on that row are all confidently about the wrong company —
+    and nothing else in the report would look wrong. `figi:` in the portfolio file is how you
+    settle which one it really is.
+    """
+    if not mismatched:
+        return []
+    out = [f"  WRONG INSTRUMENT? {len(mismatched)} holding(s) priced far from the broker's own "
+           f"mark. Check `figi:` in the portfolio file before trusting these rows."]
+    for ticker, ours, mark in mismatched:
+        gap = f"{ours / mark:,.1f}x" if mark and ours / mark >= 2 else f"{(ours - mark) / mark:+.1%}"
+        out.append(f"    {ticker}  ours {_money(ours)}  broker {_money(mark)}  ({gap})")
+    return [*out, ""]
 
 
 def _rank(reading: Reading) -> tuple[int, float]:

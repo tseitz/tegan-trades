@@ -58,6 +58,11 @@ class Position:
     """
     holding: Holding
     domain: str
+    # What the broker says this holding is and what it is worth. Present only on a synced file;
+    # a hand-kept one has no second opinion to offer. `mark` is never used as a price — it feeds
+    # `core.review.mark_disagrees`, whose whole value is that it came from somewhere else.
+    figi: str | None = None
+    mark: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +82,10 @@ class Portfolio:
     # date you have to remember to bump is the first thing that goes stale.
     updated: date | None = None
     stale_after: int = DEFAULT_HALF_LIFE.position
+    # Money that could go into a position today, when the broker reported it. None means nobody
+    # said — a hand-kept file, or a broker that omits the balance — and that has to stay
+    # distinct from zero, because "no room to add" is a fact and "we do not know" is not.
+    cash: float | None = None
 
     def age_days(self, *, on: date) -> int | None:
         return None if self.updated is None else (on - self.updated).days
@@ -194,6 +203,8 @@ def load(name: str, *, root: Path = DATA_ROOT) -> Portfolio:
         positions.append(Position(
             holding=holding,
             domain=str(row.get("domain") or fallback_domain),
+            figi=(str(row["figi"]) if row.get("figi") else None),
+            mark=_number(row.get("mark"), field="mark", where=f"{path} position {index}"),
         ))
 
     horizon = str(doc.get("horizon") or DEFAULT_HORIZON)
@@ -208,6 +219,7 @@ def load(name: str, *, root: Path = DATA_ROOT) -> Portfolio:
         positions=tuple(positions),
         level_kinds=_level_kinds(doc.get("levels"), path=path),
         updated=_updated(doc.get("updated"), path=path),
+        cash=_number(doc.get("cash"), field="cash", where=str(path)),
         # The view half-lives reused as a starting point, not a measurement of how fast a
         # portfolio file rots. They are the right shape — a scalper's book turns over in days
         # and a retirement book in years — but an actively traded account goes wrong far

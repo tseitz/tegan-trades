@@ -216,3 +216,42 @@ def test_a_fresh_file_gets_no_warning():
 
 def test_age_is_optional_so_a_caller_without_one_still_renders():
     assert "BTC" in render([_reading()], portfolio="p", as_of=AS_OF)
+
+
+def test_cash_prints_in_the_header_when_the_broker_reported_it():
+    out = render([_reading()], portfolio="retirement", as_of=AS_OF, cash=3379.57)
+    assert "3,379.57 cash" in out
+
+
+def test_a_hand_kept_file_says_nothing_about_cash_rather_than_zero():
+    """None is not 0.0. A file nobody linked has no balance to report, and printing `0.00 cash`
+    would state as fact that there is no room to add."""
+    out = render([_reading()], portfolio="retirement", as_of=AS_OF, cash=None)
+    assert "cash" not in out
+
+
+def test_cash_lands_beside_the_adds_not_only_in_the_header():
+    """The header is where you learn it; the ADD block is where you need it."""
+    out = render([_reading(verdict=ADD, lean=_lean(BULLISH_ROSTER, bulls=3, bears=0))],
+                 portfolio="retirement", as_of=AS_OF, cash=500.0)
+    assert "500.00 cash to fund 1 ADD(s)" in out
+
+
+def test_cash_is_not_advertised_when_nothing_asks_you_to_buy():
+    out = render([_reading(verdict=HOLD)], portfolio="retirement", as_of=AS_OF, cash=500.0)
+    assert "to fund" not in out
+
+
+def test_a_mark_mismatch_is_the_first_thing_on_the_page():
+    """Above the table on purpose. Every number on that row — verdict, level, P&L — is about
+    whichever instrument the price came from, and nothing else in the report looks wrong."""
+    out = render([_reading(ticker="LINK", price=24.30)], portfolio="retirement", as_of=AS_OF,
+                 mismatched=(("LINK", 24.30, 4.85),))
+    assert out.index("WRONG INSTRUMENT?") < out.index("TICKER")
+    assert "LINK" in out
+    assert "5.0x" in out          # a multiple, not a percentage, at this distance
+
+
+def test_a_clean_account_prints_no_mismatch_banner():
+    out = render([_reading()], portfolio="retirement", as_of=AS_OF, mismatched=())
+    assert "WRONG INSTRUMENT" not in out

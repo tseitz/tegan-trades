@@ -123,6 +123,46 @@ MIN_VOICES = 2
 # many people spoke without counting toward which way.
 DIRECTIONAL = (BULLISH_ROSTER, BEARISH_ROSTER)
 
+# How far our own cached close may sit from the broker's mark for the same holding before the
+# two are probably not the same instrument.
+#
+# **This is the only non-circular identity check the repo has for an equity.** Every price here
+# is fetched *by ticker*, so a wrong ticker fetches a wrong price confidently and nothing
+# downstream can tell. A broker's mark is arrived at independently — it is the security the
+# shares actually sit in — so a disagreement is evidence in a way a second ticker lookup never
+# is. The tickers that make this real are the ones that exist in both worlds: `LINK` is
+# Chainlink on the roster and Interlink Electronics on a US exchange, `DASH` is DoorDash, `BCH`
+# is Banco de Chile. Same string, different instrument, no error anywhere.
+#
+# **Deliberately loose, because the error it hunts is not marginal.** A wrong instrument misses
+# by multiples: Chainlink against Interlink Electronics is roughly 5x, DoorDash against Dash
+# about 10x, and Banco de Chile against Bitcoin Cash about 20x. Nothing in that class squeaks
+# under a wide threshold, so width costs no sensitivity at all.
+#
+# It buys quiet, which the check needs to survive. Measured across all 81 priced holdings on
+# 2026-08-28, the widest *correct* row was 3.35% (LEU) and none exceeded 5% — the spread is our
+# cached close against the broker's intraday mark, so a volatile name over a weekend can open
+# that gap further with nothing wrong. At 3% this fired on a correct row the first day it ran,
+# and a warning that cries wolf on day one is a warning nobody reads on day thirty.
+#
+# A gap between 5% and 25% is therefore not reported. It would mean a stale cache rather than a
+# wrong instrument, which is a different problem with a different fix and does not belong under
+# this heading.
+MARK_TOLERANCE = 0.25
+
+
+def mark_disagrees(price: float | None, mark: float | None, *,
+                   tolerance: float = MARK_TOLERANCE) -> bool:
+    """Whether two prices for one holding are too far apart to be the same thing.
+
+    Either side missing is not a disagreement. An unpriced holding already reports itself, and
+    a broker that sent no mark has said nothing — treating silence as a mismatch would cry wolf
+    on every account whose broker omits the field.
+    """
+    if price is None or mark is None or mark <= 0:
+        return False
+    return abs(price - mark) / mark > tolerance
+
 
 class _StanceLike(Protocol):
     lean: str

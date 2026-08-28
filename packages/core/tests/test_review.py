@@ -24,6 +24,7 @@ from core.review import (
     WATCH,
     Holding,
     locate,
+    mark_disagrees,
     review,
     roster_lean,
     verdict_for,
@@ -345,3 +346,35 @@ def test_a_ranging_weekly_still_produces_a_reading():
     )
     assert reading.verdict == ADD
     assert reading.weekly_trend == RANGING
+
+
+# ── the broker's mark as an identity check ──
+
+def test_two_prices_for_the_same_instrument_do_not_disagree():
+    """Our cached close against the broker's intraday mark. Measured across 81 live holdings
+    on 2026-08-28 the widest correct gap was 3.35%, so ordinary drift must stay silent."""
+    assert not mark_disagrees(195.31, 188.98)
+
+
+def test_a_wrong_instrument_disagrees_by_a_multiple():
+    """Chainlink priced against Interlink Electronics — the collision this exists for."""
+    assert mark_disagrees(24.30, 4.85)
+
+
+def test_a_missing_price_on_either_side_is_not_a_disagreement():
+    """An unpriced holding already reports itself, and a broker that sent no mark has said
+    nothing. Treating silence as a mismatch would cry wolf on every hand-kept account."""
+    assert not mark_disagrees(None, 100.0)
+    assert not mark_disagrees(100.0, None)
+
+
+def test_a_nonsense_mark_is_not_a_disagreement():
+    """Guards the division, and errs toward quiet: a zero mark is a broker bug, not evidence
+    about which instrument we priced."""
+    assert not mark_disagrees(100.0, 0.0)
+    assert not mark_disagrees(100.0, -5.0)
+
+
+def test_the_tolerance_is_wide_enough_for_a_stale_close():
+    """5% was the ceiling of correct rows measured; the gap must not fire there."""
+    assert not mark_disagrees(105.0, 100.0)

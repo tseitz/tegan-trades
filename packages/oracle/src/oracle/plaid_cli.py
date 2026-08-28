@@ -105,7 +105,9 @@ def sync(argv: list[str] | None = None) -> int:
             failures += 1
             continue
 
-        rows, skipped, accounts = plaid.rows_from(payload, accounts=_narrow(name))
+        narrowed = _narrow(name)
+        rows, skipped, accounts = plaid.rows_from(payload, accounts=narrowed)
+        cash = plaid.cash_from(payload, accounts=narrowed)
         path = portfolios.DATA_ROOT / f"{name}.yaml"
         before = _tickers(name)
         now = {r.ticker for r in rows}
@@ -120,11 +122,17 @@ def sync(argv: list[str] | None = None) -> int:
 
         verb = "would write" if args.dry_run else "wrote"
         if not args.dry_run:
-            plaid.write_positions(path, rows, horizon=_horizon(name))
+            plaid.write_positions(path, rows, horizon=_horizon(name), cash=cash)
+        money = "" if cash is None else f", {cash:,.2f} cash"
         print(f"{name}: {verb} {len(rows)} position(s) from "
-              f"{len(accounts)} account(s) -> {path}")
+              f"{len(accounts)} account(s){money} -> {path}")
         for label in accounts:
             print(f"    {label}")
+        # Every investment account the login reaches, not only the ones holding something. An
+        # empty second IRA is silent today and merges into this file the day it is funded —
+        # naming it now is what makes that a choice rather than a surprise.
+        for idle in _idle(payload, narrowed, accounts):
+            print(f"    {idle}  (reachable, nothing in it — it would merge in if funded)")
         _report(before, now)
         for miss in skipped:
             print(f"    dropped {miss.what}: {miss.why}")
@@ -172,6 +180,15 @@ def _narrow(name: str) -> tuple[str, ...]:
     doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     raw = doc.get("plaid_accounts") if isinstance(doc, dict) else None
     return tuple(str(a) for a in raw) if isinstance(raw, list) else ()
+
+
+def _idle(payload: dict, narrowed: tuple[str, ...], used: tuple[str, ...]) -> list[str]:
+    """Investment accounts this login reaches that contributed no position."""
+    return [f"{a.get('name') or a['account_id']} ({a.get('mask') or '—'})"
+            for a in payload.get("accounts") or ()
+            if (a.get("type") or "") == plaid.INVESTMENT
+            and (not narrowed or a.get("account_id") in narrowed)
+            and f"{a.get('name') or a['account_id']} ({a.get('mask') or '—'})" not in used]
 
 
 def _report(before: set[str], now: set[str]) -> None:

@@ -49,6 +49,13 @@ class PlaidError(Exception):
     """A Plaid call that failed, carrying the body — Plaid puts the actionable part there."""
 
 
+# Plaid's own word for a brokerage or retirement account, as opposed to `depository` (a
+# current or savings account) and `credit`. One login can reach all three — a SoFi connection
+# arrives with Checking, Savings and Self-directed together — and only this one holds money you
+# could put into a position. Summing the others would report a savings balance as buying power.
+INVESTMENT = "investment"
+
+
 @dataclass(frozen=True, slots=True)
 class Row:
     """One position, in the shape ``portfolios.load`` will read back."""
@@ -56,6 +63,12 @@ class Row:
     shares: float
     cost: float | None
     domain: str
+    # The broker's own identity and price for this holding. Neither is used to fetch anything —
+    # they exist to be disagreed with. Every price in this repo is fetched *by ticker*, so a
+    # wrong ticker is a confident wrong answer; the broker arrived at its mark from the security
+    # the shares actually sit in, which makes it the one independent check available.
+    figi: str | None = None
+    mark: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +194,8 @@ def rows_from(payload: dict, *, accounts: tuple[str, ...] = ()
     shares_by: dict[str, float] = {}
     basis_by: dict[str, float | None] = {}
     domains: dict[str, str] = {}
+    figis: dict[str, str | None] = {}
+    marks: dict[str, float | None] = {}
     skipped: list[Skipped] = []
     used: list[str] = []
 
@@ -213,13 +228,41 @@ def rows_from(payload: dict, *, accounts: tuple[str, ...] = ()
         basis_by[ticker] = (None if running is None or not isinstance(basis, int | float)
                             else running + float(basis))
         domains[ticker] = _domain(security)
+        figis[ticker] = security.get("figi")
+        # The instrument price, not the position value. Two accounts holding the same security
+        # report the same mark, so last-one-wins is not a merge decision — it is the same number.
+        mark = held.get("institution_price")
+        marks[ticker] = float(mark) if isinstance(mark, int | float) else None
 
     rows: list[Row] = []
     for ticker, total in sorted(shares_by.items()):
         basis = basis_by[ticker]
         rows.append(Row(ticker=ticker, shares=total, domain=domains[ticker],
-                        cost=(basis / total if basis is not None and total > 0 else None)))
+                        cost=(basis / total if basis is not None and total > 0 else None),
+                        figi=figis[ticker], mark=marks[ticker]))
     return tuple(rows), tuple(skipped), tuple(used)
+
+
+def cash_from(payload: dict, *, accounts: tuple[str, ...] = ()) -> float | None:
+    """Money you could put into a position today, across the accounts this file covers.
+
+    ``balances.available`` and not ``balances.current``: on a brokerage account ``current`` is
+    the whole account including every security in it, so reporting it as cash would say a
+    $115k retirement book has $115k to deploy.
+
+    **Only ``investment`` accounts count.** One login reaches a savings account as easily as a
+    brokerage one, and a savings balance is not buying power — the SoFi connection arrives with
+    $44k of savings beside $7k of actual cash. Returns None rather than 0.0 when no investment
+    account reported a balance at all, so "the broker did not say" stays distinguishable from
+    "you have nothing".
+    """
+    seen = [a for a in payload.get("accounts") or ()
+            if (a.get("type") or "") == INVESTMENT
+            and (not accounts or a.get("account_id") in accounts)
+            and isinstance((a.get("balances") or {}).get("available"), int | float)]
+    if not seen:
+        return None
+    return float(sum(a["balances"]["available"] for a in seen))
 
 
 def _number(value: float) -> str:
@@ -244,7 +287,16 @@ domain: stock
 """
 
 
-def write_positions(path: Path, rows, *, horizon: str = "position") -> None:
+# What this module wrote last time, stripped from the preserved half before rewriting. The
+# `cash:` line matters most: left in place it would appear twice in one document, and PyYAML
+# resolves a duplicate key silently by taking the last one. A settings file that quietly
+# ignores a line you edited is worse than one that refuses it. The banner is here for the same
+# reason at a smaller scale — nightly syncs would otherwise stack a comment per night forever.
+_GENERATED = re.compile(r"^(cash:.*|# Synced from Plaid .*)$\n?", re.MULTILINE)
+
+
+def write_positions(path: Path, rows, *, horizon: str = "position",
+                    cash: float | None = None) -> None:
     """Replace the ``positions:`` block, keeping every line above it exactly as written.
 
     The settings and comments in a portfolio file are yours — ``levels:``, ``stale_after:``,
@@ -263,8 +315,11 @@ def write_positions(path: Path, rows, *, horizon: str = "position") -> None:
         prefix = HEADER.format(name=path.stem, horizon=horizon)
 
     fallback = _default_domain(doc if isinstance(doc, dict) else {})
-    lines = [prefix.rstrip("\n"), "",
-             f"# Synced from Plaid {datetime.now(UTC).date().isoformat()}.", "positions:"]
+    lines = [_GENERATED.sub("", prefix).rstrip("\n"), "",
+             f"# Synced from Plaid {datetime.now(UTC).date().isoformat()}."]
+    if cash is not None:
+        lines.append(f"cash: {cash:.2f}")
+    lines.append("positions:")
     for row in rows:
         lines.append(f"  - ticker: {row.ticker}")
         lines.append(f"    shares: {_number(row.shares)}")
@@ -272,6 +327,12 @@ def write_positions(path: Path, rows, *, horizon: str = "position") -> None:
             lines.append(f"    cost: {_number(row.cost)}")
         if row.domain != fallback:
             lines.append(f"    domain: {row.domain}")
+        # Written for the reader's benefit as much as the code's: `figi` is what lets you settle
+        # by hand which instrument a row really is, when the mark check says two prices disagree.
+        if row.figi:
+            lines.append(f"    figi: {row.figi}")
+        if row.mark is not None:
+            lines.append(f"    mark: {_number(row.mark)}")
         lines.append("")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
