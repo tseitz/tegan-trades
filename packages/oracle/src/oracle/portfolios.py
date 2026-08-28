@@ -16,7 +16,7 @@ answer it must never give by accident.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -86,6 +86,11 @@ class Portfolio:
     # said — a hand-kept file, or a broker that omits the balance — and that has to stay
     # distinct from zero, because "no room to add" is a fact and "we do not know" is not.
     cash: float | None = None
+    # Which account holds which part of it, when one file covers more than one. A Roth and a
+    # Traditional IRA are one book to think about and their positions genuinely sum — the same
+    # ticker in both is one exposure. Their cash does not: you cannot buy in the Roth with
+    # Traditional money, so the total alone would name a sum you cannot spend anywhere.
+    cash_by_account: dict[str, float] = field(default_factory=dict)
 
     def age_days(self, *, on: date) -> int | None:
         return None if self.updated is None else (on - self.updated).days
@@ -220,6 +225,7 @@ def load(name: str, *, root: Path = DATA_ROOT) -> Portfolio:
         level_kinds=_level_kinds(doc.get("levels"), path=path),
         updated=_updated(doc.get("updated"), path=path),
         cash=_number(doc.get("cash"), field="cash", where=str(path)),
+        cash_by_account=_cash_by_account(doc.get("cash_by_account"), path=path),
         # The view half-lives reused as a starting point, not a measurement of how fast a
         # portfolio file rots. They are the right shape — a scalper's book turns over in days
         # and a retirement book in years — but an actively traded account goes wrong far
@@ -247,6 +253,22 @@ def _updated(raw, *, path: Path) -> date:
         return date.fromisoformat(str(raw)[:10])
     except ValueError as exc:
         raise PortfolioError(f"{path}: `updated` is not a date: {raw!r}") from exc
+
+
+def _cash_by_account(raw, *, path: Path) -> dict[str, float]:
+    """Written by ``plaid-sync``; absent on a hand-kept file and on a single-account one."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise PortfolioError(f"{path}: `cash_by_account` must be a mapping of account "
+                             f"name to amount")
+    out: dict[str, float] = {}
+    for name, value in raw.items():
+        amount = _number(value, field=f"cash_by_account.{name}", where=str(path))
+        if amount is None:
+            raise PortfolioError(f"{path}: `cash_by_account.{name}` has no amount")
+        out[str(name)] = amount
+    return out
 
 
 def _level_kinds(raw, *, path: Path) -> tuple[str, ...]:

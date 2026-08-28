@@ -255,3 +255,19 @@ def test_a_mark_mismatch_is_the_first_thing_on_the_page():
 def test_a_clean_account_prints_no_mismatch_banner():
     out = render([_reading()], portfolio="retirement", as_of=AS_OF, mismatched=())
     assert "WRONG INSTRUMENT" not in out
+
+
+def test_two_accounts_in_one_file_show_which_cash_is_spendable_where():
+    out = render([_reading(verdict=ADD, lean=_lean(BULLISH_ROSTER, bulls=3, bears=0))],
+                 portfolio="retirement", as_of=AS_OF, cash=3879.57,
+                 cash_by={"Roth IRA": 3379.57, "Traditional IRA": 500.0})
+    assert "3,879.57 cash to fund 1 ADD(s)" in out
+    assert "Roth IRA 3,379.57" in out
+    assert "Traditional IRA 500.00" in out
+
+
+def test_one_account_does_not_restate_its_own_total():
+    out = render([_reading(verdict=ADD, lean=_lean(BULLISH_ROSTER, bulls=3, bears=0))],
+                 portfolio="retirement", as_of=AS_OF, cash=500.0,
+                 cash_by={"Roth IRA": 500.0})
+    assert "spendable separately" not in out

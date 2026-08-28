@@ -243,8 +243,9 @@ def rows_from(payload: dict, *, accounts: tuple[str, ...] = ()
     return tuple(rows), tuple(skipped), tuple(used)
 
 
-def cash_from(payload: dict, *, accounts: tuple[str, ...] = ()) -> float | None:
-    """Money you could put into a position today, across the accounts this file covers.
+def cash_from(payload: dict, *, accounts: tuple[str, ...] = ()
+              ) -> tuple[float | None, dict[str, float]]:
+    """``(total, per account)`` — money you could put into a position today.
 
     ``balances.available`` and not ``balances.current``: on a brokerage account ``current`` is
     the whole account including every security in it, so reporting it as cash would say a
@@ -255,14 +256,22 @@ def cash_from(payload: dict, *, accounts: tuple[str, ...] = ()) -> float | None:
     $44k of savings beside $7k of actual cash. Returns None rather than 0.0 when no investment
     account reported a balance at all, so "the broker did not say" stays distinguishable from
     "you have nothing".
+
+    **The breakdown is what makes merging two accounts into one file honest.** A Roth and a
+    Traditional IRA are one retirement book to think about, and summing their positions is
+    right — the same ticker in both is one exposure. Their *cash* does not combine that way:
+    you cannot buy in the Roth with Traditional money. The total is still a true number, but
+    only the split says which of it you can actually spend where.
     """
     seen = [a for a in payload.get("accounts") or ()
             if (a.get("type") or "") == INVESTMENT
             and (not accounts or a.get("account_id") in accounts)
             and isinstance((a.get("balances") or {}).get("available"), int | float)]
     if not seen:
-        return None
-    return float(sum(a["balances"]["available"] for a in seen))
+        return None, {}
+    by = {str(a.get("name") or a["account_id"]): float(a["balances"]["available"])
+          for a in seen}
+    return float(sum(by.values())), by
 
 
 def _number(value: float) -> str:
@@ -292,11 +301,13 @@ domain: stock
 # resolves a duplicate key silently by taking the last one. A settings file that quietly
 # ignores a line you edited is worse than one that refuses it. The banner is here for the same
 # reason at a smaller scale — nightly syncs would otherwise stack a comment per night forever.
-_GENERATED = re.compile(r"^(cash:.*|# Synced from Plaid .*)$\n?", re.MULTILINE)
+_GENERATED = re.compile(
+    r"^(cash:.*|cash_by_account:.*(?:\n[ \t]+\S.*)*|# Synced from Plaid .*)$\n?",
+    re.MULTILINE)
 
 
 def write_positions(path: Path, rows, *, horizon: str = "position",
-                    cash: float | None = None) -> None:
+                    cash: float | None = None, cash_by: dict[str, float] | None = None) -> None:
     """Replace the ``positions:`` block, keeping every line above it exactly as written.
 
     The settings and comments in a portfolio file are yours — ``levels:``, ``stale_after:``,
@@ -319,6 +330,12 @@ def write_positions(path: Path, rows, *, horizon: str = "position",
              f"# Synced from Plaid {datetime.now(UTC).date().isoformat()}."]
     if cash is not None:
         lines.append(f"cash: {cash:.2f}")
+    # Only when a file covers more than one account. On a single-account book the split would
+    # restate the total under a second name, and a report that says the same number twice
+    # trains the eye past both.
+    if cash_by and len(cash_by) > 1:
+        lines.append("cash_by_account:")
+        lines += [f"  {name}: {value:.2f}" for name, value in sorted(cash_by.items())]
     lines.append("positions:")
     for row in rows:
         lines.append(f"  - ticker: {row.ticker}")

@@ -70,7 +70,8 @@ LEVEL_HEADERS = ("TICKER", "PRICE", "SIDE", "LEVEL", "WHAT", "", "ROSTER", "")
 
 
 def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
-           stale: bool = False, cash: float | None = None, mismatched=()) -> str:
+           stale: bool = False, cash: float | None = None, cash_by=None,
+           mismatched=()) -> str:
     """The whole report. ``as_of`` is passed in rather than read from a clock so a replay of
     a past date prints that date, not today's.
 
@@ -118,6 +119,15 @@ def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
         # is enough for the one judgement it supports: whether there is room to act at all.
         if cash is not None and adds:
             lines += ["", f"  {_money(cash)} cash to fund {adds} ADD(s)"]
+            # Only when the file covers more than one account, and it has to print here rather
+            # than in the header. Two IRAs are one book to think about and their positions
+            # genuinely sum, but their cash does not — you cannot buy in the Roth with
+            # Traditional money. Beside the ADDs is the one place that distinction changes what
+            # you do; anywhere else it is trivia.
+            if cash_by and len(cash_by) > 1:
+                split = " · ".join(f"{name} {_money(value)}"
+                                   for name, value in sorted(cash_by.items()))
+                lines.append(f"        spendable separately — {split}")
         else:
             lines.append("")
         lines += notes

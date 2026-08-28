@@ -215,33 +215,34 @@ def _account(aid, *, kind="investment", available=100.0, name="An Account"):
 def test_cash_is_what_you_could_deploy_not_what_the_account_is_worth():
     """`current` on a brokerage account is every security in it. Reporting that as cash would
     tell a $115k retirement book it has $115k to spend."""
-    assert plaid.cash_from(_payload(accounts=[_account("a", available=3379.57)])) == 3379.57
+    total, _ = plaid.cash_from(_payload(accounts=[_account("a", available=3379.57)]))
+    assert total == 3379.57
 
 
 def test_a_savings_account_reached_by_the_same_login_is_not_buying_power():
     """One SoFi connection arrives with Checking, Savings and Self-directed together. Only the
     last one holds money that can enter a position."""
-    got = plaid.cash_from(_payload(accounts=[
+    total, _ = plaid.cash_from(_payload(accounts=[
         _account("brokerage", available=6979.55),
         _account("savings", kind="depository", available=44611.10),
         _account("card", kind="credit", available=7209.0),
     ]))
-    assert got == 6979.55
+    assert total == 6979.55
 
 
 def test_naming_accounts_narrows_the_cash_too():
-    got = plaid.cash_from(_payload(accounts=[
+    total, _ = plaid.cash_from(_payload(accounts=[
         _account("roth", available=3379.57), _account("taxable", available=1000.0),
     ]), accounts=("roth",))
-    assert got == 3379.57
+    assert total == 3379.57
 
 
 def test_a_broker_that_reports_no_balance_says_none_not_zero():
     """"We do not know" and "you have nothing to spend" are different facts, and only one of
     them should ever be printed as a number."""
     assert plaid.cash_from(_payload(accounts=[
-        {"account_id": "a", "type": "investment", "name": "x", "balances": {}}])) is None
-    assert plaid.cash_from(_payload()) is None
+        {"account_id": "a", "type": "investment", "name": "x", "balances": {}}])) == (None, {})
+    assert plaid.cash_from(_payload()) == (None, {})
 
 
 def test_cash_is_written_where_the_reader_will_find_it(tmp_path):
@@ -286,3 +287,34 @@ def test_identity_survives_the_round_trip_through_the_file(tmp_path):
     position = portfolios.load("p", root=tmp_path).positions[0]
     assert position.figi == "BBG000BQ2L37"
     assert position.mark == 188.98
+
+
+def test_cash_is_broken_down_per_account():
+    """What makes merging two IRAs into one file honest. Their positions genuinely sum — the
+    same ticker in both is one exposure — but you cannot buy in the Roth with Traditional
+    money, so the total alone would name a sum that is not spendable anywhere."""
+    total, by = plaid.cash_from(_payload(accounts=[
+        _account("roth", available=3379.57, name="Roth IRA"),
+        _account("trad", available=500.0, name="Traditional IRA"),
+    ]))
+    assert total == 3879.57
+    assert by == {"Roth IRA": 3379.57, "Traditional IRA": 500.0}
+
+
+def test_a_single_account_file_does_not_restate_its_own_total(tmp_path):
+    """A split of one is the total under a second name, and a report that says the same number
+    twice teaches the eye to skip both."""
+    path = tmp_path / "p.yaml"
+    plaid.write_positions(path, ROWS, cash=100.0, cash_by={"Only": 100.0})
+    assert "cash_by_account" not in path.read_text(encoding="utf-8")
+
+
+def test_the_split_survives_the_round_trip_and_never_stacks(tmp_path):
+    from oracle import portfolios
+    path = tmp_path / "p.yaml"
+    split = {"Roth IRA": 3379.57, "Traditional IRA": 500.0}
+    plaid.write_positions(path, ROWS, cash=3879.57, cash_by=split)
+    plaid.write_positions(path, ROWS, cash=3879.57, cash_by=split)
+
+    assert path.read_text(encoding="utf-8").count("cash_by_account:") == 1
+    assert portfolios.load("p", root=tmp_path).cash_by_account == split

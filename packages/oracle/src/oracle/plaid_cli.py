@@ -107,7 +107,7 @@ def sync(argv: list[str] | None = None) -> int:
 
         narrowed = _narrow(name)
         rows, skipped, accounts = plaid.rows_from(payload, accounts=narrowed)
-        cash = plaid.cash_from(payload, accounts=narrowed)
+        cash, cash_by = plaid.cash_from(payload, accounts=narrowed)
         path = portfolios.DATA_ROOT / f"{name}.yaml"
         before = _tickers(name)
         now = {r.ticker for r in rows}
@@ -122,7 +122,8 @@ def sync(argv: list[str] | None = None) -> int:
 
         verb = "would write" if args.dry_run else "wrote"
         if not args.dry_run:
-            plaid.write_positions(path, rows, horizon=_horizon(name), cash=cash)
+            plaid.write_positions(path, rows, horizon=_horizon(name), cash=cash,
+                                  cash_by=cash_by)
         money = "" if cash is None else f", {cash:,.2f} cash"
         print(f"{name}: {verb} {len(rows)} position(s) from "
               f"{len(accounts)} account(s){money} -> {path}")

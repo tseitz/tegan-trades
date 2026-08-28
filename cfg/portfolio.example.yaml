@@ -49,14 +49,30 @@ domain: stock
 
 # Which accounts inside one Plaid connection this file covers. All of them when absent, which
 # is the right default — a broker that later opens a second sleeve should appear, not vanish.
-# Narrow it when one login reaches a Roth and a taxable account that want separate reviews.
-# `plaid-link` prints the ids and masks it found.
-# plaid_accounts: [abc123]
+#
+# Two reasons to set it. To EXCLUDE an account you do not use: an empty one is silent right up
+# until the day it is not, so naming the ones you want beats relying on the others staying at
+# zero. And to keep two books apart when one login reaches both.
+#
+# Merging is usually right for accounts you think of as one thing — two IRAs are one retirement
+# position, and the same ticker in both is one exposure, so summing them is the honest answer.
+# Cash is the exception and is reported per account for exactly that reason.
+#
+# `plaid-link` and `plaid-sync` both print the ids and masks they found.
+# plaid_accounts: [abc123, def456]
 
 # Money that could go into a position today. WRITTEN BY `plaid-sync` — do not hand-edit it,
 # the next sync overwrites it. Absent on a hand-kept file, which is not the same as zero: the
 # report says nothing rather than telling you there is no room to add.
 # cash: 3379.57
+#
+# And where it sits, written only when this file covers more than one account. The positions of
+# two IRAs genuinely sum; their cash does not, because you cannot buy in the Roth with
+# Traditional money. `review` prints this beside the ADDs, which is the one place it changes
+# what you do.
+# cash_by_account:
+#   Roth IRA: 3379.57
+#   Traditional IRA: 0.00
 
 positions:
   # `shares` is required and must be positive. A closed position is deleted, not zeroed.
