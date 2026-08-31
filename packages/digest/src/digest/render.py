@@ -30,6 +30,18 @@ from digest.fmt import num
 # anyone can act on. At 90% the remaining headroom is one or two nights and that is a decision.
 SPEND_LOUD_AT = 0.90
 
+# How many level arrivals one portfolio prints before it starts counting instead.
+#
+# A display decision only. The scan behind these is uncapped on purpose (``holdings.delta``),
+# and the group is already ranked weekly-first then by position size, so the rows this keeps
+# are the ones worth keeping. It follows ``review.levels.shortlist``'s rule exactly: whatever
+# it drops, it says how many.
+#
+# Five, not that module's twelve. Twelve is a screenful in a terminal; here the competition is
+# the sections above, which are the ones asking you to move money. On 2026-08-30 one account
+# printed seventeen arrivals — the largest block in the digest and the least urgent thing in it.
+ARRIVALS_SHOWN = 5
+
 # Trigger states in words a person reads at 06:30. These are internal enum values and
 # ``no_zone_tag`` reached the inbox unchanged for weeks — it is the *most common* previous state
 # in the arrivals section, so the one line that carries entry and stop levels was also the one
@@ -37,8 +49,12 @@ SPEND_LOUD_AT = 0.90
 #
 # A state missing from this map prints as its raw value rather than as nothing. Ugly is
 # recoverable; silence would hide that the map went stale behind ``core.trigger``.
+#
+# Each entry names a STATE, so it can be read after the word "was". Written as a sentence,
+# ``no_zone_tag`` printed as "price reached the zone (price had not reached the zone)" — the two
+# halves are now and before, and with nothing saying so the line reads as a contradiction.
 _TRIGGER_WORDS = {
-    NO_ZONE_TAG: "price had not reached the zone",
+    NO_ZONE_TAG: "not at the zone",
     NO_TRIGGER: "no break yet",
     ARMED: "armed",
     FIRED: "fired",
@@ -88,7 +104,11 @@ def subject(delta: diff.QueueDelta, book=None, *, stale_as_of: str | None = None
     else:
         parts = []
         if delta.arrived:
-            parts.append(f"{len(delta.arrived)} at trigger")
+            # Capitalised, alone among the counts. Every other fragment on this line reports
+            # something that happened; this one is the only one asking for a decision today,
+            # and set in the same case as the rest it was read at the same weight as "1
+            # rezoned". The marker below does the same job for a subject list seen at a glance.
+            parts.append(f"{len(delta.arrived)} AT TRIGGER")
         if delta.entered:
             parts.append(f"{len(delta.entered)} new")
         if delta.departed:
@@ -107,12 +127,20 @@ def subject(delta: diff.QueueDelta, book=None, *, stale_as_of: str | None = None
     if repeat:
         parts.insert(0, "again")
 
+    line = " · ".join(parts)
+
+    # Marks the one subject worth opening before coffee, and it is a prefix rather than a
+    # fragment because a subject list is read down its left edge. Glued on without a separator:
+    # a marker with a "·" after it is just another count.
+    if delta.arrived:
+        line = f"▲ {line}"
+
     # Appended to every shape, including bootstrap. A first run that half-failed is still a
     # half-failed run, and the subject is where that has to show. ``!!`` stays leftmost — it is
-    # the louder of the two markers and the eye lands there first.
+    # the loudest of the markers and the eye lands there first.
     if problems:
-        return f"!! {' · '.join(parts)} · {problems} problem(s)"
-    return " · ".join(parts)
+        return f"!! {line} · {problems} problem(s)"
+    return line
 
 
 def markdown(delta: diff.QueueDelta, *, run=None, book=None, roster: str | None = None,
@@ -175,7 +203,7 @@ def markdown(delta: diff.QueueDelta, *, run=None, book=None, roster: str | None 
     out.extend(_run_section(run, xai_month=xai_month, xai_cap=xai_cap,
                             xai_changed=xai_changed))
     out.extend(_problems_section(problems))
-    out.extend(_provenance(delta))
+    out.extend(_provenance(delta, run))
     return "\n".join(out).strip() + "\n"
 
 
@@ -192,7 +220,7 @@ def _trigger_section(delta: diff.QueueDelta) -> list[str]:
     for move in sorted(delta.arrived, key=lambda m: (m.kind != diff.TRIGGERED, m.asset)):
         row = move.row
         what = "armed" if move.kind == diff.TRIGGERED else "price reached the zone"
-        origin = "new tonight" if move.new_tonight else _in_words(move.was)
+        origin = "new tonight" if move.new_tonight else f"was {_in_words(move.was)}"
         out.append(f"  {row['asset']:<8} {row['direction'].upper():<6} "
                    f"{row.get('zone_timeframe', '?')} · entry {num(row.get('entry'))} · "
                    f"stop {num(row.get('stop'))} · target {num(row.get('target'))}")
@@ -368,9 +396,12 @@ def _holdings_section(deltas) -> list[str]:
         # sits above the standing counts — those describe a state that was already true.
         if d.arrived:
             out.append("  reached a level overnight")
-            out += [f"    {_arrival(spot)}" for spot in d.arrived]
+            out += [f"    {_arrival(spot)}" for spot in d.arrived[:ARRIVALS_SHOWN]]
+            dropped = len(d.arrived) - ARRIVALS_SHOWN
+            if dropped > 0:
+                out.append(f"    and {dropped} more — `uv run review --levels`")
         if d.left:
-            out.append("  left one")
+            out.append("  stepped off a level overnight")
             for ticker, was in d.left:
                 kind, _, side = was.partition(":")
                 out.append(f"    {ticker:<6} was on {kind.replace('_', ' ')} {side}")
@@ -469,23 +500,51 @@ def _problems_section(problems) -> list[str]:
             *(f"  {p}" for p in items)]
 
 
-def _provenance(delta: diff.QueueDelta) -> list[str]:
-    """Which two snapshots this diff is between.
+def _is_clean(run) -> bool:
+    """Did last night work. Shared so the RUN section and the footer cannot disagree about it.
+
+    A step can report failure while exiting 0, so ``exit`` alone is not enough — see the note
+    in ``_run_section`` about which field is authoritative and why both are read.
+    """
+    if not run:
+        return False
+    steps = run.get("steps", []) or []
+    return (not run.get("exit", 0)
+            and not any(s.get("status") in ("fail", "warn") for s in steps))
+
+
+def _provenance(delta: diff.QueueDelta, run=None) -> list[str]:
+    """Which two snapshots this diff is between, and — on a good night — that it was a good
+    night.
 
     Printed unconditionally and last. Without it a digest built from a stale snapshot — because
     ``setups`` failed, or could not write — renders as a real, internally consistent diff of the
     wrong night, and the vault note stamps today's date on it. Two run stamps make that visible
     without the reader having to know the failure exists.
+
+    A clean run's step count rides here rather than in a RUN section of its own. That section
+    printed "RUN  clean · 15 steps" on every good night, which is a heading the eye learns to
+    skip — including on the night it finally says ``exit 2``. Moving the fact rather than
+    dropping it keeps "the run was clean" distinguishable from "there is no run row at all",
+    which is the failure this line exists to expose.
     """
-    return ["", f"     {delta.previous_run or '—'} → {delta.current_run or '—'}"]
+    health = ""
+    if run and _is_clean(run):
+        health = f"{len(run.get('steps') or [])} steps clean · "
+    return ["", f"     {health}{delta.previous_run or '—'} → {delta.current_run or '—'}"]
 
 
 def _run_section(run, *, xai_month: float | None, xai_cap: float | None,
                  xai_changed: bool = True) -> list[str]:
-    """One line, unless something wants attention.
+    """Nothing at all, unless something wants attention.
 
     Trends across runs are ``scripts/nightly_report.py``'s job and are deliberately not
     duplicated here — this answers only "did last night work".
+
+    **Silent on a clean night.** A section that printed on all of them was a heading the eye
+    learned to skip, which costs exactly on the night it reads ``exit 2``. The fact is not lost:
+    ``_provenance`` carries the step count on its always-present line, so a clean run still
+    cannot be confused with a run that left no row behind.
 
     ``xai_changed`` is whether the month total moved since it was last printed; see
     ``state.xai_changed``. It gates only the spend line, never the step-health line above it.
@@ -514,6 +573,14 @@ def _run_section(run, *, xai_month: float | None, xai_cap: float | None,
     else:
         line = f"RUN  clean · {len(steps)} steps"
 
+    # Spend near the cap is the one thing that brings the section back on a clean night. It
+    # needs a heading to sit under, and printing it bare under the portfolios would read as a
+    # portfolio fact.
+    loud_spend = (xai_changed and xai_month is not None and xai_cap
+                  and xai_month >= xai_cap * SPEND_LOUD_AT)
+    if _is_clean(run) and not loud_spend:
+        return []
+
     out = ["", line]
     out += [f"    {r}" for r in reasons]
     # Spend only speaks up near the cap. Below it the number is knowable, unchanged in any
@@ -523,8 +590,7 @@ def _run_section(run, *, xai_month: float | None, xai_cap: float | None,
     # line otherwise fires on the identical number every night until the month rolls over. That
     # is an alarm nothing can clear, sitting directly under the step-health line — so it does
     # not just waste a row, it teaches the reader to skip the row that reports real failures.
-    if (xai_changed and xai_month is not None and xai_cap
-            and xai_month >= xai_cap * SPEND_LOUD_AT):
+    if loud_spend:
         # "Near" and "over" are different facts and the second is the one that wants acting on.
         # Reading "near the cap" beside a number visibly above it teaches the eye to skip both.
         where = "OVER the cap" if xai_month >= xai_cap else "near the cap"

@@ -276,8 +276,25 @@ def test_level_moves_render_under_the_portfolio_heading():
     out = "\n".join(render._holdings_section([d]))
     assert "reached a level" in out
     assert "COST" in out and "resistance" in out
-    assert "left one" in out
+    assert "stepped off a level" in out
     assert "TSLA" in out
+
+
+def test_a_long_arrival_list_is_capped_and_says_what_it_dropped():
+    """The scan behind these is uncapped and ranked weekly-first, so the cap keeps the rows
+    worth keeping. On 2026-08-30 one account printed seventeen — the biggest block in the
+    digest and the least urgent thing in it."""
+    spots = tuple(_spot(f"T{n}", side=RESISTANCE) for n in range(9))
+    out = "\n".join(render._holdings_section([_delta(arrived=spots, positions=9)]))
+    assert "T0" in out and "T4" in out
+    assert "T5" not in out
+    assert "and 4 more" in out
+
+
+def test_an_arrival_list_inside_the_cap_says_nothing_about_dropping():
+    spots = tuple(_spot(f"T{n}", side=RESISTANCE) for n in range(3))
+    out = "\n".join(render._holdings_section([_delta(arrived=spots, positions=3)]))
+    assert "more" not in out
 
 
 def test_a_night_with_no_level_movement_prints_no_level_lines():

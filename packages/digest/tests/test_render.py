@@ -113,9 +113,29 @@ def test_the_subject_carries_the_counts_that_matter():
         _snap("2026-08-20", [_entry("a", trigger_state=NO_TRIGGER),
                              _entry("b", asset="ETH")]))
     subject = render.subject(delta)
-    assert "1 at trigger" in subject
+    assert "1 AT TRIGGER" in subject
     assert "1 new" in subject
     assert "1 out" in subject
+
+
+def test_an_arrival_marks_the_subject_at_its_left_edge():
+    """A subject list is read down its left edge, and arrivals are the only count on the line
+    asking for a decision today rather than reporting one."""
+    delta = diff.compare(_snap("2026-08-19", [_entry("a", trigger_state=NO_ZONE_TAG)]),
+                         _snap("2026-08-20", [_entry("a", trigger_state=NO_TRIGGER)]))
+    assert render.subject(delta).startswith("▲ ")
+
+
+def test_a_night_with_no_arrival_carries_no_marker():
+    """A marker on every subject is not a marker."""
+    assert "▲" not in render.subject(_quiet())
+
+
+def test_a_problem_outranks_the_arrival_marker():
+    """Both can be true. ``!!`` is the louder of the two and the eye lands leftmost first."""
+    delta = diff.compare(_snap("2026-08-19", [_entry("a", trigger_state=NO_ZONE_TAG)]),
+                         _snap("2026-08-20", [_entry("a", trigger_state=NO_TRIGGER)]))
+    assert render.subject(delta, problems=1).startswith("!! ▲ ")
 
 
 def test_a_quiet_night_gets_an_explicitly_quiet_subject():
@@ -316,7 +336,14 @@ def test_a_trigger_state_is_printed_in_plain_words():
     move = diff.TriggerMove(row=_row(), was=NO_ZONE_TAG, now=ARMED, kind=diff.TRIGGERED)
     body = render.markdown(_quiet(arrived=(move,)))
     assert "no_zone_tag" not in body
-    assert "price had not reached the zone" in body
+    assert "armed (was not at the zone)" in body
+
+
+def test_the_previous_trigger_state_says_it_is_the_previous_one():
+    """Without "was" the line printed "price reached the zone (price had not reached the zone)",
+    which reads as the pipeline contradicting itself inside one pair of brackets."""
+    move = diff.TriggerMove(row=_row(), was=NO_ZONE_TAG, now=ARMED, kind=diff.TAGGED)
+    assert "price reached the zone (was not at the zone)" in render.markdown(_quiet(arrived=(move,)))
 
 
 def test_an_unknown_trigger_state_is_printed_as_itself_rather_than_dropped():
@@ -450,8 +477,37 @@ def _health(row):
     return [ln for ln in render._run_section(row, xai_month=None, xai_cap=None) if ln.strip()]
 
 
-def test_a_clean_run_stays_one_line():
-    assert _health(_run(0)) == ["RUN  clean · 1 steps"]
+def test_a_clean_run_prints_no_section_at_all():
+    """A heading that appeared on every good night was one the eye learned to skip — which is
+    paid for on the night it reads ``exit 2``."""
+    assert _health(_run(0)) == []
+
+
+def test_a_clean_run_still_says_so_on_the_line_that_always_prints():
+    """Hiding the section must not make "the run was clean" look like "there is no run row",
+    which is the failure the provenance line exists to expose."""
+    footer = render._provenance(_quiet(), _run(0))[-1]
+    assert "1 steps clean" in footer
+
+
+def test_a_failed_run_leaves_the_footer_bare():
+    """The footer may only vouch for a night it can vouch for."""
+    assert "clean" not in render._provenance(_quiet(), _run(1))[-1]
+
+
+def test_a_run_that_exits_zero_with_a_flagged_step_is_not_clean():
+    """A step can report failure while exiting 0 — the 2026-08-27 shape. Reading ``exit`` alone
+    would hide the section AND have the footer vouch for the night."""
+    row = _run(0, steps=[{"name": "verify-roster", "status": "warn"}])
+    assert _health(row) and "clean" not in render._provenance(_quiet(), row)[-1]
+
+
+def test_spend_near_the_cap_brings_the_section_back_on_a_clean_night():
+    """It needs a heading to sit under. Printed bare it would read as a portfolio fact."""
+    lines = [ln for ln in render._run_section(_run(0), xai_month=95.0, xai_cap=100.0)
+             if ln.strip()]
+    assert lines[0].startswith("RUN  clean")
+    assert any("xAI" in ln for ln in lines)
 
 
 def test_a_reason_is_printed_when_no_step_carries_the_blame():
