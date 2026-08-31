@@ -29,6 +29,15 @@ from __future__ import annotations
 import smtplib
 from dataclasses import dataclass
 from email.message import EmailMessage
+from email.policy import SMTP
+
+from digest import htmlmail
+
+# RFC 5321's line limit, used as the header-folding width. The default policy folds at 78, and a
+# subject carrying "·" gets split into encoded-words at that boundary — one of which encodes a
+# lone space. A client unfolds the break to a space and decodes that word to a second one, so
+# every long subject arrived with a double space in it. Nothing here can emit a line near 998.
+_POLICY = SMTP.clone(max_line_length=998)
 
 # Gmail's submission endpoint. STARTTLS on 587 rather than implicit TLS on 465 — both work,
 # and 587 is the one that survives networks that block 465 outright.
@@ -96,17 +105,19 @@ def configure(env) -> Config:
 
 
 def compose(config: Config, subject: str, body: str) -> EmailMessage:
-    """The message. Plain text, one part.
+    """The message. Two parts carrying one string.
 
-    Plain text is the whole point of rendering the digest as plain text in the first place: the
-    terminal, the vault note and the inbox show the same characters, so there is one renderer
-    and nothing that can drift between them.
+    The plain-text part is the rendered digest verbatim, so the terminal, the vault note and the
+    inbox still show the same characters and there is still one renderer. The HTML part is that
+    same text in a monospace block — see ``htmlmail``, which may restyle and may not restate.
+    Sending it as ``multipart/alternative`` means a client that prefers plain text loses nothing.
     """
-    message = EmailMessage()
+    message = EmailMessage(policy=_POLICY)
     message["Subject"] = subject
     message["From"] = config.sender
     message["To"] = ", ".join(config.to)
     message.set_content(body)
+    message.add_alternative(htmlmail.wrap(body), subtype="html")
     return message
 
 

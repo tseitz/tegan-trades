@@ -6,6 +6,8 @@ no failure here may raise into the nightly.
 """
 from __future__ import annotations
 
+from email import message_from_string, policy
+
 import pytest
 from digest import mail
 
@@ -56,14 +58,35 @@ def test_the_message_carries_the_subject_and_a_plain_text_body():
     message = mail.compose(config, "1 at trigger · 1 new", "AT THE TRIGGER\n  HYPE\n")
     assert message["Subject"] == "1 at trigger · 1 new"
     assert message["From"] == "me@gmail.com"
-    assert "HYPE" in message.get_content()
+    assert "HYPE" in _part(message, "text/plain").get_content()
 
 
-def test_the_body_stays_plain_text():
+def _part(message, kind):
+    return next(p for p in message.walk() if p.get_content_type() == kind)
+
+
+def test_the_plain_text_part_is_the_rendered_digest_unchanged():
     """One renderer, no drift. The terminal, the vault note and the mail all show the same
-    characters — and a plain-text part renders everywhere without a client deciding for us."""
-    config = mail.configure(_env())
-    assert mail.compose(config, "s", "b").get_content_type() == "text/plain"
+    characters, and the HTML part below may only restyle them."""
+    body = "AT THE TRIGGER\n  HYPE     LONG   daily · entry 41.10\n"
+    message = mail.compose(mail.configure(_env()), "s", body)
+    assert _part(message, "text/plain").get_content() == body
+
+
+def test_an_html_part_is_offered_alongside_it():
+    """``render`` pads columns to fixed widths and that only holds in a monospace font. As a lone
+    plain-text part the mail was drawn proportional and every column collapsed."""
+    message = mail.compose(mail.configure(_env()), "s", "AT THE TRIGGER\n")
+    assert message.get_content_type() == "multipart/alternative"
+    assert "AT THE TRIGGER" in _part(message, "text/html").get_content()
+
+
+def test_a_long_subject_survives_the_trip_through_a_mail_parser():
+    """Folded at the default 78 columns, a subject carrying "·" split into encoded-words — one of
+    them a lone space — and every client decoded it back with a double space in it."""
+    subject = "3 at trigger · 6 new · 2 out · 1 rezoned · 3 holdings moved · 19 at a level"
+    raw = mail.compose(mail.configure(_env()), subject, "b").as_string()
+    assert str(message_from_string(raw, policy=policy.default)["Subject"]) == subject
 
 
 # ── failure never reaches the nightly ─────────────────────────────────────────
