@@ -54,3 +54,22 @@ def num(value) -> str:
     if abs(value) >= 1:
         return f"{value:,.2f}"
     return f"{value:.6g}"
+
+
+def money(value) -> str:
+    """A profit or loss, always carrying its sign. ``?`` for anything unrenderable.
+
+    Two decimals at every size, unlike ``num``. This is dollars, not a price: the range that
+    forces ``num`` to vary its precision does not apply, and a column that shifts precision
+    row to row cannot be scanned down.
+    """
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return "?"
+    return f"{value:+,.2f}"
+
+
+def pct(value) -> str:
+    """A fraction as a signed percentage. ``?`` for anything unrenderable."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return "?"
+    return f"{value:+.1%}"

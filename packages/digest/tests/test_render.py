@@ -421,6 +421,34 @@ def test_no_resting_entries_adds_nothing():
     assert "resting" not in render.markdown(_quiet(), holding=(_held(),), resting=0)
 
 
+def test_an_open_position_shows_what_it_is_up_in_money_and_in_percent():
+    """The section named the fill and the stop, so it said what was committed and never what
+    it had become. The one question a reader opens this section with went unanswered."""
+    body = render.markdown(_quiet(), holding=(_held(mark=104.26),))
+    assert "104.26" in body and "+1,037.71" in body and "+18.8%" in body
+
+
+def test_a_position_with_no_mark_still_prints_its_row():
+    """An asset nothing has fetched is still a position. Dropping the row, or printing it at
+    break-even, would both be worse than a row with no number on it."""
+    body = render.markdown(_quiet(), holding=(_held(),))
+    assert "HOOD" in body and "72.29" in body
+
+
+def _holding_head(body: str) -> str:
+    return next(line for line in body.splitlines() if line.startswith("HOLDING"))
+
+
+def test_the_holding_header_carries_the_whole_book():
+    head = _holding_head(render.markdown(_quiet(), holding=(_held(mark=104.26),)))
+    assert "+1,037.71" in head and "+18.8%" in head
+
+
+def test_the_holding_header_admits_what_it_could_not_price():
+    body = render.markdown(_quiet(), holding=(_held(mark=104.26), _held(asset="META")))
+    assert "1 unpriced" in _holding_head(body)
+
+
 # ── how old the agreement is ─────────────────────────────────────────────────
 
 def _aged(newest_at, **over):

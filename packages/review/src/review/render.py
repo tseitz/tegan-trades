@@ -55,7 +55,7 @@ WHERE_LABEL = {
     UNREADABLE: "no read",
 }
 
-HEADERS = ("TICKER", "SHARES", "PRICE", "VALUE", "P&L", "ROSTER", "WEEKLY", "")
+HEADERS = ("TICKER", "SHARES", "PRICE", "VALUE", "P&L", "P&L %", "ROSTER", "WEEKLY", "")
 
 # What each level is, in words. A weekly gap and a daily gap are both "gap"; the timeframe is
 # printed beside it rather than baked in, so one entry covers every series a kind can come from.
@@ -108,7 +108,7 @@ def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
         # Named rather than netted out. A total quietly missing three holdings reads as your
         # whole account, which is a worse error than a total that admits its own hole.
         tail += f" (excludes {len(unpriced)} with no price)"
-    lines += ["", tail]
+    lines += ["", tail, *_pnl_tail(ranked)]
 
     notes = [_note(r) for r in ranked if r.verdict in LOUD]
     if notes:
@@ -132,6 +132,25 @@ def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
             lines.append("")
         lines += notes
     return "\n".join(lines)
+
+
+def _pnl_tail(readings) -> list[str]:
+    """The account's profit and loss under the value total, or nothing at all.
+
+    A separate line rather than more words on the total: they answer different questions, and
+    a row that could be valued cannot always be graded — a wallet knows what a coin is worth
+    and never what it cost, so on a synced crypto account this line is correctly absent while
+    the total above it is complete.
+    """
+    graded = [r for r in readings if r.pnl is not None]
+    if not graded:
+        return []
+    gain = sum(r.pnl for r in graded)
+    basis = sum(abs(r.holding.cost * r.holding.shares) for r in graded)
+    share = f" ({_pct(gain / basis)})" if basis else ""
+    ungraded = len(readings) - len(graded)
+    missing = f" (excludes {ungraded} with no cost basis)" if ungraded else ""
+    return [f"  P&L   {_signed(gain)}{share}{missing}"]
 
 
 def _mismatch_block(mismatched) -> list[str]:
@@ -167,6 +186,7 @@ def _table(readings) -> list[str]:
         _money(r.price),
         _money(r.market_value),
         _signed(r.pnl),
+        _pct(r.pnl_pct),
         roster_text(r),
         where_text(r),
         r.verdict,
@@ -237,6 +257,12 @@ def _signed(value: float | None) -> str:
     if value is None:
         return "—"
     return f"{value:+,.2f}"
+
+
+def _pct(value: float | None) -> str:
+    if value is None:
+        return "—"
+    return f"{value:+.1%}"
 
 
 def _num(value: float) -> str:

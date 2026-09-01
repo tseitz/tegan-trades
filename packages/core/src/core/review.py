@@ -244,6 +244,20 @@ class Reading:
             return None
         return (self.price - self.holding.cost) * self.holding.shares
 
+    @property
+    def pnl_pct(self) -> float | None:
+        """``pnl`` as a share of what the shares cost.
+
+        The dollar figure alone cannot be compared across rows: +250 on a 500 position and
+        +250 on a 25,000 one are the same number about two different things.
+        """
+        gain = self.pnl
+        basis = None if self.holding.cost is None else abs(
+            self.holding.cost * self.holding.shares)
+        if gain is None or not basis:
+            return None
+        return gain / basis
+
 
 def roster_lean(folded, *, as_of: date) -> RosterLean:
     """Fold a person's current stances into one directional reading for the asset.

@@ -22,8 +22,8 @@ from core.rank import parse_date
 from core.trigger import ARMED, FIRED, NO_TRIGGER, NO_ZONE_TAG, UNREADABLE
 from review.render import roster_text, where_text
 
-from digest import diff, holdings
-from digest.fmt import num
+from digest import book, diff, holdings
+from digest.fmt import money, num, pct
 
 # How close to the monthly xAI cap before spend is worth a reader's attention. Below this the
 # line is noise: the number is known, it is in the nightly log, and it has not changed in a way
@@ -325,6 +325,11 @@ def _holding_section(holding, resting: int) -> list[str]:
 
     Resting entries are counted, not listed. Five orders waiting at a price is worth knowing;
     listing them would double the section to say what ``uv run book`` says better.
+
+    Every row carries what it is up or down, because "committed at 87.79 with a stop at 72.29"
+    is the state at entry and says nothing about the state now. The mark is the last cached
+    close, so these are the numbers as at the snapshot the rest of the digest describes — not
+    a live quote, and they will differ from the broker's screen by whatever has traded since.
     """
     if not holding:
         return []
@@ -338,10 +343,24 @@ def _holding_section(holding, resting: int) -> list[str]:
             "paper" if all(h.paper for h in holding) else "",
         ) if part)
 
+    gain, share, unpriced = book.totals(holding)
+    if gain is not None:
+        note += f" · P&L {money(gain)}"
+        if share is not None:
+            note += f" ({pct(share)})"
+        if unpriced:
+            note += f", excludes {unpriced} unpriced"
+
     out = [f"HOLDING — {note}"]
     for held in holding:
         fill = (f"{held.qty:g} @ {num(held.fill_price)}"
                 if held.qty is not None and held.fill_price is not None else "fill not recorded")
+        # A mark with no fill behind it still answers half the question, so it prints alone
+        # rather than being dropped with the arithmetic it could not complete.
+        if held.pnl is not None:
+            fill += f" → {num(held.mark)} · {money(held.pnl)} ({pct(held.pnl_pct)})"
+        elif held.mark is not None:
+            fill += f" · now {num(held.mark)}"
         since = f" · since {held.settled_at[:10]}" if held.settled_at else ""
         out.append(f"  {held.asset:<8} {(held.direction or '?').upper():<6} {fill} · "
                    f"stop {num(held.stop)} · target {num(held.target)}{since}")

@@ -109,6 +109,35 @@ def test_a_missing_cost_basis_blanks_pnl_without_blanking_value():
     assert "200" in out            # 2 shares x 100 still has a market value
 
 
+def test_a_row_shows_what_it_is_up_in_percent_as_well_as_in_money():
+    """+50 on a 100 position and +50 on a 50,000 one are the same number about two different
+    things, and the money column alone cannot tell them apart."""
+    out = render([_reading("BTC", price=100.0, shares=2.0, cost=50.0)],
+                 portfolio="p", as_of=AS_OF)
+    assert "+100.00" in out and "+100.0%" in out
+
+
+def test_the_account_total_carries_its_profit_and_loss():
+    out = render([_reading("BTC", price=100.0, shares=2.0, cost=50.0)],
+                 portfolio="p", as_of=AS_OF)
+    tail = next(line for line in out.splitlines() if line.strip().startswith("P&L"))
+    assert "+100.00" in tail and "+100.0%" in tail
+
+
+def test_a_wallet_with_no_cost_basis_prints_no_profit_and_loss_total():
+    """A chain knows what a coin is worth and never what it cost. A zero there would read as
+    an account that has made nothing."""
+    out = render([_reading("BTC", cost=None)], portfolio="p", as_of=AS_OF)
+    assert not any(line.strip().startswith("P&L") for line in out.splitlines())
+
+
+def test_the_profit_total_admits_the_rows_it_could_not_grade():
+    out = render([_reading("BTC", price=100.0, shares=2.0, cost=50.0),
+                  _reading("ETH", cost=None)], portfolio="p", as_of=AS_OF)
+    tail = next(line for line in out.splitlines() if line.strip().startswith("P&L"))
+    assert "1 with no cost basis" in tail
+
+
 def test_an_empty_portfolio_says_so():
     out = render([], portfolio="p", as_of=AS_OF)
     assert "no positions" in out
@@ -154,7 +183,9 @@ def test_a_breakout_reads_as_a_break_not_as_a_position_in_the_range():
     )
     out = render([reading], portfolio="p", as_of=AS_OF)
     assert "broke above range" in out
-    assert "%" not in out
+    # The row, not the whole report: the table has a P&L % column of its own now, and it is
+    # about what the position made, never about where price sits in the leg.
+    assert "%" not in next(line for line in out.splitlines() if line.strip().startswith("SPY"))
 
 
 def test_a_softened_verdict_says_why_it_was_softened():

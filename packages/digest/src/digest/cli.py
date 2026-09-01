@@ -34,13 +34,15 @@ from pathlib import Path
 
 import yaml
 from brain.stance_store import load_all_stances
-from core.canon import load_registry
+from core.canon import load_registry, resolve_asset
 from core.env import load_env
 from core.nearby import levels_near
 from execution import store
 from ingestion import spend
 from oracle import exclusions, portfolios, queue_snapshot
+from oracle.assemble import load_daily
 from oracle.decisions import load_decisions
+from oracle.route import Priceable, route, the_routing_table
 from review.cli import readings_for
 from review.levels import shortlist
 
@@ -301,6 +303,8 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
 
     held_keys, resting_keys = _open_keys(orders_path or store.DEFAULT_PATH, warn)
     holding = book_mod.holdings(orders, held_keys)
+    holding = book_mod.priced(
+        holding, _marks(holding, as_of=datetime.now(UTC).date(), warn=warn))
 
     memory = state.load(state_path, warn=warn) if state_path else {}
     narration, withheld, reported = _roster_section(
@@ -327,6 +331,43 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
     return (subject, body,
             _next_memory(memory, reported, xai_month, delta.previous_run, *holdings_memories)
             if state_path else None)
+
+
+def _marks(holding, *, as_of, warn) -> dict[str, float]:
+    """Last cached close for each open position, so the HOLDING section can price it.
+
+    **Reads the cache and never fetches**, the same refusal ``review`` makes. The nightly warms
+    prices in an earlier step, and a reporting command that reached the network would make
+    re-running the digest an unpredictable cost. An asset nothing has fetched gets no mark and
+    its row prints without a profit and loss figure.
+
+    ``close_on`` is what decides how stale is too stale: it carries the last bar forward across
+    a weekend and refuses beyond that, so a market shut for a month cannot supply a mark that
+    reads as today's.
+
+    Never raises. A missing price cache must not cost the other six sections.
+    """
+    assets = {held.asset for held in holding if held.asset and held.asset != "?"}
+    if not assets:
+        return {}
+    try:
+        registry = load_registry(CONFIG_DIR)
+        table = the_routing_table(CONFIG_DIR)
+        series_cache: dict = {}
+        marks = {}
+        for asset in sorted(assets):
+            resolved = route(resolve_asset(asset, registry)[0], table)
+            if not isinstance(resolved, Priceable):
+                continue
+            series = load_daily(resolved, table=table, series_cache=series_cache)
+            close = None if series is None else series.close_on(as_of)
+            if close is not None:
+                marks[asset] = close
+        return marks
+    except Exception as exc:  # noqa: BLE001 - a price failure must not cost the whole digest
+        warn(f"warning: open positions could not be priced, so the HOLDING section shows no "
+             f"profit and loss — {type(exc).__name__}: {exc}")
+        return {}
 
 
 def _holdings(memory: dict, *, registry, as_of, warn) -> tuple[tuple, tuple[dict, dict]]:

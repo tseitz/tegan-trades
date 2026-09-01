@@ -335,6 +335,16 @@ def test_market_value_and_pnl_need_both_halves():
     assert uncosted.pnl is None
 
 
+def test_pnl_percent_is_the_gain_over_what_the_shares_cost():
+    """The dollar figure alone cannot be compared across rows: +80 on a 200 position and +80
+    on a 20,000 one are the same number about two different things."""
+    priced = review(Holding(ticker="BTC", shares=2.0, cost=100.0), _ctx(price=140.0),
+                    folded=[], as_of=AS_OF)
+    assert priced.pnl_pct == 0.40
+    assert review(Holding(ticker="BTC", shares=2.0, cost=None), _ctx(price=140.0),
+                  folded=[], as_of=AS_OF).pnl_pct is None
+
+
 def test_a_ranging_weekly_still_produces_a_reading():
     """Trend is reported, not gated on. `setups` refuses an unaligned weekly because it is
     opening a new trade; this reviews one already open, and 'the weekly went sideways' is

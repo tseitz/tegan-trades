@@ -280,3 +280,64 @@ def test_the_newest_fill_wins_when_a_key_reconciles_twice():
 
 def test_nothing_open_is_an_empty_tuple_not_a_guess():
     assert book.holdings([], set()) == ()
+
+
+# ── what the position is worth now ────────────────────────────────────────────
+#
+# The section named the fill and the stop and stopped there, so it said what was committed and
+# never what it had become. The mark arrives from the price cache; the arithmetic is here.
+
+def _open(**over):
+    kw = {"asset": "HOOD", "direction": "long", "qty": 63.0, "fill_price": 87.79}
+    kw.update(over)
+    return book.Holding(**kw)
+
+
+def test_a_long_gains_when_the_mark_is_above_the_fill():
+    it = _open(mark=104.26)
+    assert it.pnl == pytest.approx(1037.61)
+    assert it.pnl_pct == pytest.approx(0.18761, rel=1e-4)
+
+
+def test_a_short_gains_when_the_mark_is_below_the_fill():
+    """The sign has to follow the direction. A short priced with the long's arithmetic reports
+    a winning trade as a loss, on the one number a reader takes at face value."""
+    assert _open(direction="short", mark=80.0).pnl == pytest.approx(490.77)
+
+
+def test_percent_is_measured_against_what_the_entry_cost():
+    """Not against the margin posted. On a leveraged venue those differ by the leverage, and
+    the entry notional is the only one of the two this module can see."""
+    assert _open(qty=2.0, fill_price=100.0, mark=110.0).pnl_pct == pytest.approx(0.10)
+
+
+def test_a_position_nothing_has_priced_has_no_profit_figure():
+    """An asset the price cache has never seen still prints — as a position with no number,
+    never as a position at break-even."""
+    it = _open()
+    assert it.mark is None and it.pnl is None and it.pnl_pct is None
+
+
+def test_a_position_with_no_fill_recorded_has_no_profit_figure():
+    assert _open(qty=None, fill_price=None, mark=104.26).pnl is None
+
+
+def test_marks_are_attached_by_asset_and_leave_the_rest_alone():
+    held = book.priced((_open(), _open(asset="META", fill_price=550.75, qty=16.0)),
+                       {"HOOD": 104.26})
+    assert [h.mark for h in held] == [104.26, None]
+    assert held[0].stop == _open().stop
+
+
+def test_the_book_total_says_how_many_rows_it_could_not_price():
+    """A total quietly missing a position reads as the whole book, which is worse than a total
+    that admits its own hole."""
+    gain, share, unpriced = book.totals(
+        (_open(qty=2.0, fill_price=100.0, mark=110.0), _open(asset="META")))
+    assert gain == pytest.approx(20.0)
+    assert share == pytest.approx(0.10)
+    assert unpriced == 1
+
+
+def test_a_book_with_nothing_priced_reports_no_total():
+    assert book.totals((_open(),)) == (None, None, 1)

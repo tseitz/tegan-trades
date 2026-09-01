@@ -13,7 +13,7 @@ bury the rows that matter.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from execution.store import CLOSED, FAILED, PLACED, RECONCILED, REFUSED
 
@@ -29,7 +29,9 @@ __all__ = [
     "asset_names",
     "holdings",
     "lines",
+    "priced",
     "since",
+    "totals",
 ]
 
 
@@ -54,6 +56,36 @@ class Holding:
     #: The fill never had to find a buyer. Travels with the position for the same reason it
     #: travels with a closed trade's number — see ``_closed``.
     paper: bool = False
+    #: Last cached close for the asset, attached by ``priced``. ``None`` when nothing has
+    #: fetched it, and a position with no mark still prints — see ``holdings``.
+    mark: float | None = None
+
+    @property
+    def pnl(self) -> float | None:
+        """Money the position is up or down at ``mark``, before any cost of holding it.
+
+        The sign follows the direction. A short priced with the long's arithmetic reports a
+        winning trade as a loss, on the one number a reader takes at face value.
+        """
+        if self.mark is None or self.qty is None or self.fill_price is None:
+            return None
+        move = (self.mark - self.fill_price) * self.qty
+        return -move if (self.direction or "").lower() == "short" else move
+
+    @property
+    def pnl_pct(self) -> float | None:
+        """``pnl`` as a share of what the entry cost.
+
+        Against the entry notional, **not** against the margin posted. On a leveraged venue
+        those differ by the leverage, and the notional is the only one of the two this module
+        can see — the log records the fill, never the account's margin behind it.
+        """
+        basis = None if self.qty is None or self.fill_price is None else abs(
+            self.fill_price * self.qty)
+        gain = self.pnl
+        if gain is None or not basis:
+            return None
+        return gain / basis
 
 
 def holdings(all_rows, keys) -> tuple[Holding, ...]:
@@ -97,6 +129,30 @@ def holdings(all_rows, keys) -> tuple[Holding, ...]:
                  paper=state.get("network") == "paper")
          for state in found.values()),
         key=lambda h: h.asset))
+
+
+def priced(holding, marks: dict) -> tuple[Holding, ...]:
+    """``holding`` with each row's mark attached, keyed by asset. Pure.
+
+    Separate from ``holdings`` because a mark comes from the price cache and this module reads
+    nothing. An asset the cache has never seen keeps ``None`` and still prints.
+    """
+    return tuple(replace(held, mark=marks.get(held.asset)) for held in holding)
+
+
+def totals(holding) -> tuple[float | None, float | None, int]:
+    """``(profit and loss, its share of what the entries cost, rows that could not be priced)``.
+
+    The unpriced count comes back rather than being quietly netted out, following
+    ``review.render``: a total silently missing three positions reads as the whole book, which
+    is a worse error than a total that admits its own hole.
+    """
+    known = [held for held in holding if held.pnl is not None]
+    if not known:
+        return None, None, len(holding)
+    gain = sum(held.pnl for held in known)
+    basis = sum(abs(held.fill_price * held.qty) for held in known)
+    return gain, (gain / basis if basis else None), len(holding) - len(known)
 
 
 def asset_names(all_rows) -> dict:
