@@ -183,9 +183,10 @@ def test_a_breakout_reads_as_a_break_not_as_a_position_in_the_range():
     )
     out = render([reading], portfolio="p", as_of=AS_OF)
     assert "broke above range" in out
-    # The row, not the whole report: the table has a P&L % column of its own now, and it is
-    # about what the position made, never about where price sits in the leg.
-    assert "%" not in next(line for line in out.splitlines() if line.strip().startswith("SPY"))
+    # The parenthesis, not any "%" on the row: the table has percentage columns of its own
+    # now, and they are about the position's profit and its size, never about where price
+    # sits in the leg. A range location is the only thing that renders as "label (NN%)".
+    assert "range (" not in out
 
 
 def test_a_softened_verdict_says_why_it_was_softened():
@@ -211,6 +212,43 @@ def test_totals_line_sums_what_it_can_price():
         portfolio="p", as_of=AS_OF,
     )
     assert "230" in out            # 200 + 30
+
+
+def _row(out: str, ticker: str) -> str:
+    return next(line for line in out.splitlines() if line.split()[:1] == [ticker])
+
+
+def test_a_row_shows_how_much_of_the_book_it_is():
+    out = render(
+        [_reading("A", price=100.0, shares=2.0, cost=50.0),
+         _reading("B", price=10.0, shares=3.0, cost=5.0)],
+        portfolio="p", as_of=AS_OF,
+    )
+    assert "87.0%" in _row(out, "A")     # 200 of 230
+    assert "13.0%" in _row(out, "B")     # 30 of 230
+
+
+def test_weight_is_measured_against_the_printed_total_not_against_cash():
+    """The denominator has to be a number already on the page, or no row can be checked by
+    hand. Cash is reported beside it and deliberately stays out of it."""
+    out = render(
+        [_reading("A", price=100.0, shares=2.0, cost=80.0)],
+        portfolio="p", as_of=AS_OF, cash=200.0,
+    )
+    assert "100.0%" in _row(out, "A")    # not 50%, which counting the cash would give
+
+
+def test_an_unpriced_row_has_no_weight_rather_than_a_zero():
+    """Zero percent is a claim that the holding is worth nothing. It is not — nobody knows
+    what it is worth, which is the same reason it is missing from the total."""
+    reading = Reading(
+        holding=Holding(ticker="WEIRD", shares=1.0, cost=None),
+        roster=_lean(SILENT, bears=0, people=0, age_days=None, voices=()),
+        location=Location(where=UNREADABLE, basis="none"),
+        verdict=NO_VIEW, price=None, weekly_trend=None,
+    )
+    out = render([reading, _reading("A")], portfolio="p", as_of=AS_OF)
+    assert "%" not in _row(out, "WEIRD")
 
 
 # ── how old the file is ────────────────────────────────────────────────────

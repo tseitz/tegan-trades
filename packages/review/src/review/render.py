@@ -55,7 +55,7 @@ WHERE_LABEL = {
     UNREADABLE: "no read",
 }
 
-HEADERS = ("TICKER", "SHARES", "PRICE", "VALUE", "P&L", "P&L %", "ROSTER", "WEEKLY", "")
+HEADERS = ("TICKER", "SHARES", "PRICE", "VALUE", "WT", "P&L", "P&L %", "ROSTER", "WEEKLY", "")
 
 # What each level is, in words. A weekly gap and a daily gap are both "gap"; the timeframe is
 # printed beside it rather than baked in, so one entry covers every series a kind can come from.
@@ -98,10 +98,10 @@ def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
         lines += [f"  STALE — these positions were written down {age_days} days ago. "
                   f"Anything traded since is missing, and every verdict below is computed "
                   f"against holdings that may no longer exist.", ""]
-    lines += _mismatch_block(mismatched)
-    lines += _table(ranked)
-
     total = sum(r.market_value for r in ranked if r.market_value is not None)
+    lines += _mismatch_block(mismatched)
+    lines += _table(ranked, total)
+
     unpriced = [r for r in ranked if r.price is None]
     tail = f"  total {_money(total)}"
     if unpriced:
@@ -179,12 +179,13 @@ def _rank(reading: Reading) -> tuple[int, float]:
     return (urgency, -(reading.market_value or 0.0))
 
 
-def _table(readings) -> list[str]:
+def _table(readings, total: float) -> list[str]:
     rows = [[
         r.holding.ticker,
         _num(r.holding.shares),
         _money(r.price),
         _money(r.market_value),
+        _weight(r.market_value, total),
         _signed(r.pnl),
         _pct(r.pnl_pct),
         roster_text(r),
@@ -257,6 +258,19 @@ def _signed(value: float | None) -> str:
     if value is None:
         return "—"
     return f"{value:+,.2f}"
+
+
+def _weight(value: float | None, total: float) -> str:
+    """A holding's share of the book.
+
+    **The denominator is the value total printed under the table, and cash is deliberately
+    outside it.** Every weight here can therefore be checked by hand against a number already
+    on the page. Folding cash in would make a column that reconciles with nothing, and it
+    would move every weight on the day a deposit landed and nothing was bought.
+    """
+    if value is None or not total:
+        return "—"
+    return f"{value / total:.1%}"
 
 
 def _pct(value: float | None) -> str:
