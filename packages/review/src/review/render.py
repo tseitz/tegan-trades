@@ -34,6 +34,14 @@ from core.review import (
     UNREADABLE,
     WATCH,
     Reading,
+    chart_trims,
+)
+from core.structure import (
+    DOWNTREND,
+    DOWNTREND_FAILED_BREAKDOWN,
+    RANGING,
+    UPTREND,
+    UPTREND_FAILED_BREAKOUT,
 )
 
 # Most urgent first. TRIM outranks ADD because it is the one that protects money you already
@@ -55,7 +63,19 @@ WHERE_LABEL = {
     UNREADABLE: "no read",
 }
 
-HEADERS = ("TICKER", "SHARES", "PRICE", "VALUE", "WT", "P&L", "P&L %", "ROSTER", "WEEKLY", "")
+HEADERS = ("TICKER", "SHARES", "PRICE", "VALUE", "WT", "P&L", "P&L %", "ROSTER", "WEEKLY",
+           "TREND", "")
+
+# Which way the weekly is going, short enough for a column. A failed break keeps the word
+# "failed" rather than collapsing to its parent trend: price refusing to break is the argument
+# against the trend, and a reader who cannot see that would read it as confirmation.
+TREND_LABEL = {
+    UPTREND: "up",
+    DOWNTREND: "down",
+    RANGING: "range",
+    UPTREND_FAILED_BREAKOUT: "up failed",
+    DOWNTREND_FAILED_BREAKDOWN: "down failed",
+}
 
 # What each level is, in words. A weekly gap and a daily gap are both "gap"; the timeframe is
 # printed beside it rather than baked in, so one entry covers every series a kind can come from.
@@ -190,6 +210,7 @@ def _table(readings, total: float) -> list[str]:
         _pct(r.pnl_pct),
         roster_text(r),
         where_text(r),
+        trend_text(r),
         r.verdict,
     ] for r in readings]
 
@@ -233,6 +254,14 @@ def where_text(reading: Reading) -> str:
     return label
 
 
+def trend_text(reading: Reading) -> str:
+    """Public alongside ``roster_text`` and ``where_text`` so that if ``digest`` comes to word
+    a trend, it words it from here rather than growing a second spelling."""
+    if reading.weekly_trend is None:
+        return "—"
+    return TREND_LABEL.get(reading.weekly_trend, reading.weekly_trend)
+
+
 def _note(reading: Reading) -> str:
     lean = reading.roster
     who = ", ".join(lean.voices) if lean.voices else "nobody"
@@ -243,8 +272,15 @@ def _note(reading: Reading) -> str:
     # grid looks broken: the roster is bullish, price is at support, and the verdict is the
     # cautious one for a reason nothing on the line explains.
     thin = " [one voice — needs a second]" if lean.thin else ""
+    # The mirror case: says why a row came back louder than the roster alone would explain.
+    # A TRIM beside a bullish roster reads as a broken grid without it. Recomputed from the
+    # same function the verdict used rather than inferred from the verdict, so a row can never
+    # carry this marker for a TRIM the chart did not in fact argue for.
+    chart = (" [weekly falling into resistance]"
+             if chart_trims(reading.location.where, reading.weekly_trend,
+                            lean.lean, lean.age_days) else "")
     return (f"  {reading.verdict:<5} {reading.holding.ticker} — roster {side} "
-            f"({who}{age}){thin}; price {where_text(reading)}"
+            f"({who}{age}){thin}{chart}; price {where_text(reading)}"
             f"{'' if reading.weekly_trend is None else f', weekly {reading.weekly_trend}'}")
 
 

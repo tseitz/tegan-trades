@@ -29,7 +29,7 @@ from typing import Protocol
 
 from core.rank import parse_date
 from core.setups import ARRIVAL, PROXIMITY_SPAN, WEEKLY, Context, Zone, approach_to
-from core.structure import BULLISH
+from core.structure import BULLISH, DOWNTREND
 
 # Where price sits on the weekly.
 AT_SUPPORT = "at_support"
@@ -117,6 +117,14 @@ VERDICTS: dict[tuple[str, str], str] = {
 # gated. The thin view is still counted, still shown, and still explained — it just comes back
 # as WATCH instead of ADD or TRIM.
 MIN_VOICES = 2
+
+# How old the roster's newest word on an asset may be before a falling weekly is allowed to
+# talk over it. Six weeks: long enough that the weekly structure has redrawn underneath the
+# opinion, short enough that a view someone genuinely still holds is not discarded.
+#
+# It bounds one rule only — whether the chart may escalate a bullish roster into a TRIM. Age
+# is printed on every row regardless, and no other verdict consults this.
+STALE_VIEW_DAYS = 42
 
 # Leans that pick a side. `neutral` ("it goes sideways") and `uncertain` ("I have no idea")
 # both exist in the corpus and neither one tells you what to do, so they count toward how
@@ -353,18 +361,53 @@ def locate(context: Context, *, span: float = PROXIMITY_SPAN) -> Location:
     return Location(where=where, basis="range", position=position)
 
 
-def verdict_for(lean: str, where: str, *, thin: bool = False) -> str:
-    """The grid, plus the two refusals that sit in front of it.
+def chart_trims(where: str, trend: str | None, lean: str,
+                view_age_days: int | None) -> bool:
+    """Whether the weekly alone is enough to ask you to lighten a holding.
 
-    Order matters. ``SILENT`` is checked first because it is the more useful thing to print:
-    with no view from the roster there is nothing to act on however clean the chart is, so
-    reporting a chart problem instead would answer a question nobody asked.
+    **A falling weekly into resistance, and nothing else.** Every other square stays with the
+    roster. A downtrend at the cheap end is where a roster view matters most and the chart has
+    no business overruling it; the expensive end of a *rising* weekly is the ordinary case, and
+    trimming it every time would make the answer meaningless. ``DOWNTREND_FAILED_BREAKDOWN``
+    is excluded deliberately — price refusing to break down is the opposite of this argument.
+
+    A bullish roster still wins while it is current. Once its newest word is older than
+    ``STALE_VIEW_DAYS`` the chart may talk over it, because by then the structure the opinion
+    was formed on has redrawn. An age of ``None`` counts as current: an undated stance is a
+    missing fact rather than an old one, and reading it as stale would let a gap in the corpus
+    argue for selling.
+    """
+    if where != AT_RESISTANCE or trend != DOWNTREND:
+        return False
+    if lean != BULLISH_ROSTER:
+        return True
+    return view_age_days is not None and view_age_days > STALE_VIEW_DAYS
+
+
+def verdict_for(lean: str, where: str, *, thin: bool = False, trend: str | None = None,
+                view_age_days: int | None = None) -> str:
+    """The grid, plus the chart's own trim and the two refusals that sit in front of it.
+
+    Order matters. ``chart_trims`` runs first because it is the one verdict that does not need
+    the roster to have spoken; it can only fire at ``AT_RESISTANCE``, so it never competes with
+    the ``UNREADABLE`` refusal below.
+
+    ``SILENT`` is checked next because it is the more useful thing to print: with no view from
+    the roster there is nothing to act on however clean the chart is, so reporting a chart
+    problem instead would answer a question nobody asked.
 
     An unreadable chart returns ``UNREADABLE`` rather than falling back to ``HOLD``. They
     look alike — you end up doing nothing either way — but ``HOLD`` is advice and this is a
     gap in the evidence. Dressing one as the other is how a stale price feed comes out
     looking like a considered decision.
+
+    **The chart also settles a thin roster rather than being softened by it.** ``MIN_VOICES``
+    exists so that one person cannot move money alone; a falling weekly into resistance is the
+    independent second witness that rule was asking for, so it confirms a lone bear here
+    instead of downgrading them.
     """
+    if chart_trims(where, trend, lean, view_age_days):
+        return TRIM
     if lean == SILENT:
         return NO_VIEW
     if where == UNREADABLE:
@@ -387,7 +430,9 @@ def review(holding: Holding, context: Context | None, *, folded, as_of: date) ->
         holding=holding,
         roster=roster,
         location=location,
-        verdict=verdict_for(roster.lean, location.where, thin=roster.thin),
+        verdict=verdict_for(roster.lean, location.where, thin=roster.thin,
+                            trend=None if context is None else context.weekly_trend,
+                            view_age_days=roster.age_days),
         price=None if context is None else context.price,
         weekly_trend=None if context is None else context.weekly_trend,
     )

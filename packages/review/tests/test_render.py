@@ -340,3 +340,41 @@ def test_one_account_does_not_restate_its_own_total():
                  portfolio="retirement", as_of=AS_OF, cash=500.0,
                  cash_by={"Roth IRA": 500.0})
     assert "spendable separately" not in out
+
+
+# ── the weekly trend on the row ────────────────────────────────────────────
+
+
+def test_the_row_says_which_way_the_weekly_is_going():
+    """It decides a verdict now, so it has to be visible where the verdict is. Leaving it in
+    the notes meant only the loud rows ever showed the thing that made them loud."""
+    out = render([_reading("BTC", trend="downtrend")], portfolio="p", as_of=AS_OF)
+    assert "TREND" in out
+    assert "down" in _row(out, "BTC")
+
+
+def test_a_holding_with_no_chart_has_no_trend():
+    reading = Reading(
+        holding=Holding(ticker="WEIRD", shares=1.0, cost=None),
+        roster=_lean(SILENT, bears=0, people=0, age_days=None, voices=()),
+        location=Location(where=UNREADABLE, basis="none"),
+        verdict=NO_VIEW, price=None, weekly_trend=None,
+    )
+    out = render([reading], portfolio="p", as_of=AS_OF)
+    assert "trend" not in _row(out, "WEIRD")
+
+
+def test_a_trim_the_chart_argued_for_says_so():
+    """A bullish roster beside a TRIM reads as a broken grid. The line has to carry the
+    reason, exactly as a softened verdict does."""
+    out = render(
+        [_reading("BTC", verdict=TRIM, trend="downtrend",
+                  lean=_lean(BULLISH_ROSTER, bulls=3, bears=0, age_days=200))],
+        portfolio="p", as_of=AS_OF,
+    )
+    assert "weekly falling into resistance" in out
+
+
+def test_an_ordinary_trim_carries_no_such_marker():
+    out = render([_reading("BTC", verdict=TRIM, trend="uptrend")], portfolio="p", as_of=AS_OF)
+    assert "weekly falling into resistance" not in out

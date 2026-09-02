@@ -19,6 +19,7 @@ from core.review import (
     NO_VIEW,
     PREMIUM_EDGE,
     SILENT,
+    STALE_VIEW_DAYS,
     TRIM,
     UNREADABLE,
     WATCH,
@@ -33,6 +34,8 @@ from core.setups import WEEKLY, Context, Zone
 from core.structure import (
     BEARISH,
     BULLISH,
+    DOWNTREND,
+    DOWNTREND_FAILED_BREAKDOWN,
     RANGING,
     SWING_HIGH,
     SWING_LOW,
@@ -388,3 +391,62 @@ def test_a_nonsense_mark_is_not_a_disagreement():
 def test_the_tolerance_is_wide_enough_for_a_stale_close():
     """5% was the ceiling of correct rows measured; the gap must not fire there."""
     assert not mark_disagrees(105.0, 100.0)
+
+
+# ── the chart's own trim ───────────────────────────────────────────────────
+
+
+def test_a_downtrend_into_resistance_trims_a_silent_roster():
+    """The case the grid could not reach. Nobody is talking, price is at the expensive end,
+    and the weekly is falling — reporting NO_VIEW there answers only half the question that
+    was asked."""
+    assert verdict_for(SILENT, AT_RESISTANCE, trend=DOWNTREND) == TRIM
+
+
+def test_a_downtrend_into_resistance_trims_a_split_roster():
+    assert verdict_for(MIXED, AT_RESISTANCE, trend=DOWNTREND) == TRIM
+
+
+def test_a_fresh_bullish_view_still_outranks_the_chart():
+    """Trimming a position your people currently like, because price is doing what they said
+    it would, is selling the thesis you are being paid for."""
+    assert verdict_for(BULLISH_ROSTER, AT_RESISTANCE,
+                       trend=DOWNTREND, view_age_days=10) == HOLD
+
+
+def test_a_stale_bullish_view_stops_blocking_the_chart():
+    """Six weeks. Long enough that the weekly has redrawn under the opinion, short enough
+    that a view someone still holds is not thrown away."""
+    assert verdict_for(BULLISH_ROSTER, AT_RESISTANCE,
+                       trend=DOWNTREND, view_age_days=STALE_VIEW_DAYS + 1) == TRIM
+    assert verdict_for(BULLISH_ROSTER, AT_RESISTANCE,
+                       trend=DOWNTREND, view_age_days=STALE_VIEW_DAYS) == HOLD
+
+
+def test_a_bullish_view_of_unknown_age_is_treated_as_fresh():
+    """An undated stance is a missing fact, not an old one. Reading it as stale would let a
+    gap in the corpus argue for selling."""
+    assert verdict_for(BULLISH_ROSTER, AT_RESISTANCE,
+                       trend=DOWNTREND, view_age_days=None) == HOLD
+
+
+def test_only_a_downtrend_escalates():
+    """A range and an uptrend both leave the grid alone. Price at the top of a rising weekly
+    is the ordinary case, and trimming it every time would make the column meaningless."""
+    for trend in (UPTREND, RANGING, DOWNTREND_FAILED_BREAKDOWN, None):
+        assert verdict_for(SILENT, AT_RESISTANCE, trend=trend) == NO_VIEW
+
+
+def test_only_resistance_escalates():
+    """A downtrend is not on its own a reason to sell. Somewhere cheap in one is where the
+    roster's view matters most, and the chart has no business overruling it there."""
+    for where in (AT_SUPPORT, MID, BELOW_RANGE, ABOVE_RANGE, UNREADABLE):
+        assert verdict_for(SILENT, where, trend=DOWNTREND) == NO_VIEW
+
+
+def test_the_chart_counts_as_the_second_voice_a_thin_roster_wanted():
+    """MIN_VOICES exists so one opinion cannot move money on its own. A falling weekly into
+    resistance is exactly the independent second witness it was asking for, so a lone bear
+    here is confirmed rather than softened."""
+    assert verdict_for(BEARISH_ROSTER, AT_RESISTANCE, thin=True) == WATCH
+    assert verdict_for(BEARISH_ROSTER, AT_RESISTANCE, thin=True, trend=DOWNTREND) == TRIM
