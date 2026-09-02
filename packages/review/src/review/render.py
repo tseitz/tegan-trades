@@ -264,10 +264,17 @@ def trend_text(reading: Reading) -> str:
 
 def _note(reading: Reading) -> str:
     lean = reading.roster
-    who = ", ".join(lean.voices) if lean.voices else "nobody"
     age = "" if lean.age_days is None else f", newest {lean.age_days}d ago"
-    side = {BULLISH_ROSTER: "bullish", BEARISH_ROSTER: "bearish",
-            MIXED: "split", SILENT: "silent"}.get(lean.lean, lean.lean)
+    # A lean of SILENT covers two different rooms: nobody spoke, and people spoke without
+    # picking a side. The table already tells them apart, so the paragraph has to as well —
+    # "nobody" beside a date somebody's statement supplied is a contradiction on one line.
+    if lean.lean == SILENT and lean.people:
+        side = "undecided"
+        who = f"{lean.people} {'person' if lean.people == 1 else 'people'} spoke, no side"
+    else:
+        side = {BULLISH_ROSTER: "bullish", BEARISH_ROSTER: "bearish",
+                MIXED: "split", SILENT: "silent"}.get(lean.lean, lean.lean)
+        who = ", ".join(lean.voices) if lean.voices else "nobody"
     # Says why a row that looks like an ADD or a TRIM came back as WATCH. Without it the
     # grid looks broken: the roster is bullish, price is at support, and the verdict is the
     # cautious one for a reason nothing on the line explains.

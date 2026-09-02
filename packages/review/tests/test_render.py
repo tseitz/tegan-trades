@@ -378,3 +378,40 @@ def test_a_trim_the_chart_argued_for_says_so():
 def test_an_ordinary_trim_carries_no_such_marker():
     out = render([_reading("BTC", verdict=TRIM, trend="uptrend")], portfolio="p", as_of=AS_OF)
     assert "weekly falling into resistance" not in out
+
+
+# ── people who spoke without picking a side ────────────────────────────────
+
+
+def _note_line(out: str, ticker: str) -> str:
+    return next(line for line in out.splitlines()
+                if line.strip().split()[1:2] == [ticker])
+
+
+def test_an_undecided_roster_is_not_described_as_silent():
+    """The table calls this "1 undecided" and the note called it "silent (nobody)". Someone
+    did speak — they just did not pick a side, and that is a different fact from an empty
+    room. Two words for one state, in one report, is the drift this module exists to stop."""
+    out = render(
+        [_reading("COST", verdict=TRIM,
+                  lean=_lean(SILENT, bulls=0, bears=0, people=1, age_days=4, voices=()))],
+        portfolio="p", as_of=AS_OF,
+    )
+    note = _note_line(out, "COST")
+    assert "undecided" in note
+    assert "silent" not in note
+    assert "nobody" not in note
+
+
+def test_an_empty_roster_still_reads_as_silence():
+    """The other half of the distinction. Nobody has said anything, so there is no date to
+    report and no one to name."""
+    out = render(
+        [_reading("COST", verdict=TRIM,
+                  lean=_lean(SILENT, bulls=0, bears=0, people=0, age_days=None, voices=()))],
+        portfolio="p", as_of=AS_OF,
+    )
+    note = _note_line(out, "COST")
+    assert "silent" in note
+    assert "nobody" in note
+    assert "undecided" not in note
