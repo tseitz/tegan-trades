@@ -6,7 +6,7 @@ from core.review import NO_VIEW, UNREADABLE, Holding
 from oracle.portfolios import Portfolio, Position
 from oracle.route import RoutingTable
 from oracle.series import Bar, PriceSeries
-from review.cli import CONFIG_DIR, build_readings
+from review.cli import CONFIG_DIR, build_readings, refresh_argv
 
 AS_OF = date(2025, 6, 30)
 REGISTRY = load_registry(CONFIG_DIR)
@@ -116,3 +116,20 @@ def test_the_structure_each_reading_was_drawn_from_comes_back_alongside_it():
     assert len(result.contexts) == len(result.readings) == 2
     assert result.contexts[0] is not None
     assert result.contexts[1] is None
+
+
+# ── warming prices before reading them ─────────────────────────────────────
+
+
+def test_a_refresh_fetches_only_what_the_account_holds():
+    """The corpus pass is ~300 assets and none of them are yours. A midday price check that
+    walked it would take minutes to answer a question about 77 tickers."""
+    argv = refresh_argv("retirement")
+    assert "--held-only" in argv
+    assert argv[argv.index("--portfolio") + 1] == "retirement"
+
+
+def test_a_refresh_skips_the_hourly_pass():
+    """`review` draws on daily and weekly bars only. The hourly series exists for `setups`'
+    entry trigger, and warming it here would roughly double the wait for nothing on screen."""
+    assert "--no-intraday" in refresh_argv("retirement")

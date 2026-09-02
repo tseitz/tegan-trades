@@ -129,3 +129,33 @@ def test_a_ref_with_no_intraday_identity_is_skipped_rather_than_crashing():
     """``DerivedRef`` — a ratio computed from two other series — carries neither field, and
     there is no hourly chart of a ratio to warm."""
     assert fetch_cli.intraday_targets([SimpleNamespace(ref=SimpleNamespace(asset="ETHBTC"))]) == []
+
+
+# ── narrowing a fetch to the book you hold ─────────────────────────────────
+
+
+def test_held_only_keeps_the_assets_you_hold():
+    jobs = [_job("NVDA"), _job("PEPE"), _job("SLV")]
+    kept = fetch_cli.held_only(jobs, [SimpleNamespace(asset="NVDA"),
+                                      SimpleNamespace(asset="SLV")])
+    assert [j.ref.asset for j in kept] == ["NVDA", "SLV"]
+
+
+def test_held_only_keeps_both_legs_of_a_proxied_holding():
+    """A held asset with a tradeable proxy plans two jobs under one asset name, and dropping
+    either one is a half-warmed holding that nothing downstream reports as incomplete."""
+    legs = [
+        FetchJob(ref=OracleRef(asset="DJI", source="yahoo", symbol="^DJI"),
+                 start=date(2026, 7, 1), end=date(2026, 7, 31)),
+        FetchJob(ref=OracleRef(asset="DJI", source="yahoo", symbol="DIA"),
+                 start=date(2026, 7, 1), end=date(2026, 7, 31)),
+    ]
+    assert len(fetch_cli.held_only(legs, [SimpleNamespace(asset="DJI")])) == 2
+
+
+def test_held_only_drops_the_benchmarks():
+    """Benchmarks exist to grade the corpus against. Nothing a portfolio review draws needs
+    one, and fetching them is the bulk of what makes a full pass slow."""
+    jobs = [_job("NVDA"), _job("__benchmark__SPY")]
+    kept = fetch_cli.held_only(jobs, [SimpleNamespace(asset="NVDA")])
+    assert [j.ref.asset for j in kept] == ["NVDA"]

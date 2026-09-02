@@ -5,10 +5,10 @@ stances come from ``brain``; price, routing and weekly structure come from ``ora
 ``core.review`` pairs them. Nothing here decides anything — it fetches the two readings and
 hands them to the grid.
 
-**Nothing in this command spends money and nothing places an order.** It reads the price
-cache and refuses rather than fetching: warming a symbol is ``fetch-prices --portfolio``'s
-job, and a review that silently went to the network would make "run it again" an unpredictable
-cost. A holding with no cached price comes back as a row saying so.
+**Nothing in this command spends money and nothing places an order.** By default it reads the
+price cache and refuses rather than fetching, so a holding nobody has warmed comes back as a
+row saying so. ``--refresh`` is the one exception and it is opt-in for that reason: a review
+that went to the network on every run would make "run it again" an unpredictable wait.
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from core.canon import load_registry, resolve_asset
 from core.nearby import levels_near
 from core.review import mark_disagrees, review
 from core.setups import build_context
-from oracle import cache, corpus, listings, portfolios
+from oracle import cache, corpus, fetch_cli, listings, portfolios
 from oracle.assemble import load_daily
 from oracle.resample import to_weekly
 from oracle.route import Priceable, load_routing_table, route
@@ -161,6 +161,17 @@ def readings_for(books, *, as_of: date, registry=None):
     ]
 
 
+def refresh_argv(portfolio: str) -> list[str]:
+    """What ``--refresh`` asks ``fetch-prices`` for.
+
+    A separate function so the two narrowings that make a midday check quick are visible and
+    testable, rather than buried in a literal. Both are load-bearing: ``--held-only`` skips a
+    ~300-asset corpus pass you do not own, and ``--no-intraday`` skips the hourly warm that
+    only ``setups``' entry trigger reads. ``review`` draws on daily and weekly bars alone.
+    """
+    return ["--portfolio", portfolio, "--held-only", "--no-intraday"]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Check what you hold against where the roster stands and where the "
@@ -169,6 +180,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="which file under data/portfolios/ to read (default: retirement)")
     parser.add_argument("--list", action="store_true",
                         help="name the portfolios on disk and stop")
+    parser.add_argument("--refresh", action="store_true",
+                        help="warm this account's prices before reading them, for a check "
+                             "during the session. Free, and takes seconds rather than the "
+                             "minutes a full `fetch-prices` does. Off by default: every other "
+                             "run of this command answers from cache and touches no network.")
     parser.add_argument("--as-of", type=date.fromisoformat,
                         help="review as at a past date (YYYY-MM-DD), for replay")
     parser.add_argument("--levels", action="store_true",
@@ -183,11 +199,25 @@ def main(argv: list[str] | None = None) -> int:
               f"no portfolios yet — write one at {portfolios.DATA_ROOT}/<name>.yaml")
         return 0
 
+    if args.refresh and args.as_of:
+        # A replay reads the cache as at a past date. Fetching would write today's bars into
+        # it, which is the one thing that makes the replay untrue.
+        print("--refresh warms today's bars and cannot serve a replay of a past date",
+              file=sys.stderr)
+        return 2
+
     try:
         book = portfolios.load(args.portfolio)
     except portfolios.PortfolioError as exc:
         print(exc, file=sys.stderr)
         return 1
+
+    # After the file loads, so a typo in the name fails in a second rather than after a fetch.
+    if args.refresh and fetch_cli.main(refresh_argv(args.portfolio)) != 0:
+        # Reported, then carried on with. A failed warm is a reason to distrust how current the
+        # rows are, never a reason to refuse to show you what you hold.
+        print("  refresh failed — the rows below are the cache as it already stood",
+              file=sys.stderr)
 
     as_of = args.as_of or datetime.now(UTC).date()
     [(book, readings, contexts)] = readings_for([book], as_of=as_of)

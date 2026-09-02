@@ -99,6 +99,22 @@ def _run_job(job: FetchJob, *, root: Path, marks=None) -> tuple[FetchJob, str, i
         return job, f"error:{type(exc).__name__}", 0
 
 
+def held_only(jobs, held_rows) -> list:
+    """The planned jobs for assets a portfolio actually holds, and nothing else.
+
+    Filtered *after* planning rather than by planning less, which is the whole point. The
+    routing table is still built from the corpus, so a held ticker resolves exactly as it
+    always does — the corpus supplies the domain consensus a portfolio's single row cannot
+    outvote. Narrowing the rows instead would quietly re-route the holdings.
+
+    Matched on the asset name, so an asset with a tradeable proxy keeps both of its legs.
+    ``__benchmark__`` jobs match nothing and drop out: a review draws on a holding's own
+    bars and never measures against a benchmark.
+    """
+    held = {row.asset for row in held_rows}
+    return [job for job in jobs if job.ref.asset in held]
+
+
 def intraday_targets(jobs) -> list:
     """The refs whose hourly bars are worth holding, one per instrument an order can reach.
 
@@ -155,6 +171,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="warm every file in data/portfolios/. What the nightly uses — a "
                              "shell script cannot enumerate accounts added after it was "
                              "written, and a hardcoded name would stop warming them silently.")
+    parser.add_argument("--held-only", action="store_true",
+                        help="fetch ONLY the tickers the named portfolios hold, skipping the "
+                             "corpus pass. What `review --refresh` uses for a midday price "
+                             "check. Requires --portfolio or --all-portfolios.")
     parser.add_argument("--no-intraday", action="store_true",
                         help="skip the hourly pass; `setups` then falls back to daily zones "
                              "for everything and shows no entry trigger")
@@ -164,6 +184,14 @@ def main(argv: list[str] | None = None) -> int:
                              "predates an asset's first mention; 0 restores the old "
                              "mention-windowed behaviour")
     args = parser.parse_args(argv)
+
+    # Refused rather than allowed to fetch nothing. With no portfolio named there are no held
+    # rows to keep, so the filter empties the plan and the run reports a clean success having
+    # warmed not one symbol.
+    if args.held_only and not (args.portfolio or args.all_portfolios):
+        print("--held-only needs --portfolio NAME or --all-portfolios; on its own it would "
+              "fetch nothing", file=sys.stderr)
+        return 2
 
     registry = load_registry(CONFIG_DIR)
     rows = list(corpus.iter_rows(registry))
@@ -209,19 +237,27 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.only:
         jobs = [j for j in jobs if j.ref.asset == args.only]
+    if args.held_only:
+        jobs = held_only(jobs, held_rows)
 
     counts = collections.Counter(r.asset for r in rows)
-    priced = sum(counts[j.ref.asset] for j in jobs)
-    unpriceable = sum(counts[s.asset] for s in skipped)
 
-    print(f"{len(rows)} theses · {len(counts)} distinct assets")
-    print(f"  {len(jobs)} fetch jobs ({priced} theses)")
-    print(f"  {len(skipped)} unpriceable assets ({unpriceable} theses, "
-          f"{unpriceable / len(rows):.1%})")
-    by_reason = collections.Counter(s.reason for s in skipped)
-    for reason, n in by_reason.most_common():
-        theses = sum(counts[s.asset] for s in skipped if s.reason == reason)
-        print(f"      {reason:<18} {n:>3} assets / {theses:>4} theses")
+    # Corpus coverage, and only when the corpus is what is being fetched. Under --held-only
+    # every one of these numbers is about assets the run has just filtered away, so printing
+    # them describes work that is not going to happen.
+    if not args.held_only:
+        priced = sum(counts[j.ref.asset] for j in jobs)
+        unpriceable = sum(counts[s.asset] for s in skipped)
+        print(f"{len(rows)} theses · {len(counts)} distinct assets")
+        print(f"  {len(jobs)} fetch jobs ({priced} theses)")
+        print(f"  {len(skipped)} unpriceable assets ({unpriceable} theses, "
+              f"{unpriceable / len(rows):.1%})")
+        by_reason = collections.Counter(s.reason for s in skipped)
+        for reason, n in by_reason.most_common():
+            theses = sum(counts[s.asset] for s in skipped if s.reason == reason)
+            print(f"      {reason:<18} {n:>3} assets / {theses:>4} theses")
+    else:
+        print(f"  {len(jobs)} fetch job(s), held only — the corpus pass is skipped")
 
     if args.dry_run:
         print("\nplanned fetches:")
