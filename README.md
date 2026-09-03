@@ -39,9 +39,12 @@ of available commands, and `docs/ARCHITECTURE.md` groups them in pipeline order 
 `scripts/nightly.sh` runs the whole cycle — refresh the corpus, re-price, settle yesterday's
 orders, rebuild the queue. Awake, it takes 8–16 minutes. Fourteen steps, roughly:
 
-`verify-roster` → `ingest-roster` → `ingest-x` *(off by default)* → `distill-roster` → `brain-extract` →
+`data-pull` → `verify-roster` → `ingest-roster` → `ingest-x` *(off by default)* → `distill-roster` → `brain-extract` →
 `brain-index` → `fetch-prices` → `fetch-funding` → `reconcile` (both venues) →
 `setups --list` → `fetch-tickers` → `canon-drift` → `backup`
+
+It opens with `data-pull` and closes with `backup` on purpose: pull → work → push, so a second
+machine cannot build tonight's queue on a stale corpus and then mirror that over the good copy.
 
 `./scripts/nightly.sh --list` prints them in order and is the authoritative list — this one is
 prose and will drift. A failing step does not abort the run; the exit code reflects the worst of
@@ -128,3 +131,38 @@ re-bootstrap after any edit.
 Logs are in `data/logs/nightly/` (30 nights kept), running spend in
 `data/logs/nightly/spend.json`, and `launchd.out` / `launchd.err` catch anything that escapes
 the script — including a failure to start at all, which by definition the script cannot record.
+
+## Working on a second machine
+
+`data/` is gitignored, so a fresh clone has an empty corpus and every command that reads down
+into it returns nothing. The nightly's last step (`scripts/backup.sh`) already mirrors it to
+Google Drive over the rclone API; `scripts/data-pull.sh` is the way back down.
+
+```bash
+rclone config create gdrive drive scope=drive   # once per machine, opens a browser
+./scripts/data-pull.sh --dry-run                # what would come down, and who wrote it
+./scripts/data-pull.sh                          # ~139MB, a few minutes
+uv run brain-index                              # once, ~40min, free — see below
+```
+
+**Pull before you run anything, not after.** Both scripts are `copy`, so the last machine to
+push wins per file. The nightly does this for you — `data-pull` is its first step — but a
+command you type by hand does not, so pull first when you sit down mid-day. `data-pull.sh`
+defaults to `--update` and will never replace a file that is newer locally; that guard protects
+the machine you are sitting at, not the mirror, so it is not a substitute for pulling first.
+
+One caveat the guard creates: `data/logs/nightly/history.jsonl` is append-only run health, so two
+machines that both run a night diverge on it and the later push wins. It feeds the digest's run
+health only — no trade or price data is affected.
+
+**`data/brain/index.db` is deliberately not mirrored.** It is one 114MB SQLite file that changes
+nightly, so syncing it would upload the whole thing every night to protect the only artifact that
+costs nothing to rebuild. Run `brain-index` once on a new machine; it is incremental and free
+after that. Until it runs, `brain` and its MCP server return nothing.
+
+**`.env` is not mirrored and must never be.** It holds the Hyperliquid signing key, the Plaid
+access tokens and the SMTP credentials. Copy it between machines by hand — never through Drive,
+which is neither encrypted at rest under your control nor something you can revoke per file.
+
+Portfolio files (`data/portfolios/*.yaml`) *are* mirrored, which is the point: they are
+gitignored because share counts are not configuration, so Drive is their only sync path.

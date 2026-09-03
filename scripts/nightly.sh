@@ -121,7 +121,7 @@ ONLY_STEPS=""
 # defers with "already ran today" as though nothing had been asked for.
 declare -a ORIGINAL_ARGS=("$@")
 
-ALL_STEPS="verify-roster ingest-roster ingest-x distill-roster brain-extract brain-index \
+ALL_STEPS="data-pull verify-roster ingest-roster ingest-x distill-roster brain-extract brain-index \
 plaid-sync wallet-sync fetch-prices fetch-funding reconcile reconcile-perps setups \
 fetch-tickers \
 canon-drift backup digest"
@@ -344,6 +344,16 @@ step() {
 }
 
 echo "tegan-trades nightly · $(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$LOG"
+
+# First, mirroring `backup` last, so the run is pull → work → push and a second machine can never
+# build tonight's queue on a stale corpus and then mirror that staleness over the good copy.
+# On the machine that wrote the last backup this moves nothing and costs one round-trip.
+#
+# Both directions are rclone `copy`, so the last writer wins per file — that is what makes the
+# ordering load-bearing rather than a nicety. It is also why this is a `step`: a Drive outage
+# should leave the night running on local ore, not abort it, and `step` records a failure
+# without stopping the run.
+step data-pull      ./scripts/data-pull.sh
 
 step verify-roster  uv run verify-roster
 step ingest-roster  uv run ingest-roster
