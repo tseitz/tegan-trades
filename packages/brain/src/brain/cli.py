@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 from datetime import UTC, datetime
 
+from core.env import load_env
+
 from brain.extract import DEFAULT_MODEL
 from brain.sweep import (
     DEFAULT_MAX_CONSECUTIVE_FAILURES,
@@ -32,6 +34,7 @@ def extract_main(argv: list[str] | None = None) -> int:
                         help="abort the sweep after this many back-to-back failures "
                              "(a usage cap fails every remaining call instantly)")
     args = parser.parse_args(argv)
+    load_env()
     results = extract_all(extracted_at=_now(), model=args.model, force=args.force,
                           max_workers=args.concurrency, limit=args.limit,
                           max_consecutive_failures=args.max_consecutive_failures)

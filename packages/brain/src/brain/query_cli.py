@@ -12,6 +12,8 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from core.env import load_env
+
 from brain.question import parse_assets
 from brain.report import format_view
 from brain.retrieve import retrieve
@@ -79,6 +81,7 @@ def main(
     out=print,
 ) -> int:
     args = _build_parser().parse_args(argv)
+    load_env()
 
     if registry is None:
         from core.canon import load_registry
