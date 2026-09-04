@@ -3,7 +3,9 @@
 **Why SMTP and not the Gmail MCP.** The MCP server is interactively authenticated — it needs a
 browser and a person. The nightly runs under launchd with nobody there, so the MCP is not an
 option however convenient it looks from a Claude Code session. ``smtplib`` with a Gmail app
-password is the only path that survives a headless run.
+password survives a headless run — on a machine that can reach port 587 at all. Most cloud hosts
+block outbound SMTP by default (spam prevention), so a droplet has no working SMTP path
+regardless of credentials — see ``configure``.
 
 **Email is the mirror, not the primary.** The vault note is written first and a failure here
 never rolls it back, the same contract ``oracle.decisions`` states for its own mirror.
@@ -22,6 +24,13 @@ credentials. Do not assume anything in that file is trading-related.
 
 A Gmail app password is not a Google account password: it is scoped to SMTP, revocable on its
 own, and useless for signing in.
+
+## Resend, for a machine SMTP cannot reach
+
+``RESEND_API_KEY`` + ``RESEND_FROM_EMAIL`` send over plain HTTPS instead — the path that works
+from a datacenter IP with SMTP ports blocked. ``configure`` picks Resend whenever the key is
+set, SMTP otherwise, so a machine with a working SMTP path (a laptop, a residential IP) needs no
+change at all.
 """
 
 from __future__ import annotations
@@ -30,6 +39,8 @@ import smtplib
 from dataclasses import dataclass
 from email.message import EmailMessage
 from email.policy import SMTP
+
+import requests
 
 from digest import htmlmail
 
@@ -49,6 +60,10 @@ PASSWORD = "DIGEST_SMTP_APP_PASSWORD"
 TO = "DIGEST_TO"
 HOST = "DIGEST_SMTP_HOST"
 PORT = "DIGEST_SMTP_PORT"
+
+RESEND_API_KEY = "RESEND_API_KEY"
+RESEND_FROM_EMAIL = "RESEND_FROM_EMAIL"
+RESEND_ENDPOINT = "https://api.resend.com/emails"
 
 
 class NotConfigured(RuntimeError):
@@ -74,8 +89,42 @@ class Config:
         return self.user
 
 
-def configure(env) -> Config:
-    """Read the mailer's settings, or say precisely which one is missing."""
+@dataclass(frozen=True, slots=True)
+class ResendConfig:
+    api_key: str
+    sender: str
+    to: tuple[str, ...]
+
+
+def _recipients(env, *, required: bool = True) -> tuple[str, ...]:
+    raw = (env.get(TO) or "").strip()
+    if not raw:
+        if required:
+            raise NotConfigured(f"{TO} is not set — the digest cannot be emailed.")
+        return ()
+    recipients = tuple(part.strip() for part in raw.split(",") if part.strip())
+    # ``DIGEST_TO=","`` clears the blank check above and still yields no recipients.
+    # Caught here rather than at ``send``, because an empty ``To:`` header is rejected by the
+    # server — the exact late failure this exception exists to convert into an early one.
+    if not recipients:
+        raise NotConfigured(f"{TO} names no recipients (got {env.get(TO)!r})")
+    return recipients
+
+
+def _configure_resend(env) -> ResendConfig:
+    def _required(name: str) -> str:
+        value = (env.get(name) or "").strip()
+        if not value:
+            raise NotConfigured(
+                f"{name} is not set — the digest cannot be emailed via Resend. Set "
+                f"{RESEND_API_KEY}, {RESEND_FROM_EMAIL} and {TO} in .env, or run without --email.")
+        return value
+
+    return ResendConfig(api_key=_required(RESEND_API_KEY), sender=_required(RESEND_FROM_EMAIL),
+                        to=_recipients(env))
+
+
+def _configure_smtp(env) -> Config:
     def _required(name: str) -> str:
         value = (env.get(name) or "").strip()
         if not value:
@@ -83,13 +132,6 @@ def configure(env) -> Config:
                 f"{name} is not set — the digest cannot be emailed. Set {USER}, {PASSWORD} and "
                 f"{TO} in .env, or run without --email.")
         return value
-
-    recipients = tuple(part.strip() for part in _required(TO).split(",") if part.strip())
-    # ``DIGEST_TO=","`` clears ``_required``'s non-blank test and still yields no recipients.
-    # Caught here rather than at ``send``, because an empty ``To:`` header is rejected by the
-    # server — the exact late failure this exception exists to convert into an early one.
-    if not recipients:
-        raise NotConfigured(f"{TO} names no recipients (got {env.get(TO)!r})")
 
     # Re-raised as ``NotConfigured`` so it joins the one exception the caller catches. As a bare
     # ``ValueError`` this escaped every handler and took down the whole digest run, after the
@@ -100,8 +142,20 @@ def configure(env) -> Config:
     except (TypeError, ValueError) as exc:
         raise NotConfigured(f"{PORT} must be a number, got {raw_port!r}") from exc
 
-    return Config(user=_required(USER), password=_required(PASSWORD), to=recipients,
+    return Config(user=_required(USER), password=_required(PASSWORD), to=_recipients(env),
                   host=(env.get(HOST) or DEFAULT_HOST).strip(), port=port)
+
+
+def configure(env) -> Config | ResendConfig:
+    """Read the mailer's settings, or say precisely which one is missing.
+
+    Resend whenever ``RESEND_API_KEY`` is set — the path that works from a machine whose
+    outbound SMTP is blocked. SMTP otherwise, unchanged for a machine that can already reach
+    it. See the module docstring's Resend section.
+    """
+    if (env.get(RESEND_API_KEY) or "").strip():
+        return _configure_resend(env)
+    return _configure_smtp(env)
 
 
 def compose(config: Config, subject: str, body: str) -> EmailMessage:
@@ -128,16 +182,33 @@ def _smtp_send(config: Config, message: EmailMessage) -> None:
         server.send_message(message)
 
 
-def send(config: Config, subject: str, body: str, *, transport=_smtp_send, warn=None) -> bool:
+def _resend_send(config: ResendConfig, subject: str, text: str, html: str) -> None:
+    response = requests.post(
+        RESEND_ENDPOINT,
+        headers={"Authorization": f"Bearer {config.api_key}"},
+        json={"from": config.sender, "to": list(config.to), "subject": subject,
+              "text": text, "html": html},
+        timeout=30,
+    )
+    response.raise_for_status()
+
+
+def send(config: Config | ResendConfig, subject: str, body: str, *,
+         transport=None, warn=None) -> bool:
     """Send it. ``True`` if it went. Never raises.
 
     ``transport`` is injected so the send path is testable without a socket — everything above
     it is pure construction, and this function's only real job is turning an exception into a
-    warning.
+    warning. Dispatches on ``config``'s type: ``ResendConfig`` sends plain text/html over HTTPS,
+    ``Config`` sends a MIME message over SMTP — see the module docstring's Resend section for why
+    two paths exist.
     """
     try:
-        transport(config, compose(config, subject, body))
-    except (OSError, smtplib.SMTPException) as exc:
+        if isinstance(config, ResendConfig):
+            (transport or _resend_send)(config, subject, body, htmlmail.wrap(body))
+        else:
+            (transport or _smtp_send)(config, compose(config, subject, body))
+    except (OSError, smtplib.SMTPException, requests.RequestException) as exc:
         if warn is not None:
             warn(f"warning: could not email the digest: {exc}")
         return False

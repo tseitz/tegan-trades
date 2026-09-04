@@ -572,6 +572,7 @@ dependencies = [
     { name = "llm" },
     { name = "oracle" },
     { name = "pyyaml" },
+    { name = "requests" },
     { name = "review" },
 ]
 
@@ -589,6 +590,7 @@ requires-dist = [
     { name = "llm", editable = "packages/llm" },
     { name = "oracle", editable = "packages/oracle" },
     { name = "pyyaml", specifier = ">=6" },
+    { name = "requests" },
     { name = "review", editable = "packages/review" },
 ]
 

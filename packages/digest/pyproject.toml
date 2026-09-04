@@ -18,6 +18,8 @@ dependencies = [
     "llm",
     "oracle",
     "pyyaml>=6",
+    # Resend's HTTPS API — the mail path for a machine whose outbound SMTP is blocked.
+    "requests",
     # The standing read on positions you already hold. `digest` reduces it to a diff; it does
     # not reimplement the grid. Acyclic — `review` reads brain and oracle and imports nothing
     # here, exactly as this package imports and is imported by nothing.

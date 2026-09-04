@@ -9,6 +9,7 @@ from __future__ import annotations
 from email import message_from_string, policy
 
 import pytest
+import requests
 from digest import mail
 
 
@@ -134,3 +135,58 @@ def test_a_numeric_port_is_honoured():
 
 def test_the_port_defaults_when_unset():
     assert mail.configure(_env()).port == mail.DEFAULT_PORT
+
+
+# ── Resend, when SMTP has no path (a blocked cloud host) ──────────────────────
+
+def _resend_env(**over) -> dict:
+    env = {"RESEND_API_KEY": "re_abc123",
+           "RESEND_FROM_EMAIL": "noreply@example.com",
+           "DIGEST_TO": "me@gmail.com"}
+    env.update(over)
+    return {k: v for k, v in env.items() if v is not None}
+
+
+def test_resend_is_chosen_whenever_its_key_is_set():
+    """Even alongside a complete SMTP config — a droplet with no SMTP path needs no unset
+    variables to pick the working transport."""
+    config = mail.configure(dict(_env(), **_resend_env()))
+    assert isinstance(config, mail.ResendConfig)
+
+
+def test_smtp_is_chosen_when_no_resend_key_is_set():
+    assert isinstance(mail.configure(_env()), mail.Config)
+
+
+def test_a_missing_resend_setting_is_named():
+    with pytest.raises(mail.NotConfigured, match="RESEND_FROM_EMAIL"):
+        mail.configure(_resend_env(RESEND_FROM_EMAIL=None))
+
+
+def test_resend_also_requires_a_recipient():
+    with pytest.raises(mail.NotConfigured, match="DIGEST_TO"):
+        mail.configure(_resend_env(DIGEST_TO=None))
+
+
+def test_resend_sends_plain_text_and_html_over_https():
+    config = mail.configure(_resend_env())
+    calls = []
+    sent = mail.send(config, "s", "AT THE TRIGGER\n  HYPE\n",
+                     transport=lambda *a: calls.append(a))
+    assert sent is True
+    got_config, subject, text, html = calls[0]
+    assert got_config is config
+    assert subject == "s"
+    assert text == "AT THE TRIGGER\n  HYPE\n"
+    assert "HYPE" in html
+
+
+def test_a_resend_failure_warns_and_returns_false():
+    def _explode(*_args, **_kwargs):
+        raise requests.RequestException("503 from Resend")
+
+    warned: list[str] = []
+    sent = mail.send(mail.configure(_resend_env()), "s", "b",
+                     transport=_explode, warn=warned.append)
+    assert sent is False
+    assert warned and "503 from Resend" in warned[0]
