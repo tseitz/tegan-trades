@@ -38,6 +38,13 @@ def test_the_block_is_monospace():
     assert "monospace" in htmlmail.wrap(TRIGGER)
 
 
+def test_a_long_line_scrolls_sideways_instead_of_wrapping():
+    """Some phone mail apps do not zoom a wide `<pre>` block out to fit — they force-wrap it,
+    which breaks the column alignment `white-space:pre` exists to protect. A horizontally
+    scrollable wrapper gives those clients a way out that does not touch the columns."""
+    assert "overflow-x:auto" in htmlmail.wrap(TRIGGER)
+
+
 def test_alignment_is_not_allowed_to_wrap():
     """A wrapped row drops its tail into the left margin, where it reads as a new row."""
     assert "white-space:pre" in htmlmail.wrap(TRIGGER)

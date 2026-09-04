@@ -140,7 +140,11 @@ def wrap(body: str) -> str:
     return (
         '<!DOCTYPE html><html><head><meta charset="utf-8"></head>'
         '<body style="margin:0;padding:0;background:#ffffff">'
+        # A client that force-wraps a wide `<pre>` instead of zooming it out breaks the
+        # column alignment the whole module exists to protect. This gives those clients a
+        # horizontal scrollbar instead — the columns stay true either way.
+        '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">'
         f'<pre style="font-family:{MONO};font-size:13px;line-height:1.55;color:{INK};'
         'background:#ffffff;margin:0;padding:16px;white-space:pre">'
-        f"{painted}</pre></body></html>"
+        f"{painted}</pre></div></body></html>"
     )
