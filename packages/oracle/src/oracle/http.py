@@ -50,14 +50,20 @@ def post_json(url: str, body: dict, *, timeout: int = TIMEOUT) -> Any:
     raise FetchError(f"failed after {RETRIES} attempts: {url}") from last
 
 
-def get_json(url: str, params: dict | None = None, *, timeout: int = TIMEOUT) -> Any:
-    """GET + parse JSON, retrying rate limits and transient 5xx with linear backoff."""
+def get_json(
+    url: str, params: dict | None = None, *, timeout: int = TIMEOUT, headers: dict | None = None
+) -> Any:
+    """GET + parse JSON, retrying rate limits and transient 5xx with linear backoff.
+
+    ``headers`` merges over the default ``User-Agent`` rather than replacing it — Solana
+    Tracker's ``x-api-key`` is the first caller that needs one, and losing the default would
+    make every other adapter's requests distinguishable from a browser's for no reason.
+    """
     last: Exception | None = None
+    merged_headers = {"User-Agent": USER_AGENT, **(headers or {})}
     for attempt in range(RETRIES):
         try:
-            resp = requests.get(
-                url, params=params, timeout=timeout, headers={"User-Agent": USER_AGENT}
-            )
+            resp = requests.get(url, params=params, timeout=timeout, headers=merged_headers)
             if resp.status_code == 429 or resp.status_code >= 500:
                 time.sleep(BACKOFF * (attempt + 1))
                 last = FetchError(f"{resp.status_code} for {url}")

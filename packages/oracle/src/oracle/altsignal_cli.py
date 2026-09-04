@@ -1,11 +1,13 @@
-"""``fetch-altsignal`` — pull the Phase 5 alt-signal sources named in ``cfg/altsignal.yaml``.
+"""``fetch-altsignal`` — pull the Phase 5 alt-signal sources.
 
-Free on every source: no keys, no money, safe to run from the nightly job — same tier as
-``fetch-funding``. pump.fun is deliberately absent (see ``scripts/probe_pumpfun_migrations.py``
-for why); this snapshots DefiLlama, Kalshi and Polymarket only, for whatever chains/markets
-``cfg/altsignal.yaml`` names.
+Free on every source: no money, safe to run from the nightly job — same tier as
+``fetch-funding``. DefiLlama, Kalshi and Polymarket fetch whatever ``cfg/altsignal.yaml``
+names. pump.fun is different — it's a global feed (recently graduated tokens), not a curated
+list, so it always runs; it needs a free Solana Tracker key (``SOLANATRACKER_API_KEY`` in
+``.env``, see ``oracle.altsignal.pumpfun``) and is skipped with a clear message if that's unset,
+same as any other unreachable source.
 
-    fetch-altsignal            snapshot every configured source
+    fetch-altsignal            snapshot every configured source, plus pump.fun
     fetch-altsignal --report   summarise what has been logged, per source per key
 """
 from __future__ import annotations
@@ -17,7 +19,7 @@ from pathlib import Path
 from core.altsignal import AltSignalReading
 
 from oracle import altsignal_config, altsignal_store
-from oracle.altsignal import defillama, kalshi, polymarket
+from oracle.altsignal import defillama, kalshi, polymarket, pumpfun
 from oracle.http import FetchError
 
 CONFIG_DIR = Path(__file__).resolve().parents[4] / "cfg"
@@ -59,6 +61,14 @@ def _snapshot(cfg: altsignal_config.AltSignalConfig, verbose: bool = True) -> li
         except FetchError as exc:
             print(f"  ! polymarket: {exc}")
 
+    try:
+        got = pumpfun.fetch()
+        readings.extend(got)
+        if verbose:
+            print(f"  pumpfun: {len(got)} readings")
+    except FetchError as exc:
+        print(f"  ! pumpfun: {exc}")
+
     return readings
 
 
@@ -93,10 +103,8 @@ def main() -> int:
         _report(args.window)
         return 0
 
-    if not cfg.chains and not cfg.markets:
-        print("cfg/altsignal.yaml has nothing configured — nothing to fetch.")
-        return 0
-
+    # No early-return on an empty cfg/altsignal.yaml — pump.fun is a global feed, not a
+    # curated list, so it still has something to fetch even on a fresh checkout.
     print("Snapshotting alt-signal sources...")
     readings = _snapshot(cfg)
 

@@ -17,17 +17,15 @@ does not have**:
    Every endpoint, including the documented free tier, returned ``{"error": "API key is
    required"}`` (HTTP 401). "Free" here means free *after* signing up for a key, not keyless.
 
-**Conclusion: nothing free and keyless answers this question today.** Building
-``oracle/altsignal/pumpfun.py`` needs one of:
+**Resolved 2026-09-04: nothing free and keyless answers this, but Solana Tracker's free tier
+does.** ``GET /tokens/multi/graduated`` with an ``x-api-key`` header works, is a purpose-built
+endpoint for exactly this signal, and its 2,500 requests/month free tier easily covers a
+nightly poll (~30 calls/month). No credit card. See ``oracle/altsignal/pumpfun.py``, which
+this probe's finding — Solana Tracker over the Cloudflare-blocked frontend API, and a nightly
+poll over PumpPortal's WebSocket — is built against.
 
-- A Solana Tracker API key (sign up at solanatracker.io — free tier exists, per the earlier
-  research; this probe could not confirm its limits without one)
-- Trying the Cloudflare-blocked pump.fun endpoint through the Webshare proxy this repo already
-  has for YouTube, on the chance the block is IP-reputation-based like YouTube's was
-- Falling back to PumpPortal's WebSocket after all, which reopens the "no always-on process in
-  this repo" question the design spec deliberately avoided
-
-This is a real decision point, not something to guess past — see the plan's task 5.
+The Cloudflare block on pump.fun's own frontend API (point 1 above) was never retried through
+the Webshare proxy, since point 2 resolved the question first.
 
 RUN IT:
 

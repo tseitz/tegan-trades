@@ -437,8 +437,9 @@ step fetch-funding  uv run fetch-funding
 # Free, order-independent of `setups`/`reconcile` — `review` reads `data/altsignal/` at report
 # time, not at fetch time, so this only needs to land before `review` is next run by hand. It
 # sits next to `fetch-funding` because both are the same shape: free third-party reads, safe
-# unattended, logged rather than cached. pump.fun is deliberately absent — see
-# `scripts/probe_pumpfun_migrations.py` for why it isn't fetchable keyless yet.
+# unattended, logged rather than cached. Includes pump.fun (needs SOLANATRACKER_API_KEY in
+# .env — skipped with a message, not a failure, if that's unset on a machine that hasn't set
+# one up yet).
 step fetch-altsignal  uv run fetch-altsignal
 
 # Ordered before `setups` for the same reason `fetch-funding` is: the queue is worth more when
