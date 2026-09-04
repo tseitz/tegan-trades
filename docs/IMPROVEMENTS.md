@@ -850,3 +850,30 @@ trades that cannot be placed either way.
 number a position beside them is deliberate — flattening carries a live stop and is a trading
 decision, not budget housekeeping. So this needs a separate, separately-confirmed close path,
 not a wider menu.
+
+---
+
+## 53. Revisit Dune Analytics once there's a manual-query use case, not a nightly one · `OPEN` — new 2026-09-03
+
+Deferred out of the Phase 5 alt-signal build (DefiLlama chain TVL/stablecoins/DEX volume,
+pump.fun graduation events via PumpPortal, Kalshi, Polymarket): Dune's free tier carries a
+10-minute execution delay and a 40 req/min cap, which rules out a nightly automated pull. Fine
+for an occasional hand-run query, not for anything `fetch-altsignal` would call on a schedule.
+
+Worth another look if a specific question comes up that only Dune's SQL-over-everything model
+can answer — something DefiLlama's fixed endpoints don't expose (cross-protocol flows, custom
+wallet cohorts). Paid tiers start ~$390/mo, putting it in Coinglass's bracket: defer until a
+concrete question justifies the cost.
+
+---
+
+## 54. Give `brain` a sentiment layer once the alt-signal numbers exist to feed it · `OPEN` — new 2026-09-03
+
+An agent-formed read across everything coming in — roster theses plus the alt-signal numbers
+(DefiLlama chain TVL/stablecoins/volume, Kalshi/Polymarket macro odds, pump.fun activity) —
+rather than only restating what the roster literally said. `brain/synthesize.py` is the natural
+extension point: it's already one of the repo's four LLM call sites and already does narrative
+synthesis over roster stances, so this is widening its inputs, not a new boundary.
+
+Blocked on the alt-signal fetch/store work landing first — there's nothing to synthesize over
+until `fetch-altsignal` exists and has a few nights of data behind it.
