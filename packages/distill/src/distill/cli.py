@@ -4,6 +4,8 @@ import argparse
 import json
 from datetime import UTC, datetime
 
+from core.env import load_env
+
 from distill.extract import DEFAULT_MODEL, extract_theses
 from distill.roster import (
     DEFAULT_MAX_WORKERS,
@@ -29,6 +31,7 @@ def roster_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--concurrency", type=int, default=DEFAULT_MAX_WORKERS,
                         help="number of transcripts to distill in parallel")
     args = parser.parse_args(argv)
+    load_env()
     results = distill_all(distilled_at=_now(), model=args.model, force=args.force,
                           max_workers=args.concurrency)
     print(format_summary(results))
@@ -43,6 +46,7 @@ def transcript_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--platform", default="youtube")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     args = parser.parse_args(argv)
+    load_env()
 
     sidecar_path = TRANSCRIPTS_ROOT / args.platform / f"{args.video_id}.json"
     sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
