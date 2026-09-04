@@ -1,0 +1,42 @@
+# Alt-signal tracking list. Hand-curated, same spirit as oracle_map.yaml: explicit, checked
+# into git, never auto-discovered.
+#
+# `chains:` feeds oracle/altsignal/defillama.py — `asset` is the ticker a holding is written
+# under in a portfolio file; `chain` is DefiLlama's own slug for it, which does not always
+# match the ticker (`solana`, not `SOL`).
+#
+# `markets:` feeds oracle/altsignal/{kalshi,polymarket}.py. Kalshi tickers name one specific
+# strike/market — a series like KXFED covers every strike at every future meeting, so picking
+# which ones are worth watching is a deliberate choice, not something to auto-discover.
+# Polymarket entries name an event slug, which can expand to several readings when the event
+# nests more than one market (see polymarket.py's docstring).
+#
+# Tickers/slugs below were pulled live from each platform's public API on 2026-09-03 and WILL
+# go stale — Kalshi rolls to a new event per Fed meeting, Polymarket's yearly BTC/ETH target
+# events roll at year-end. Re-pull from the live market list rather than guessing a successor
+# ticker by pattern.
+
+chains:
+  - asset: SOL
+    chain: solana
+  - asset: ETH
+    chain: ethereum
+  # DefiLlama's chain TVL is a DeFi-usage metric — a chain with ~no native DeFi (e.g. plain
+  # BTC) will read as ~0. That's an accurate reading, not an error.
+
+markets:
+  - platform: kalshi
+    ticker: "KXFED-26DEC-T3.75"
+    why: "Fed funds rate above 3.75% after the Dec 2026 meeting — roster references Fed policy constantly"
+  - platform: kalshi
+    ticker: "KXNBERRECESSQ-Q4-2025"
+    why: "NBER recession call for the current quarter"
+  - platform: polymarket
+    slug: "us-recession-by-end-of-2026"
+    why: "Direct recession-odds market, cross-checks the Kalshi read above"
+  - platform: polymarket
+    slug: "what-price-will-bitcoin-hit-before-2027"
+    why: "BTC price-target market — expands to one reading per strike"
+  - platform: polymarket
+    slug: "what-price-will-ethereum-hit-before-2027"
+    why: "ETH price-target market — expands to one reading per strike"

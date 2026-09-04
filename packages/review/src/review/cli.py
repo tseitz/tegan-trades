@@ -25,13 +25,14 @@ from core.canon import load_registry, resolve_asset
 from core.nearby import levels_near
 from core.review import mark_disagrees, review
 from core.setups import build_context
-from oracle import cache, corpus, fetch_cli, listings, portfolios
+from oracle import altsignal_config, cache, corpus, fetch_cli, listings, portfolios
 from oracle.assemble import load_daily
 from oracle.resample import to_weekly
 from oracle.route import Priceable, load_routing_table, route
 
+from review import altsignal
 from review.levels import SHOWN, shortlist
-from review.render import render, render_levels
+from review.render import render, render_altsignal, render_levels
 
 CONFIG_DIR = Path(__file__).resolve().parents[4] / "cfg"
 
@@ -233,6 +234,18 @@ def main(argv: list[str] | None = None) -> int:
     standing, closing, suppressed = shortlist(pairs, limit=None if args.levels else SHOWN)
     print()
     print(render_levels(standing, closing, suppressed, kinds=book.level_kinds))
+
+    # Recomputed here rather than threaded through `readings_for`'s `Read` — widening that
+    # namedtuple broke `digest`'s `for book, readings, contexts in readings_for(...)` unpack,
+    # caught in this feature's own plan review. Cheap: a registry load and a dict lookup per
+    # position, not the O(corpus) work `readings_for` already paid for once.
+    registry = load_registry(CONFIG_DIR)
+    assets = [asset for asset, _domain in canonical_rows(book, registry)]
+    altsignal_cfg = altsignal_config.load(CONFIG_DIR)
+    chains = altsignal.chain_lines(readings, assets, altsignal_cfg=altsignal_cfg)
+    macro = altsignal.macro_block(altsignal_cfg=altsignal_cfg)
+    print()
+    print(render_altsignal(chains, macro))
 
     missing = [r.holding.ticker for r in readings if r.price is None]
     if missing:

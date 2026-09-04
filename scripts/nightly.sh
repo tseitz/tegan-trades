@@ -14,8 +14,9 @@
 #   7. wallet-sync     free    what your public wallet addresses hold, straight off chain
 #   8. fetch-prices    free
 #   9. fetch-funding   free    what holding a position costs — must precede setups
-#  10. reconcile       free    settle what the venue did with yesterday's orders
-#  11. setups --list   free    the queue you actually read
+#  10. fetch-altsignal free    Phase 5 alt-signal — DefiLlama/Kalshi/Polymarket for `review`
+#  11. reconcile       free    settle what the venue did with yesterday's orders
+#  12. setups --list   free    the queue you actually read
 #
 # **A failing step does not abort the run.** A YouTube outage should not cost you the price
 # refresh, and a bad roster marker should not cost you the whole night. Every step's status is
@@ -122,7 +123,7 @@ ONLY_STEPS=""
 declare -a ORIGINAL_ARGS=("$@")
 
 ALL_STEPS="data-pull verify-roster ingest-roster ingest-x distill-roster brain-extract brain-index \
-plaid-sync wallet-sync fetch-prices fetch-funding reconcile reconcile-perps setups \
+plaid-sync wallet-sync fetch-prices fetch-funding fetch-altsignal reconcile reconcile-perps setups \
 fetch-tickers \
 canon-drift backup digest"
 
@@ -221,24 +222,31 @@ if [ "$FORCE" -eq 0 ]; then
   # Written at start, not at finish, so a poll landing mid-run cannot launch a second one.
   [ "$(cat "$STAMP_FILE" 2>/dev/null)" = "$(date +%F)" ] && defer "already ran today"
 
-  # Absent on a machine with no lid, where the empty string correctly fails the "Yes" test.
-  LID="$(ioreg -r -k AppleClamshellState -d 4 2>/dev/null \
-    | sed -n 's/.*"AppleClamshellState" = \(.*\)/\1/p' | head -1)"
-  BATT_PCT="$(pmset -g batt 2>/dev/null | grep -oE '[0-9]+%' | head -1 | tr -d '%')"
+  # Lid/battery/caffeinate are all macOS-only — `ioreg`, `pmset` and `caffeinate` don't exist
+  # on Linux, and a `exec`'d caffeinate that isn't there kills the script with no output at
+  # all (exec failure exits a non-interactive shell). A cloud box has no lid to close and no
+  # battery to drain, so skip this whole section there rather than teach it to no-op per call.
+  if [ "$(uname -s)" = "Darwin" ]; then
+    # Absent on a machine with no lid, where the empty string correctly fails the "Yes" test.
+    LID="$(ioreg -r -k AppleClamshellState -d 4 2>/dev/null \
+      | sed -n 's/.*"AppleClamshellState" = \(.*\)/\1/p' | head -1)"
+    BATT_PCT="$(pmset -g batt 2>/dev/null | grep -oE '[0-9]+%' | head -1 | tr -d '%')"
 
-  # On AC we run regardless of the lid — that is clamshell-on-a-desk, and `caffeinate -s` is
-  # honoured there, so the run will actually finish.
-  if ! pmset -g batt 2>/dev/null | grep -q "'AC Power'"; then
-    [ "$LID" = "Yes" ] && defer "lid closed on battery — macOS sleeps through the run"
-    [ -n "$BATT_PCT" ] && [ "$BATT_PCT" -lt "$NIGHTLY_MIN_BATTERY" ] \
-      && defer "battery ${BATT_PCT}% below ${NIGHTLY_MIN_BATTERY}%"
+    # On AC we run regardless of the lid — that is clamshell-on-a-desk, and `caffeinate -s` is
+    # honoured there, so the run will actually finish.
+    if ! pmset -g batt 2>/dev/null | grep -q "'AC Power'"; then
+      [ "$LID" = "Yes" ] && defer "lid closed on battery — macOS sleeps through the run"
+      [ -n "$BATT_PCT" ] && [ "$BATT_PCT" -lt "$NIGHTLY_MIN_BATTERY" ] \
+        && defer "battery ${BATT_PCT}% below ${NIGHTLY_MIN_BATTERY}%"
+    fi
   fi
 fi
 
 # Gate passed. Hold the machine awake for the duration — re-exec rather than wrap in the plist
 # so the 50ms polls stay out of power management entirely. `/bin/bash "$0"` rather than `"$0"`
-# so this does not silently depend on the exec bit surviving a checkout.
-if [ -z "${NIGHTLY_CAFFEINATED:-}" ]; then
+# so this does not silently depend on the exec bit surviving a checkout. Linux has no sleep to
+# fight here (a cloud box doesn't suspend under a running cron job), so only macOS re-execs.
+if [ "$(uname -s)" = "Darwin" ] && [ -z "${NIGHTLY_CAFFEINATED:-}" ]; then
   export NIGHTLY_CAFFEINATED=1
   exec /usr/bin/caffeinate -s -i -m /bin/bash "$0" ${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"}
 fi
@@ -425,6 +433,13 @@ step fetch-prices   uv run fetch-prices --all-portfolios
 # This is also the only way Lighter is ever captured — it serves no reconcilable history
 # (§22), so a night this step misses is a night of Lighter coverage that cannot be recovered.
 step fetch-funding  uv run fetch-funding
+
+# Free, order-independent of `setups`/`reconcile` — `review` reads `data/altsignal/` at report
+# time, not at fetch time, so this only needs to land before `review` is next run by hand. It
+# sits next to `fetch-funding` because both are the same shape: free third-party reads, safe
+# unattended, logged rather than cached. pump.fun is deliberately absent — see
+# `scripts/probe_pumpfun_migrations.py` for why it isn't fetchable keyless yet.
+step fetch-altsignal  uv run fetch-altsignal
 
 # Ordered before `setups` for the same reason `fetch-funding` is: the queue is worth more when
 # what it reads is current. `placed` is written from the *submission* reply, so an order the

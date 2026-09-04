@@ -14,6 +14,7 @@ dependencies = [
 [project.scripts]
 fetch-prices = "oracle.fetch_cli:main"
 fetch-funding = "oracle.funding_cli:main"
+fetch-altsignal = "oracle.altsignal_cli:main"
 score-roster = "oracle.score_cli:main"
 setups = "oracle.setups_cli:main"
 plaid-link = "oracle.plaid_cli:link"

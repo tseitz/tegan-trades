@@ -409,3 +409,28 @@ def _level_row(spot) -> list[str]:
         roster_text(spot.reading),
         f"+{spot.others} more" if spot.others else "",
     ]
+
+
+def render_altsignal(chains, macro) -> str:
+    """Phase 5 alt-signal: DefiLlama confirms a holding, Kalshi/Polymarket confirm macro
+    context. Independent of the verdict grid and of LEVELS above it, same reasoning as
+    ``render_levels`` — this reports what an outside source says, not what to do about it."""
+    if not chains and not macro:
+        return "ALT-SIGNAL — nothing configured yet (see cfg/altsignal.yaml)"
+
+    out = ["ALT-SIGNAL"]
+    if chains:
+        out.append("")
+        for c in chains:
+            out.append(f"  {c.reading.holding.ticker}")
+            out += [f"    {line}" for line in c.lines]
+    if macro:
+        out.append("")
+        out.append("  MACRO")
+        for row in macro:
+            # A Polymarket key is "<event slug>:<market slug>" — only the market half reads
+            # as a line item here, the event half is already carried by `why`.
+            top = ", ".join(f"{key.rsplit(':', 1)[-1]} {value:.0%}" for key, value in row.top)
+            suffix = f" (+{row.others} more)" if row.others else ""
+            out.append(f"    {row.why}: {top}{suffix}")
+    return "\n".join(out)
