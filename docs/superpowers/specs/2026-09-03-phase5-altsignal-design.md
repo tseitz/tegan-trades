@@ -110,10 +110,14 @@ markets:
 
 Per the "prove it before deepening" approach `review`'s own LEVELS section already follows:
 
-- **DefiLlama** → `core.setups.Context` gains an optional `altsignal: AltSignalReadings | None`
-  field, the same slot `funding: FundingOutlook` already occupies. `core.review.review()` reads
-  it and prints one line per crypto holding when the chain in `cfg/altsignal.yaml` matches the
-  holding's asset (e.g. a SOL position shows "Solana chain TVL: +12% (7d)" beside its verdict).
+- **DefiLlama** → **correction from the implementation plan's scout**: `funding` does not
+  actually reach `core.review` this way — `Context.funding` is read only inside
+  `core/setups.py`'s scoring, and `Reading` carries no such slot. The real precedent for an
+  independent line in `review`'s output is the LEVELS section (`core.nearby.levels_near` →
+  `review.levels.shortlist` → `render_levels`), and DefiLlama follows that shape instead: a
+  scan + rank/format step that prints one line per crypto holding when the chain in
+  `cfg/altsignal.yaml` matches the holding's asset (e.g. a SOL position shows "Solana chain
+  TVL: +12% (7d)" beside its verdict). See the implementation plan for the exact wiring.
 - **Kalshi / Polymarket** → not tied to one holding. A small new "MACRO" block in `review`'s
   output, printed once per run, independent of the position table.
 - **pump.fun** → **stored only this round.** `review` confirms things already held or already
