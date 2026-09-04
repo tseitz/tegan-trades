@@ -6,6 +6,20 @@ from datetime import UTC, date, datetime, timedelta
 
 from yt_dlp import YoutubeDL
 
+from ingestion.youtube import proxy_url
+
+
+def _ydl_opts(**opts: object) -> dict:
+    """yt-dlp options, routed through the Webshare proxy when one is configured.
+
+    Metadata calls get bot-blocked on a datacenter IP exactly like caption calls do —
+    see ``ingestion.youtube.proxy_url``.
+    """
+    url = proxy_url()
+    if url is not None:
+        opts["proxy"] = url
+    return opts
+
 
 def channel_base_url(channel: str) -> str:
     """Normalize a watchlist channel identifier to its YouTube base URL.
@@ -38,12 +52,12 @@ class VideoStub:
 
 
 def _flat_entries(url: str, limit: int) -> list[dict]:
-    opts = {
-        "extract_flat": True,
-        "skip_download": True,
-        "quiet": True,
-        "playlistend": limit,
-    }
+    opts = _ydl_opts(
+        extract_flat=True,
+        skip_download=True,
+        quiet=True,
+        playlistend=limit,
+    )
     with YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
     return info.get("entries") or []
@@ -125,7 +139,7 @@ def _published_at(info: dict) -> str | None:
 
 
 def _full_extract(url: str) -> dict:
-    with YoutubeDL({"skip_download": True, "quiet": True}) as ydl:
+    with YoutubeDL(_ydl_opts(skip_download=True, quiet=True)) as ydl:
         return ydl.extract_info(url, download=False)
 
 

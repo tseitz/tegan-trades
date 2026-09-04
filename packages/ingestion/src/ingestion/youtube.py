@@ -66,12 +66,12 @@ class ProxyCredentialError(RuntimeError):
 _ILLEGAL_CREDENTIAL_CHARS = "@:/ "
 
 
-def _proxy_config() -> WebshareProxyConfig | None:
-    """Build a Webshare residential proxy config from env vars, or None.
+def _proxy_credentials() -> tuple[str, str] | None:
+    """Read + validate WEBSHARE_PROXY_USERNAME/PASSWORD, or None if unset.
 
-    Opt-in: set WEBSHARE_PROXY_USERNAME + WEBSHARE_PROXY_PASSWORD to route
-    transcript fetches through rotating residential IPs (needed when YouTube
-    IP-blocks the caller's own IP). Absent → direct, un-proxied fetch.
+    Shared by every proxy consumer (transcript fetches via ``WebshareProxyConfig``,
+    yt-dlp metadata fetches via ``proxy_url``) so the credential-shape check below
+    can't drift between them.
 
     Malformed credentials raise rather than degrade. An unparseable proxy URL makes
     ``requests`` fall back to a **direct** connection without a word, so a typo silently
@@ -91,7 +91,37 @@ def _proxy_config() -> WebshareProxyConfig | None:
             "Refusing to continue: an unusable proxy silently falls back to a direct "
             "fetch and gets your own IP blocked."
         )
+    return user, password
+
+
+def _proxy_config() -> WebshareProxyConfig | None:
+    """Build a Webshare residential proxy config from env vars, or None.
+
+    Opt-in: set WEBSHARE_PROXY_USERNAME + WEBSHARE_PROXY_PASSWORD to route
+    transcript fetches through rotating residential IPs (needed when YouTube
+    IP-blocks the caller's own IP). Absent → direct, un-proxied fetch.
+    """
+    creds = _proxy_credentials()
+    if creds is None:
+        return None
+    user, password = creds
     return WebshareProxyConfig(proxy_username=user, proxy_password=password)
+
+
+def proxy_url() -> str | None:
+    """Webshare proxy URL for yt-dlp's ``proxy`` option, or None if unconfigured.
+
+    yt-dlp (channel listings, video metadata) talks to YouTube directly by default —
+    only transcript fetches went through the proxy. That's fine from a residential IP,
+    but a datacenter IP gets metadata calls bot-blocked too ("Sign in to confirm you're
+    not a bot"), so this reuses the same credentials and rotating endpoint for yt-dlp's
+    plain-URL proxy option.
+    """
+    creds = _proxy_credentials()
+    if creds is None:
+        return None
+    user, password = creds
+    return f"http://{user}:{password}@p.webshare.io:80/"
 
 
 def _build_api() -> YouTubeTranscriptApi:
