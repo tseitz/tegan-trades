@@ -271,13 +271,26 @@ def test_remember_levels_keys_on_kind_and_side_only():
 
 def test_level_moves_render_under_the_portfolio_heading():
     d = _delta(arrived=(_spot("COST", side=RESISTANCE),),
-               left=(("TSLA", f"{WEEKLY_ZONE}:{SUPPORT}"),),
                standing={HOLD: 2}, positions=2)
     out = "\n".join(render._holdings_section([d]))
     assert "reached a level" in out
     assert "COST" in out and "resistance" in out
-    assert "stepped off a level" in out
-    assert "TSLA" in out
+
+
+def test_leaving_a_level_prints_a_count_not_a_list():
+    """Not actionable — the position simply isn't at a level any more, and naming each one
+    lengthened the section without changing a single decision the reader has to make."""
+    d = _delta(left=(("TSLA", f"{WEEKLY_ZONE}:{SUPPORT}"), ("AAPL", f"{WEEKLY_ZONE}:{SUPPORT}")),
+               standing={HOLD: 2}, positions=2)
+    out = "\n".join(render._holdings_section([d]))
+    assert "2 positions stepped off a level overnight" in out
+    assert "TSLA" not in out
+
+
+def test_a_single_departure_is_singular():
+    d = _delta(left=(("TSLA", f"{WEEKLY_ZONE}:{SUPPORT}"),), standing={HOLD: 1}, positions=1)
+    out = "\n".join(render._holdings_section([d]))
+    assert "1 position stepped off a level overnight" in out
 
 
 def test_a_long_arrival_list_is_capped_and_says_what_it_dropped():
@@ -326,6 +339,20 @@ def test_a_stale_portfolio_is_called_out_above_its_rows():
 def test_a_fresh_portfolio_says_nothing_about_its_age():
     d = _delta(standing={TRIM: 1}, positions=5)
     assert not any("STALE" in line for line in render._holdings_section([d]))
+
+
+# ── priority order: buys and sells before quiet dropouts ───────────────────
+
+
+def test_add_and_trim_print_before_a_quiet_dropout():
+    """The reader wants what to buy and what to sell first; a verdict that quietly expired
+    back to HOLD asks nothing of them and can sit at the bottom of the block."""
+    add = holdings.Change(ticker="ASML", before=HOLD, reading=_reading("ASML", ADD))
+    dropout = holdings.Change(ticker="COIN", before=ADD, reading=_reading("COIN", HOLD))
+    trim = holdings.Change(ticker="ORCL", before=WATCH, reading=_reading("ORCL", TRIM))
+    out = "\n".join(render._holdings_section([_delta(
+        changed=(dropout, trim, add), standing={ADD: 1, TRIM: 1}, positions=3)]))
+    assert out.index("ASML") < out.index("ORCL") < out.index("COIN")
 
 
 def test_a_stale_portfolio_reaches_the_subject_line():

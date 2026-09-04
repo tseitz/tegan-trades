@@ -401,7 +401,9 @@ def _holdings_section(deltas) -> list[str]:
             out.append(f"  STALE — written down {d.age_days} days ago. Anything traded since "
                        f"is missing from everything below.")
 
-        for change in d.changed:
+        # Loud (ADD/TRIM) before quiet dropouts, ADD before TRIM within the loud group — a
+        # reader wants to know what to buy and sell before what quietly stopped asking.
+        for change in sorted(d.changed, key=_change_sort_key):
             verdict = change.reading.verdict
             was = "new to the file" if change.before is None else f"was {change.before}"
             if verdict in holdings.LOUD:
@@ -419,11 +421,11 @@ def _holdings_section(deltas) -> list[str]:
             dropped = len(d.arrived) - ARRIVALS_SHOWN
             if dropped > 0:
                 out.append(f"    and {dropped} more — `uv run review --levels`")
+        # Counted, not listed. A departure asks nothing of the reader — the position simply
+        # is not at a level any more — so naming each one only lengthens the section.
         if d.left:
-            out.append("  stepped off a level overnight")
-            for ticker, was in d.left:
-                kind, _, side = was.partition(":")
-                out.append(f"    {ticker:<6} was on {kind.replace('_', ' ')} {side}")
+            out.append(f"  {len(d.left)} position{'' if len(d.left) == 1 else 's'} "
+                       f"stepped off a level overnight")
 
         counts = " · ".join(f"{n} {v}" for v, n in sorted(standing_loud.items()))
         watching = d.standing.get("WATCH", 0)
@@ -439,6 +441,11 @@ def _holdings_section(deltas) -> list[str]:
             out.append(f"  no price for {', '.join(d.unpriced)} — "
                        f"run `fetch-prices --portfolio {d.portfolio}`")
     return out
+
+
+def _change_sort_key(change):
+    verdict = change.reading.verdict
+    return (verdict not in holdings.LOUD, verdict, change.ticker)
 
 
 def _arrival(spot) -> str:
