@@ -6,7 +6,7 @@
       "args": [
         "run",
         "--directory",
-        "/Users/tseitz/code/projects/tegan-trades",
+        "${CLAUDE_PROJECT_DIR}",
         "brain-mcp"
       ],
       "env": {}
