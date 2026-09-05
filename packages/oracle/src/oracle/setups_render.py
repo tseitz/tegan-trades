@@ -237,8 +237,20 @@ def _age_days(newest_at: str, as_of: date | None) -> int | None:
 
 
 def format_views(candidate: Candidate) -> str:
-    """``Person (date)`` per supporter, newest first — so a stale voice is visible as one."""
-    return ", ".join(f"{v.person} ({v.published_at})" for v in candidate.views)
+    """``Person (date)`` per supporter, newest first — so a stale voice is visible as one.
+
+    A supporter whose counted call has since been reversed gets the newer call appended right
+    on their name (``since flipped long 2026-08-24``) — the reversal itself usually can't form
+    its own row here (see ``View.reversal``), so this is the only place it would ever surface.
+    """
+    parts = []
+    for v in candidate.views:
+        part = f"{v.person} ({v.published_at})"
+        if v.reversal is not None:
+            direction, when = v.reversal
+            part += f" [since flipped {direction} {when}]"
+        parts.append(part)
+    return ", ".join(parts)
 
 
 def format_candidate(candidate: Candidate, *, rank: int | None = None,
@@ -246,7 +258,7 @@ def format_candidate(candidate: Candidate, *, rank: int | None = None,
                      color: bool = False, venue_symbol: str | None = None,
                      venue: str | None = None,
                      zones_in_thesis: int = 1, zone_index: int = 1,
-                     trigger=None) -> str:
+                     trigger=None, asset_name: str | None = None) -> str:
     """Render one candidate as a price ladder plus four summary lines.
 
     Stop and invalidation stay two distinct labelled values (they answer "where is this trade
@@ -298,13 +310,15 @@ def format_candidate(candidate: Candidate, *, rank: int | None = None,
 
     return "\n".join(["", _headline(c, rank=rank, total=total, color=color,
                                     venue_symbol=venue_symbol, venue=venue,
-                                    zones_in_thesis=zones_in_thesis, zone_index=zone_index), "",
+                                    zones_in_thesis=zones_in_thesis, zone_index=zone_index,
+                                    asset_name=asset_name), "",
                       *body, "", *_summary(c, as_of=as_of, color=color, trigger=trigger)])
 
 
 def _headline(c: Candidate, *, rank: int | None, total: int | None, color: bool,
               venue_symbol: str | None = None, venue: str | None = None,
-              zones_in_thesis: int = 1, zone_index: int = 1) -> str:
+              zones_in_thesis: int = 1, zone_index: int = 1,
+              asset_name: str | None = None) -> str:
     """Asset, direction and the two numbers the whole judgement hangs on.
 
     The zone timeframe stays in the heading because the same asset can appear twice — once per
@@ -340,7 +354,11 @@ def _headline(c: Candidate, *, rank: int | None, total: int | None, color: bool,
     if c.aliases:
         folded = " " + paint("(= " + ", ".join(c.aliases) + ")", "dim", color=color)
 
-    head = (f"{counter}{paint(c.asset, 'bold', color=color)}{routing}{folded} "
+    # The full name behind an unfamiliar or ambiguous ticker — "IO" alone is a coin
+    # (io.net) that reads as a typo, and "LINK" alone collides with an unrelated stock.
+    name = "" if not asset_name else " " + paint(f"({asset_name})", "dim", color=color)
+
+    head = (f"{counter}{paint(c.asset, 'bold', color=color)}{routing}{folded}{name} "
             f"{paint(direction, dir_style, color=color)}")
     # One thesis can yield a weekly zone and a daily one, and they are offered as two separate
     # decisions because they are two different trades. Adjacency alone reads as the duplicate

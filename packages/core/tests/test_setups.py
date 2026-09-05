@@ -1017,6 +1017,66 @@ def test_a_person_who_restated_counts_once_at_their_latest_date():
     assert len(candidate.thesis_ids) == 2
 
 
+# ── flagging a reversal ──────────────────────────────────────────────────────
+#
+# The counted call is always a person's latest *matching* one — the opposite direction usually
+# needs a zone the current structure doesn't have (see cross_reference's premium/discount gate),
+# so a reversal otherwise vanishes instead of being shown. ``latest_by_person`` is how a caller
+# hands ``collapse`` the fact anyway.
+
+def test_flags_a_supporter_whose_later_call_reversed():
+    ctx = _ctx()  # long-permitting; _row()'s default direction is "long"
+    setup = cross_reference(_row(id="a", person="Mayne", published_at="2026-07-05"), ctx,
+                            published_close=100.0)
+    candidate = collapse(
+        [setup], latest_by_person={("BTC", "Mayne"): ("short", "2026-08-01")},
+    )[0]
+    assert candidate.views == (
+        View(person="Mayne", published_at="2026-07-05", reversal=("short", "2026-08-01")),
+    )
+
+
+def test_does_not_flag_a_mere_restatement_in_the_same_direction():
+    ctx = _ctx()
+    setup = cross_reference(_row(id="a", person="Mayne", published_at="2026-07-05"), ctx,
+                            published_close=100.0)
+    candidate = collapse(
+        [setup], latest_by_person={("BTC", "Mayne"): ("long", "2026-08-01")},
+    )[0]
+    assert candidate.views[0].reversal is None
+
+
+def test_does_not_flag_a_neutral_later_call():
+    """Neutral has no family — an abstention isn't a reversal."""
+    ctx = _ctx()
+    setup = cross_reference(_row(id="a", person="Mayne", published_at="2026-07-05"), ctx,
+                            published_close=100.0)
+    candidate = collapse(
+        [setup], latest_by_person={("BTC", "Mayne"): ("neutral", "2026-08-01")},
+    )[0]
+    assert candidate.views[0].reversal is None
+
+
+def test_does_not_flag_an_earlier_opposite_call():
+    """The reversal has to be *later* than the counted call, or it isn't news."""
+    ctx = _ctx()
+    setup = cross_reference(_row(id="a", person="Mayne", published_at="2026-07-20"), ctx,
+                            published_close=100.0)
+    candidate = collapse(
+        [setup], latest_by_person={("BTC", "Mayne"): ("short", "2026-07-05")},
+    )[0]
+    assert candidate.views[0].reversal is None
+
+
+def test_no_latest_by_person_means_no_flagging():
+    """The lookup is optional — omitting it must not change existing behaviour."""
+    ctx = _ctx()
+    setup = cross_reference(_row(id="a", person="Mayne", published_at="2026-07-05"), ctx,
+                            published_close=100.0)
+    candidate = collapse([setup])[0]
+    assert candidate.views[0].reversal is None
+
+
 def test_published_at_is_normalized_to_a_date_even_from_a_full_timestamp():
     setup = cross_reference(
         _row(published_at="2026-07-20T14:33:02Z"), _ctx(), published_close=100.0

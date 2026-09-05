@@ -273,6 +273,17 @@ def build_candidates(
             ctx = replace(ctx, funding=outlook)
         contexts[asset] = (daily, ctx)
 
+    # Each person's single most recent thesis per asset, over the whole corpus — including
+    # calls that never reach a gate below. ``collapse`` uses this to flag a supporter whose
+    # counted view has since been reversed; the reversal itself almost never survives
+    # ``cross_reference`` on its own (the opposite direction usually needs a zone the current
+    # structure doesn't have), so without this pass it just goes quiet instead of being shown.
+    latest_by_person: dict[tuple[str, str], tuple[str, str]] = {}
+    for row in rows:
+        key = (row.asset, row.person)
+        if row.published_at > latest_by_person.get(key, ("", ""))[1]:
+            latest_by_person[key] = (row.direction, row.published_at)
+
     rank_cache: dict[str, int | None] = {}
     outcomes = []
     rejections: Counter = Counter()
@@ -318,7 +329,9 @@ def build_candidates(
 
     # One row per ticker, before sampling rather than after. Sampling after would let the
     # draw pick the daily zone and discard the weekly the precedence rule says outranks it.
-    kept, duplicate_zones = queue_mod.one_per_asset(collapse(outcomes, aliases=aliases))
+    kept, duplicate_zones = queue_mod.one_per_asset(
+        collapse(outcomes, aliases=aliases, latest_by_person=latest_by_person)
+    )
     candidates = tuple(kept)          # collapse's return type; callers index and unpack it
 
     # The trigger pass runs over candidates rather than assets: it is a handful of rows against

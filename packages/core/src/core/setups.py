@@ -505,6 +505,13 @@ class View:
     """
     person: str
     published_at: str   # normalized to YYYY-MM-DD
+    # Set when this person has since said something in the *other* direction on this same
+    # asset — a call that never counts here, because a contradicting direction can only ever
+    # form a *different* candidate (a different zone, or none at all if the structure currently
+    # only permits one side). Without this, an old bearish call and a newer bullish reversal
+    # from the same person both go quiet: the old one keeps counting, the new one just
+    # disappears because the zone it would need doesn't exist right now. (direction, date).
+    reversal: tuple[str, str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -721,11 +728,20 @@ def collapse(
     *,
     weights: SetupWeights = DEFAULT_WEIGHTS,
     aliases: Mapping[str, str] | None = None,
+    latest_by_person: Mapping[tuple[str, str], tuple[str, str]] | None = None,
 ) -> tuple[Candidate, ...]:
     """Fold per-thesis setups into one candidate per zone, best score first.
 
     ``outcomes`` may contain ``NotASetup`` entries; they are ignored, so a caller can pass the
     raw stream straight through.
+
+    ``latest_by_person`` is ``(asset, person) -> (direction, published_at)`` for that person's
+    single most recent thesis on the asset, over the *whole* corpus — including calls that never
+    passed a gate here. Without it, a reversal is invisible rather than merely uncounted: the old
+    call still forms this candidate, and the newer, contradicting one usually needs a zone that
+    doesn't currently exist (see ``View.reversal``), so it produces nothing to compare against.
+    Optional because most callers (tests, anything building a single candidate by hand) have no
+    such corpus to hand and the flag is a courtesy, not a gate.
 
     ``aliases`` maps a corpus label onto the label of the instrument it is actually traded as,
     and is how *two spellings of one ticker* stop being two candidates. The corpus says both
@@ -798,10 +814,19 @@ def collapse(
         for member in members:
             if member.published_at > latest.get(member.person, ""):
                 latest[member.person] = member.published_at
-        views = tuple(
-            View(person=person, published_at=when)
-            for person, when in sorted(latest.items(), key=lambda kv: (kv[1], kv[0]), reverse=True)
-        )
+        group_family = _DIRECTION_FAMILY.get(rep.direction)
+        views = []
+        for person, when in sorted(latest.items(), key=lambda kv: (kv[1], kv[0]), reverse=True):
+            reversal = None
+            newer = (latest_by_person or {}).get((asset, person))
+            if newer is not None:
+                newer_direction, newer_at = newer
+                if newer_at > when and _DIRECTION_FAMILY.get(newer_direction) not in (
+                    None, group_family,
+                ):
+                    reversal = newer
+            views.append(View(person=person, published_at=when, reversal=reversal))
+        views = tuple(views)
         # The freshest member's, not the representative's or an average. A zone one person
         # called yesterday and three called last year is a live idea with old corroboration,
         # not a stale one — and averaging would let extra supporters *lower* the score, which

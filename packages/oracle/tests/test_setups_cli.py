@@ -416,6 +416,14 @@ def test_format_candidate_shows_freshness_so_an_old_view_reads_as_one():
     assert "freshness 0.08" in text
 
 
+def test_format_candidate_flags_a_supporter_who_has_since_reversed():
+    """The counted call still shows — the reversal is a note beside it, not a replacement."""
+    text = setups_cli.format_candidate(_candidate(views=(
+        View(person="Mayne", published_at="2026-07-20", reversal=("short", "2026-08-24")),
+    )))
+    assert "Mayne (2026-07-20) [since flipped short 2026-08-24]" in text
+
+
 def test_format_candidate_flags_a_ranging_weekly_rather_than_hiding_it():
     aligned = setups_cli.format_candidate(_candidate(trend_alignment=1.0))
     ranging = setups_cli.format_candidate(_candidate(trend_alignment=0.0,
