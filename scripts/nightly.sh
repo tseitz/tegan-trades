@@ -35,6 +35,37 @@ cd "$REPO" || exit 1
 # not being found would look like an LLM failure rather than a PATH one.
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
+# ── keep this checkout current before anything else runs ────────────────────────
+#
+# The only thing that used to update a checkout was a person SSHing in and running `git pull`
+# by hand — which is exactly how a proxy fix sat unused on the droplet for a full day after it
+# was pushed. This makes every run start on whatever is on `origin/main`, on every machine that
+# runs this script.
+#
+# `cfg/tickers.json` is rewritten by this same run's `fetch-tickers` step and never committed
+# from here (`backup.sh` mirrors it to Drive, not to git — see that file), so its working-tree
+# copy is always "changed" by the next time this runs. Checking it out first is what keeps the
+# pull a plain fast-forward instead of a nightly conflict; nothing else is touched, so real
+# uncommitted work on a machine stays untouched. `--ff-only` means a history that has genuinely
+# diverged (a commit made directly on this machine, say) fails loudly instead of silently
+# merging.
+#
+# Re-execs into a fresh process afterward rather than letting this one keep going — bash reads
+# a running script incrementally, and a `git pull` that just changed the file underneath it is
+# a well-known way to corrupt the rest of the execution. Mirrors the caffeinate re-exec further
+# down (same guard-var shape), except this one runs before `ORIGINAL_ARGS` exists yet, so it
+# re-execs on the raw, not-yet-parsed `"$@"` instead.
+if [ -z "${NIGHTLY_REEXECED:-}" ]; then
+  git checkout -- cfg/tickers.json 2>/dev/null
+  if git pull --ff-only origin main; then
+    echo "[nightly] pulled latest code from origin/main"
+  else
+    echo "[nightly] git pull failed — continuing on the code already checked out" >&2
+  fi
+  export NIGHTLY_REEXECED=1
+  exec /bin/bash "$0" "$@"
+fi
+
 # ── when this is allowed to run ──────────────────────────────────────────────────
 #
 # **The trigger is "the laptop is genuinely awake", not a clock time.** launchd pokes this
