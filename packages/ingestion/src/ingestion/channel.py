@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import sys
+import time
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
 from yt_dlp import YoutubeDL
+from yt_dlp.utils import DownloadError
 
 from ingestion.youtube import proxy_url
 
@@ -19,6 +21,36 @@ def _ydl_opts(**opts: object) -> dict:
     if url is not None:
         opts["proxy"] = url
     return opts
+
+
+# yt-dlp reports these as prose on an untyped DownloadError (see roster.py's
+# _metadata_verdict for the same constraint) — a rotating proxy IP that YouTube has
+# already flagged, or a momentary rate limit. Either clears on the next IP the pool
+# hands out, which is exactly what fetch_transcript already does for captions; this
+# mirrors that retry rather than leaving the metadata path as a single uncontested try.
+_BLOCKED_MARKERS = ("Sign in to confirm", "Too Many Requests")
+
+
+def _with_retry(call, *, retries: int = 4, backoff: float = 1.5, sleep=time.sleep):
+    """Run ``call()``, retrying a proxy-flagged block with a fresh IP.
+
+    Only worth retrying when a proxy is actually configured — a single IP will hit
+    the same block every time, so retrying would just burn 4x the wait for the same
+    failure (the same reasoning ``fetch_transcript`` uses for ``TranscriptBlocked``).
+    """
+    proxied = proxy_url() is not None
+    last_exc: DownloadError | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            return call()
+        except DownloadError as exc:
+            if not proxied or not any(marker in str(exc) for marker in _BLOCKED_MARKERS):
+                raise
+            last_exc = exc
+            if attempt < retries:
+                sleep(backoff * attempt)
+    assert last_exc is not None
+    raise last_exc
 
 
 def channel_base_url(channel: str) -> str:
@@ -59,7 +91,7 @@ def _flat_entries(url: str, limit: int) -> list[dict]:
         playlistend=limit,
     )
     with YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=False)
+        info = _with_retry(lambda: ydl.extract_info(url, download=False))
     return info.get("entries") or []
 
 
@@ -140,7 +172,7 @@ def _published_at(info: dict) -> str | None:
 
 def _full_extract(url: str) -> dict:
     with YoutubeDL(_ydl_opts(skip_download=True, quiet=True)) as ydl:
-        return ydl.extract_info(url, download=False)
+        return _with_retry(lambda: ydl.extract_info(url, download=False))
 
 
 def hydrate(video_id: str, *, _extract=None) -> VideoMeta:

@@ -5,6 +5,7 @@ from ingestion.channel import (
     VideoMeta,
     VideoStub,
     _published_at,
+    _with_retry,
     channel_base_url,
     hydrate,
     is_recent_enough,
@@ -12,6 +13,7 @@ from ingestion.channel import (
     resolve_recent,
     tab_url,
 )
+from yt_dlp.utils import DownloadError
 
 
 @pytest.mark.parametrize("channel,expected", [
@@ -116,6 +118,57 @@ def test_resolve_recent_returns_empty_and_surfaces_failure_when_both_tabs_error(
     assert "@x/videos" in err
     assert "@x/streams" in err
     assert "boom" in err
+
+
+def test_with_retry_recovers_from_a_blocked_proxy_ip(monkeypatch):
+    monkeypatch.setattr("ingestion.channel.proxy_url", lambda: "http://proxy:8080")
+    attempts = []
+
+    def call():
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise DownloadError("Sign in to confirm you're not a bot")
+        return "ok"
+
+    result = _with_retry(call, sleep=lambda _: None)
+    assert result == "ok"
+    assert len(attempts) == 3
+
+
+def test_with_retry_raises_immediately_with_no_proxy_configured(monkeypatch):
+    monkeypatch.setattr("ingestion.channel.proxy_url", lambda: None)
+    attempts = []
+
+    def call():
+        attempts.append(1)
+        raise DownloadError("Sign in to confirm you're not a bot")
+
+    with pytest.raises(DownloadError):
+        _with_retry(call, sleep=lambda _: None)
+    assert len(attempts) == 1  # a single IP will hit the same block every retry
+
+
+def test_with_retry_does_not_retry_a_permanent_error(monkeypatch):
+    monkeypatch.setattr("ingestion.channel.proxy_url", lambda: "http://proxy:8080")
+    attempts = []
+
+    def call():
+        attempts.append(1)
+        raise DownloadError("This channel does not have a streams tab")
+
+    with pytest.raises(DownloadError):
+        _with_retry(call, sleep=lambda _: None)
+    assert len(attempts) == 1  # not one of the known transient markers
+
+
+def test_with_retry_raises_last_error_after_exhausting_retries(monkeypatch):
+    monkeypatch.setattr("ingestion.channel.proxy_url", lambda: "http://proxy:8080")
+
+    def call():
+        raise DownloadError("HTTP Error 429: Too Many Requests")
+
+    with pytest.raises(DownloadError, match="429"):
+        _with_retry(call, retries=3, sleep=lambda _: None)
 
 
 def test_hydrate_maps_upload_date_to_iso_published_at():
