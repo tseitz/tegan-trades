@@ -548,7 +548,7 @@ def routing_plan(queue) -> tuple[venue_routing.Router, tuple[str, ...]]:
 def triage(queue, *, decisions_path, vault_path, input_fn=input, out=print,
            as_of: date | None = None, color: bool | None = None,
            mirror_path=None, exclusions_path=None, desk=None, router=None,
-           triggers=None) -> dict[str, int]:
+           triggers=None, tickers: dict | None = None) -> dict[str, int]:
     """Present each candidate in queue order; approve -> vault note (if given) + sidecar,
     all decisions -> sidecar. Quit stops immediately without consuming further input.
 
@@ -559,6 +559,10 @@ def triage(queue, *, decisions_path, vault_path, input_fn=input, out=print,
     ``as_of`` is only used to age each candidate for display, so it stays optional — a caller
     that doesn't supply one gets the date without the day count rather than an exception.
     ``color`` defaults to autodetection, and is an explicit argument so tests pin it off.
+
+    ``tickers`` is ``Registry.tickers`` (``core.canon``), used only to print the full name
+    beside an obscure or ambiguous symbol. Optional — a caller without it just shows the
+    ticker alone, same as before this existed.
 
     **One prompt, not two.** ``_read_choice`` settles the verdict and the reason together —
     see ``_CHOICES`` for why splitting them mis-routed decisions in both directions. The only
@@ -615,11 +619,13 @@ def triage(queue, *, decisions_path, vault_path, input_fn=input, out=print,
         # would print a ticker nothing could trade.
         venue = routed.winner.venue if desk is not None and routed.winner else None
         listing = venue_map.listing(c.asset, venue) if venue else None
+        asset_name = (tickers or {}).get(c.asset.upper(), {}).get("name")
         out(format_candidate(c, rank=i, total=total, as_of=as_of, color=color,
                              venue=venue,
                              venue_symbol=getattr(listing, "symbol", None),
                              zones_in_thesis=zones, zone_index=index,
-                             trigger=(triggers or {}).get(c.key)))
+                             trigger=(triggers or {}).get(c.key),
+                             asset_name=asset_name))
         # A fifth summary line rather than a headline field: it is four facts (venue, cost,
         # margin, what is unpriced) and the headline is already carrying five.
         out(format_routing(routed, hold_days=CARRY_HOLD_DAYS, color=color))
@@ -1005,7 +1011,7 @@ def main(argv: list[str] | None = None) -> int:
     counts = triage(  # pragma: no cover - interactive
         queue, decisions_path=decisions_path, vault_path=vault_note, as_of=as_of,
         mirror_path=mirror_path, exclusions_path=args.exclusions, desk=desk, router=router,
-        triggers=stats.triggers)
+        triggers=stats.triggers, tickers=registry.tickers)
     print("\n" + format_counts(counts))
     return 0
 
