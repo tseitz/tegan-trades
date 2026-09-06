@@ -701,15 +701,20 @@ PY
 # It IS in `ALL_STEPS` so `--only digest` and `--skip digest` work: that list is the selector,
 # not the summary.
 #
-# Runs last, after `backup`, so nothing it does can cost the night's ore. Both `--vault` and
-# `--email` warn rather than fail — a missing vault or an unset DIGEST_* setting is a surface
-# lost, not a run lost. A degraded run still exits 0, so the `||` branch below catches only an
-# unhandled crash; the survivable failures announce themselves in the digest's own body and
-# subject line instead, which is where a person will actually meet them.
+# Runs last, after `backup`, so nothing it does can cost the night's ore. `--email` warns rather
+# than fail — an unset DIGEST_* setting is a surface lost, not a run lost. A degraded run still
+# exits 0, so the `||` branch below catches only an unhandled crash; the survivable failures
+# announce themselves in the digest's own body and subject line instead, which is where a
+# person will actually meet them.
+#
+# **No `--vault` here.** On the droplet, `~/vault/Trading` is a bare local folder, not the real
+# Obsidian vault (`~/Obsidian/Main Vault/Trading` on the Mac) — same name, unrelated directory.
+# The note was landing somewhere only reachable over SSH and nobody was reading it. Email is the
+# channel that has actually been reaching Tegan since the droplet took over the nightly run.
 if should_run digest; then
   echo "" | tee -a "$LOG"
   echo "───── digest ─────" | tee -a "$LOG"
-  uv run digest --vault --email >>"$LOG" 2>&1 || \
+  uv run digest --email >>"$LOG" 2>&1 || \
     echo "  WARN  digest — see log" | tee -a "$LOG"
 fi
 

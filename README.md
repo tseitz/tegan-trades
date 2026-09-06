@@ -50,45 +50,60 @@ machine cannot build tonight's queue on a stale corpus and then mirror that over
 prose and will drift. A failing step does not abort the run; the exit code reflects the worst of
 them, so a partial night is visible rather than passing as a good one.
 
-**It runs when you open the laptop, not at a set time.** launchd starts the script every 120s;
-the script's gate decides in ~50ms whether to go and exits if not. It runs once a day, no
-earlier than **06:15 local**, when the machine is genuinely awake — lid open, or on AC power —
-and not under 30% battery. Open the lid after 06:15 and the queue is ready within the quarter
-hour.
+**It runs on a DigitalOcean droplet, on a fixed schedule — not on the laptop.** `ssh
+tegan-droplet` (repo at `/root/tegan-trades`), `crontab -l` there shows the real trigger:
 
-Waiting to be opened is the trade, made on purpose: **nothing here wakes the Mac, so a day the
-laptop never opens is a day the cycle does not run.** No data is lost when that happens —
-`ingest-x` resumes from the last captured day rather than assuming yesterday, so a gap is
-collected on the next run (up to 7 days automatically; beyond that it warns rather than
-skipping silently).
+```
+0 11 * * * cd /root/tegan-trades && export PATH="/root/.local/bin:$PATH" && ./scripts/nightly.sh --skip reconcile-perps >> /root/tegan-trades/data/logs/nightly-cron.log 2>&1
+```
 
-Why it is not simply scheduled for 06:15: launchd fires a missed `StartCalendarInterval` during
-*DarkWake*, a maintenance wake with the lid shut, and on battery macOS puts the machine back to
-sleep — the job is not killed, it is frozen, thawing seconds at a time until you open the lid.
-Measured twice (2026-07-27, 2026-08-01): a run that started at 06:16 reported
-`ingest-roster (10354s)` and finished at 09:39 — that step takes about five minutes awake —
-while `distill-roster`, which happened to begin after the lid opened, took 149s. `caffeinate` cannot
-fix it — `-s` is honoured **only on AC power** and a closed lid is not "idle sleep", so `-i`
-does not cover it either. It can keep a machine awake; it cannot wake a sleeping one.
+11:00 UTC, every day, no lid or battery involved — the droplet has neither and is always on.
+`data/nightly.gate`, `NIGHTLY_EARLIEST` and the lid/battery checks below still exist in the
+script and still matter for `data-pull`/`backup` timing, but the lid/AC/battery gate itself is
+Mac-only code (`if [ "$(uname -s)" = "Darwin" ]`) and is a no-op on the droplet's Linux box.
 
-Ask why it has not gone yet with `cat data/nightly.gate` — one line, rewritten every poll:
+**The laptop's launchd job is uninstalled.** `scripts/com.tseitz.tegan-trades.nightly.plist`
+still sits in `scripts/`, unused — it is not loaded on this machine, and the section below
+describes what it did back when the laptop was the runner, kept for the day this needs to run
+on a Mac again.
+
+Historical note, kept because the reasoning still applies if this ever runs on a Mac: launchd's
+`StartCalendarInterval` fires during *DarkWake* (a maintenance wake with the lid shut), and on
+battery macOS goes straight back to sleep — the job isn't killed, it's frozen, thawing seconds
+at a time until the lid opens. Measured twice (2026-07-27, 2026-08-01): a run that started at
+06:16 reported `ingest-roster (10354s)` and finished at 09:39 — that step takes about five
+minutes awake. `caffeinate -s` is honoured **only on AC power**, and a closed lid isn't "idle
+sleep" either, so it can keep an awake machine from sleeping but can't wake a sleeping one. This
+is why the droplet is the actual answer, not a `caffeinate` trick on the laptop.
+
+Ask whether a run is running or deferred with `cat data/nightly.gate` — one line, rewritten every
+run:
 
 ```text
-2026-08-01 06:18  deferred: lid closed on battery — macOS sleeps through the run
+2026-09-06 11:00  deferred: already ran today
 ```
 
 Override the timing gate with `scripts/nightly.sh --force` (or `NIGHTLY_FORCE=1`) — it skips the
 hour, lid, battery and once-a-day checks, but **not `data/nightly.pause`**, which stops spending
 and so has to mean it. A forced run does not count as the day's run, so testing one by hand
-leaves the automatic one still to come. Tune with `NIGHTLY_EARLIEST=0615` and
-`NIGHTLY_MIN_BATTERY=30`.
+leaves the scheduled one still to come.
 
 **What it costs.** **Nothing in real money, as of 2026-08-18** — `ingest-x`, the only step
 billed in actual dollars, is off by default (`NIGHTLY_WITH_X` in the script says why, and
 `scripts/probe_x_contribution.py` is the measurement it rests on). What remains is the day's
-distillation against the Max subscription. Both totals land in the log and in one line per night in
-`~/vault/Trading/Trade Logs/Nightly.md`. **A missing line there is the signal** — a dead job
-and a quiet market look identical otherwise.
+distillation against the Max subscription. Both totals land in the log and in one line per night
+in `Trade Logs/Nightly.md`.
+
+**Fixed 2026-09-06: the digest no longer writes `--vault` on the droplet.** `digest --vault`
+used to resolve the vault anchor to `~/vault/Trading` on whichever machine ran it. On the
+droplet that is a bare local folder, not the real Obsidian vault (`~/Obsidian/Main Vault/Trading`
+on the Mac) — same name, unrelated directory. The note was landing somewhere only reachable over
+SSH, unread, from 2026-09-03 (when the droplet took over the nightly run) until this was caught.
+Email (`digest --email`, `DIGEST_TO` in `.env`) is the channel that actually reaches Tegan, so
+that's now the only one. `Trade Logs/Nightly.md` — written directly by `nightly.sh`, separate
+from `digest --vault` — still lands in that same stranded droplet folder; it is a one-line
+dead-job signal rather than something read routinely, and is left as-is pending a decision on
+whether it's worth syncing back or dropping too.
 
 ### Stopping it
 
@@ -100,12 +115,28 @@ XAI_MONTHLY_CAP=5.00         # automatic backstop (default $15/month)
 ```
 
 Sentinel files rather than flags, because the job runs while you are not at the keyboard and a
-file left in `data/` explains its own silence. Pausing loses no data.
+file left in `data/` explains its own silence. Pausing loses no data. Run `touch
+data/nightly.pause` **on the droplet** — a copy on the laptop does nothing, since the laptop no
+longer runs the job.
 
 The monthly cap is a **trailing** check — spend is recorded after a run, so the run that
 crosses the line completes and the next is skipped. Overshoot is bounded by one run, ~$0.25.
 
-### Install / uninstall
+### Managing the cron job (droplet)
+
+```bash
+ssh tegan-droplet
+crontab -l                  # see the schedule
+crontab -e                  # change it
+cd tegan-trades && ./scripts/nightly.sh --force   # run it once now, without waiting for cron
+```
+
+There is no install/uninstall step beyond editing the crontab — no plist, no `launchctl`. Logs
+are in `/root/tegan-trades/data/logs/nightly/` (30 nights kept) and
+`data/logs/nightly-cron.log` (cron's own stdout/stderr, catches anything that escapes the script
+before logging starts). `data/logs/nightly/spend.json` has running spend.
+
+### If this ever needs to run on the laptop again (legacy launchd path)
 
 ```bash
 # install
@@ -126,11 +157,9 @@ rm ~/Library/LaunchAgents/com.tseitz.tegan-trades.nightly.plist
 `bootout` alone stops it until the next login; the file in `~/Library/LaunchAgents` is what
 makes it come back, so **remove both** to uninstall properly. Editing the plist in `scripts/`
 changes nothing on its own — launchd reads the copy in `~/Library/LaunchAgents`, so re-copy and
-re-bootstrap after any edit.
-
-Logs are in `data/logs/nightly/` (30 nights kept), running spend in
-`data/logs/nightly/spend.json`, and `launchd.out` / `launchd.err` catch anything that escapes
-the script — including a failure to start at all, which by definition the script cannot record.
+re-bootstrap after any edit. `launchd.out` / `launchd.err` in `data/logs/nightly/` would catch
+anything that escapes the script under this path — including a failure to start at all, which by
+definition the script cannot record.
 
 ## Working on a second machine
 
