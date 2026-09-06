@@ -567,12 +567,41 @@ total_failed() {
   grep -E "^TOTAL: [0-9]+ $1," "$LOG" | tail -1 | grep -oE '[0-9]+ failed' | cut -d' ' -f1
 }
 
+# Best-effort classifier for the flag line above: turns the per-item `!` lines under a step's
+# own section into one phrase a bleary-eyed read of the morning mail can act on ("ignore it,
+# check tomorrow" vs. "look now"), instead of always saying just "see log". This is the opposite
+# tradeoff from total_failed() above — a wrong guess here only drops the hint, it never hides or
+# miscounts a failure, so the format-fragility that function avoids doesn't apply here.
+failure_hint() {
+  local step="$1"
+  local section
+  section=$(awk -v s="───── $step ─────" '
+    $0==s {p=1; next}
+    /^───── .* ─────$/ {if (p) exit}
+    p
+  ' "$LOG")
+  local total blocked item_lines
+  item_lines=$(grep '^    ! ' <<<"$section")
+  total=$(grep -c '^    ! ' <<<"$section")
+  [ "${total:-0}" -eq 0 ] && return 0
+  blocked=$(grep -Ec 'not a bot|429 Too Many Requests|Read timed out|UNEXPECTED_EOF_WHILE_READING' <<<"$item_lines")
+  if [ "${blocked:-0}" -eq "$total" ]; then
+    echo "youtube is bot-blocking/rate-limiting yt-dlp, not a real failure — usually clears on its own within a day or two"
+  fi
+}
+
 for pair in "ingest-roster:$(total_failed ingested)" \
             "distill-roster:$(total_failed distilled)" \
             "brain-extract:$(total_failed extracted)"; do
   failed="${pair##*:}"
   if [ "${failed:-0}" -gt 0 ]; then
-    flag "${pair%%:*} — ${failed} item(s) failed, see log"
+    step_name="${pair%%:*}"
+    hint=$(failure_hint "$step_name")
+    if [ -n "$hint" ]; then
+      flag "${step_name} — ${failed} item(s) failed ($hint), see log"
+    else
+      flag "${step_name} — ${failed} item(s) failed, see log"
+    fi
   fi
 done
 
