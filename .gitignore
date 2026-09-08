@@ -8,10 +8,10 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
-# Secrets / env
-.env
+# Secrets / env — .env is tracked but locked by git-crypt (see .gitattributes)
 .env.*
 !.env.example
+!.env
 
 # OS
 .DS_Store
