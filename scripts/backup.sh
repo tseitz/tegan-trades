@@ -47,6 +47,15 @@
 #                the one thing that costs nothing to recreate.
 #   *.bak        one-off migration leftovers.
 #   scratch/     throwaway.
+#   .last-pull   each machine's own note of which mirror snapshot it last pulled. It must stay
+#                machine-local: uploaded, it would come back down and tell the other machine it
+#                had pulled when it had not.
+#
+# **This is still a `copy`, so it overwrites — which is wrong for a file two machines append to.**
+# Those are reconciled by `oracle.mirror`, which merges instead. This script does not exclude
+# them, because it runs on the droplet straight after `data-pull.sh` has already merged and
+# pushed them, so what it uploads is the union. If you ever run this WITHOUT a pull first, run
+# `uv run python -m oracle.mirror reconcile --dest "$DEST"` before it.
 #
 # Everything else is kept even where it is cheap, because "cheap to refetch" assumes the API
 # still serves that window, and price/funding history is exactly where that assumption fails.
@@ -87,6 +96,7 @@ rclone copy data/ "$DEST/data/" \
   --exclude '*.bak' \
   --exclude '*.pre-contentid.bak/**' \
   --exclude '.DS_Store' \
+  --exclude '.last-pull' \
   || { echo "backup: rclone copy of data/ failed" >&2; exit 1; }
 
 # The config is small and versioned in git, but a restore needs the watchlist and the canon
@@ -99,7 +109,16 @@ rclone copy cfg/ "$DEST/cfg/" --checksum || true
 #
 # `rclone size` reads the destination rather than the source, so it is the one line here that
 # would catch a transfer that reported success and moved nothing.
+# Checked, because `mktemp` can fail while still exiting 0. On macOS it writes to /var/folders
+# regardless of TMPDIR, so a caller confined away from that path gets an empty string and a
+# success code — after which `> "$MANIFEST"` redirects to nothing, `rclone copyto ""` fails on an
+# empty path, and the backup that actually succeeded reports failure on its last line.
 MANIFEST="$(mktemp)"
+if [ -z "$MANIFEST" ] || [ ! -f "$MANIFEST" ]; then
+  echo "backup: mktemp produced no file (TMPDIR=${TMPDIR:-unset}) — data/ is mirrored, but no" >&2
+  echo "        manifest was written, so 'did the backup work' has no answer this run" >&2
+  exit 1
+fi
 trap 'rm -f "$MANIFEST"' EXIT
 {
   echo "backed_up_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"

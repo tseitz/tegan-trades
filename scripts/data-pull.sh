@@ -72,6 +72,31 @@ rclone cat "$DEST/MANIFEST.txt" 2>/dev/null | sed 's/^/  /' || echo "  (no manif
 echo "[data-pull] this host: $(hostname)"
 echo
 
+# The files both machines APPEND to are held out of the bulk copy and reconciled below instead.
+# `rclone copy` replaces the destination wholesale, which is right for ore and silently lossy for
+# an append-only log: whoever copies second wins and the other machine's rows are gone.
+#
+# The patterns come from `oracle.mirror` rather than being written out here, because the two
+# drifting apart is the one failure with no symptom — the bulk copy would replace the file, the
+# reconcile would then merge the remote copy with itself, and every test in the repo would still
+# pass. Read that module's docstring before touching this. It also explains why the patterns
+# carry no `data/` prefix: the copy is rooted at `data/`, so a prefixed pattern matches nothing
+# and excludes nothing, failing the same quiet way.
+#
+# Built with a while-read loop rather than `mapfile`: macOS ships bash 3.2, where `mapfile` does
+# not exist. The shebang is `#!/bin/bash`, so this runs under 3.2 on the laptop and under 5.x on
+# the droplet, and only the older dialect is safe to use.
+EXCLUDES_RAW="$(uv run python -m oracle.mirror excludes)" || {
+  echo "data-pull: could not read the exclude list from oracle.mirror" >&2; exit 1; }
+HELD_OUT=()
+while IFS= read -r held_line; do
+  [ -n "$held_line" ] && HELD_OUT+=("$held_line")
+done <<< "$EXCLUDES_RAW"
+if [ "${#HELD_OUT[@]}" -eq 0 ]; then
+  echo "data-pull: the exclude list came back empty — refusing to overwrite append-only logs" >&2
+  exit 1
+fi
+
 # --checksum for the same reason backup.sh uses it: part of the mirror predates rclone and carries
 # modtimes Drive assigned itself, which read as changed forever under the default comparison.
 rclone copy "$DEST/data/" data/ \
@@ -80,12 +105,45 @@ rclone copy "$DEST/data/" data/ \
   --transfers 8 --checkers 16 \
   --exclude '.DS_Store' \
   --exclude 'logs/nightly/*.log' \
+  "${HELD_OUT[@]}" \
   --stats-one-line --stats 10s \
   || { echo "data-pull: rclone copy from $DEST/data/ failed" >&2; exit 1; }
 
 if [ -n "$DRY_RUN" ]; then
   echo "[data-pull] dry run — nothing was written"
   exit 0
+fi
+
+# `--force` means "this corpus is damaged, take the mirror's copy". A merge can never repair a
+# corrupt local file — it would splice the corruption in and then push the result back up — so
+# the flag keeps its stated meaning by taking the remote copy wholesale for these three too.
+if [ -z "$UPDATE_FLAG" ]; then
+  echo "[data-pull] --force: taking the mirror's copy of the append-only files wholesale"
+  uv run python -m oracle.mirror synced | while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    rclone copyto "$DEST/data/$rel" "data/$rel" --checksum \
+      || echo "data-pull: warning: could not restore data/$rel" >&2
+  done
+else
+  # `--root` is passed explicitly and is NOT optional here. Without it `oracle.mirror` derives
+  # the data root from its own file location, which is the checkout the *module* lives in — not
+  # the one this script resolved from `${BASH_SOURCE[0]}` and cd'd into. The two are the same in
+  # production and differ under any second checkout, where the reconcile would then quietly
+  # rewrite the wrong machine's corpus.
+  #
+  # Exits non-zero on failure rather than warning: this script has no `set -e`, so a warning
+  # would be swallowed and the pull would go on to print success over a merge that never ran.
+  uv run python -m oracle.mirror reconcile --dest "$DEST" --root "$REPO/data" || {
+    echo "data-pull: reconciling the append-only files failed — local rows are untouched" >&2
+    exit 1; }
+fi
+
+# Written only after everything above succeeded, so a failed pull cannot leave a receipt claiming
+# this machine is current. `oracle.freshness` is the primary staleness signal and needs no
+# network; this receipt answers the narrower question of which mirror snapshot was last taken.
+if BACKED_UP_AT="$(rclone cat "$DEST/MANIFEST.txt" 2>/dev/null | awk '/^backed_up_at:/{print $2}')" \
+   && [ -n "$BACKED_UP_AT" ]; then
+  printf '%s\n' "$BACKED_UP_AT" > data/.last-pull
 fi
 
 echo "[data-pull] pulled into data/"

@@ -41,6 +41,9 @@ from core.setups import (
 )
 from execution.venues import ALL_NETWORKS, ALPACA
 
+# Re-exported: choosing which candidates a sitting sees is its own concern now — see that
+# module's docstring for why it stopped being ``qualified[:limit]`` — but both names remain
+# part of this CLI's surface for callers and tests that reach for them here.
 from oracle import (
     cache,
     carry,
@@ -49,14 +52,12 @@ from oracle import (
     exclusions,
     execute,
     listings,
+    mirror,
     queue_snapshot,
+    setups_sync,
     venue_map,
     venue_routing,
 )
-
-# Re-exported: choosing which candidates a sitting sees is its own concern now — see that
-# module's docstring for why it stopped being ``qualified[:limit]`` — but both names remain
-# part of this CLI's surface for callers and tests that reach for them here.
 from oracle import queue as queue_mod
 from oracle import route as route_mod
 
@@ -820,6 +821,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
                              "confirmation is shown or waited for")
     parser.add_argument("--list", action="store_true",
                         help="print the queue and exit, no prompting")
+    # The age of the price cache prints either way; this only governs whether being stale is
+    # allowed to trigger a pull. Offline work needs it, and so does the suite, which must never
+    # reach the network.
+    parser.add_argument("--no-sync", action="store_true",
+                        help="never pull from the mirror, however stale the price cache is")
     # Execution is opt-in per run and has no config-file switch that could turn it on.
     # A flag you must type every time is the difference between "I meant to trade tonight"
     # and "I forgot this was still enabled from last week".
@@ -850,6 +856,13 @@ def main(argv: list[str] | None = None) -> int:
     if scratch:
         print(f"  SCRATCH RUN — decisions go to {decisions_path}, not the real sidecar")
         print("  the vault mirror is off; nothing here reaches your durable decision log")
+
+    # Before everything, because a pull rewrites both the price cache the queue is scored from
+    # and the decisions sidecar read below — arriving after either would mean this run scored
+    # one corpus and recorded against another. Skipped on a scratch run: a rehearsal must not
+    # trigger a multi-minute transfer.
+    if not scratch:
+        setups_sync.ensure_fresh(enabled=not args.no_sync)
 
     # Reconciled up front, before the queue is built: a restore has to land before
     # ``load_decisions`` reads the sidecar, or a session run against a lost ``data/`` would
@@ -1013,6 +1026,20 @@ def main(argv: list[str] | None = None) -> int:
         mirror_path=mirror_path, exclusions_path=args.exclusions, desk=desk, router=router,
         triggers=stats.triggers, tickers=registry.tickers)
     print("\n" + format_counts(counts))
+
+    # Pushed here rather than left for the next nightly, because the gap between them is where
+    # judgement lives on exactly one disk. Nineteen decisions and eleven order rows sat only on
+    # the laptop for a week in 2026-09 for precisely this reason.
+    #
+    # A failure warns loudly instead of passing quietly: a push everyone believes is running and
+    # isn't is worse than no push at all, since it is only ever noticed once the local copy is
+    # already gone — the same argument ``oracle.decisions.append_decision`` makes for the vault
+    # mirror. Never fatal, though; the rows are safely on local disk either way.
+    if not scratch and not args.no_sync and any(counts.values()):
+        report = mirror.reconcile(mirror.default_dest())
+        print(f"  {report.message}")
+        if not report.ok:
+            print(f"  {mirror.TOKEN_HINT}", file=sys.stderr)
     return 0
 
 
