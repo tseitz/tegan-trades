@@ -55,16 +55,38 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$P
 # a well-known way to corrupt the rest of the execution. Mirrors the caffeinate re-exec further
 # down (same guard-var shape), except this one runs before `ORIGINAL_ARGS` exists yet, so it
 # re-execs on the raw, not-yet-parsed `"$@"` instead.
+#
+# The outcome is left in a marker file and reported later by the `code-update` step, because a
+# warning printed here reaches nobody. This runs before the step framework exists and before the
+# log file is opened, so its only output was one stderr line in a rotated log — and the droplet
+# ran stale code for over a week behind exactly that line, after a whitespace-only difference in
+# `.env` made every `--ff-only` pull refuse. Continuing on old code is still right; doing it
+# quietly is not. The marker lives under `.git/` so it is machine-local by construction: `data/`
+# is mirrored to Drive, and a marker from the other machine would report the wrong host's
+# failure.
+PULL_MARKER="$REPO/.git/nightly-pull-status"
 if [ -z "${NIGHTLY_REEXECED:-}" ]; then
   git checkout -- cfg/tickers.json 2>/dev/null
-  if git pull --ff-only origin main; then
+  if PULL_ERR="$(git pull --ff-only origin main 2>&1)"; then
     echo "[nightly] pulled latest code from origin/main"
+    rm -f "$PULL_MARKER"
   else
     echo "[nightly] git pull failed — continuing on the code already checked out" >&2
+    printf '%s\n' "$PULL_ERR" > "$PULL_MARKER"
   fi
   export NIGHTLY_REEXECED=1
   exec /bin/bash "$0" "$@"
 fi
+
+# Reports what the pre-re-exec pull above recorded. Non-zero on failure so `step` files it as
+# FAIL, which puts it in the summary, in `history.jsonl`, and from there in the nightly email.
+code_update_status() {
+  [ -f "$PULL_MARKER" ] || { echo "on $(git rev-parse --short HEAD)"; return 0; }
+  echo "git pull --ff-only failed, so this run used the code already checked out:"
+  sed 's/^/  /' "$PULL_MARKER"
+  echo "fix the checkout, or the next push will not reach this machine either"
+  return 1
+}
 
 # ── when this is allowed to run ──────────────────────────────────────────────────
 #
@@ -153,7 +175,7 @@ ONLY_STEPS=""
 # defers with "already ran today" as though nothing had been asked for.
 declare -a ORIGINAL_ARGS=("$@")
 
-ALL_STEPS="data-pull verify-roster ingest-roster ingest-x distill-roster brain-extract brain-index \
+ALL_STEPS="code-update data-pull verify-roster ingest-roster ingest-x distill-roster brain-extract brain-index \
 plaid-sync wallet-sync fetch-prices fetch-funding fetch-altsignal reconcile reconcile-perps setups \
 fetch-tickers \
 canon-drift backup digest"
@@ -392,6 +414,9 @@ echo "tegan-trades nightly · $(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$LOG"
 # ordering load-bearing rather than a nicety. It is also why this is a `step`: a Drive outage
 # should leave the night running on local ore, not abort it, and `step` records a failure
 # without stopping the run.
+# First of all, because every other step runs whatever version of the code this reports on.
+step code-update    code_update_status
+
 step data-pull      ./scripts/data-pull.sh
 
 step verify-roster  uv run verify-roster
