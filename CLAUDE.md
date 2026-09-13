@@ -65,3 +65,17 @@ populated `data/` and fail on a fresh clone, so the command that looks equivalen
 **Before re-running any pipeline command, check `docs/ARCHITECTURE.md` for its cost tier.** `distill-roster --force` and `brain-extract --force` are full-corpus LLM passes (666 calls each); both commands are resume-safe *without* `--force`.
 
 Transcript fetching needs a clean IP — YouTube IP-blocks the caption (`timedtext`) endpoint for flagged/datacenter IPs. Set `WEBSHARE_PROXY_USERNAME` / `WEBSHARE_PROXY_PASSWORD` (see `.env.example`) to route transcript fetches through a rotating residential proxy. Metadata (yt-dlp) fetches direct and is unaffected. The two `@pytest.mark.integration` tests in `packages/ingestion/tests/` hit YouTube live and fail without it — that's environmental, not a regression.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live as GitHub issues on `tseitz/tegan-trades`, driven by the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage roles, each label string equal to its role name. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` and one `docs/adr/` at the repo root. See `docs/agents/domain.md`.
