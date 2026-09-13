@@ -24,6 +24,20 @@ refusals against its 1704 — close enough to look right and wrong enough to hid
 
 Read `scripts/probe_chart_first.py` first; it prints the same facts for one asset, and this is
 the population that card's readings are drawn from.
+
+**Frozen pre-reset baseline, 2026-09-13** — `core.dealing_range.dealing_range` did not yet
+reset, so every one of the 1,704 `wrong_side_of_range` refusals below was unconditional:
+
+    weekly_disagrees=2479, wrong_side_of_range=1704, no_live_zone=716,
+    timeframe_conflict=572, reward_risk_too_low=396, unknown_direction=349,
+    price_past_stop=163, entry_outside_range=59, no_dealing_range=6
+
+(404 assets priced, 57 candidates.) The gate above stayed pointed at the confirmed-only path
+on purpose so its own numbers never move; the reconciliation at the bottom of `main` is the
+one number this probe cannot freeze, because it runs the real engine and the engine now
+resets. Diff its histogram against the one above, not just the refused count — a
+`wrong_side_of_range` that falls while `entry_outside_range` rises by about as much is a label
+migration, not a fix. See `core.dealing_range.dealing_range`'s ``price`` argument.
 """
 from __future__ import annotations
 
@@ -37,7 +51,6 @@ from statistics import median
 from core.canon import load_registry
 from core.dealing_range import dealing_range
 from core.setups import build_context
-from core.structure import BULLISH, breaks, on_or_before
 from oracle import assemble, cache, corpus, listings, trigger_feed
 from oracle.resample import to_weekly
 from oracle.route import Priceable, load_routing_table, route
@@ -76,82 +89,14 @@ def measure(asset: str, *, as_of: date, table, series_cache):
     return {
         "price": context.price,
         "rung": rung,
-        "weekly": context.dealing_range,
+        # The pre-reset baseline, held pure by never passing `price` — the histogram this
+        # feeds must stay comparable across the code change, not silently start reading
+        # `reset` ranges as `inside`. See the module docstring.
+        "weekly": dealing_range(weekly.bars, as_of=as_of),
+        "reset_aware": context.dealing_range,
         "daily": dealing_range(daily.bars, as_of=as_of),
         "rung_range": dealing_range(bars, as_of=as_of) if rung_series is not None else None,
-        "reset": reset_range(weekly.bars, as_of=as_of, confirmed=context.dealing_range),
     }
-
-
-def reset_range(bars, *, as_of: date, confirmed=None) -> tuple[float, float] | None:
-    """The range TraderMayne calls a **range reset**, as ``(low, high)``.
-
-    > "We just broke this high. This is an MSB. We've made a higher high. Where's my higher
-    > low? ... That higher low to higher high, that's my new dealing range. Mark out the 50%.
-    > Mark out the discount, the premium."  — TraderMayne, 2026-05-04
-
-    **Why this is not just another way to draw a range.** ``core.dealing_range`` needs two
-    *confirmed* swings, and a swing needs ``SWING_WIDTH`` closed bars either side, so after a
-    breakout there is nothing to draw with until price turns back — measured 2026-09-13, 133 of
-    410 priced assets had price outside their confirmed range, and ``permits`` refuses long
-    *and* short there. A reset is built from the break's own origin swing and the extreme since,
-    neither of which waits on confirmation, so it exists exactly when the confirmed one does not.
-
-    **One deliberate ambiguity, resolved by Tegan on 2026-09-13.** A later episode (2026-08-17)
-    puts the new low at "the first meaningful pullback" *after* the expansion rather than at the
-    origin swing before it. That reading needs price to come back and leaves "meaningful"
-    undefined; this one is computable the moment the break confirms. The two give different
-    premium/discount lines, so if this is ever revisited, that is the fork.
-
-    **The extreme is bounded at ``as_of`` on both ends, and the first version was not.** The
-    original read every bar from the break to the end of the array, which is correct only
-    because this probe runs at today. ``oracle.asof`` records that the engine never truncates
-    its series — *"every reader in `core.structure` filters by `as_of`"* — so an unfiltered read
-    here is a look-ahead that a past ``--as-of`` would silently answer with tomorrow's high.
-
-    **``confirmed`` bounds which break may reset it, by level rather than by date.** Without a
-    bound, ``found[-1]`` can be a break from years ago whose "extreme since" spans the whole
-    history, producing a range so wide it contains everything: ``permits`` then passes and
-    nothing on the card looks wrong. The bound is that the break must have closed through *this*
-    range's own bound — a bullish break above ``high``, a bearish one below ``low``. A break of
-    lower structure is not a reset of this range, it is a reset of something this range already
-    replaced.
-
-    **Dates were tried first and were badly wrong: 47 of 133 recovered against this rule's 89**
-    (measured 2026-09-13; no bound at all recovers 95). ``DealingRange.confirmed_at`` is a
-    *confirmation* date and lags the swing itself by ``SWING_WIDTH`` bars, so testing a break
-    date against it compares two different clocks — and price breaking out before a later
-    pullback low confirms is the ordinary case, not an edge one. Comparing levels has no clock
-    in it at all. Bounding on the swing dates instead recovers 76 or 82 depending on which swing
-    is used, which is closer but still answers a question about position with a date.
-
-    With no confirmed range there is nothing to be a reset *of*, so any break is accepted. That
-    is the ``no_dealing_range`` case, where having a range at all beats having none.
-    """
-    found = [b for b in breaks(bars, as_of=as_of) if b.origin is not None]
-    if confirmed is not None:
-        found = [b for b in found
-                 if (b.level >= confirmed.high if b.kind == BULLISH
-                     else b.level <= confirmed.low)]
-    if not found:
-        return None
-    last = found[-1]
-    after = [b for b in bars
-             if on_or_before(last.date, b.date) and on_or_before(b.date, as_of)]
-    if not after:
-        return None
-    extreme = (max(b.high for b in after) if last.kind == BULLISH
-               else min(b.low for b in after))
-    low, high = sorted((last.origin.price, extreme))
-    return None if high <= low else (low, high)
-
-
-def reset_verdict(found, price: float) -> str:
-    """Same three states as ``verdict``, for a bare ``(low, high)`` pair."""
-    if found is None:
-        return "none"
-    low, high = found
-    return "inside" if low <= price <= high else "outside"
 
 
 def verdict(dealing, price: float) -> str:
@@ -230,7 +175,7 @@ def main(argv: list[str] | None = None) -> int:
                   f"· none {tally['none']:4}")
 
         print("\n  and what a RANGE RESET would say for the same assets")
-        reset = Counter(reset_verdict(m["reset"], m["price"]) for m in outside.values())
+        reset = Counter(verdict(m["reset_aware"], m["price"]) for m in outside.values())
         print(f"    reset range          inside {reset['inside']:4} · outside "
               f"{reset['outside']:4} · none {reset['none']:4}")
         # Where inside, which half — because a reset that lands everything in premium refuses
@@ -238,10 +183,10 @@ def main(argv: list[str] | None = None) -> int:
         # has to be seen before the gate is changed.
         halves: Counter = Counter()
         for m in outside.values():
-            if reset_verdict(m["reset"], m["price"]) != "inside":
+            dealing = m["reset_aware"]
+            if dealing is None or dealing.position_at(m["price"]) is None:
                 continue
-            low, high = m["reset"]
-            halves["premium" if m["price"] > (low + high) / 2 else "discount"] += 1
+            halves["premium" if m["price"] > dealing.equilibrium else "discount"] += 1
         print(f"      of those inside:   premium {halves['premium']:4} "
               f"· discount {halves['discount']:4}")
 

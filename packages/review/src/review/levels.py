@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from core.dealing_range import CONFIRMED
 from core.nearby import DAILY_ZONE, GAP, RANGE_EDGE, WEEKLY_ZONE, Level
 from core.setups import WEEKLY
 
@@ -28,11 +29,13 @@ from core.setups import WEEKLY
 # reported; see ``shortlist``.
 SHOWN = 12
 
-# Weekly beats intraday, and a range edge carries no timeframe of its own because the dealing
-# range is always read off the weekly (``build_context``). Anything unrecognised sorts last
-# rather than first, so a new timeframe added upstream degrades to "least important" instead
-# of silently taking the top of the section.
-_TIMEFRAME_RANK = {WEEKLY: 0, "": 0}
+# Weekly beats intraday, and a confirmed range edge ranks with it because the dealing range is
+# always read off the weekly (``build_context``). A **reset** range edge is weaker evidence —
+# see ``core.dealing_range.dealing_range``'s ``price`` argument — and falls through to the
+# default rank below, same tier as a daily block. Anything unrecognised sorts there too, so a
+# new timeframe added upstream degrades to "least important" instead of silently taking the
+# top of the section.
+_TIMEFRAME_RANK = {WEEKLY: 0, CONFIRMED: 0}
 
 # Within one timeframe: a structural block outranks the range boundary, which outranks a void,
 # which outranks a daily block. Order-of-evidence, not preference — a block is where price

@@ -1,5 +1,6 @@
 from datetime import date
 
+from core.dealing_range import CONFIRMED, RESET
 from core.nearby import (
     DAILY_ZONE,
     GAP,
@@ -62,11 +63,24 @@ def test_weekly_outranks_daily_across_holdings():
 def test_a_range_edge_outranks_a_gap_and_a_daily_block():
     pairs = [
         (_reading("A"), [_level(GAP)]),
-        (_reading("B"), [_level(RANGE_EDGE, timeframe="", top=99.0, bottom=99.0)]),
+        (_reading("B"), [_level(RANGE_EDGE, timeframe=CONFIRMED, top=99.0, bottom=99.0)]),
         (_reading("C"), [_level(DAILY_ZONE, timeframe=DAILY)]),
     ]
     standing, _, _ = shortlist(pairs)
     assert [s.reading.holding.ticker for s in standing] == ["B", "A", "C"]
+
+
+def test_a_reset_range_edge_ranks_with_daily_not_with_the_confirmed_edge():
+    """A reset is weaker evidence than a confirmed range — see
+    ``core.dealing_range.dealing_range``'s ``price`` argument — so it must not borrow the
+    confirmed edge's top rank just because both are ``RANGE_EDGE``."""
+    pairs = [
+        (_reading("RESET"), [_level(RANGE_EDGE, timeframe=RESET, top=99.0, bottom=99.0)]),
+        (_reading("CONFIRMED"), [_level(RANGE_EDGE, timeframe=CONFIRMED,
+                                        top=99.0, bottom=99.0)]),
+    ]
+    standing, _, _ = shortlist(pairs)
+    assert [s.reading.holding.ticker for s in standing] == ["CONFIRMED", "RESET"]
 
 
 def test_standing_and_closing_in_are_separate_groups():

@@ -4,9 +4,11 @@ from types import SimpleNamespace
 
 import pytest
 from core.dealing_range import (
+    CONFIRMED,
     DISCOUNT,
     EQUILIBRIUM,
     PREMIUM,
+    RESET,
     dealing_range,
 )
 
@@ -183,6 +185,85 @@ def test_an_inverted_range_yields_none():
         (5, 1), (5.5, 1), (6, 1), (10, 1), (6, 1), (5.5, 1), (5, 1),
     ])
     assert dealing_range(inverted) is None
+
+
+# ── range reset ──────────────────────────────────────────────────────────────
+#
+# TraderMayne's "as price breaks out of this range, it forms a new range". RANGE_BARS's
+# confirmed range (3-20) is extended with a break beyond one edge, so `price` sitting past
+# that edge can only be answered by a reset rather than the confirmed range.
+
+BULL_BREAK_BARS = RANGE_BARS + _bars([(25, 24), (26, 25)], start=START + timedelta(days=14))
+BEAR_BREAK_BARS = RANGE_BARS + _bars([(2, 1), (0.5, 0.2)], start=START + timedelta(days=14))
+AS_OF_AFTER_BREAK = date(2025, 1, 16)
+
+
+def test_a_bullish_break_resets_the_range_above_the_confirmed_high():
+    dr = dealing_range(BULL_BREAK_BARS, as_of=AS_OF_AFTER_BREAK, price=24.5)
+    assert dr is not None
+    assert (dr.low, dr.high) == (3, 26)
+    assert dr.source == RESET
+    assert dr.position_at(24.5) is not None
+
+
+def test_a_bearish_break_resets_the_range_below_the_confirmed_low():
+    dr = dealing_range(BEAR_BREAK_BARS, as_of=AS_OF_AFTER_BREAK, price=1.0)
+    assert dr is not None
+    assert (dr.low, dr.high) == (0.2, 20)
+    assert dr.source == RESET
+    assert dr.position_at(1.0) is not None
+
+
+def test_reset_keeps_the_origin_swing_and_drops_the_bare_extreme():
+    """The break's origin is a real, confirmed swing; the extreme since is not. Manufacturing
+    a ``Swing`` for it would invent a ``confirmed_at`` for something never confirmed."""
+    up = dealing_range(BULL_BREAK_BARS, as_of=AS_OF_AFTER_BREAK, price=24.5)
+    assert up is not None
+    assert up.low_swing is not None and up.low_swing.price == 3
+    assert up.high_swing is None
+
+    down = dealing_range(BEAR_BREAK_BARS, as_of=AS_OF_AFTER_BREAK, price=1.0)
+    assert down is not None
+    assert down.high_swing is not None and down.high_swing.price == 20
+    assert down.low_swing is None
+
+
+def test_reset_confirmed_at_is_the_break_date_not_a_confirmation_date():
+    """A different clock from the confirmed path's — see the field's docstring."""
+    dr = dealing_range(BULL_BREAK_BARS, as_of=AS_OF_AFTER_BREAK, price=24.5)
+    assert dr is not None
+    assert dr.confirmed_at == date(2025, 1, 15)
+
+
+def test_price_still_outside_the_reset_range_still_refuses():
+    """Not every reset catches up to price — the reset here tops out at 26, and a price
+    beyond even that has no honest reading, exactly as outside the confirmed range."""
+    dr = dealing_range(BULL_BREAK_BARS, as_of=AS_OF_AFTER_BREAK, price=30.0)
+    assert dr is not None
+    assert dr.position_at(30.0) is None
+    assert dr.permits("long", 30.0) is False
+
+
+def test_no_break_falls_back_to_the_confirmed_range_even_when_price_is_outside_it():
+    dr = dealing_range(RANGE_BARS, price=2.0)
+    assert dr is not None
+    assert dr.source == CONFIRMED
+    assert (dr.low, dr.high) == (3, 20)
+    assert dr.permits("long", 2.0) is False
+
+
+def test_no_break_and_no_confirmed_range_yields_none():
+    only_high = _bars([(10, 1), (11, 1), (12, 1), (20, 1), (12, 1), (11, 1), (10, 1)])
+    assert dealing_range(only_high, price=5.0) is None
+
+
+def test_price_none_never_attempts_a_reset():
+    """Every caller written before ``price`` existed passes none, and must keep reading the
+    confirmed-only range even where a reset would otherwise apply."""
+    dr = dealing_range(BULL_BREAK_BARS, as_of=AS_OF_AFTER_BREAK)
+    assert dr is not None
+    assert dr.source == CONFIRMED
+    assert (dr.low, dr.high) == (3, 20)
 
 
 # ── immutability ─────────────────────────────────────────────────────────────

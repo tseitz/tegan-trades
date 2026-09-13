@@ -114,9 +114,12 @@ def levels_near(context: Context, *, kinds=ALL_KINDS, reach: float = REACH) -> t
         ]
 
     if RANGE_EDGE in kinds and context.dealing_range is not None:
+        # `timeframe` doubles as provenance here: `dealing_range.source` is CONFIRMED or
+        # RESET, and a reset edge is weaker evidence than a confirmed one — without it, the
+        # two render identically. See `review.levels._TIMEFRAME_RANK`.
         for edge in (context.dealing_range.low, context.dealing_range.high):
-            found.append(_level(kind=RANGE_EDGE, timeframe="", price=price,
-                                top=edge, bottom=edge, own_direction=None))
+            found.append(_level(kind=RANGE_EDGE, timeframe=context.dealing_range.source,
+                                price=price, top=edge, bottom=edge, own_direction=None))
 
     within = [level for level in found if level.inside or level.distance <= reach]
     return tuple(sorted(within, key=lambda level: (level.distance, level.bottom)))

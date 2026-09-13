@@ -1,7 +1,7 @@
 from datetime import date
 
 import pytest
-from core.dealing_range import DealingRange
+from core.dealing_range import CONFIRMED, RESET, DealingRange
 from core.imbalance import Gap
 from core.nearby import (
     ALL_KINDS,
@@ -169,6 +169,27 @@ def test_kinds_can_be_narrowed():
     )
     assert _kinds(levels_near(ctx, kinds=(WEEKLY_ZONE,))) == [WEEKLY_ZONE]
     assert levels_near(ctx, kinds=()) == ()
+
+
+def test_a_range_edge_carries_confirmed_as_its_timeframe_by_default():
+    ctx = _ctx(price=140.0,
+               dealing_range=DealingRange(low=80.0, high=200.0,
+                                          low_swing=_swing(80.0, SWING_LOW),
+                                          high_swing=_swing(200.0, SWING_HIGH),
+                                          confirmed_at=date(2025, 1, 6)))
+    edge = next(level for level in levels_near(ctx, reach=1.0) if level.kind == RANGE_EDGE)
+    assert edge.timeframe == CONFIRMED
+
+
+def test_a_reset_range_edge_is_labelled_even_when_price_stays_outside_it():
+    """A reset that fails to recover the candidate — price sits outside it too — must not
+    render identically to a confirmed edge. See ``review.levels._TIMEFRAME_RANK``."""
+    reset_range = DealingRange(low=80.0, high=200.0,
+                               low_swing=_swing(80.0, SWING_LOW), high_swing=None,
+                               confirmed_at=date(2025, 1, 15), source=RESET)
+    ctx = _ctx(price=250.0, dealing_range=reset_range)
+    edges = [level for level in levels_near(ctx, reach=1.0) if level.kind == RANGE_EDGE]
+    assert edges and all(level.timeframe == RESET for level in edges)
 
 
 def test_a_range_edge_is_one_price_not_a_band():

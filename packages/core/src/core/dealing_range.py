@@ -19,11 +19,14 @@ from dataclasses import dataclass
 from datetime import date, datetime
 
 from core.structure import (
+    BULLISH,
     SWING_HIGH,
     SWING_LOW,
     SWING_WIDTH,
     Swing,
+    breaks,
     confirmed_by,
+    on_or_before,
     position_in_range,
     swings,
 )
@@ -32,10 +35,15 @@ PREMIUM = "premium"
 DISCOUNT = "discount"
 EQUILIBRIUM = "equilibrium"
 
+CONFIRMED = "confirmed"
+RESET = "reset"
+
 __all__ = [
+    "CONFIRMED",
     "DISCOUNT",
     "EQUILIBRIUM",
     "PREMIUM",
+    "RESET",
     "SWING_WIDTH",
     "DealingRange",
     "dealing_range",
@@ -49,12 +57,21 @@ class DealingRange:
     ``low``/``high`` are carried alongside ``low_swing``/``high_swing`` rather than derived
     on read, so a caller can compare prices without reaching back into the swings on every
     call — the same shape ``OrderBlock`` uses for ``top``/``bottom`` next to its ``bos``.
+
+    ``low_swing``/``high_swing`` are ``None`` on whichever side came from a **reset** rather
+    than a confirmed swing (see ``source``). Manufacturing a ``Swing`` for that side would
+    invent a ``confirmed_at`` for something never confirmed — the exact failure
+    ``core.structure`` exists to prevent.
     """
     low: float
     high: float
-    low_swing: Swing
-    high_swing: Swing
+    low_swing: Swing | None
+    high_swing: Swing | None
+    # For a confirmed range this is the later of the two swings' `confirmed_at` (see
+    # `dealing_range`). For a reset it is the date of the break that created it — a break
+    # date, not a confirmation date, and the two must never be pooled in the same statistic.
     confirmed_at: date | datetime
+    source: str = CONFIRMED
 
     @property
     def equilibrium(self) -> float:
@@ -109,13 +126,31 @@ class DealingRange:
         return False
 
 
-def dealing_range(bars, *, as_of: date | None = None,
-                   width: int = SWING_WIDTH) -> DealingRange | None:
+def dealing_range(bars, *, as_of: date | None = None, width: int = SWING_WIDTH,
+                   price: float | None = None) -> DealingRange | None:
     """The range bounded by the most recent confirmed swing low and swing high.
 
     Either leg missing (not enough structure yet) yields None rather than a partial range —
     same discipline as ``order_blocks`` skipping breaks with no qualifying candle.
+
+    ``price``, when given, lets the range **reset** after a break of structure: if the
+    confirmed range doesn't contain it (or there is none), the range is redrawn from the
+    break's own origin swing and the extreme since — see ``_reset_range``. Every caller
+    written before this keeps ``price=None`` and therefore the confirmed-only behaviour.
+
+    Measured 2026-09-13: 133 of 410 priced assets sat outside their confirmed range, with
+    ``permits`` refusing long *and* short there. See ``scripts/probe_range_staleness.py``.
     """
+    confirmed = _confirmed_range(bars, as_of=as_of, width=width)
+    if price is None:
+        return confirmed
+    if confirmed is not None and confirmed.low <= price <= confirmed.high:
+        return confirmed
+    reset = _reset_range(bars, as_of=as_of, width=width, confirmed=confirmed)
+    return reset if reset is not None else confirmed
+
+
+def _confirmed_range(bars, *, as_of: date | None, width: int) -> DealingRange | None:
     found = swings(bars, width=width)
     if as_of is not None:
         found = confirmed_by(found, as_of)
@@ -146,4 +181,61 @@ def dealing_range(bars, *, as_of: date | None = None,
         low_swing=low_swing,
         high_swing=high_swing,
         confirmed_at=confirmed_at,
+    )
+
+
+def _reset_range(bars, *, as_of: date | None, width: int,
+                  confirmed: DealingRange | None) -> DealingRange | None:
+    """The range TraderMayne calls a **range reset**, built the moment a confirmed range no
+    longer contains price rather than waiting on two fresh swings to confirm.
+
+    > "We just broke this high. This is an MSB. We've made a higher high. Where's my higher
+    > low? ... That higher low to higher high, that's my new dealing range. Mark out the 50%.
+    > Mark out the discount, the premium." — TraderMayne, 2026-05-04
+
+    Bounded by the break's own origin swing and the extreme since — neither of which waits on
+    confirmation, so it exists exactly when a confirmed range cannot be drawn.
+
+    ``confirmed`` bounds which break may reset it, **by level, not by date**: the break must
+    close through *this* range's own boundary, or an old break from years back could reset a
+    range it has long since been replaced by. Dates were tried first and recovered fewer
+    cases — ``DealingRange.confirmed_at`` lags its swing by ``width`` bars, so a break date
+    compares two different clocks; a level comparison has no clock in it at all. With no
+    confirmed range there is nothing to be a reset *of*, so any break is accepted.
+
+    The extreme is bounded at ``as_of`` on both ends. An unfiltered read would let a past
+    ``as_of`` see tomorrow's high — the same look-ahead ``Swing.confirmed_at`` exists to
+    prevent. See ``scripts/probe_range_staleness.py`` for the measurement that justified this
+    construct and the alternatives it beat.
+    """
+    found = [b for b in breaks(bars, as_of=as_of, width=width) if b.origin is not None]
+    if confirmed is not None:
+        found = [b for b in found
+                 if (b.level >= confirmed.high if b.kind == BULLISH
+                     else b.level <= confirmed.low)]
+    if not found:
+        return None
+    last = found[-1]
+    origin = last.origin
+    assert origin is not None  # guaranteed by the `found` filter above
+    after = [b for b in bars
+             if on_or_before(last.date, b.date) and on_or_before(b.date, as_of)]
+    if not after:
+        return None
+    extreme = (max(b.high for b in after) if last.kind == BULLISH
+               else min(b.low for b in after))
+    low, high = sorted((origin.price, extreme))
+    if high <= low:
+        return None
+
+    # A bullish break's origin is the swing LOW it rose from, so it bounds the range's low
+    # side; a bearish break's origin is the swing HIGH it fell from, bounding the high side.
+    # The other side is the bare extreme, with no confirming Swing behind it.
+    origin_is_low = last.kind == BULLISH
+    return DealingRange(
+        low=low, high=high,
+        low_swing=origin if origin_is_low else None,
+        high_swing=None if origin_is_low else origin,
+        confirmed_at=last.date,
+        source=RESET,
     )

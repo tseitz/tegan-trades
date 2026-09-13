@@ -347,7 +347,12 @@ DEFAULT_WEIGHTS = SetupWeights()
 # ``reward_risk_from_price``, which is a scored term. Ranking moves on 22 of 36 internal
 # entries (median +0.89 R, worst +7.13) and candidates stop existing on three separate new
 # refusals, so by v7's own rule the cohort must partition here.
-SCORE_VERSION = 8
+#
+# v9 lets the dealing range **reset** after a break of structure, when price has left the
+# confirmed range instead of waiting on two fresh swings to redraw it. Same shape as v8: no
+# term and no weight changes, but the reset range moves ``exits.py``'s range bound, which
+# feeds ``reward_risk_from_price`` — a scored term — so the cohort must partition here too.
+SCORE_VERSION = 9
 
 # Weekly trend agrees with the thesis, versus has no opinion at all. There is no third value:
 # a weekly that genuinely contradicts is still refused outright, so it never reaches scoring.
@@ -956,7 +961,8 @@ def build_context(setup, weekly, *, as_of: date,
         price=upto[-1].close,
         weekly_trend=trend_state(weekly, as_of=as_of, width=width),
         daily_trend=trend_state(setup, as_of=as_of, width=width),
-        dealing_range=resolve_dealing_range(weekly, as_of=as_of, width=width),
+        dealing_range=resolve_dealing_range(weekly, as_of=as_of, width=width,
+                                            price=upto[-1].close),
         zones=(
             _zones_from(weekly, timeframe=WEEKLY, as_of=as_of, width=width)
             + _zones_from(setup, timeframe=setup_timeframe, as_of=as_of, width=width)
