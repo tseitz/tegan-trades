@@ -43,6 +43,8 @@ PRIVATE = "private_company"
 RATE = "rate"
 UNMAPPED = "unmapped"
 CONFLICT = "conflict"
+NO_VENUE = "no_venue"
+NEEDS_INVERT = "needs_invert"
 
 # Not an unpriceable reason — the opposite. ``plan_fetches`` reports a ``DerivedRef`` under this
 # because there is no request to make *for that asset*: it is computed, and its legs are planned
@@ -60,8 +62,8 @@ DERIVED = "derived"
 # The 53-row ``__basket__`` sentinel alone was a fifth of the headline while being, by
 # construction, the extractor's placeholder for a thesis that is not about one thing.
 NOT_AN_ASSET = frozenset({BASKET_REASON, MACRO_REASON, EVENT, PRIVATE})
-COMPUTABLE = frozenset({DOMINANCE, DERIVED_RATIO, RATE})
-NO_ROUTE = frozenset({UNMAPPED, CONFLICT})
+COMPUTABLE = frozenset({DOMINANCE, DERIVED_RATIO, RATE, NEEDS_INVERT})
+NO_ROUTE = frozenset({UNMAPPED, CONFLICT, NO_VENUE})
 
 CRYPTO_DOMAIN = "crypto"
 

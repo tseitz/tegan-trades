@@ -86,9 +86,12 @@ assets:
   # 2026-07-28: it routed to USDCAD=X, where CAD is the quote currency, so TTrades' "bullish
   # CAD futures (equivalently bearish USDCAD)" was priced and scored as a bullish USDCAD —
   # the opposite trade. Nothing in the engine flips direction, so there is no safe way to
-  # express it here yet. `JPY` (13 theses) is unrouted for the same reason; routing it to
-  # JPY=X would create 13 inverted theses at once. See §29 for the invert flag that fixes
-  # both. `test_a_bare_currency_never_routes_to_a_pair_that_inverts_it` enforces this.
+  # express it here yet. `JPY` (25 theses) is curated unpriceable below for the same reason:
+  # routing it to JPY=X, where JPY is the quote currency, would invert all 25 at once.
+  # `test_a_bare_currency_never_routes_to_a_pair_that_inverts_it` enforces the general rule; a
+  # dedicated test pins JPY's row specifically, since an `unpriceable` row has no `symbol` key
+  # for that test to catch.
+  JPY:      {unpriceable: needs_invert, detail: "quote currency of JPY=X; would invert all theses until the invert flag exists"}
 
   # ── rates ────────────────────────────────────────────────────────────────
   US10Y:    {source: yahoo, symbol: "^TNX"}
@@ -97,6 +100,20 @@ assets:
   # ── ETF proxies (a proxy, not the underlying — noted deliberately) ───────
   URANIUM:  {source: yahoo, symbol: "URA"}        # Global X Uranium ETF as the proxy
   MAG7:     {source: yahoo, symbol: "MAGS"}       # Roundhill Magnificent Seven ETF
+
+  # ── equities colliding with a perp-venue token of the same ticker ────────
+  # A curated route is never re-checked (confirm.py) — the perp mark is the only non-circular
+  # identity evidence this repo has for an equity, so overruling it here needs to be justified,
+  # not just corrected. Each row records the mark and the date it was overruled.
+  #
+  # Aster lists a token under "RTX" marking 0.7165 (2026-09-13) — not Raytheon. Corpus
+  # (asset_heard: "Rathon") and Yahoo's cached close (214.92, 2026-07-31) agree it's Raytheon.
+  RTX:      {source: yahoo, symbol: "RTX"}
+  # Hyperliquid, Lighter and Aster all list Starknet under "STRK", marking ~0.0278 (2026-09-13).
+  # The corpus (asset_heard: "strike") means Strategy's 8% Series A Perpetual Strike Preferred
+  # (STRK, $100 par) — confirmed by the thesis itself: it calls STRK "at a premium to $100 par"
+  # on 2025-07-02, and Yahoo's cached close that week was ~$118, a premium. Not Starknet.
+  STRK:     {source: yahoo, symbol: "STRK"}
 
   # ── crypto needing an explicit hand ──────────────────────────────────────
   # The other half of the SPX collision: this one really *is* the memecoin.
@@ -132,6 +149,9 @@ assets:
   NFT:      {unpriceable: basket}
   CRYPTOPUNKS: {unpriceable: basket}
   PUNKS:    {unpriceable: basket}
+  # Bare AI is the theme ("the AI trade", "AI capex/debt buildout"), not C3.ai Inc. — already
+  # a `__basket__` alias in cfg/assets.yaml, but the bare label slipped through it.
+  AI:       {unpriceable: basket}
   ENERGY:   {unpriceable: basket}
   ROBOTICS: {unpriceable: basket}
   DEFENSE:  {unpriceable: basket}

@@ -211,6 +211,33 @@ def _curated_routes():
     return {a: s for a, s in routes.items() if isinstance(s, dict) and "symbol" in s}
 
 
+def _curated_unpriceable_reasons():
+    import yaml
+    from oracle.assemble import CONFIG_DIR
+    raw = yaml.safe_load((CONFIG_DIR / "oracle_map.yaml").read_text())
+    routes = raw.get("assets", raw)
+    return {a: s["unpriceable"] for a, s in routes.items() if isinstance(s, dict) and "unpriceable" in s}
+
+
+def test_every_curated_unpriceable_reason_belongs_to_a_named_group():
+    """A reason spelled in cfg/oracle_map.yaml that route.py cannot name is invisible to
+    setups_cli's tally — it falls into the catch-all `ungrouped` bucket instead of `computable`,
+    `no route` or `not an instrument`. `no_venue` (PURR) did exactly this until route.py named
+    it; this test is what stops the next new reason doing the same silently."""
+    known = route_mod.NOT_AN_ASSET | route_mod.COMPUTABLE | route_mod.NO_ROUTE
+    reasons = set(_curated_unpriceable_reasons().values())
+    assert reasons <= known, f"unrecognized unpriceable reasons: {reasons - known}"
+
+
+def test_jpy_stays_curated_unpriceable_until_the_invert_flag_lands():
+    """`test_a_bare_currency_never_routes_to_a_pair_that_inverts_it` only looks at rows with a
+    `symbol` key, so it is vacuous for an `unpriceable` row — it would not catch JPY being
+    wrongly given a `symbol` route. This pins JPY's row directly: routing bare JPY to Yahoo's
+    JPY=X, where JPY is the quote currency, would invert all 25 JPY theses (the CAD trap)."""
+    reasons = _curated_unpriceable_reasons()
+    assert reasons.get("JPY") == route_mod.NEEDS_INVERT
+
+
 def test_no_two_asset_keys_route_to_one_instrument_unless_declared():
     """`SILVER` and `XAG` both routed to `SI=F`, so the queue offered one trade twice —
     identical in every number — burning two slots of a sitting and double-counting it in §4's
