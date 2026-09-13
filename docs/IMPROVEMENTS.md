@@ -865,6 +865,11 @@ can answer — something DefiLlama's fixed endpoints don't expose (cross-protoco
 wallet cohorts). Paid tiers start ~$390/mo, putting it in Coinglass's bracket: defer until a
 concrete question justifies the cost.
 
+One has now arrived, and it is hand-run rather than nightly, which is the shape this entry was
+waiting for: per-venue liquidations and volume concentration by account, both named as
+unreachable in `scripts/probe_perp_venue_fundamentals.py`. Sized against §55's ranking — the
+free sources there come first, because they may answer it without the $390.
+
 ---
 
 ## 54. Give `brain` a sentiment layer once the alt-signal numbers exist to feed it · `OPEN` — new 2026-09-03
@@ -877,3 +882,25 @@ synthesis over roster stances, so this is widening its inputs, not a new boundar
 
 Blocked on the alt-signal fetch/store work landing first — there's nothing to synthesize over
 until `fetch-altsignal` exists and has a few nights of data behind it.
+
+---
+
+## 55. Reach the signal sources the probe names as unreachable · `DECIDED` — new 2026-09-13
+
+`scripts/probe_perp_venue_fundamentals.py` prices three perp venues against open interest
+instead of volume, and its closing block names what it could not read. Wire the free ones up;
+the reasoning for each metric lives in that probe's docstring, not here.
+
+- **Coinglass — liquidations per venue.** The strongest honesty metric of the set, because a
+  liquidation costs real money and so cannot be manufactured the way volume can. None of the
+  three venues publishes a total. Free tier is rate-capped; paid sits in §53's bracket.
+- **L2Beat / growthepie — free, unauthenticated, do this first.** Lighter and Robinhood Chain
+  are both L2s, so their activity is already published by someone who normalises across chains.
+- **Tokenomist — unlock calendars.** Supply arriving is half of every multiple the probe prints
+  and none of it is in the probe. Reading the site is free; the API is paid.
+- **Artemis** only if its free tier answers something DefiLlama's fixed endpoints do not.
+
+Each is read-only public HTTP, so each is an adapter in the existing shape, not a new boundary.
+The probe also reads DefiLlama's *per-protocol* fee endpoints, which
+`oracle/altsignal/defillama.py` lacks — it holds only the chain-level three. Promoting those is
+what makes any of this nightly rather than hand-run.
