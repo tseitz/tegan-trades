@@ -109,7 +109,7 @@ people:
     why: "Trader/commentator; runs 'Public Stream' livestreams tied to The Haven community. Transcribable."
     channels:
       - { platform: youtube, id: "@pierre_crypt0", access: ok }
-      - { platform: x, id: "pierre_crypt0", access: grok }
+      - { platform: x, id: "pierre_crypt0", access: excluded }
     notes: "Active, French + English. Krillin (@LSDinmycoffee) also appears via The Haven / Pierre's streams."
 
   - name: "TraderSZ"
@@ -215,7 +215,7 @@ people:
     status: candidate
     domains: [crypto]
     why: "Full-time trader/analyst; The Haven. Appears in Haven/Pierre streams."
-    channels: [{ platform: x, id: "LSDinmycoffee", access: grok }]
+    channels: [{ platform: x, id: "LSDinmycoffee", access: excluded }]
     notes: "Partial long-form via The Haven / @pierre_crypt0."
 
   # ══════════ DORMANT — kept for the record, not ingesting ══════════
@@ -417,25 +417,7 @@ x_grok_digest:
   - DonAlt
   - cryptoalle        # posts chart images more than prose; needs --images to be worth anything
   - 0xmagiclines
-  - pierre_crypt0     # KEEP — but NOT because YouTube is dead, which is what this note used to
-                      # say. He livestreams there roughly monthly ("Public Stream #N - The
-                      # Haven", 30-80 min), and YouTube is 6:1 of his corpus against X. X
-                      # supplements him; it does not replace him.
-                      #
-                      # The "effectively dead, newest video 2026-07-01" reading was drawn from a
-                      # gap that was partly a data hole. Stream #26 (2026-08-06) has no captions
-                      # at all — only live_chat — so it is permanently in `_dead.json` and the
-                      # corpus jumps 07-01 to 08-13. Some of his streams caption and some do not,
-                      # so a quiet stretch here can be missing data rather than silence. Check
-                      # `_dead.json` before concluding anyone went dormant.
-                      #
-                      # A first pass flagged him as
-                      # 3% signal and redundant; both were wrong — the metric was `$TICKER`-or-
-                      # chart, which kept "Bonked by it indeed" and discarded "a fight for 65.5k
-                      # ish: - If reclaimed, give another shot at mid June highs". He also posts
-                      # in French, which the distiller has to handle or those vanish silently.
   - MarkNewtonCMT
-  - LSDinmycoffee
   - Tradermayne
   - LynAldenContact   # Added 2026-08-06. X is her only ingestible channel — she has no
                       # long-form feed of her own, so without this the "hard-macro grounding
@@ -445,3 +427,13 @@ x_grok_digest:
                       # showing up as a config gap on every single run.
   # trader1sz removed 2026-07-26 — his YouTube livestreams turned out to be live, and that is
   # what's wanted from him. Was 29 posts/day at ~$3.04/mo, the second-largest line on the bill.
+  # pierre_crypt0 removed 2026-09-13 by Tegan, after reviewing his posts directly — same
+  # "not what I want from X" judgment as the 07-26 prune, on the follow-list itself, not a
+  # signal metric. He was the single largest line on the bill: 899 of 2,622 posts (34%) across
+  # the 35 measured runs, ~$4.50/mo alone under the per-post pricing effective 2026-09-21. He
+  # stays on YouTube (`access: ok`), which was always 6:1 of his corpus against X anyway.
+  # krillin (LSDinmycoffee) removed 2026-09-13 by Tegan — X was his ONLY channel, so unlike
+  # Pierre this drops him from the corpus entirely. Checked the actual distilled output first:
+  # 468 posts -> 58 theses (12%, above the ~5% corpus average, so not pure noise) but 38 of
+  # those 58 were low conviction and only 3 were high, scattered across 10+ tickers with no
+  # concentration. ~$2.34/mo for 3 high-conviction calls in a month was judged not worth it.
