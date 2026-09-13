@@ -19,6 +19,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from core.funding import FundingRate
+from core.interest import OpenInterest
 
 from oracle import http
 
@@ -65,6 +66,74 @@ def parse_asset_ctxs(payload, *, dex: str = "", observed_at: datetime) -> list[F
             )
         )
     return rates
+
+
+def fetch_snapshot(
+    *, post_json=http.post_json, observed_at: datetime | None = None
+) -> tuple[list[FundingRate], list[OpenInterest]]:
+    """Funding and open interest together, off the same ``metaAndAssetCtxs`` sweep.
+
+    Both parsers read the identical reply, so open interest costs zero extra requests here —
+    the only venue where that's true, since Lighter and Aster read it from a different
+    endpoint than their funding.
+    """
+    at = observed_at or datetime.now(UTC)
+    rates: list[FundingRate] = []
+    interest: list[OpenInterest] = []
+
+    def pull(dex: str = "") -> None:
+        payload = post_json(
+            BASE, {"type": "metaAndAssetCtxs", **({"dex": dex} if dex else {})}
+        )
+        rates.extend(parse_asset_ctxs(payload, dex=dex, observed_at=at))
+        interest.extend(parse_open_interest(payload, dex=dex, observed_at=at))
+
+    pull()
+    for dex in parse_dexs(post_json(BASE, {"type": "perpDexs"})):
+        pull(dex)
+
+    return rates, interest
+
+
+def parse_open_interest(
+    payload, *, dex: str = "", observed_at: datetime
+) -> list[OpenInterest]:
+    """Parse the same ``metaAndAssetCtxs`` reply ``parse_asset_ctxs`` reads, for open interest.
+
+    ``openInterest`` is base units of the underlying; ``notional`` is that times ``markPx``,
+    same conversion as ``core.interest.OpenInterest`` requires. ``dayNtlVlm`` is already USD.
+    """
+    if not payload or len(payload) < 2:
+        return []
+    meta, ctxs = payload[0], payload[1]
+    universe = (meta or {}).get("universe") or []
+
+    readings: list[OpenInterest] = []
+    for asset, ctx in zip(universe, ctxs or [], strict=False):
+        name = (asset or {}).get("name")
+        if not name or (asset or {}).get("isDelisted"):
+            continue
+        raw_oi, raw_mark, raw_vol = (ctx or {}).get("openInterest"), (ctx or {}).get("markPx"), (
+            ctx or {}
+        ).get("dayNtlVlm")
+        if raw_oi is None or raw_mark is None or raw_vol is None:
+            continue
+        try:
+            notional = float(raw_oi) * float(raw_mark)
+            volume = float(raw_vol)
+        except (TypeError, ValueError):
+            continue
+        symbol = name.split(":", 1)[-1] if ":" in name else name
+        readings.append(
+            OpenInterest(
+                venue=f"{VENUE}:{dex}" if dex else VENUE,
+                symbol=symbol,
+                notional=notional,
+                volume_24h=volume,
+                observed_at=observed_at,
+            )
+        )
+    return readings
 
 
 def parse_dexs(payload) -> list[str]:

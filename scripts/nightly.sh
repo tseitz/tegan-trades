@@ -14,9 +14,10 @@
 #   7. wallet-sync     free    what your public wallet addresses hold, straight off chain
 #   8. fetch-prices    free
 #   9. fetch-funding   free    what holding a position costs — must precede setups
-#  10. fetch-altsignal free    Phase 5 alt-signal — DefiLlama/Kalshi/Polymarket for `review`
-#  11. reconcile       free    settle what the venue did with yesterday's orders
-#  12. setups --list   free    the queue you actually read
+#  10. perp-fundamentals free free three-venue open-interest/volume report — was hand-run only
+#  11. fetch-altsignal free    Phase 5 alt-signal — DefiLlama/Kalshi/Polymarket for `review`
+#  12. reconcile       free    settle what the venue did with yesterday's orders
+#  13. setups --list   free    the queue you actually read
 #
 # **A failing step does not abort the run.** A YouTube outage should not cost you the price
 # refresh, and a bad roster marker should not cost you the whole night. Every step's status is
@@ -176,7 +177,7 @@ ONLY_STEPS=""
 declare -a ORIGINAL_ARGS=("$@")
 
 ALL_STEPS="code-update data-pull verify-roster ingest-roster ingest-x distill-roster brain-extract brain-index \
-plaid-sync wallet-sync fetch-prices fetch-funding fetch-altsignal reconcile reconcile-perps setups \
+plaid-sync wallet-sync fetch-prices fetch-funding perp-fundamentals fetch-altsignal reconcile reconcile-perps setups \
 fetch-tickers \
 canon-drift backup digest"
 
@@ -490,6 +491,12 @@ step fetch-prices   uv run fetch-prices --all-portfolios
 # (§22), so a night this step misses is a night of Lighter coverage that cannot be recovered.
 step fetch-funding  uv run fetch-funding
 
+# Was hand-run only — nothing scheduled it, which is the actual gap, not a missing log (see
+# packages/core/src/core/interest.py and the plan this shipped with). Free: three public venue
+# APIs plus DefiLlama/CoinGecko, no key, nothing placed. After `fetch-funding` so open interest
+# is same-night, even though this reads the venues live rather than from `data/interest/`.
+step perp-fundamentals  uv run python scripts/probe_perp_venue_fundamentals.py
+
 # Free, order-independent of `setups`/`reconcile` — `review` reads `data/altsignal/` at report
 # time, not at fetch time, so this only needs to land before `review` is next run by hand. It
 # sits next to `fetch-funding` because both are the same shape: free third-party reads, safe
@@ -663,7 +670,11 @@ CLOSED=$(grep -oE '[0-9]+ close\(s\) recorded' "$LOG" \
 # venue of three looks identical to a clean run. That matters more here than elsewhere —
 # Hyperliquid and Aster can be backfilled afterwards, Lighter cannot (§22), so a silently
 # skipped venue is silently unrecoverable data.
-FUNDING=$(grep -oE '^[0-9]+ observations logged' "$LOG" | tail -1 | cut -d' ' -f1)
+# `fetch-funding` now says "N funding observations logged." (it also logs open interest, see
+# packages/core/src/core/interest.py) -- the extra word means this must match "funding"
+# explicitly rather than a bare "N observations logged", or it would also catch the
+# open-interest line beneath it.
+FUNDING=$(grep -oE '^[0-9]+ funding observations logged' "$LOG" | tail -1 | cut -d' ' -f1)
 FUNDING_FAILED=$(grep -cE '^  ! (hyperliquid|lighter|aster)' "$LOG" || true)
 if [ "${FUNDING_FAILED:-0}" -gt 0 ]; then
   flag "fetch-funding — ${FUNDING_FAILED} venue(s) unreachable, see log"
