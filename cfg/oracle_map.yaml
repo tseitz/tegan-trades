@@ -101,6 +101,11 @@ assets:
   # ── crypto needing an explicit hand ──────────────────────────────────────
   # The other half of the SPX collision: this one really *is* the memecoin.
   SPX6900:  {source: coinbase, symbol: "SPX-USD"}
+  # Yahoo's "PURR" is a different, wrong instrument (confirm.py's collision list) — off by
+  # 2-4 orders of magnitude. Verified 2026-09-13: the Hyperliquid spot token is not listed on
+  # Coinbase or Kraken either, so none of the three fetchable sources carry the real thing.
+  # Unpriceable is the honest state until one does.
+  PURR:     {unpriceable: no_venue, detail: "Hyperliquid spot token; not on Yahoo/Coinbase/Kraken"}
 
   # ── dominance / index metrics: TradingView-only concepts, no price feed ──
   BTC.D:    {unpriceable: dominance_metric}
