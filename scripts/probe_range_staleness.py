@@ -79,11 +79,11 @@ def measure(asset: str, *, as_of: date, table, series_cache):
         "weekly": context.dealing_range,
         "daily": dealing_range(daily.bars, as_of=as_of),
         "rung_range": dealing_range(bars, as_of=as_of) if rung_series is not None else None,
-        "reset": reset_range(weekly.bars, as_of=as_of),
+        "reset": reset_range(weekly.bars, as_of=as_of, confirmed=context.dealing_range),
     }
 
 
-def reset_range(bars, *, as_of: date) -> tuple[float, float] | None:
+def reset_range(bars, *, as_of: date, confirmed=None) -> tuple[float, float] | None:
     """The range TraderMayne calls a **range reset**, as ``(low, high)``.
 
     > "We just broke this high. This is an MSB. We've made a higher high. Where's my higher
@@ -102,12 +102,42 @@ def reset_range(bars, *, as_of: date) -> tuple[float, float] | None:
     origin swing before it. That reading needs price to come back and leaves "meaningful"
     undefined; this one is computable the moment the break confirms. The two give different
     premium/discount lines, so if this is ever revisited, that is the fork.
+
+    **The extreme is bounded at ``as_of`` on both ends, and the first version was not.** The
+    original read every bar from the break to the end of the array, which is correct only
+    because this probe runs at today. ``oracle.asof`` records that the engine never truncates
+    its series — *"every reader in `core.structure` filters by `as_of`"* — so an unfiltered read
+    here is a look-ahead that a past ``--as-of`` would silently answer with tomorrow's high.
+
+    **``confirmed`` bounds which break may reset it, by level rather than by date.** Without a
+    bound, ``found[-1]`` can be a break from years ago whose "extreme since" spans the whole
+    history, producing a range so wide it contains everything: ``permits`` then passes and
+    nothing on the card looks wrong. The bound is that the break must have closed through *this*
+    range's own bound — a bullish break above ``high``, a bearish one below ``low``. A break of
+    lower structure is not a reset of this range, it is a reset of something this range already
+    replaced.
+
+    **Dates were tried first and were badly wrong: 47 of 133 recovered against this rule's 89**
+    (measured 2026-09-13; no bound at all recovers 95). ``DealingRange.confirmed_at`` is a
+    *confirmation* date and lags the swing itself by ``SWING_WIDTH`` bars, so testing a break
+    date against it compares two different clocks — and price breaking out before a later
+    pullback low confirms is the ordinary case, not an edge one. Comparing levels has no clock
+    in it at all. Bounding on the swing dates instead recovers 76 or 82 depending on which swing
+    is used, which is closer but still answers a question about position with a date.
+
+    With no confirmed range there is nothing to be a reset *of*, so any break is accepted. That
+    is the ``no_dealing_range`` case, where having a range at all beats having none.
     """
     found = [b for b in breaks(bars, as_of=as_of) if b.origin is not None]
+    if confirmed is not None:
+        found = [b for b in found
+                 if (b.level >= confirmed.high if b.kind == BULLISH
+                     else b.level <= confirmed.low)]
     if not found:
         return None
     last = found[-1]
-    after = [b for b in bars if on_or_before(last.date, b.date)]
+    after = [b for b in bars
+             if on_or_before(last.date, b.date) and on_or_before(b.date, as_of)]
     if not after:
         return None
     extreme = (max(b.high for b in after) if last.kind == BULLISH
