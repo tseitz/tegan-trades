@@ -4,7 +4,17 @@ Personal signal/trading platform: ingest trusted people → distill theses → c
 
 ## Workflow rules (these OVERRIDE default/skill behavior)
 
-- **Work directly on `main`. Do NOT create git worktrees.** This is a brand-new solo project — worktrees add friction with no benefit. If a skill (e.g. superpowers `using-git-worktrees`, `executing-plans`, `subagent-driven-development`) wants to create a worktree, **skip that step** and just commit to `main`. This intentionally overrides the global worktree convention in `~/.claude/rules/`.
+- **Default is `main`, no worktree — but a worktree is fine when explicitly asked for.** This was a brand-new solo project where worktrees added friction with no benefit; that default still holds, and skills should not create one on their own. But it's no longer an absolute ban: if tseitz asks for a worktree by name, create it at `.claude/worktrees/<branch-name>` (gitignored) per the global convention in `~/.claude/rules/`, run `~/.claude/scripts/worktree-bootstrap.sh` from inside it, and work there for that task.
+
+  **`git worktree add` fails on this repo** — `.env` is git-crypt encrypted (see `.gitattributes`), and git-crypt looks for its key under the *per-worktree* git dir (`.git/worktrees/<name>/git-crypt/`), which is empty on a fresh worktree even though the key already exists in the shared one (`.git/git-crypt/keys/default`). The checkout fails with `git-crypt: Error: Unable to open key file`. Fix, before checking anything out:
+
+  ```bash
+  git worktree add --no-checkout -b <branch-name> .claude/worktrees/<branch-name>
+  ln -s ../../git-crypt .git/worktrees/<branch-name>/git-crypt
+  cd .claude/worktrees/<branch-name> && git checkout <branch-name> -- .
+  ```
+
+  Then `uv sync` from inside the worktree — it's a separate `.venv`, not shared with the main checkout, and `~/.claude/scripts/worktree-bootstrap.sh` only handles `npm`/node projects, not `uv`.
 
 - **This is a uv workspace. Run everything from the repo root with `uv run <command>`. Do NOT `cd` into `packages/*/`.** The root `pyproject.toml` declares `[tool.uv.workspace]` over `packages/*`, so one `.venv` and one `uv.lock` at the root cover all nine packages and every console script. `cd packages/oracle && uv run setups` is wrong — it will try to build a second, divergent environment. There is no per-package `uv.lock` and no per-package `.venv`; do not create either. Adding a dependency means editing that member's `pyproject.toml` and running `uv sync` **from the root**.
 
