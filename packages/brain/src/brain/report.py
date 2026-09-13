@@ -62,7 +62,7 @@ def format_passages(hits, *, query: str | None = None) -> str:
     - **The score gets a health warning.** Absolute cosine is NOT comparable across
       queries — it depends on how the query itself embeds. "displacement" tops out at
       0.70 with five on-topic hits while "order block" tops out at 0.80; the first is
-      not worse. IMPROVEMENTS.md §8 read the absolute numbers as "retrieval doesn't
+      not worse. GitHub issue #10 read the absolute numbers as "retrieval doesn't
       discriminate" and stood unchallenged for months. The consumer of this output is
       a model that will anchor on a number unless told what it means.
     """

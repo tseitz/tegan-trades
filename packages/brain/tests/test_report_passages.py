@@ -62,7 +62,7 @@ def test_whitespace_is_collapsed():
 
 
 def test_states_that_score_is_not_comparable_across_queries():
-    """IMPROVEMENTS.md §8 was mis-read for months because absolute cosine scores look
+    """GitHub issue #10 was mis-read for months because absolute cosine scores look
     low. They are only meaningful relative to the corpus for the SAME query, and the
     consumer of this output is a model that will otherwise anchor on the number."""
     out = format_passages([_hit(score=0.645)], query="q")

@@ -12,7 +12,7 @@ naked. Alpaca labels the difference itself (``position_intent``: ``buy_to_open``
 side, which would be exactly backwards on a short.
 
 **A resting entry consumes buying power at full notional and expires in 90 days.** That is the
-third of ``docs/IMPROVEMENTS.md`` §40's caps: an approval nobody cancelled sits against the
+third of GitHub issue #29's caps: an approval nobody cancelled sits against the
 budget for a quarter, and a zone price has not reached in a fortnight is a staler thesis than
 the one that was approved.
 """

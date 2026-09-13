@@ -55,7 +55,7 @@ max_notional_frac: 3.0
 # APPLIES TO BOTH VENUES, and it was chosen on equity data. On a perp account a 20% cap is
 # tighter than the venue would require, which is the safe direction but not a measured one.
 # If Hyperliquid ever carries real size again this wants splitting per venue, alongside the
-# same problem max_notional_frac has in the other direction (docs/IMPROVEMENTS.md §36).
+# same problem max_notional_frac has in the other direction (GitHub issue #27).
 max_position_frac: 0.20
 
 # The risk ceiling for the WHOLE BOOK, across venues, as a share of combined equity.
@@ -93,7 +93,7 @@ max_portfolio_risk: 0.05
 #
 # This is the one number in this file that is CHOSEN rather than measured, and it is round on
 # purpose so nobody reads precision into it. What would settle it is the decision sidecar
-# (docs/IMPROVEMENTS.md §4) — whether shrunk orders get approved and held like full ones — and
+# (GitHub issue #4) — whether shrunk orders get approved and held like full ones — and
 # that needs shrunk orders to exist first. 0 means "always shrink"; 1 means "never shrink".
 min_budget_fill: 0.5
 

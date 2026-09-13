@@ -32,7 +32,7 @@ that prompt becomes the entry's required reason.
 Vocabulary 1 asked the scope as its own question ("archive: [a]sset / [s]etup") and got it wrong
 in both directions — all 3 ``setup`` answers read as asset-level and stayed inert, while "Zero
 interest in PNUT" arrived as a *rejection* and had to be added here by hand. The scope is now
-derived from the reason rather than asked before it. See ``docs/IMPROVEMENTS.md`` §4.
+derived from the reason rather than asked before it. See GitHub issue #4.
 
 The append is textual rather than a ``safe_dump`` of the parsed file, because re-dumping would
 round-trip the data faithfully and destroy this header — which is where the whole

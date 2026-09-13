@@ -3,7 +3,7 @@
 **This is the one file under ``data/`` that is not ore.** ``docs/ARCHITECTURE.md`` describes
 that tree as machine-generated and regenerable, and for transcripts, theses, stances and
 prices that is exactly right — delete them and a command rebuilds them. It is false here.
-These rows are hand-entered judgement, they are what ``docs/IMPROVEMENTS.md`` §4 calls the
+These rows are hand-entered judgement, they are what GitHub issue #4 calls the
 only ground truth available for validating any of the four scorers, and nothing can
 reconstruct them. ``.gitignore`` excludes ``data/``, so without a second copy the file lives
 in exactly one place, on one disk, unbacked.

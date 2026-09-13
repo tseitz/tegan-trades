@@ -5,7 +5,7 @@ re-run before changing either. Replays the recorded order log through the curren
 with the budget decrementing as each order is placed — which is the thing that did not exist
 on the night the log was written.
 
-WHAT IT FOUND, 2026-07-29 (the sitting that produced `docs/IMPROVEMENTS.md` §40). Eight
+WHAT IT FOUND, 2026-07-29 (the sitting that produced GitHub issue #29). Eight
 brackets went out between 03:24 and 04:01 ET, every one of them sized to risk 1% of a $100,000
 account. Alpaca accepted all eight — the market was shut — and rejected three at the open:
 ``RKLB`` for buying power, and two ``CRM`` shorts because the account cannot short at all. The

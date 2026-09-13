@@ -19,7 +19,7 @@ meaningful share of the risk it was meant to, and refuses below that.
 
 ``MIN_BUDGET_FILL`` is **chosen, not measured**, and it is the one number here without
 evidence behind it: half the intended risk is the point where the trade is still recognisably
-the trade that was approved. What would settle it is the sidecar (`docs/IMPROVEMENTS.md` §4) —
+the trade that was approved. What would settle it is the sidecar (GitHub issue #4) —
 whether budget-shrunk orders are approved and held at the same rate as full-size ones — and
 that needs shrunk orders to exist first. Until then it is a round number, deliberately, so
 that nobody reads precision into it.

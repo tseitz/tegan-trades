@@ -11,7 +11,7 @@ open, where nothing was watching.
   account from Reg T's $2,000 equity minimum. The paper account holds $99,674 and cannot
   short — ``shorting_enabled`` is false. Two of the three rejections were this, not the budget.
 * **How much leverage the broker will actually hold.** ``multiplier`` is 1 here, against a
-  ``max_notional_frac`` of 3.0 measured on perps (``docs/IMPROVEMENTS.md`` §36).
+  ``max_notional_frac`` of 3.0 measured on perps (GitHub issue #27).
 
 MEASURED on Alpaca paper 2026-07-29, and the arithmetic is exact:
 ``equity 99,674.47 - initial_margin 74,702.95 = buying_power 24,971.52``, where that initial

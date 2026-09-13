@@ -28,7 +28,7 @@ result rests on the convention.
 not reached either level by the end of the window has a real unrealized value, and dropping it
 biases toward whatever resolves fastest — which is tight stops, which is a construction
 difference rather than an edge. Inventing a "trade expires after N days" cutoff instead would
-resurrect exactly the fixed-horizon constant ``docs/IMPROVEMENTS.md`` §2 is trying to delete.
+resurrect exactly the fixed-horizon constant GitHub issue #2 is trying to delete.
 The tail is a measurement boundary, not a claim that the trade ended.
 """
 from __future__ import annotations

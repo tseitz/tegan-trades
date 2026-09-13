@@ -1,7 +1,7 @@
 """Which candidates get put in front of a human, and what else was on screen beside them.
 
 Split out of ``setups_cli`` because it stopped being one slice expression. The queue used to
-be ``qualified[:limit]`` — the top N by score — and ``docs/IMPROVEMENTS.md`` §4 is the account
+be ``qualified[:limit]`` — the top N by score — and GitHub issue #4 is the account
 of why that quietly destroyed the only ground truth this repo has.
 
 **The defect, in one sentence: a sitting is not a random sample of the queue.** Decided rows

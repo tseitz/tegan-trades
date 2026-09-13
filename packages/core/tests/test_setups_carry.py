@@ -1,7 +1,7 @@
 """Carry folded into cross_reference: what it costs to *hold* the setup it just produced.
 
 The scorer is deliberately untouched — ``_score`` never sees these fields, so ranking risk is
-zero by construction. That is what IMPROVEMENTS §21 asks for before any weighting decision.
+zero by construction. That is what GitHub issue #18 asks for before any weighting decision.
 
 Fixtures mirror ``test_setups.py`` rather than reinventing structure.
 """

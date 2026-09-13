@@ -1,7 +1,7 @@
 """The decisions sidecar and its vault mirror.
 
 These cover the one file in ``data/`` that is not regenerable ore: hand-entered judgement,
-which nothing in the pipeline can reconstruct. See ``docs/IMPROVEMENTS.md`` §4b.
+which nothing in the pipeline can reconstruct. See GitHub issue #5.
 """
 from __future__ import annotations
 

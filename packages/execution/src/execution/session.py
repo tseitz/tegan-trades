@@ -365,7 +365,7 @@ def describe(plan: OrderPlan, account: Account | None = None,
         )
 
     # **Printed on every equity order, not only when the participation ceiling bound** — the
-    # remaining half of `docs/IMPROVEMENTS.md` §36. It used to appear only under a cap, so a
+    # remaining half of GitHub issue #27. It used to appear only under a cap, so a
     # market thin enough to shrink the order showed its numbers and a market merely thin showed
     # nothing: 175 trades/day and 26,862 trades/day rendered identically as long as neither
     # tripped the 1% ceiling. The ceiling answers "should this order shrink"; this line answers
@@ -389,7 +389,7 @@ def describe(plan: OrderPlan, account: Account | None = None,
             + (f" — this order is {share:.2%} of one" if share is not None else "")
         )
 
-    # The total that nothing computed (`docs/IMPROVEMENTS.md` §40). Sizing is per-trade, so
+    # The total that nothing computed (GitHub issue #29). Sizing is per-trade, so
     # eight approvals in one sitting each looked like 1% and together wanted 123.6% of the
     # account — a fact that was on nobody's screen until the venue rejected three of them at
     # the open. Printed on every order, not only when it binds, because the point is to make

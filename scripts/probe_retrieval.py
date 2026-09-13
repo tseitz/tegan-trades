@@ -1,4 +1,4 @@
-"""Does the vector index discriminate? Re-runnable measurement behind IMPROVEMENTS.md §8.
+"""Does the vector index discriminate? Re-runnable measurement behind GitHub issue #10.
 
 §8 read "scores compress into 0.72-0.81" as "retrieval doesn't discriminate". Absolute
 cosine is the wrong statistic: it depends on how the QUERY embeds, so it is not
@@ -17,7 +17,7 @@ import numpy as np
 from brain import vector_store as v
 from brain.embed import FastEmbedder
 
-# Includes the four questions IMPROVEMENTS.md §3 lists as unresolved in the spec.
+# Includes the four questions GitHub issue #3 lists as unresolved in the spec.
 QUERIES = [
     "what do they call the down move before the up move that breaks market structure",
     "what is a fair value gap and how do you identify one",

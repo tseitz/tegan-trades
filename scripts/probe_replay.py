@@ -6,7 +6,7 @@ is ever written back onto a decision row (``oracle.decisions`` forbids backfilli
 replayed outcome is exactly the kind of derived value that would look captured-live a month
 from now).
 
-**Why this probe exists.** ``docs/IMPROVEMENTS.md`` §4 says revealed preference is the only
+**Why this probe exists.** GitHub issue #4 says revealed preference is the only
 ground truth available for the four scorers. That was true when it was written and it is not
 true now: every decision row carries ``entry``/``stop``/``target`` and a timestamp, and
 ``data/prices/`` holds a year of daily OHLC for most of the assets involved. Walking those

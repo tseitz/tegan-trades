@@ -99,7 +99,7 @@ DEFAULT_VAULT_NOTE = Path.home() / "vault" / "Trading" / "Trade Logs" / "Setups.
 # The sidecar's second copy. Sits beside the approvals note because it is the same kind of
 # thing — hand-entered judgement, which ``architecture.md`` puts on the vault side of the
 # repo/vault boundary — and because ``data/`` is gitignored, so the sidecar is otherwise
-# unbacked. See ``oracle.decisions`` and ``docs/IMPROVEMENTS.md`` §4b.
+# unbacked. See ``oracle.decisions`` and GitHub issue #5.
 DEFAULT_MIRROR = DEFAULT_VAULT_NOTE.parent / "decisions.jsonl"
 
 TIER_CHOICES = (TIER_MAJOR, TIER_LARGE, TIER_SMALL, TIER_UNRANKED, TIER_NONCRYPTO)
@@ -149,7 +149,7 @@ ARCHIVE_SETUP = "setup"
 # ── reason vocabulary 2 ─────────────────────────────────────────────────────────────────────
 #
 # **Derived from the notes, not designed a priori.** Hand-labelling all 29 vocabulary-1 rows
-# against what their free text literally says (the table is in ``docs/IMPROVEMENTS.md`` §4)
+# against what their free text literally says (the table is in GitHub issue #4)
 # found the old five buckets cutting across the real categories rather than along them:
 #
 #   * ``other`` was not a residue bucket. All 9 rows had a nameable category — 3 stale,

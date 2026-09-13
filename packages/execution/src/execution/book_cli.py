@@ -1,6 +1,6 @@
 """``book`` — what the account is already holding, and what to retire.
 
-The third of ``docs/IMPROVEMENTS.md`` §40's three caps, and the only one that is a command
+The third of GitHub issue #29's three caps, and the only one that is a command
 rather than a check. A resting entry reserves its full notional and Alpaca expires it after 90
 days, so an approval nobody cancelled holds a slice of the budget for a quarter — and a zone
 price has not reached in a fortnight is a staler thesis than the one that was approved.

@@ -224,7 +224,7 @@ def offer(session, candidate, *, book=None, input_fn=input, out=print,
 
     # The account goes in beside the plan so the preview can show the running total. Per-trade
     # numbers alone are what let eight approvals in one sitting each read as 1% while together
-    # wanting 123.6% of the account — see `docs/IMPROVEMENTS.md` §40.
+    # wanting 123.6% of the account — see GitHub issue #29.
     out(describe(outcome, session.account, book))
 
     # The perp liquidity gate is measured but not enforced on the rehearsal network. Saying so

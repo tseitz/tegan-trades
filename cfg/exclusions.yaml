@@ -6,7 +6,7 @@
 # again. OIL and CL were rejected for the asset on 2026-07-27 and were back on 4 of the 59
 # undecided rows the same day, one at score 0.711.
 #
-# It also protects the ground truth. These decisions are what `docs/IMPROVEMENTS.md` §4 mines
+# It also protects the ground truth. These decisions are what GitHub issue #4 mines
 # to calibrate the scorer, and an asset-level "no" carries no information about setup quality
 # — 3 of 7 rejections in the first real session were disinterest in the instrument, 43% of the
 # negative labels. Filtered here, every rejection left in the sidecar is about the trade.

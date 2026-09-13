@@ -4,7 +4,7 @@ Free, local, re-runnable. Reads ``data/setups/decisions.jsonl`` only — no netw
 no price fetch. Nothing here mutates anything.
 
 **Why this probe exists.** ``freshness`` separated approvals from negatives in two sessions
-(docs/IMPROVEMENTS.md §4) while carrying the second-smallest weight of five, and raising
+(GitHub issue #4) while carrying the second-smallest weight of five, and raising
 it was the one named pending scoring change. This was written to measure *how far* to raise
 it rather than picking a number by argument — the rule §18 states for the ``collapse`` rep:
 "needs measuring against §4's sidecar, not picking by argument".

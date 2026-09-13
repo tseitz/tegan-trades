@@ -386,7 +386,7 @@ def approach_to(block: OrderBlock, price: float, *, span: float = PROXIMITY_SPAN
     0.0, so nothing could push it lower, and a continuous tail necessarily scores *above* that
     floor. What it buys is resolution: distance becomes rankable instead of collapsing to one
     value. Demoting them means fixing the reward:risk term, which currently *rises* with the
-    same distance. See ``docs/IMPROVEMENTS.md`` §19.
+    same distance. See GitHub issue #17.
     """
     if block.traded_through(price):
         return 0.0

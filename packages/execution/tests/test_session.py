@@ -269,7 +269,7 @@ def test_a_candidate_with_a_working_bracket_is_still_refused(tmp_path):
 
 
 # ── the running total ───────────────────────────────────────────────────────────────────────
-# `docs/IMPROVEMENTS.md` §40: sizing is per-trade and nothing added it up, so eight approvals
+# GitHub issue #29: sizing is per-trade and nothing added it up, so eight approvals
 # in one sitting each looked like 1% and together wanted 123.6% of the account.
 
 FUNDED = Account(equity=10_000.0, buying_power=10_000.0, committed=0.0,

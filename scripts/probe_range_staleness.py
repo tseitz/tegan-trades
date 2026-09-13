@@ -7,8 +7,7 @@ which is the strongest signal drawn from the weakest evidence. But it means an a
 broken out is not merely gated, it is *ungateable*, and the queue reports that under the same
 `wrong_side_of_range` label it uses for a price sitting honestly in the wrong half.
 
-Those are two different facts and this probe separates them — the same split `IMPROVEMENTS.md`
-§27 made when it pulled a ranging weekly out of `weekly_disagrees` and recovered 23 candidates.
+Those are two different facts and this probe separates them — the same split GitHub issue #22 made when it pulled a ranging weekly out of `weekly_disagrees` and recovered 23 candidates.
 
     uv run python scripts/probe_range_staleness.py
 

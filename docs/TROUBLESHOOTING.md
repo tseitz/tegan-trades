@@ -3,7 +3,7 @@
 Failures that cost hours to diagnose once, written down so they cost minutes the next time.
 
 Each entry records the **symptom you will actually see** first, because in every case here the
-error that surfaces is not the real one. `docs/IMPROVEMENTS.md` is the backlog; this file is the
+error that surfaces is not the real one. GitHub Issues is the backlog; this file is the
 runbook, and things land here when they are *fixed but not update-safe*, or fixed in a way a
 future session could undo without noticing.
 
