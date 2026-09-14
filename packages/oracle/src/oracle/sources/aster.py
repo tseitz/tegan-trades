@@ -18,15 +18,24 @@ rather than an annualized or daily figure.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
 from core.funding import FundingRate
+from core.interest import OpenInterest
 
 from oracle import http
+from oracle.http import FetchError
 
 BASE = "https://fapi.asterdex.com/fapi/v1"
 VENUE = "aster"
 DEFAULT_INTERVAL_HOURS = 8.0
+
+# There is no bulk open-interest endpoint -- one request per listed symbol (589 measured
+# 2026-09-13). Eight-way concurrency finishes in ~30s and stayed under the venue's rate limit
+# across repeated runs (scripts/probe_perp_venue_fundamentals.py); higher trades a few seconds
+# for 429s that would look like missing markets in the coverage figure below.
+OPEN_INTEREST_WORKERS = 8
 
 
 def parse_funding_info(payload) -> dict[str, float]:
@@ -133,3 +142,61 @@ def fetch(
     at = observed_at or datetime.now(UTC)
     intervals = parse_funding_info(get_json(f"{BASE}/fundingInfo"))
     return parse_premium_index(get_json(f"{BASE}/premiumIndex"), intervals, observed_at=at)
+
+
+def fetch_open_interest(
+    *,
+    get_json=http.get_json,
+    observed_at: datetime | None = None,
+    workers: int = OPEN_INTEREST_WORKERS,
+) -> tuple[list[OpenInterest], float]:
+    """Open interest per symbol, plus the share of 24h volume it actually resolved.
+
+    Three reads: ``/ticker/24hr`` for volume, ``/premiumIndex`` for marks (open interest is
+    base units of the underlying and is meaningless untranslated), then one ``/openInterest``
+    call per symbol -- there is no bulk endpoint. A refusing symbol drops out of the rows
+    rather than being counted as zero, so the coverage figure reflects what was actually
+    resolved rather than a partial sum reported as a total.
+    """
+    at = observed_at or datetime.now(UTC)
+    tickers = get_json(f"{BASE}/ticker/24hr") or []
+    marks = {
+        row.get("symbol"): row.get("markPrice")
+        for row in (get_json(f"{BASE}/premiumIndex") or [])
+        if row and row.get("symbol")
+    }
+    volume_all = 0.0
+    for row in tickers:
+        try:
+            volume_all += float(row.get("quoteVolume") or 0.0)
+        except (TypeError, ValueError):
+            continue
+
+    def one(row) -> OpenInterest | None:
+        symbol = row.get("symbol") or ""
+        if not symbol or symbol not in marks:
+            return None
+        # `requests` percent-encodes `params` values itself -- pre-encoding a non-ASCII
+        # symbol like `龙虾USDT` here would double-encode it and silently 400.
+        try:
+            payload = get_json(f"{BASE}/openInterest", {"symbol": symbol})
+        except FetchError:
+            return None
+        if not payload or payload.get("openInterest") is None:
+            return None
+        try:
+            notional = float(payload["openInterest"]) * float(marks[symbol])
+            volume = float(row.get("quoteVolume") or 0.0)
+        except (TypeError, ValueError):
+            return None
+        return OpenInterest(
+            venue=VENUE, symbol=symbol, notional=notional, volume_24h=volume, observed_at=at
+        )
+
+    with ThreadPoolExecutor(workers) as pool:
+        results = list(pool.map(one, tickers))
+
+    readings = [r for r in results if r is not None]
+    volume_resolved = sum(r.volume_24h for r in readings)
+    coverage = volume_resolved / volume_all if volume_all else 0.0
+    return readings, coverage

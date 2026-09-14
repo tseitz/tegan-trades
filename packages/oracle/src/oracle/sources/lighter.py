@@ -20,6 +20,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from core.funding import FundingRate
+from core.interest import OpenInterest
 
 from oracle import http
 
@@ -58,3 +59,50 @@ def parse_funding_rates(payload, *, observed_at: datetime) -> list[FundingRate]:
 def fetch(*, get_json=http.get_json, observed_at: datetime | None = None) -> list[FundingRate]:
     at = observed_at or datetime.now(UTC)
     return parse_funding_rates(get_json(f"{BASE}/funding-rates"), observed_at=at)
+
+
+def parse_open_interest(payload, *, observed_at: datetime) -> list[OpenInterest]:
+    """Parse ``/orderBookDetails`` — open interest, mark and 24h volume in one response.
+
+    Perp markets only: the endpoint also lists spot pairs, which carry no open interest to
+    speak of. ``daily_quote_token_volume`` is already USD, unlike ``open_interest``, which is
+    base units of the underlying and must be multiplied by ``mark_price`` first.
+    """
+    if not payload:
+        return []
+    readings: list[OpenInterest] = []
+    for row in payload.get("order_book_details") or []:
+        if not row or row.get("market_type") != "perp":
+            continue
+        symbol = row.get("symbol")
+        raw_oi, raw_mark, raw_vol = (
+            row.get("open_interest"),
+            row.get("mark_price"),
+            row.get("daily_quote_token_volume"),
+        )
+        if not symbol or raw_oi is None or raw_mark is None or raw_vol is None:
+            continue
+        try:
+            notional = float(raw_oi) * float(raw_mark)
+            volume = float(raw_vol)
+        except (TypeError, ValueError):
+            continue
+        readings.append(
+            OpenInterest(
+                venue=VENUE,
+                symbol=symbol,
+                notional=notional,
+                volume_24h=volume,
+                observed_at=observed_at,
+            )
+        )
+    return readings
+
+
+def fetch_open_interest(
+    *, get_json=http.get_json, observed_at: datetime | None = None
+) -> list[OpenInterest]:
+    """The one call funding doesn't already make — ``/orderBookDetails`` is a separate
+    endpoint from ``/funding-rates``, so this costs one extra request per sweep."""
+    at = observed_at or datetime.now(UTC)
+    return parse_open_interest(get_json(f"{BASE}/orderBookDetails"), observed_at=at)

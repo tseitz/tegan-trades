@@ -1,7 +1,12 @@
-"""``fetch-funding`` — log what it costs to hold a position, across venues.
+"""``fetch-funding`` — log what it costs to hold a position, and what stands behind it,
+across venues.
 
 Free on every venue: three public read-only endpoints, no keys, no money. Safe to run from
-the nightly job.
+the nightly job. The name is now a slight understatement — every snapshot also logs open
+interest into ``data/interest/`` (see ``oracle.interest_store``), because Hyperliquid and
+Lighter answer it in the same or one extra call funding already makes. Skip that half with
+``--no-interest`` when only funding is wanted; it also spares Aster's ~589-call sweep, the one
+open-interest read that isn't nearly free.
 
 Two modes, because they answer different questions:
 
@@ -11,7 +16,8 @@ Two modes, because they answer different questions:
 Backfill is what makes the log useful on day one rather than in three weeks. It covers
 Hyperliquid and Aster only — Lighter serves a history feed whose unit does not reconcile
 with its snapshot feed, and shipping an unverified 8x conversion into a carry model is the
-exact failure this whole subsystem is built to avoid.
+exact failure this whole subsystem is built to avoid. Backfill never touches open interest —
+all three venues serve it as a snapshot only, so there is no history to pull.
 
     fetch-funding --report        summarise what has been logged, per asset per venue
 """
@@ -21,8 +27,9 @@ import argparse
 from datetime import UTC, datetime, timedelta
 
 from core.funding import FundingRate, summarize
+from core.interest import OpenInterest
 
-from oracle import funding_store, http, venue_map
+from oracle import funding_store, http, interest_store, venue_map
 from oracle.http import FetchError
 from oracle.sources import aster, hyperliquid, lighter
 
@@ -31,35 +38,64 @@ from oracle.sources import aster, hyperliquid, lighter
 BACKFILL_VENUES = ("hyperliquid", "aster")
 
 
-def _snapshot(verbose: bool = True) -> list[FundingRate]:
+def _snapshot(
+    *, with_interest: bool = True, verbose: bool = True
+) -> tuple[list[FundingRate], list[OpenInterest]]:
     at = datetime.now(UTC)
     rates: list[FundingRate] = []
+    interest: list[OpenInterest] = []
 
-    for name, thunk in (
-        ("hyperliquid", lambda: hyperliquid.fetch(observed_at=at)),
-        ("lighter", lambda: lighter.fetch(observed_at=at)),
-    ):
-        try:
-            got = thunk()
-        except FetchError as exc:
-            # One venue being unreachable must not cost the other two their snapshot --
-            # a gap in the log is unrecoverable, so partial beats nothing.
-            print(f"  ! {name}: {exc}")
-            continue
+    try:
+        got_rates, got_interest = hyperliquid.fetch_snapshot(observed_at=at)
+    except FetchError as exc:
+        # One venue being unreachable must not cost the other two their snapshot -- a gap
+        # in the log is unrecoverable, so partial beats nothing.
+        print(f"  ! hyperliquid: {exc}")
+    else:
+        rates.extend(got_rates)
+        if with_interest:
+            interest.extend(got_interest)
+        if verbose:
+            print(f"  hyperliquid: {len(got_rates)} markets")
+
+    try:
+        got = lighter.fetch(observed_at=at)
+    except FetchError as exc:
+        print(f"  ! lighter: {exc}")
+    else:
         rates.extend(got)
         if verbose:
-            print(f"  {name}: {len(got)} markets")
+            print(f"  lighter: {len(got)} markets")
+
+    if with_interest:
+        try:
+            got_oi = lighter.fetch_open_interest(observed_at=at)
+        except FetchError as exc:
+            print(f"  ! lighter interest: {exc}")
+        else:
+            interest.extend(got_oi)
 
     try:
         got, defaulted = aster.fetch(observed_at=at)
+    except FetchError as exc:
+        print(f"  ! aster: {exc}")
+    else:
         rates.extend(got)
         if verbose:
             note = f" ({defaulted} used the {aster.DEFAULT_INTERVAL_HOURS}h default)" if defaulted else ""
             print(f"  aster: {len(got)} markets{note}")
-    except FetchError as exc:
-        print(f"  ! aster: {exc}")
 
-    return rates
+    if with_interest:
+        try:
+            got_oi, coverage = aster.fetch_open_interest(observed_at=at)
+        except FetchError as exc:
+            print(f"  ! aster interest: {exc}")
+        else:
+            interest.extend(got_oi)
+            if verbose:
+                print(f"  aster interest: {len(got_oi)} markets ({coverage:.1%} of volume resolved)")
+
+    return rates, interest
 
 
 def _backfill(days: int) -> list[FundingRate]:
@@ -160,30 +196,50 @@ def main() -> int:
         "--window", type=int, default=30, help="days of history to report over (default 30)"
     )
     parser.add_argument("--dry-run", action="store_true", help="fetch but do not write")
+    parser.add_argument(
+        "--no-interest",
+        action="store_true",
+        help="skip open interest, including Aster's ~589-call per-symbol sweep",
+    )
     args = parser.parse_args()
 
     if args.report:
         _report(args.window)
         return 0
 
+    interest: list[OpenInterest] = []
     if args.backfill:
         print(f"Backfilling {args.backfill}d of realised funding...")
         rates = _backfill(args.backfill)
     else:
         print("Snapshotting funding...")
-        rates = _snapshot()
+        rates, interest = _snapshot(with_interest=not args.no_interest)
 
-    if not rates:
-        print("No rates fetched — nothing written.")
+    if not rates and not interest:
+        print("Nothing fetched — nothing written.")
         return 1
 
     if args.dry_run:
-        print(f"\n[dry-run] {len(rates)} observations, not written.")
+        print(
+            f"\n[dry-run] {len(rates)} funding observations, "
+            f"{len(interest)} open-interest observations, not written."
+        )
         return 0
 
-    written = funding_store.append(rates)
-    total = sum(written.values())
-    for path, n in sorted(written.items()):
-        print(f"  wrote {n:>6} -> {path.name}")
-    print(f"\n{total} observations logged.")
+    if rates:
+        written = funding_store.append(rates)
+        total = sum(written.values())
+        for path, n in sorted(written.items()):
+            print(f"  wrote {n:>6} -> {path.name}")
+        print(f"\n{total} funding observations logged.")
+    else:
+        print("\nNo funding observations fetched.")
+
+    if interest:
+        written_oi = interest_store.append(interest)
+        total_oi = sum(written_oi.values())
+        for path, n in sorted(written_oi.items()):
+            print(f"  wrote {n:>6} -> {path.name}")
+        print(f"{total_oi} open-interest observations logged.")
+
     return 0

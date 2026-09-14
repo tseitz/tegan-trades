@@ -1,11 +1,12 @@
 # Architecture — data flow and cost map
 
 Six uv packages, one shared `core` contract, and a filesystem-as-database: everything under
-`data/` is regenerable ore, and no stage mutates what an upstream stage wrote — **with two
+`data/` is regenerable ore, and no stage mutates what an upstream stage wrote — **with three
 exceptions that are records rather than caches**: `data/setups/decisions.jsonl` (and its
 triage sibling) hold hand-entered judgement that nothing can recompute, and `data/funding/`
-holds observations of a window the venues stop serving — see `oracle.funding_store`. Deleting
-either loses information permanently. Everything else can be rebuilt by re-running its stage.
+and `data/interest/` hold observations of a window the venues serve only as a live snapshot —
+see `oracle.funding_store` and `oracle.interest_store`. Deleting any of them loses information
+permanently. Everything else can be rebuilt by re-running its stage.
 
 Spine: **ingest → distill → price → cross-reference**, with a parallel **stance/context**
 branch feeding the `brain` Q&A head.

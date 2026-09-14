@@ -95,6 +95,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from oracle import http
+from oracle.sources import hyperliquid
 
 HYPERLIQUID_INFO = "https://api.hyperliquid.xyz/info"
 LIGHTER_BASE = "https://mainnet.zklighter.elliot.ai/api/v1"
@@ -190,19 +191,26 @@ class Economics:
 # ---------------------------------------------------------------------------- venue books
 
 
-def parse_hyperliquid(payload) -> Book:
-    """``metaAndAssetCtxs`` returns a two-element list: the universe, then contexts in the
-    same order. The pairing is positional, so a zip is the only join available."""
-    if not payload:
-        return Book("hyperliquid", 0, 0.0, 0.0, 1.0, None)
-    universe = (payload[0] or {}).get("universe") or []
-    ctxs = payload[1] or []
+def parse_hyperliquid(payloads: list) -> Book:
+    """One ``metaAndAssetCtxs`` reply per element: the core book, then one per HIP-3 builder
+    dex. Equities, indices and commodities live only on those dexs, not the core book, so
+    summing the core book alone previously undercounted Hyperliquid's total open interest by
+    ~30% (measured 2026-09-13: $9.79B core-only vs $13.9B across every dex). Each reply is a
+    two-element ``[universe, contexts]`` list, positionally zipped, same as
+    ``oracle.sources.hyperliquid.parse_asset_ctxs``."""
     oi = vol = 0.0
-    for _, ctx in zip(universe, ctxs, strict=False):
-        mark = _f(ctx.get("markPx"))
-        oi += _f(ctx.get("openInterest")) * mark
-        vol += _f(ctx.get("dayNtlVlm"))
-    return Book("hyperliquid", min(len(universe), len(ctxs)), oi, vol, 1.0, None)
+    markets = 0
+    for payload in payloads:
+        if not payload:
+            continue
+        universe = (payload[0] or {}).get("universe") or []
+        ctxs = payload[1] or []
+        markets += min(len(universe), len(ctxs))
+        for _, ctx in zip(universe, ctxs, strict=False):
+            mark = _f(ctx.get("markPx"))
+            oi += _f(ctx.get("openInterest")) * mark
+            vol += _f(ctx.get("dayNtlVlm"))
+    return Book("hyperliquid", markets, oi, vol, 1.0, None)
 
 
 def parse_lighter(payload) -> Book:
@@ -251,10 +259,14 @@ def fetch_aster(*, top: int | None = None, get_json=http.get_json) -> Book:
 
 
 def fetch_books(*, aster_top: int | None = None) -> dict[str, Book]:
+    hl_payloads = [http.post_json(HYPERLIQUID_INFO, {"type": "metaAndAssetCtxs"})]
+    for dex in hyperliquid.parse_dexs(http.post_json(HYPERLIQUID_INFO, {"type": "perpDexs"})):
+        hl_payloads.append(
+            http.post_json(HYPERLIQUID_INFO, {"type": "metaAndAssetCtxs", "dex": dex})
+        )
+
     books = {
-        "hyperliquid": parse_hyperliquid(
-            http.post_json(HYPERLIQUID_INFO, {"type": "metaAndAssetCtxs"})
-        ),
+        "hyperliquid": parse_hyperliquid(hl_payloads),
         "lighter": parse_lighter(http.get_json(f"{LIGHTER_BASE}/orderBookDetails")),
     }
     books["aster"] = fetch_aster(top=aster_top)
@@ -281,10 +293,17 @@ def fetch_llama(venue: Venue, *, months: int) -> tuple[float | None, float | Non
 
 
 def _llama_total(protocol: str, data_type: str) -> float | None:
+    """Only ``total30d`` is read, so both chart params drop -- measured on
+    ``/summary/fees/hyperliquid``: 95,167 bytes -> 82,103 with ``excludeTotalDataChart`` alone
+    -> 6,627 with the breakdown excluded too. A 14x cut for six floats."""
     try:
         payload = http.get_json(
             f"{LLAMA_FEES}/{protocol}",
-            {"dataType": data_type, "excludeTotalDataChart": "true"},
+            {
+                "dataType": data_type,
+                "excludeTotalDataChart": "true",
+                "excludeTotalDataChartBreakdown": "true",
+            },
         )
     except http.FetchError:
         return None
