@@ -7,7 +7,7 @@ This file is the glossary. Decisions live in `docs/adr/`; work lives in GitHub i
 ## Money
 
 **Mandate**:
-What a pot of money is for, and what it must beat. Retirement, savings, risk and active are four mandates, not four accounts.
+What a pot of money is for: what it must beat and how much risk it may take, independent of the asset classes it holds. Retirement, savings, robinhood and crypto are today's four mandates, one per portfolio file — "not four accounts" because the mandate is the purpose, not the login.
 _Avoid_: Account, portfolio, bucket, strategy.
 
 **Domain**:
@@ -19,8 +19,12 @@ The denominator a percentage is taken against: every position inside one Mandate
 _Avoid_: Total, book, net worth.
 
 **Benchmark**:
-What "doing nothing instead" would have returned for a Mandate, so performance can be judged against the Mandate's own goal rather than a generic index. A Mandate may carry more than one.
+What "doing nothing instead" would have returned for a Mandate, so performance can be judged against the Mandate's own goal rather than a generic index. A Mandate carries one to three — a market index, a flat synthetic rate, or its own holdings left untraded — capped there so the comparison stays legible rather than open-ended.
 _Avoid_: Index, baseline, target.
+
+**Horizon**:
+How long a Mandate's position is expected to be held — `scalp`, `swing`, `position`, or `macro` — carried as a Mandate field. Three unrelated things share this vocabulary: a Mandate's own Horizon, a Thesis's stated timeframe, and the day-count constants used in call scoring. Settling which one a conversation means is worth a beat before using the word.
+_Avoid_: Timeframe, period — without saying which of the three you mean.
 
 **Holding**:
 Something currently owned, listed in a portfolio file. Distinct from a Candidate, which is not owned yet.
