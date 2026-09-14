@@ -57,9 +57,19 @@ both. Quoting fees where revenue was wanted overstates the share that reaches a 
 so the fallback is explicit and the report says which figure it used. The 400 costs ~9s
 because `oracle.http` retries it three times before giving up.
 
-**Volume is paywalled and the venues are not.** `/overview/derivatives` and
-`/summary/derivatives/*` both answer HTTP 402. That is the reason this probe reads volume and
-open interest from each venue directly instead of taking one vendor's word for all three.
+Do not reconstruct the missing figure by adding the parts. `dailyHoldersRevenue` plus
+`dailyProtocolRevenue` overshoots Lighter's own `dailyRevenue` by 62%, so the sum is not a
+decomposition of it and reads as a confident wrong number.
+
+**Volume is paywalled. Open interest is not.** `/overview/derivatives` and
+`/summary/derivatives/*` answer HTTP 402, but `/overview/open-interest` answers 200 without a
+key (re-measured 2026-09-14). So the paywall is not "derivatives data" as a category, and a
+future reader should not assume the OI number has to come from the venues. This probe still
+reads both from each venue directly, because the two sides must be counted the same way:
+DefiLlama and CoinGecko agree with each other on Lighter's OI to 1.3% while both sit at ~1.97x
+what Lighter's own API reports. That gap is a definitional split, not a vendor bug, and mixing
+a venue figure for one side with an aggregator figure for the other turns a 13x like-for-like
+gap into a reported 26x one.
 
 **A young adapter is a soft number.** DefiLlama's per-protocol adapters are often
 community-written, and a new one gets backfilled and corrected after the fact. `Lighter

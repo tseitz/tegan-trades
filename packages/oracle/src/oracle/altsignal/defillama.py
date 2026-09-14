@@ -7,8 +7,11 @@ Three endpoints, all free and unauthenticated (verified live 2026-09-03):
     /overview/dexs/{chain}           DEX trading volume for one chain — proves real usage,
                                       not just parked capital
 
-DefiLlama has no "active users" endpoint. That is a real gap in what this source can answer,
-not something missed here — see the Phase 5 design spec for the research behind that.
+Two gaps, both confirmed absent rather than missed. **Active users** has no endpoint at all,
+free or paid. **Perps volume** does have one, and it answers HTTP 402 — but note that
+`/overview/open-interest` is free, so "derivatives data" is not paywalled as a category.
+`docs/research/protocol-comparison-metrics.md` carries the measurements and the sources that
+do answer those two.
 """
 from __future__ import annotations
 
