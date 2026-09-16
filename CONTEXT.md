@@ -14,9 +14,9 @@ _Avoid_: Account, portfolio, bucket, strategy.
 An asset class — `crypto` or `stock`. It selects a price source. It is **not** a statement of purpose; that is the Mandate.
 _Avoid_: Using it to mean what the money is for.
 
-**Whole**:
-The denominator a percentage is taken against: every position inside one Mandate, merged across its accounts. Percentages never cross a Mandate boundary.
-_Avoid_: Total, book, net worth.
+**Net worth**:
+Everything you have, summed across every Mandate: each Mandate's holdings plus its own cash, plus Treasury's balance once Treasury exists. Settled 2026-09-15 ([ADR-0007](adr/0007-net-worth-reader.md)) as the one deliberate, narrow crossing of the Mandate boundary — a percentage inside a Mandate still never crosses it; this is the sole reader that sums across all of them.
+_Avoid_: Whole, total, book — this repo does not have a standing word for "everything inside one Mandate merged across its accounts"; describe that in plain words where it's needed instead of reaching for a proper noun.
 
 **Benchmark**:
 What "doing nothing instead" would have returned for a Mandate, so performance can be judged against the Mandate's own goal rather than a generic index. A Mandate carries one to three — a market index, a flat synthetic rate, or its own holdings left untraded — capped there so the comparison stays legible rather than open-ended.
@@ -56,8 +56,8 @@ _Avoid_: Recommendation, call, action, rating.
 A trade idea not yet owned, produced by `setups` and ranked for the queue. Becomes a Holding only if taken.
 _Avoid_: Setup, opportunity, idea, signal.
 
-## Trust and yield
+## Safety and yield
 
-**Trust**:
-The property that makes a yield venue acceptable to park money in. Deliberately undefined so far — "mostly blue chip, but open to a validated fork" is an intent, not a definition. Pinning it down is open work.
-_Avoid_: Safety, risk score, quality.
+**Safety**:
+Whether a yield venue is safe enough to park money in — a hard gate a venue must clear entirely, not a score. Settled 2026-09-14: needs at least one audit on record, plus a minimum on-chain age gated by fork lineage. A venue that clears the gate still gets a separate safety score shown alongside it (incentive mix, history stability, incidents) — flagged, never hidden behind one pass/fail. Full reasoning: [ADR-0006](adr/0006-yield-venue-safety-gate.md).
+_Avoid_: Trust — reserved for the crypto roster's unrelated per-voice credibility grade (see issue #1), not this concept.
