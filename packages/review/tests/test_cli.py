@@ -179,6 +179,9 @@ def test_review_for_bundles_mismatch_and_levels_onto_the_result(monkeypatch):
     assert result.levels == ((), (), 0)
     assert [ticker for ticker, _, _ in result.mismatched] == ["VTI"]
     assert result.chains == () and result.macro == ()
+    # No `data/transactions/test.json` exists, so the trailing field rides on the result as
+    # `None` rather than the caller having to know to ask for it separately.
+    assert result.history is None
 
 
 def test_load_books_skips_a_bad_file_and_reports_it(monkeypatch):

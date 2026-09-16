@@ -18,6 +18,7 @@ from core.review import (
     Reading,
     RosterLean,
 )
+from core.transactions import TransactionSpan
 from oracle.portfolios import Benchmark, Mandate
 from review.render import ORDER, render
 
@@ -428,3 +429,36 @@ def test_an_empty_roster_still_reads_as_silence():
     assert "silent" in note
     assert "nobody" in note
     assert "undecided" not in note
+
+
+# ── transaction history — the printed line ──────────────────────────────────
+
+HELD_FLAT = Mandate(name="retirement", benchmarks=(Benchmark(type="held_flat"),),
+                    horizon="macro", risk_posture="conservative")
+NO_HISTORY = Mandate(name="swing", benchmarks=(Benchmark(type="flat_rate", rate=0.05),),
+                     horizon="swing", risk_posture="moderate")
+
+
+def test_history_present_prints_the_oldest_day():
+    span = TransactionSpan(oldest=date(2024, 3, 1), newest=date(2025, 1, 1), count=40)
+    out = render([_reading()], portfolio="retirement", as_of=AS_OF, mandate=HELD_FLAT,
+                 history=span)
+    assert "2024-03-01" in out
+
+
+def test_history_none_on_a_held_flat_mandate_says_the_account_has_no_feed():
+    out = render([_reading()], portfolio="retirement", as_of=AS_OF, mandate=HELD_FLAT,
+                 history=None)
+    assert "none cached" in out
+
+
+def test_history_none_on_any_other_mandate_prints_nothing():
+    out = render([_reading()], portfolio="swing", as_of=AS_OF, mandate=NO_HISTORY,
+                 history=None)
+    assert "transaction history" not in out
+
+
+def test_an_empty_book_still_prints_the_history_line():
+    span = TransactionSpan(oldest=date(2024, 3, 1), newest=date(2025, 1, 1), count=40)
+    out = render([], portfolio="retirement", as_of=AS_OF, mandate=HELD_FLAT, history=span)
+    assert "2024-03-01" in out

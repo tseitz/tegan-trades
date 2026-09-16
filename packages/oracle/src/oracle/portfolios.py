@@ -109,6 +109,12 @@ class Benchmark:
     ``type`` names which of ``key``/``rate`` applies; the other stays ``None``. Resolving a
     ``symbol`` key to an actual price series, or a ``held_flat`` entry to the held-flat
     baseline, is #69's job — this is only the parsed intent.
+
+    **Declaring ``held_flat`` on an account costs real money.** ``plaid_cli`` gates its
+    transaction-history pull on this exact entry, and the first pull against an Item starts a
+    metered monthly Plaid subscription on that connection that cannot be cancelled without
+    removing and re-linking it. Adding ``held_flat`` to a mandate that did not have it before is
+    therefore not a free config change — see ``oracle.plaid``'s module docstring.
     """
     type: str
     key: str | None = None

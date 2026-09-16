@@ -25,7 +25,16 @@ from core.canon import load_registry, resolve_asset
 from core.nearby import levels_near
 from core.review import mark_disagrees, review
 from core.setups import build_context
-from oracle import altsignal_config, cache, corpus, fetch_cli, listings, portfolios
+from core.transactions import TransactionSpan
+from oracle import (
+    altsignal_config,
+    cache,
+    corpus,
+    fetch_cli,
+    listings,
+    portfolios,
+    transaction_store,
+)
 from oracle.assemble import load_daily
 from oracle.resample import to_weekly
 from oracle.route import Priceable, load_routing_table, route
@@ -64,6 +73,12 @@ class ReviewResult(NamedTuple):
 
     ``chains``/``macro`` come back empty when ``review_for`` was called with no
     ``altsignal_cfg`` — see its docstring for why that is opt-in rather than always assembled.
+
+    ``history`` is the account's cached transaction span, or ``None`` when no
+    ``data/transactions/<name>.json`` exists yet — distinct from a cache file with zero rows,
+    which is a ``TransactionSpan`` whose ``oldest`` is ``None``. Both existing test-cli.py's
+    and digest's ``test_holdings.py``'s constructions of this tuple read every field by
+    keyword, so a trailing field with a default is safe to add here.
     """
     book: object               # oracle.portfolios.Portfolio
     readings: list
@@ -72,6 +87,7 @@ class ReviewResult(NamedTuple):
     levels: tuple
     chains: tuple
     macro: tuple
+    history: TransactionSpan | None = None
 
 
 def canonical_rows(book, registry) -> list[tuple[str, str]]:
@@ -210,10 +226,13 @@ def review_for(books, *, as_of: date, registry=None, altsignal_cfg=None) -> list
             chains = altsignal.chain_lines(readings, assets, altsignal_cfg=altsignal_cfg)
             macro = altsignal.macro_block(altsignal_cfg=altsignal_cfg)
 
+        cached = transaction_store.load(book.name)
+        history = TransactionSpan.of(cached[0]) if cached is not None else None
+
         results.append(ReviewResult(
             book=book, readings=readings, contexts=contexts,
             mismatched=mismatched(book, readings),
-            levels=levels, chains=chains, macro=macro,
+            levels=levels, chains=chains, macro=macro, history=history,
         ))
     return results
 
@@ -301,7 +320,7 @@ def main(argv: list[str] | None = None) -> int:
     print(render(readings, portfolio=book.name, as_of=as_of,
                  age_days=book.age_days(on=as_of), stale=book.is_stale(on=as_of),
                  cash=book.cash, cash_by=book.cash_by_account,
-                 mismatched=result.mismatched, mandate=book.mandate))
+                 mismatched=result.mismatched, mandate=book.mandate, history=result.history))
 
     # The view hands back every level, uncapped — this is the one place that decides how much
     # fits on a screen. See `ReviewResult.levels` and `review.levels.cap`.

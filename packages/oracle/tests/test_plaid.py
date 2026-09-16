@@ -19,6 +19,17 @@ def _payload(*holdings, securities=(), accounts=()):
     }
 
 
+def _txn_payload(*txns, securities=()):
+    return {"investment_transactions": list(txns), "securities": list(securities)}
+
+
+def _txn(id_, *, account="a1", security=None, date="2026-01-05", type_="cash",
+        subtype="dividend", amount=12.5):
+    return {"investment_transaction_id": id_, "account_id": account, "security_id": security,
+           "date": date, "name": "txn", "quantity": None, "price": None, "amount": amount,
+           "fees": None, "type": type_, "subtype": subtype}
+
+
 def _security(sid, ticker, *, kind="equity", name="A Thing"):
     return {"security_id": sid, "ticker_symbol": ticker, "type": kind, "name": name}
 
@@ -204,5 +215,61 @@ def test_cash_is_broken_down_per_account():
     ]))
     assert total == 3879.57
     assert by == {"Roth IRA": 3379.57, "Traditional IRA": 500.0}
+
+
+# ── transactions_from: a dividend, a deposit and a withdrawal, distinguishable ──
+
+def test_a_dividend_a_deposit_and_a_withdrawal_come_back_distinguishable():
+    """`cash/dividend` and `cash/withdrawal` are pairs `scripts/probe_plaid_transactions.py`
+    confirmed on the real retirement account; `cash/deposit` is Plaid's documented spelling,
+    unconfirmed because no deposit has happened on that account in the probed window — see the
+    probe's own docstring for both."""
+    rows, skipped = plaid.transactions_from(_txn_payload(
+        _txn("d1", type_="cash", subtype="dividend"),
+        _txn("d2", type_="cash", subtype="deposit"),
+        _txn("d3", type_="cash", subtype="withdrawal"),
+    ))
+    assert skipped == ()
+    kinds = {r.id: r.kind for r in rows}
+    assert kinds == {"d1": "dividend", "d2": "deposit", "d3": "withdrawal"}
+
+
+def test_a_row_with_no_id_is_skipped_with_a_reason():
+    txn = _txn("whatever")
+    txn["investment_transaction_id"] = None
+    rows, skipped = plaid.transactions_from(_txn_payload(txn))
+    assert rows == ()
+    assert len(skipped) == 1 and "investment_transaction_id" in skipped[0].why
+
+
+def test_a_row_with_an_unparseable_date_is_skipped_with_a_reason():
+    rows, skipped = plaid.transactions_from(_txn_payload(_txn("t1", date="not-a-date")))
+    assert rows == ()
+    assert len(skipped) == 1 and "date" in skipped[0].why
+
+
+def test_a_cash_movement_with_no_security_keeps_ticker_none():
+    rows, skipped = plaid.transactions_from(_txn_payload(_txn("t1", security=None)))
+    assert skipped == ()
+    assert rows[0].ticker is None
+
+
+def test_a_transaction_on_an_account_outside_accounts_is_dropped():
+    rows, _ = plaid.transactions_from(
+        _txn_payload(_txn("t1", account="roth"), _txn("t2", account="crypto")),
+        accounts=("roth",),
+    )
+    assert [r.id for r in rows] == ["t1"]
+
+
+def test_an_explicit_null_amount_does_not_crash_and_becomes_zero():
+    """`.get("amount", 0.0)` only substitutes when the key is absent — an explicit `null`,
+    which Plaid has sent in the wild, passes straight through and used to raise out of
+    `float(None)`. `amount` is not an optional field on `InvestmentTransaction`."""
+    txn = _txn("t1")
+    txn["amount"] = None
+    rows, skipped = plaid.transactions_from(_txn_payload(txn))
+    assert skipped == ()
+    assert rows[0].amount == 0.0
 
 

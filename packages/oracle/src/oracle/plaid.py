@@ -16,6 +16,13 @@ calls bill against the plan's Item count, not per call, so a nightly sync costs 
 **Read-only by construction.** The only products ever requested are ``investments``, so the
 token this creates cannot move money. It still reads your positions, so it lives in ``.env``
 with the signing key and never in ``data/`` — an access token is not regenerable ore.
+
+**Transaction history is a second, separately billed feed.** ``/investments/transactions/get``
+bills per Item like holdings do, but on a different meter — the first call against an Item
+starts a metered monthly subscription that Plaid does not let you cancel without removing and
+re-linking that connection. It reaches 2 years back from link (``ADR-0003``'s Plaid ceiling).
+``plaid_cli`` gates it behind a mandate's ``held_flat`` benchmark for exactly this reason: see
+``portfolios.Benchmark`` for what declaring one now costs.
 """
 from __future__ import annotations
 
@@ -24,11 +31,12 @@ import os
 import re
 import time
 import urllib.request
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from urllib.error import HTTPError
 
 from core.env import load_env
+from core.transactions import InvestmentTransaction
 
 from oracle import portfolios
 
@@ -149,6 +157,18 @@ def holdings(token: str) -> dict:
     return post("/investments/holdings/get", {"access_token": token}, timeout=60)
 
 
+def investment_transactions(token: str, *, start, end, offset: int, count: int) -> dict:
+    """One page of ``/investments/transactions/get``. Paging is the caller's job — see
+    ``plaid_cli._sync_transactions`` — because the caller decides how many pages to accumulate
+    before writing, and this stays a thin wrapper matching ``holdings()``."""
+    return post("/investments/transactions/get", {
+        "access_token": token,
+        "start_date": start.isoformat(),
+        "end_date": end.isoformat(),
+        "options": {"offset": offset, "count": count},
+    }, timeout=60)
+
+
 def _domain(security: dict) -> str:
     return "crypto" if (security.get("type") or "").lower() in CRYPTO_TYPES else "stock"
 
@@ -225,6 +245,58 @@ def rows_from(payload: dict, *, accounts: tuple[str, ...] = ()
                         cost=(basis / total if basis is not None and total > 0 else None),
                         figi=figis[ticker], mark=marks[ticker]))
     return tuple(rows), tuple(skipped), tuple(used)
+
+
+def transactions_from(payload: dict, *, accounts: tuple[str, ...] = ()
+                      ) -> tuple[tuple[InvestmentTransaction, ...], tuple[Skipped, ...]]:
+    """``(rows, skipped)`` from one ``/investments/transactions/get`` page.
+
+    Narrows on ``accounts`` exactly as ``rows_from`` does (``:161-173`` above): the Item this
+    ticket reaches holds an account deliberately not in the retirement book, and without the
+    narrowing a deposit into it would be absorbed into #71's held-flat basket with nothing
+    failing.
+
+    A row with no usable ``date`` or no ``investment_transaction_id`` becomes a ``Skipped``
+    with a reason, never a silent drop — the same contract ``rows_from`` already keeps.
+
+    The ticker comes from the payload's ``securities`` list, the same join ``rows_from`` uses.
+    A cash movement has no security and keeps ``ticker=None`` — that is correct, not a skip.
+    """
+    securities = {s["security_id"]: s for s in payload.get("securities") or ()}
+
+    rows: list[InvestmentTransaction] = []
+    skipped: list[Skipped] = []
+    for txn in payload.get("investment_transactions") or ():
+        account = txn.get("account_id")
+        if accounts and account not in accounts:
+            continue
+
+        txn_id = txn.get("investment_transaction_id")
+        raw_date = txn.get("date")
+        name = txn.get("name") or txn_id or "?"
+        if not txn_id:
+            skipped.append(Skipped(what=name, why="Plaid gave no investment_transaction_id"))
+            continue
+        try:
+            when = date.fromisoformat(str(raw_date)[:10])
+        except (TypeError, ValueError):
+            skipped.append(Skipped(what=name, why=f"unparseable date: {raw_date!r}"))
+            continue
+
+        security = securities.get(txn.get("security_id")) or {}
+        ticker = (security.get("ticker_symbol") or "").strip().upper() or None
+
+        rows.append(InvestmentTransaction(
+            id=txn_id, account_id=account, security_id=txn.get("security_id"), ticker=ticker,
+            date=when, quantity=txn.get("quantity"), price=txn.get("price"),
+            # `or 0.0` rather than `.get("amount", 0.0)`: a `.get` default only fires when the
+            # key is absent, and Plaid sending an explicit `null` for `amount` — which
+            # `InvestmentTransaction.amount` is not optional — would pass straight through and
+            # raise out of `float()`.
+            amount=float(txn.get("amount") or 0.0), fees=txn.get("fees"),
+            type=str(txn.get("type") or ""), subtype=str(txn.get("subtype") or ""),
+        ))
+    return tuple(rows), tuple(skipped)
 
 
 def cash_from(payload: dict, *, accounts: tuple[str, ...] = ()

@@ -13,11 +13,21 @@ from __future__ import annotations
 import argparse
 import sys
 import webbrowser
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 
 from core.env import REPO_ROOT
+from core.transactions import InvestmentTransaction
 
-from oracle import plaid, portfolios
+from oracle import plaid, portfolios, transaction_store
+
+# ADR-0003's Plaid ceiling: /investments/transactions/get reaches at most 2 years back from
+# when an Item was linked.
+_HISTORY_FLOOR_DAYS = 730
+# How far back a re-run re-reads once the floor is already reached, to catch a late-settling
+# correction Plaid makes to a transaction after the fact.
+_RESETTLE_WINDOW_DAYS = 30
+_PAGE_SIZE = 500
 
 
 def link(argv: list[str] | None = None) -> int:
@@ -99,7 +109,8 @@ def sync(argv: list[str] | None = None) -> int:
     failures = 0
     for name in names:
         try:
-            payload = plaid.holdings(plaid.access_token(name))
+            token = plaid.access_token(name)
+            payload = plaid.holdings(token)
         except plaid.PlaidError as exc:
             print(f"{name}: {exc}", file=sys.stderr)
             failures += 1
@@ -138,11 +149,128 @@ def sync(argv: list[str] | None = None) -> int:
         for miss in skipped:
             print(f"    dropped {miss.what}: {miss.why}")
 
+        if _wants_history(name):
+            _sync_transactions(name, token, narrowed=narrowed, dry_run=args.dry_run)
+
     if failures:
         return 1
     print(f"\nsynced {datetime.now(UTC).date().isoformat()}. "
           f"Prices: uv run fetch-prices --all-portfolios")
     return 0
+
+
+def _wants_history(name: str) -> bool:
+    """Whether ``name``'s mandate declares a ``held_flat`` benchmark — the gate on the
+    transaction-history pull, because that pull starts metered billing on the Item (see
+    ``portfolios.Benchmark`` and ``oracle.plaid``'s module docstring).
+
+    Does not reuse ``_existing`` below: that function swallows a ``PortfolioError`` into
+    ``None``, which is right for its own job of deciding what to diff against, and wrong here.
+    A freshly-linked account's first sync writes a file with no `mandate:` block at all
+    (``write_positions``' ``HEADER`` never writes one), and ``portfolios.load`` refuses that
+    file — a silent ``False`` here would then skip the transaction pull forever with nothing
+    ever saying why.
+    """
+    try:
+        # `root=portfolios.DATA_ROOT` read here rather than left to `load`'s own default:
+        # that default is bound once at import time, so a test pointing `portfolios.DATA_ROOT`
+        # at `tmp_path` (the convention `_narrow` below already follows) would otherwise still
+        # reach the real data directory.
+        book = portfolios.load(name, root=portfolios.DATA_ROOT)
+    except portfolios.PortfolioError as exc:
+        print(f"{name}: cannot tell whether it wants transaction history — {exc}",
+              file=sys.stderr)
+        return False
+    return any(b.type == "held_flat" for b in book.mandate.benchmarks)
+
+
+def _window(name: str, *, root: Path) -> tuple[date, date]:
+    """``(start, today)`` for the next fetch. Re-extends backwards, never forward-only: an
+    interrupted first backfill must stay repairable by a later run, so the floor is always
+    ``today - _HISTORY_FLOOR_DAYS`` unless the document already reached it — in which case this
+    asks for a short recent window instead, to pick up a late-settling correction."""
+    today = datetime.now(UTC).date()
+    floor = today - timedelta(days=_HISTORY_FLOOR_DAYS)
+    cached = transaction_store.load(name, root=root)
+    reaches = cached[1] if cached else None
+    if reaches is not None and reaches <= floor:
+        newest = max((t.date for t in cached[0]), default=today) if cached and cached[0] else today
+        return newest - timedelta(days=_RESETTLE_WINDOW_DAYS), today
+    return floor, today
+
+
+def _sync_transactions(name: str, token: str, *, narrowed: tuple[str, ...], dry_run: bool = False,
+                       root: Path | None = None) -> None:
+    """Fetch, page and commit one account's transaction-history window.
+
+    **A transaction failure warns and never fails the step.** This is a secondary feed
+    alongside the positions sync that must stay loud — see ``sync()``'s own comment on
+    ``failures`` for why a secondary feed reddening the nightly is how a step stops being read.
+
+    **One commit at the end, never per page.** Pages accumulate in a list and
+    ``transaction_store.replace_window`` is called exactly once, after the last page lands — so
+    a page-3 failure leaves the cache exactly as it was rather than half-written.
+    """
+    root = transaction_store.DATA_ROOT if root is None else root
+    if transaction_store.load(name, root=root) is None:
+        # Named out loud: this call is the moment `name`'s Item starts a metered, non-
+        # cancellable Plaid subscription. See `portfolios.Benchmark` for what declaring
+        # `held_flat` costs.
+        print(f"{name}: first transaction-history pull — starts metered Plaid billing on "
+              f"this connection (see portfolios.Benchmark)", file=sys.stderr)
+    start, end = _window(name, root=root)
+
+    pages: list[InvestmentTransaction] = []
+    offset = 0
+    while True:
+        try:
+            payload = plaid.investment_transactions(
+                token, start=start, end=end, offset=offset, count=_PAGE_SIZE)
+        except plaid.PlaidError as exc:
+            print(f"{name}: transaction history fetch failed (page at offset {offset}) — "
+                  f"{exc}. Cache left alone.", file=sys.stderr)
+            return
+        raw = payload.get("investment_transactions") or ()
+        rows, skipped = plaid.transactions_from(payload, accounts=narrowed)
+        pages.extend(rows)
+        # `.get(key, default)` only substitutes when the key is absent; Plaid sending an
+        # explicit `null` — seen in the wild — passes straight through and breaks the `>=`
+        # comparison below with a `TypeError`, which would escape `sync()` as an unhandled
+        # exception rather than the warning this feed promises to fail as.
+        total = payload.get("total_investment_transactions")
+        if total is None:
+            total = len(raw)
+        for miss in skipped:
+            print(f"    dropped transaction {miss.what}: {miss.why}", file=sys.stderr)
+        # Paged on the raw count Plaid returned, not on `rows` — a page where every
+        # transaction belongs to an account `narrowed` excludes would otherwise come back
+        # empty after filtering and stop the walk long before `total` is actually reached.
+        offset += len(raw)
+        if offset >= total or not raw:
+            break
+
+    if not pages and _window_had_cached_rows(name, start=start, end=end, root=root):
+        # Mirrors the positions sync's own guard above: a Plaid hiccup that answers 200 with
+        # zero rows must not read as "everything in this window was deleted". Without this, a
+        # blip would wipe up to two years of cache and the resettle window would then only
+        # re-ask the last 30 days — the loss would be permanent until someone hand-deletes the
+        # file, and `review` would compute #71's held-flat math against an empty basket with
+        # nothing saying why.
+        print(f"{name}: Plaid returned zero transactions for a window that already had cached "
+              f"rows — treating as a hiccup, cache left alone", file=sys.stderr)
+        return
+
+    verb = "would cache" if dry_run else "cached"
+    print(f"{name}: {verb} {len(pages)} transaction(s) back to {start.isoformat()}")
+    if not dry_run:
+        transaction_store.replace_window(name, tuple(pages), start=start, end=end, root=root)
+
+
+def _window_had_cached_rows(name: str, *, start: date, end: date, root: Path) -> bool:
+    existing = transaction_store.load(name, root=root)
+    if existing is None:
+        return False
+    return any(start <= t.date <= end for t in existing[0])
 
 
 def _linked(name: str) -> bool:

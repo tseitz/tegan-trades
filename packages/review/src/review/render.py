@@ -91,7 +91,7 @@ LEVEL_HEADERS = ("TICKER", "PRICE", "SIDE", "LEVEL", "WHAT", "", "ROSTER", "")
 
 def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
            stale: bool = False, cash: float | None = None, cash_by=None,
-           mismatched=(), mandate=None) -> str:
+           mismatched=(), mandate=None, history=None) -> str:
     """The whole report. ``as_of`` is passed in rather than read from a clock so a replay of
     a past date prints that date, not today's.
 
@@ -108,11 +108,17 @@ def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
     mandate_clause = "" if mandate is None else f" · {mandate.name} ({mandate.leads_with} leads)"
     head = (f"{portfolio}{mandate_clause} · {len(readings)} position(s){money} "
             f"· as of {as_of.isoformat()}{written}")
+    history_line = _history_line(history, mandate)
     if not readings:
-        return f"{head}\n\n  no positions — nothing to review"
+        tail = f"\n\n  {history_line}" if history_line else ""
+        return f"{head}\n\n  no positions — nothing to review{tail}"
 
     ranked = sorted(readings, key=_rank)
     lines = [head, ""]
+    if history_line:
+        # Same position as the STALE banner, and for the same reason: above the table, where
+        # it is read before any verdict below it is trusted.
+        lines += [f"  {history_line}", ""]
     if stale:
         # Above the table, never below it. Under the rows it reads as a footnote about
         # something else, and by then the reader has taken every verdict as fact.
@@ -153,6 +159,25 @@ def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
             lines.append("")
         lines += notes
     return "\n".join(lines)
+
+
+def _history_line(history, mandate) -> str:
+    """What to say about cached transaction history, or nothing at all.
+
+    Prints only when there is something to say: a cache file exists, or the mandate declares
+    ``held_flat`` and so is expected to have one eventually. Anything else — three hand-kept
+    pots with no such benchmark — would gain a nightly line saying nothing, which this repo's
+    own discipline refuses.
+    """
+    if history is not None:
+        if history.oldest is None:
+            return "transaction history — cached, but empty so far"
+        return (f"transaction history — {history.count} cached, reaching back to "
+                f"{history.oldest.isoformat()}")
+    wants_history = mandate is not None and any(b.type == "held_flat" for b in mandate.benchmarks)
+    if wants_history:
+        return "transaction history — none cached yet, run `uv run plaid-sync`"
+    return ""
 
 
 def _pnl_tail(readings) -> list[str]:
