@@ -1,12 +1,13 @@
 from datetime import date, timedelta
 from types import SimpleNamespace
 
+import review.cli as cli
 from core.canon import load_registry
-from core.review import NO_VIEW, UNREADABLE, Holding
+from core.review import NO_VIEW, UNREADABLE, Holding, Location, Reading, RosterLean
 from oracle.portfolios import Portfolio, Position
 from oracle.route import RoutingTable
 from oracle.series import Bar, PriceSeries
-from review.cli import CONFIG_DIR, build_readings, refresh_argv
+from review.cli import CONFIG_DIR, build_readings, load_books, refresh_argv, review_for
 
 AS_OF = date(2025, 6, 30)
 REGISTRY = load_registry(CONFIG_DIR)
@@ -133,3 +134,77 @@ def test_a_refresh_skips_the_hourly_pass():
     """`review` draws on daily and weekly bars only. The hourly series exists for `setups`'
     entry trigger, and warming it here would roughly double the wait for nothing on screen."""
     assert "--no-intraday" in refresh_argv("retirement")
+
+
+# ── review_for: the typed result the terminal and digest both read ─────────
+
+
+def _reading(ticker, *, price=100.0):
+    return Reading(
+        holding=Holding(ticker=ticker, shares=1.0, cost=None),
+        roster=RosterLean(lean="silent", bulls=0, bears=0, people=0, newest=None,
+                          age_days=None, voices=(), thin=False),
+        location=Location(where=UNREADABLE, basis="none"),
+        verdict=NO_VIEW, price=price, weekly_trend=None,
+    )
+
+
+def test_review_for_bundles_mismatch_and_levels_onto_the_result(monkeypatch):
+    """`review_for` is the seam both `digest` and the terminal read from — this asserts the
+    bundle actually carries mismatch and levels, not just readings, which `build_readings`'s
+    own tests already cover on their own. `chains`/`macro` come back empty here since no
+    `altsignal_cfg` was supplied, matching what `digest` asks for today.
+    """
+    monkeypatch.setattr(cli.corpus, "iter_rows", lambda registry: iter(()))
+    monkeypatch.setattr(cli.listings, "load_or_fetch", lambda path: {})
+    monkeypatch.setattr(cli, "load_all_stances", lambda: [])
+
+    reading = _reading("VTI", price=100.0)
+    monkeypatch.setattr(
+        cli, "build_readings",
+        lambda book, **_: cli.Read(readings=[reading], contexts=(None,)))
+
+    book = Portfolio(name="test", horizon="long",
+                     positions=(Position(holding=reading.holding, domain="stock", mark=50.0),))
+
+    [result] = review_for([book], as_of=AS_OF, registry=REGISTRY)
+    assert result.book is book
+    assert result.readings == [reading]
+    # No context came back from the stubbed `build_readings`, so nothing is standing on or
+    # closing in on a level — but the shape must still be the full, uncapped triple.
+    assert result.levels == ((), (), 0)
+    assert [ticker for ticker, _, _ in result.mismatched] == ["VTI"]
+    assert result.chains == () and result.macro == ()
+
+
+def test_load_books_skips_a_bad_file_and_reports_it(monkeypatch):
+    """The seam `digest` calls instead of reaching into `oracle.portfolios` directly — see
+    ADR-0004. One bad file must not cost every other account's review."""
+    good = Portfolio(name="good", horizon="long", positions=())
+
+    def _load(name):
+        if name == "bad":
+            raise cli.portfolios.PortfolioError("bad.yaml: malformed")
+        return good
+
+    monkeypatch.setattr(cli.portfolios, "available", lambda: ("good", "bad"))
+    monkeypatch.setattr(cli.portfolios, "load", _load)
+
+    warnings = []
+    assert load_books(warn=warnings.append) == [good]
+    assert warnings == ["portfolio 'bad' was skipped — bad.yaml: malformed"]
+
+
+def test_load_books_needs_no_warn_callback(monkeypatch):
+    """`warn` is optional — a bad file is still skipped, just silently, for a caller that does
+    not care to report it."""
+    good = Portfolio(name="good", horizon="long", positions=())
+
+    def _load(name):
+        if name == "bad":
+            raise cli.portfolios.PortfolioError("bad.yaml: malformed")
+        return good
+
+    monkeypatch.setattr(cli.portfolios, "available", lambda: ("good", "bad"))
+    monkeypatch.setattr(cli.portfolios, "load", _load)
+    assert load_books() == [good]

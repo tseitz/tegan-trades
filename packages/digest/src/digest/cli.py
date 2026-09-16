@@ -36,15 +36,13 @@ import yaml
 from brain.stance_store import load_all_stances
 from core.canon import load_registry, resolve_asset
 from core.env import load_env
-from core.nearby import levels_near
 from execution import store
 from ingestion import spend
-from oracle import exclusions, portfolios, queue_snapshot
+from oracle import exclusions, queue_snapshot
 from oracle.assemble import load_daily
 from oracle.decisions import load_decisions
 from oracle.route import Priceable, route, the_routing_table
-from review.cli import readings_for
-from review.levels import shortlist
+from review.cli import load_books, review_for
 
 from digest import book as book_mod
 from digest import diff, holdings, mail, narrate, render, roster, state, vault
@@ -385,37 +383,28 @@ def _holdings(memory: dict, *, registry, as_of, warn) -> tuple[tuple, tuple[dict
     previous = state.holdings_seen(memory)
     previous_levels = state.holdings_levels_seen(memory)
     try:
-        names = portfolios.available()
-        if not names:
-            return (), (previous, previous_levels)
-        books = []
-        for name in names:
-            try:
-                books.append(portfolios.load(name))
-            except portfolios.PortfolioError as exc:
-                warn(f"warning: portfolio {name!r} was skipped — {exc}")
+        # `load_books` is `review`'s seam for this, not `oracle.portfolios` directly — see
+        # ADR-0004. Its warn messages carry no "warning:" prefix of their own, since that
+        # convention belongs to this package, not to `review`.
+        books = load_books(warn=lambda m: warn(f"warning: {m}"))
         if not books:
             return (), (previous, previous_levels)
 
         deltas = []
         remembered, remembered_levels = dict(previous), dict(previous_levels)
-        for book, readings, contexts in readings_for(books, as_of=as_of, registry=registry):
+        for result in review_for(books, as_of=as_of, registry=registry):
             # Uncapped on purpose. The display cap is about screen space; a level arrival that
             # happened to rank thirteenth still happened, and a diff that missed it would be
             # silently wrong rather than merely short.
-            on_levels, _, _ = shortlist(
-                [(r, levels_near(c, kinds=book.level_kinds) if c is not None else ())
-                 for r, c in zip(readings, contexts, strict=True)],
-                limit=None,
-            )
+            on_levels, _, _ = result.levels
             deltas.append(holdings.delta(
-                book.name, readings, previous.get(book.name, {}),
+                result.book.name, result.readings, previous.get(result.book.name, {}),
                 on_levels=on_levels,
-                remembered_levels=previous_levels.get(book.name),
-                stale=book.is_stale(on=as_of), age_days=book.age_days(on=as_of),
+                remembered_levels=previous_levels.get(result.book.name),
+                stale=result.book.is_stale(on=as_of), age_days=result.book.age_days(on=as_of),
             ))
-            remembered[book.name] = holdings.remember(readings)
-            remembered_levels[book.name] = holdings.remember_levels(on_levels)
+            remembered[result.book.name] = holdings.remember(result.readings)
+            remembered_levels[result.book.name] = holdings.remember_levels(on_levels)
         return tuple(deltas), (remembered, remembered_levels)
     except Exception as exc:  # noqa: BLE001 - one bad account must not cost the whole digest
         warn(f"warning: the portfolio section was dropped — {type(exc).__name__}: {exc}")

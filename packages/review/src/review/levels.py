@@ -83,6 +83,18 @@ def shortlist(pairs, *, limit: int | None = SHOWN):
     standing.sort(key=lambda s: (_rank(s.level), -(s.reading.market_value or 0.0)))
     closing.sort(key=lambda s: (_rank(s.level), s.level.distance))
 
+    return cap(standing, closing, limit=limit)
+
+
+def cap(standing, closing, *, limit: int | None):
+    """Truncate an already-ranked ``(standing, closing)`` pair for display. Pure.
+
+    Split from ``shortlist`` so a caller holding the full, unranked result from a batched view
+    call — see ``review.cli.review_for`` — can apply the *display* cap at render time instead of
+    asking the view to guess how much screen space it will get.
+
+    ``limit=None`` returns everything, with ``suppressed`` always 0.
+    """
     if limit is None:
         return tuple(standing), tuple(closing), 0
     suppressed = max(0, len(standing) - limit) + max(0, len(closing) - limit)

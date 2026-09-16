@@ -31,7 +31,7 @@ from oracle.resample import to_weekly
 from oracle.route import Priceable, load_routing_table, route
 
 from review import altsignal
-from review.levels import SHOWN, shortlist
+from review.levels import SHOWN, cap, shortlist
 from review.render import render, render_altsignal, render_levels
 
 CONFIG_DIR = Path(__file__).resolve().parents[4] / "cfg"
@@ -47,6 +47,31 @@ class Read(NamedTuple):
     """
     readings: list
     contexts: tuple
+
+
+class ReviewResult(NamedTuple):
+    """Everything the review view can say about one book, from a single ``review_for`` call.
+
+    Bundled rather than left as separate return values so a renderer never has to reassemble
+    the same arguments a second time — the failure mode this replaces: widening the old
+    ``(book, readings, contexts)`` tuple once already broke a positional unpack in ``digest``,
+    caught only by a test built to guard that one seam. A named field can be added here without
+    breaking any caller that does not read it.
+
+    ``levels`` is the **uncapped** ``(standing, closing, suppressed=0)`` triple from
+    ``review.levels.shortlist`` — capping for a screen is a display decision, not something the
+    view should decide on a caller's behalf. See ``review.levels.cap``.
+
+    ``chains``/``macro`` come back empty when ``review_for`` was called with no
+    ``altsignal_cfg`` — see its docstring for why that is opt-in rather than always assembled.
+    """
+    book: object               # oracle.portfolios.Portfolio
+    readings: list
+    contexts: tuple
+    mismatched: tuple
+    levels: tuple
+    chains: tuple
+    macro: tuple
 
 
 def canonical_rows(book, registry) -> list[tuple[str, str]]:
@@ -124,29 +149,41 @@ def _fold_by_asset(registry) -> dict[str, list]:
     return grouped
 
 
-def readings_for(books, *, as_of: date, registry=None):
-    """``[(Portfolio, [Reading, ...]), ...]`` for several accounts at once.
+def review_for(books, *, as_of: date, registry=None, altsignal_cfg=None) -> list[ReviewResult]:
+    """One ``ReviewResult`` per account, for several accounts at once.
 
     **One routing table and one stance fold for all of them.** Both are O(corpus) — a full walk
     of ``data/theses/`` and a full fold of ``data/stances/`` — and doing either per portfolio
     would multiply the most expensive part of this command by the number of accounts you keep.
     The price cache is shared for the same reason: two accounts holding NVDA read its bars once.
 
-    This is the seam ``digest`` calls. It exists so the path from a portfolio name to a reading
-    lives in exactly one place; a second copy in the nightly would be free to drift from what
-    ``uv run review`` prints, and the two would quietly stop agreeing.
+    This is the seam ``digest`` calls. It exists so the path from a portfolio name to a full
+    review answer lives in exactly one place; a second assembly in the nightly would be free to
+    drift from what ``uv run review`` prints, and the two would quietly stop agreeing.
+
+    ``altsignal_cfg`` is ``None`` by default, which skips the DefiLlama/Kalshi/Polymarket read
+    entirely (``chains=()``, ``macro=()`` on every result). ``digest`` never renders that
+    section today, so asking every caller to pay for it — or to risk a broken
+    ``cfg/altsignal.yaml`` costing a section that was never going to be shown — would be a cost
+    with no matching benefit. The terminal passes its own loaded config.
     """
     books = list(books)
     if not books:
         return []
     registry = load_registry(CONFIG_DIR) if registry is None else registry
 
+    # Computed once per book and reused for both the routing table below and the alt-signal
+    # lookup further down — recomputing it a second time for alt-signal is what `main()` used
+    # to do, and it duplicates a registry lookup and a routing resolution per position for no
+    # reason beyond the two steps being written apart.
+    per_book_assets = [canonical_rows(book, registry) for book in books]
+
     # The corpus supplies domain consensus for everything the roster discusses; the files
     # supply it for everything else. Both, never one — see `Portfolio.domain_rows` for why a
     # file's single row cannot outvote a discussed asset's hundreds.
     rows = [(r.asset, r.domain) for r in corpus.iter_rows(registry)]
-    for book in books:
-        rows += canonical_rows(book, registry)
+    for pairs in per_book_assets:
+        rows += pairs
     table = load_routing_table(
         CONFIG_DIR, rows,
         listings=listings.load_or_fetch(cache.DATA_ROOT / "_listings.json"),
@@ -154,12 +191,50 @@ def readings_for(books, *, as_of: date, registry=None):
 
     folded = _fold_by_asset(registry)
     series_cache: dict = {}
-    return [
-        (book, *build_readings(book, registry=registry, table=table,
-                               folded_by_asset=folded, as_of=as_of,
-                               series_cache=series_cache))
-        for book in books
-    ]
+    results = []
+    for book, pairs in zip(books, per_book_assets, strict=True):
+        readings, contexts = build_readings(
+            book, registry=registry, table=table, folded_by_asset=folded, as_of=as_of,
+            series_cache=series_cache)
+        level_pairs = [
+            (reading, levels_near(context, kinds=book.level_kinds) if context is not None else ())
+            for reading, context in zip(readings, contexts, strict=True)
+        ]
+        # Uncapped — see `ReviewResult.levels`. A caller printing to a screen caps at render
+        # time with `review.levels.cap`.
+        levels = shortlist(level_pairs, limit=None)
+
+        chains, macro = (), ()
+        if altsignal_cfg is not None:
+            assets = [asset for asset, _domain in pairs]
+            chains = altsignal.chain_lines(readings, assets, altsignal_cfg=altsignal_cfg)
+            macro = altsignal.macro_block(altsignal_cfg=altsignal_cfg)
+
+        results.append(ReviewResult(
+            book=book, readings=readings, contexts=contexts,
+            mismatched=mismatched(book, readings),
+            levels=levels, chains=chains, macro=macro,
+        ))
+    return results
+
+
+def load_books(names=None, *, warn=None) -> list:
+    """Every named portfolio, or every one on disk when ``names`` is omitted. Skips a bad file
+    and reports it through ``warn`` rather than failing the whole batch.
+
+    This is the seam a surface calls instead of reaching into ``oracle.portfolios`` directly —
+    see ADR-0004. A hand-kept file with a typo in it is exactly the kind of thing one account
+    should not be able to take down every other account's review.
+    """
+    names = portfolios.available() if names is None else names
+    books = []
+    for name in names:
+        try:
+            books.append(portfolios.load(name))
+        except portfolios.PortfolioError as exc:
+            if warn is not None:
+                warn(f"portfolio {name!r} was skipped — {exc}")
+    return books
 
 
 def refresh_argv(portfolio: str) -> list[str]:
@@ -221,31 +296,21 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
 
     as_of = args.as_of or datetime.now(UTC).date()
-    [(book, readings, contexts)] = readings_for([book], as_of=as_of)
+    [result] = review_for([book], as_of=as_of, altsignal_cfg=altsignal_config.load(CONFIG_DIR))
+    readings = result.readings
     print(render(readings, portfolio=book.name, as_of=as_of,
                  age_days=book.age_days(on=as_of), stale=book.is_stale(on=as_of),
                  cash=book.cash, cash_by=book.cash_by_account,
-                 mismatched=mismatched(book, readings)))
+                 mismatched=result.mismatched))
 
-    pairs = [
-        (reading, levels_near(context, kinds=book.level_kinds) if context is not None else ())
-        for reading, context in zip(readings, contexts, strict=True)
-    ]
-    standing, closing, suppressed = shortlist(pairs, limit=None if args.levels else SHOWN)
+    # The view hands back every level, uncapped — this is the one place that decides how much
+    # fits on a screen. See `ReviewResult.levels` and `review.levels.cap`.
+    standing, closing, suppressed = cap(*result.levels[:2], limit=None if args.levels else SHOWN)
     print()
     print(render_levels(standing, closing, suppressed, kinds=book.level_kinds))
 
-    # Recomputed here rather than threaded through `readings_for`'s `Read` — widening that
-    # namedtuple broke `digest`'s `for book, readings, contexts in readings_for(...)` unpack,
-    # caught in this feature's own plan review. Cheap: a registry load and a dict lookup per
-    # position, not the O(corpus) work `readings_for` already paid for once.
-    registry = load_registry(CONFIG_DIR)
-    assets = [asset for asset, _domain in canonical_rows(book, registry)]
-    altsignal_cfg = altsignal_config.load(CONFIG_DIR)
-    chains = altsignal.chain_lines(readings, assets, altsignal_cfg=altsignal_cfg)
-    macro = altsignal.macro_block(altsignal_cfg=altsignal_cfg)
     print()
-    print(render_altsignal(chains, macro))
+    print(render_altsignal(result.chains, result.macro))
 
     missing = [r.holding.ticker for r in readings if r.price is None]
     if missing:

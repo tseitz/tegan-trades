@@ -186,22 +186,25 @@ def test_the_subject_counts_holdings_that_moved():
 
 def test_the_portfolio_section_is_not_silently_swallowed_by_its_own_safety_net(monkeypatch):
     """`_holdings` catches everything so one bad account cannot cost the whole digest. That
-    net also swallows a signature change in `review.readings_for` — which happened: the seam
-    grew a third return value and the section became a warning nobody would have read.
+    net used to also swallow a signature change in `review`'s old `(book, readings, contexts)`
+    tuple — widening it once broke this exact unpack and the section became a warning nobody
+    would have read. `ReviewResult`'s named fields (see `review.cli`) make that regression
+    class structurally impossible now, since a caller reading `.readings` never notices a field
+    it doesn't use being added.
 
     This asserts the happy path produces a delta and no warning, so the contract between the
     two packages is held by a failing test rather than by a log line.
     """
     from digest import cli
+    from review.cli import ReviewResult
 
     book = SimpleNamespace(name="retirement", level_kinds=(),
                            is_stale=lambda *, on: False,
                            age_days=lambda *, on: 0)
-    monkeypatch.setattr(cli.portfolios, "available", lambda: ("retirement",))
-    monkeypatch.setattr(cli.portfolios, "load", lambda name: book)
-    monkeypatch.setattr(
-        cli, "readings_for",
-        lambda books, *, as_of, registry: [(book, [_reading("WULF", ADD)], (None,))])
+    result = ReviewResult(book=book, readings=[_reading("WULF", ADD)], contexts=(None,),
+                          mismatched=(), levels=((), (), 0), chains=(), macro=())
+    monkeypatch.setattr(cli, "load_books", lambda *, warn=None: [book])
+    monkeypatch.setattr(cli, "review_for", lambda books, *, as_of, registry: [result])
 
     warnings = []
     deltas, (verdicts, levels) = cli._holdings(
