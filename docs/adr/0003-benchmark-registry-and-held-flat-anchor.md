@@ -4,11 +4,15 @@
 
 ## Benchmark set per mandate
 
-Retirement = `held_flat` + `symbol:sp500`. SoFi = `flat_rate` (cash rate) + `symbol:sp500`. Robinhood = `symbol:sp500` for its equities, `symbol:btc` for its crypto sleeve. The crypto mandate = `symbol:btc` + `symbol:eth`. Each mandate's benchmarks answer its own question — SoFi asks "beat cash", retirement asks "beat the market and beat sitting still", crypto asks "beat the two majors" — rather than every mandate being judged against the same index.
+Retirement = `held_flat` + `symbol:sp500`. SoFi = `flat_rate` (cash rate) + `symbol:sp500`. Robinhood = `symbol:sp500` + `symbol:btc`. The crypto mandate = `symbol:btc` + `symbol:eth`. Treasury = `flat_rate` alone ([ADR-0008](0008-treasury-as-a-pot-and-the-deployed-idle-line.md)). Each mandate's benchmarks answer its own question — SoFi asks "beat cash", retirement asks "beat the market and beat sitting still", crypto asks "beat the two majors" — rather than every mandate being judged against the same index.
+
+**Every one of these measures the whole pot**, per [ADR-0001](0001-split-mandate-from-domain.md). Robinhood's two entries are two separate *do-nothing-instead* questions asked of the entire Robinhood balance — "would all-in SPY have beaten me?" and "would all-in BTC have beaten me?" — not the equities graded against one and the crypto sleeve against the other. Retirement is measured against the S&P regardless of what it holds, because the stick follows the mandate's purpose and not its contents.
 
 ## `benchmarks.py` becomes a named registry
 
-A `symbol`-type benchmark now names a key (`sp500`, `btc`, `eth`), not a domain. The module changes from `domain -> (source, symbol)` to `key -> (source, symbol)`, looked up by that key. It also grows two computed benchmarks that aren't simple lookups: `held_flat` (below) and `flat_rate` (reads a hand-typed number straight from the mandate's own config — no live source, no fetch). It stays one module with one job — "what's the baseline to compare a mandate against" — just resolving three kinds of baseline instead of one.
+A `symbol`-type benchmark now names a key (`sp500`, `btc`, `eth`), not a domain. The module changes from `domain -> (source, symbol)` to `key -> (source, symbol)`, looked up by that key. It also grows two computed benchmarks that aren't simple lookups: `held_flat` (below) and `flat_rate` (reads a hand-typed number straight from the mandate's own config — no live source, no fetch). It stays one module with one job — "what's the baseline to compare against" — just resolving three kinds of baseline instead of one.
+
+**The domain-keyed lookup stays, because a second caller still needs it.** `benchmarks.py`'s only consumer today is not a portfolio at all: `score_cli` grades roster *calls*, and picks a baseline per call from that call's own `domain` (crypto → BTC, everything else → S&P). Replacing the domain lookup outright would break it. So the module keeps two entry points over one set of series — `domain -> key` for call grading, `key -> (source, symbol)` for mandates. Splitting them into two modules was rejected: it would define the S&P series twice, in two files that must then agree.
 
 ## `held_flat`: anchor once, don't re-baseline
 

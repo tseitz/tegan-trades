@@ -4,7 +4,11 @@ Ticket #60 was the last open branch on the rescope map (#46): a single cross-man
 
 ## What counts
 
-Net worth is each Mandate's holdings plus that Mandate's own cash, summed across all four Mandates, plus Treasury's balance once Treasury exists (contributing nothing today since Treasury isn't built — the reader's shape doesn't need to change when it is). Cash counts here even though it's excluded from `review`'s percent-of-mandate column: that exclusion is about a weight denominator, not about whether cash is an asset.
+Net worth is each Mandate's holdings plus that Mandate's own cash, summed across every Mandate. Cash counts here even though it's excluded from `review`'s percent-of-mandate column: that exclusion is about a weight denominator, not about whether cash is an asset.
+
+**Treasury is one of those Mandates, not an addition to them.** An earlier draft of this ADR read "all four Mandates, plus Treasury's balance", written while Treasury was still thought to be a view that held nothing. [ADR-0008](0008-treasury-as-a-pot-and-the-deployed-idle-line.md) settled that it is a fifth pot, so the sum is simply over every Mandate and the special case disappears.
+
+**Each dollar is counted once, and the deployed–idle line is what guarantees it.** Treasury owns only what is *deployed* into a yield venue. Idle cash stays in its home Mandate as dry powder and is counted there — Treasury reads it to advise on it, never to own it. Without that line, a stablecoin swept into `crypto.yaml`'s `cash:` by `wallet-sync` would be counted twice.
 
 This is the one deliberate, narrow exception to "percentages never cross a Mandate boundary" — every other reader still respects it.
 
