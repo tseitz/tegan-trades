@@ -124,6 +124,28 @@ step failing against the macOS keychain, which the sandbox blocks. The push exit
 
 ---
 
+## `git worktree add` fails with `git-crypt: Error: Unable to open key file`
+
+**Symptom:** the worktree is created, then the checkout aborts. The error names git-crypt, so it
+reads as a missing key — but the key is there, in the shared git dir.
+
+`.env` is git-crypt encrypted (see `.gitattributes`). git-crypt looks for its key under the
+*per-worktree* git dir, `.git/worktrees/<name>/git-crypt/`, which is empty on a fresh worktree
+even though `.git/git-crypt/keys/default` already exists. Link the two before checking anything
+out:
+
+```bash
+git worktree add --no-checkout -b <branch-name> .claude/worktrees/<branch-name>
+ln -s ../../git-crypt .git/worktrees/<branch-name>/git-crypt
+cd .claude/worktrees/<branch-name> && git checkout <branch-name> -- .
+```
+
+Then run `uv sync` from inside the worktree. It gets its own `.venv`, not shared with the main
+checkout. `~/.claude/scripts/worktree-bootstrap.sh` does not cover this — it handles npm and
+node projects, not uv.
+
+---
+
 ## Videos that are genuinely dead
 
 Not a bug — these are correctly skipped, permanently.
