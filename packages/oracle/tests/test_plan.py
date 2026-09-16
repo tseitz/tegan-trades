@@ -35,12 +35,15 @@ def test_start_date_is_per_asset_not_corpus_wide():
     fetching the corpus-wide span for every symbol would multiply the backfill for no benefit.
 
     ``floor_start`` is what overrides this when structure lookback is wanted; see the tests
-    at the bottom of this file."""
-    rows = _rows(("BTC", "2024-08-01"), ("ETH", "2026-06-01"))
+    at the bottom of this file. Uses TSLA rather than ETH for the "recent" asset — ETH is
+    itself a benchmark (see the "benchmarks must span the whole corpus" section below), so
+    it would always be clamped to the corpus start and couldn't demonstrate per-asset
+    windowing."""
+    rows = _rows(("BTC", "2024-08-01"), ("TSLA", "2026-06-01"))
     jobs, _ = plan_fetches(rows, _table(), today=TODAY, pad_days=0)
     by_asset = {j.ref.asset: j for j in jobs}
     assert by_asset["BTC"].start == date(2024, 8, 1)
-    assert by_asset["ETH"].start == date(2026, 6, 1)
+    assert by_asset["TSLA"].start == date(2026, 6, 1)
 
 
 def test_end_date_is_today_since_future_prices_do_not_exist():
@@ -131,6 +134,7 @@ def test_benchmark_not_refetched_when_already_fully_cached():
     cached = {
         ("yahoo", "^GSPC"): (date(2024, 1, 1), TODAY),
         ("coinbase", "BTC-USD"): (date(2024, 1, 1), TODAY),
+        ("coinbase", "ETH-USD"): (date(2024, 1, 1), TODAY),
     }
     jobs, _ = plan_fetches(_rows(("BTC", "2024-07-31")), _table(), today=TODAY,
                            cached_spans=cached)
