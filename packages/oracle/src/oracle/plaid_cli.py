@@ -123,7 +123,7 @@ def sync(argv: list[str] | None = None) -> int:
         verb = "would write" if args.dry_run else "wrote"
         if not args.dry_run:
             portfolios.write_positions(path, rows, source=plaid.SOURCE,
-                                       horizon=_horizon(name), cash=cash, cash_by=cash_by)
+                                       cash=cash, cash_by=cash_by)
         money = "" if cash is None else f", {cash:,.2f} cash"
         print(f"{name}: {verb} {len(rows)} position(s) from "
               f"{len(accounts)} account(s){money} -> {path}")
@@ -165,11 +165,6 @@ def _existing(name: str):
 def _tickers(name: str) -> set[str]:
     book = _existing(name)
     return {p.holding.ticker for p in book.positions} if book else set()
-
-
-def _horizon(name: str) -> str:
-    book = _existing(name)
-    return book.horizon if book else portfolios.DEFAULT_HORIZON
 
 
 def _narrow(name: str) -> tuple[str, ...]:

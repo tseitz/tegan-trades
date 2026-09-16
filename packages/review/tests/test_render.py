@@ -18,6 +18,7 @@ from core.review import (
     Reading,
     RosterLean,
 )
+from oracle.portfolios import Benchmark, Mandate
 from review.render import ORDER, render
 
 AS_OF = date(2025, 1, 10)
@@ -319,6 +320,18 @@ def test_a_mark_mismatch_is_the_first_thing_on_the_page():
     assert out.index("WRONG INSTRUMENT?") < out.index("TICKER")
     assert "LINK" in out
     assert "5.0x" in out          # a multiple, not a percentage, at this distance
+
+
+def test_the_header_names_the_mandate_and_which_reading_leads():
+    mandate = Mandate(name="retirement", benchmarks=(Benchmark(type="held_flat"),),
+                       horizon="macro", risk_posture="conservative")
+    out = render([_reading()], portfolio="retirement", as_of=AS_OF, mandate=mandate)
+    assert "retirement (levels leads)" in out
+
+
+def test_the_header_says_nothing_about_a_mandate_when_none_is_passed():
+    out = render([_reading()], portfolio="retirement", as_of=AS_OF)
+    assert "leads)" not in out
 
 
 def test_a_clean_account_prints_no_mismatch_banner():

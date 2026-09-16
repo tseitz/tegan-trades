@@ -21,8 +21,15 @@ from oracle import portfolios, wallet
 EXAMPLE = """\
 account: {name}
 domain: crypto
-horizon: position
 stale_after: 7
+
+mandate:
+  name: {name}
+  benchmarks:
+    - type: symbol
+      key: btc
+  horizon: position
+  risk_posture: aggressive
 
 # Quoted, because an unquoted `0x` address is a valid YAML hex number and parses as one.
 wallets:
@@ -98,8 +105,7 @@ def sync(argv: list[str] | None = None) -> int:
         before = _tickers(name)
         verb = "would write" if args.dry_run else "wrote"
         if not args.dry_run:
-            portfolios.write_positions(path, rows, source=wallet.SOURCE,
-                                       horizon=_horizon(name), cash=cash)
+            portfolios.write_positions(path, rows, source=wallet.SOURCE, cash=cash)
         money = "" if cash is None else f", {cash:,.2f} in stablecoins"
         print(f"{name}: {verb} {len(rows)} position(s) from {len(addresses)} wallet(s) "
               f"across {len(counted)} network(s){money} -> {path}")
@@ -230,11 +236,6 @@ def _existing(name: str):
 def _tickers(name: str) -> set[str]:
     book = _existing(name)
     return {p.holding.ticker for p in book.positions} if book else set()
-
-
-def _horizon(name: str) -> str:
-    book = _existing(name)
-    return book.horizon if book else portfolios.DEFAULT_HORIZON
 
 
 # Which drops are printed one by one, and which are only counted. A collision or a `prefer:`

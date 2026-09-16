@@ -21,6 +21,7 @@ answer it must never give by accident.
 from __future__ import annotations
 
 import re
+from collections.abc import Hashable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -36,7 +37,9 @@ DATA_ROOT = Path(__file__).resolve().parents[4] / "data" / "portfolios"
 # `core.thesis.Timeframe`, reused rather than restated. A fifth word here would be a second
 # vocabulary for one idea, and `HalfLife` below already keys off these four.
 HORIZONS = ("scalp", "swing", "position", "macro")
-DEFAULT_HORIZON = "position"
+
+RISK_POSTURES = ("conservative", "moderate", "aggressive")
+BENCHMARK_TYPES = ("symbol", "held_flat", "flat_rate")
 
 # What routing assumes an asset is when the file does not say. `crypto` is the only value
 # `oracle.route` treats specially — everything else lands on Yahoo — so "stock" is both the
@@ -52,6 +55,35 @@ DEFAULT_LEVEL_KINDS = ALL_KINDS
 
 class PortfolioError(Exception):
     """A portfolio file that cannot be trusted. Always names the offending row."""
+
+
+class _StrictLoader(yaml.SafeLoader):
+    """``yaml.safe_load``, except a repeated top-level key raises instead of keeping the last.
+
+    PyYAML's own mapping constructor silently overwrites a duplicate key — the exact hazard
+    that already bit ``cash:`` once (see ``_GENERATED`` below). Raising here closes it for
+    every key, not just ``mandate:``, with the one change ``load()`` needs.
+    """
+
+    def construct_mapping(self, node, deep=False):
+        # `flatten_mapping` first, same as `SafeConstructor` does: it resolves a `<<:` merge
+        # key into the node's own pairs before anything here sees it, so a merged-in key is
+        # both checked for duplicates and doesn't itself get mistaken for one.
+        self.flatten_mapping(node)
+        keys: set = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            # An unhashable key (a list or mapping) can't collide by definition, and letting
+            # `super()` hit it is what turns it into the `ConstructorError` — a `yaml.YAMLError`
+            # — that `load()` already converts to `PortfolioError`. Checking `key in keys`
+            # ourselves would raise a bare `TypeError` instead, which `load()`'s callers do not
+            # catch — see `review.load_books`, which one bad file must never take down.
+            if isinstance(key, Hashable):
+                if key in keys:
+                    raise yaml.constructor.ConstructorError(
+                        None, None, f"found duplicate key {key!r}", key_node.start_mark)
+                keys.add(key)
+        return super().construct_mapping(node, deep=deep)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,15 +103,44 @@ class Position:
 
 
 @dataclass(frozen=True, slots=True)
-class Portfolio:
-    """One account's holdings, as written down.
+class Benchmark:
+    """What this mandate's positions are measured against — one of three shapes.
 
-    ``horizon`` is carried but not yet acted on. It is here because the retirement account
-    and the day-trading account want different answers to the same chart — noted now so the
-    file format does not have to change when that lands.
+    ``type`` names which of ``key``/``rate`` applies; the other stays ``None``. Resolving a
+    ``symbol`` key to an actual price series, or a ``held_flat`` entry to the held-flat
+    baseline, is #69's job — this is only the parsed intent.
+    """
+    type: str
+    key: str | None = None
+    rate: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Mandate:
+    """Why this account holds what it holds, and what "doing well" means for it.
+
+    Carried on ``Portfolio`` because the retirement account and the day-trading account want
+    different answers to the same chart — noted now so the file format does not have to change
+    when the verdict engine (#68) starts acting on it.
     """
     name: str
+    benchmarks: tuple[Benchmark, ...]
     horizon: str
+    risk_posture: str
+
+    @property
+    def leads_with(self) -> str:
+        """"levels" | "sentiment" — the exact vocabulary ADR-0002 already keys its verdict
+        functions on. Derived, never stored: ADR-0001 rejected storing it as a second value
+        that could drift from ``risk_posture``."""
+        return "levels" if self.risk_posture == "conservative" else "sentiment"
+
+
+@dataclass(frozen=True, slots=True)
+class Portfolio:
+    """One account's holdings, as written down."""
+    name: str
+    mandate: Mandate
     positions: tuple[Position, ...]
     level_kinds: tuple[str, ...] = DEFAULT_LEVEL_KINDS
     # When these positions were last true. Taken from the file's `updated:` line if it has
@@ -189,7 +250,7 @@ def load(name: str, *, root: Path = DATA_ROOT) -> Portfolio:
         raise PortfolioError(f"no portfolio {name!r} at {path} (available: {listing})")
 
     try:
-        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        doc = yaml.load(path.read_text(encoding="utf-8"), Loader=_StrictLoader) or {}
     except yaml.YAMLError as exc:
         raise PortfolioError(f"{path} is not valid YAML: {exc}") from exc
     if not isinstance(doc, dict):
@@ -217,15 +278,12 @@ def load(name: str, *, root: Path = DATA_ROOT) -> Portfolio:
             mark=_number(row.get("mark"), field="mark", where=f"{path} position {index}"),
         ))
 
-    horizon = str(doc.get("horizon") or DEFAULT_HORIZON)
-    if horizon not in HORIZONS:
-        raise PortfolioError(f"{path}: unknown `horizon` {horizon!r} — "
-                             f"pick from {', '.join(HORIZONS)}")
+    mandate = _mandate(doc.get("mandate"), path=path)
 
     stale_after = doc.get("stale_after")
     return Portfolio(
         name=str(doc.get("account") or name),
-        horizon=horizon,
+        mandate=mandate,
         positions=tuple(positions),
         level_kinds=_level_kinds(doc.get("levels"), path=path),
         updated=_updated(doc.get("updated"), path=path),
@@ -235,7 +293,7 @@ def load(name: str, *, root: Path = DATA_ROOT) -> Portfolio:
         # portfolio file rots. They are the right shape — a scalper's book turns over in days
         # and a retirement book in years — but an actively traded account goes wrong far
         # sooner than its horizon suggests, which is what `stale_after:` is for.
-        stale_after=(DEFAULT_HALF_LIFE.days_for(horizon) if stale_after is None
+        stale_after=(DEFAULT_HALF_LIFE.days_for(mandate.horizon) if stale_after is None
                      else int(stale_after)),
     )
 
@@ -274,6 +332,64 @@ def _cash_by_account(raw, *, path: Path) -> dict[str, float]:
             raise PortfolioError(f"{path}: `cash_by_account.{name}` has no amount")
         out[str(name)] = amount
     return out
+
+
+def _mandate(raw, *, path: Path) -> Mandate:
+    """The `mandate:` block, required on every file — see ``Mandate`` for why it exists."""
+    if not isinstance(raw, dict):
+        raise PortfolioError(f"{path}: missing or malformed `mandate:` block")
+
+    name = raw.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise PortfolioError(f"{path}: `mandate.name` must be a non-empty string")
+
+    horizon = str(raw.get("horizon") or "")
+    if horizon not in HORIZONS:
+        raise PortfolioError(f"{path}: unknown `mandate.horizon` {horizon!r} — "
+                             f"pick from {', '.join(HORIZONS)}")
+
+    risk_posture = raw.get("risk_posture")
+    if risk_posture not in RISK_POSTURES:
+        raise PortfolioError(f"{path}: unknown `mandate.risk_posture` {risk_posture!r} — "
+                             f"pick from {', '.join(RISK_POSTURES)}")
+
+    return Mandate(
+        name=name.strip(),
+        benchmarks=_benchmarks(raw.get("benchmarks"), path=path),
+        horizon=horizon,
+        risk_posture=risk_posture,
+    )
+
+
+def _benchmarks(raw, *, path: Path) -> tuple[Benchmark, ...]:
+    """1-3 benchmark entries. Each names ``type`` and carries only the field that type needs —
+    a ``symbol`` without a ``key`` or a ``flat_rate`` without a ``rate`` names nothing to
+    compare against, so both raise rather than resolving to a benchmark that silently does
+    nothing."""
+    if not isinstance(raw, list) or not (1 <= len(raw) <= 3):
+        raise PortfolioError(f"{path}: `mandate.benchmarks` must be a list of 1-3 entries")
+
+    benchmarks = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise PortfolioError(f"{path}: each `mandate.benchmarks` entry must be a mapping")
+        kind = entry.get("type")
+        if kind not in BENCHMARK_TYPES:
+            raise PortfolioError(f"{path}: unknown benchmark `type` {kind!r} — "
+                                 f"pick from {', '.join(BENCHMARK_TYPES)}")
+        if kind == "symbol":
+            key = entry.get("key")
+            if not isinstance(key, str) or not key.strip():
+                raise PortfolioError(f"{path}: a `symbol` benchmark needs a `key`")
+            benchmarks.append(Benchmark(type=kind, key=key.strip()))
+        elif kind == "flat_rate":
+            rate = _number(entry.get("rate"), field="mandate.benchmarks.rate", where=str(path))
+            if rate is None:
+                raise PortfolioError(f"{path}: a `flat_rate` benchmark needs a `rate`")
+            benchmarks.append(Benchmark(type=kind, rate=rate))
+        else:
+            benchmarks.append(Benchmark(type=kind))
+    return tuple(benchmarks)
 
 
 def _level_kinds(raw, *, path: Path) -> tuple[str, ...]:
@@ -383,8 +499,6 @@ HEADER = """\
 # Gitignored: this repo is public and share counts are not configuration.
 account: {name}
 
-horizon: {horizon}
-
 domain: {domain}
 """
 
@@ -405,7 +519,7 @@ def _trimmed(value: float) -> str:
     return f"{value:.8f}".rstrip("0").rstrip(".") or "0"
 
 
-def write_positions(path: Path, rows, *, source: Source, horizon: str = DEFAULT_HORIZON,
+def write_positions(path: Path, rows, *, source: Source,
                     cash: float | None = None,
                     cash_by: dict[str, float] | None = None) -> None:
     """Replace the ``positions:`` block, keeping every line above it exactly as written.
@@ -423,8 +537,7 @@ def write_positions(path: Path, rows, *, source: Source, horizon: str = DEFAULT_
         head, marker, _ = text.partition("\npositions:")
         prefix = (head + "\n") if marker else text.rstrip("\n") + "\n\n"
     else:
-        prefix = HEADER.format(name=path.stem, command=source.command, horizon=horizon,
-                               domain=source.domain)
+        prefix = HEADER.format(name=path.stem, command=source.command, domain=source.domain)
 
     # The file's own `domain:` and not the source's: a per-row `domain:` is written only where
     # it differs from what this document already declares. Reading the source here instead

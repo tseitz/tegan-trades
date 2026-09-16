@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import review.cli as cli
 from core.canon import load_registry
 from core.review import NO_VIEW, UNREADABLE, Holding, Location, Reading, RosterLean
-from oracle.portfolios import Portfolio, Position
+from oracle.portfolios import Benchmark, Mandate, Portfolio, Position
 from oracle.route import RoutingTable
 from oracle.series import Bar, PriceSeries
 from review.cli import CONFIG_DIR, build_readings, load_books, refresh_argv, review_for
@@ -31,9 +31,13 @@ def _table(**consensus):
                         kraken_symbols=frozenset(), domain_consensus=consensus)
 
 
+MANDATE = Mandate(name="test", benchmarks=(Benchmark(type="held_flat"),),
+                  horizon="position", risk_posture="moderate")
+
+
 def _book(*tickers, domain="stock"):
     return Portfolio(
-        name="test", horizon="long",
+        name="test", mandate=MANDATE,
         positions=tuple(
             Position(holding=Holding(ticker=t, shares=1.0, cost=None), domain=domain)
             for t in tickers
@@ -164,7 +168,7 @@ def test_review_for_bundles_mismatch_and_levels_onto_the_result(monkeypatch):
         cli, "build_readings",
         lambda book, **_: cli.Read(readings=[reading], contexts=(None,)))
 
-    book = Portfolio(name="test", horizon="long",
+    book = Portfolio(name="test", mandate=MANDATE,
                      positions=(Position(holding=reading.holding, domain="stock", mark=50.0),))
 
     [result] = review_for([book], as_of=AS_OF, registry=REGISTRY)
@@ -180,7 +184,7 @@ def test_review_for_bundles_mismatch_and_levels_onto_the_result(monkeypatch):
 def test_load_books_skips_a_bad_file_and_reports_it(monkeypatch):
     """The seam `digest` calls instead of reaching into `oracle.portfolios` directly — see
     ADR-0004. One bad file must not cost every other account's review."""
-    good = Portfolio(name="good", horizon="long", positions=())
+    good = Portfolio(name="good", mandate=MANDATE, positions=())
 
     def _load(name):
         if name == "bad":
@@ -198,7 +202,7 @@ def test_load_books_skips_a_bad_file_and_reports_it(monkeypatch):
 def test_load_books_needs_no_warn_callback(monkeypatch):
     """`warn` is optional — a bad file is still skipped, just silently, for a caller that does
     not care to report it."""
-    good = Portfolio(name="good", horizon="long", positions=())
+    good = Portfolio(name="good", mandate=MANDATE, positions=())
 
     def _load(name):
         if name == "bad":

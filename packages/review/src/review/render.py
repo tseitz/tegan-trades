@@ -91,7 +91,7 @@ LEVEL_HEADERS = ("TICKER", "PRICE", "SIDE", "LEVEL", "WHAT", "", "ROSTER", "")
 
 def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
            stale: bool = False, cash: float | None = None, cash_by=None,
-           mismatched=()) -> str:
+           mismatched=(), mandate=None) -> str:
     """The whole report. ``as_of`` is passed in rather than read from a clock so a replay of
     a past date prints that date, not today's.
 
@@ -105,7 +105,8 @@ def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
     if age_days is not None:
         written = f" · written {'today' if age_days == 0 else f'{age_days} days ago'}"
     money = "" if cash is None else f" · {_money(cash)} cash"
-    head = (f"{portfolio} · {len(readings)} position(s){money} "
+    mandate_clause = "" if mandate is None else f" · {mandate.name} ({mandate.leads_with} leads)"
+    head = (f"{portfolio}{mandate_clause} · {len(readings)} position(s){money} "
             f"· as of {as_of.isoformat()}{written}")
     if not readings:
         return f"{head}\n\n  no positions — nothing to review"

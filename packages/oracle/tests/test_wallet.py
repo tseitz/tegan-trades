@@ -195,11 +195,21 @@ def test_the_contract_address_and_price_ride_along():
 
 def test_rows_read_back_the_way_the_reader_expects(tmp_path):
     from oracle import portfolios
+
+    # A sync can never write a mandate — it doesn't know `name`/`benchmarks`/`risk_posture` —
+    # so this hand-types one in, same as a real file needs one hand-added before `load` accepts it.
+    path = tmp_path / "w.yaml"
+    path.write_text(
+        "mandate:\n  name: w\n  benchmarks:\n    - type: held_flat\n"
+        "  horizon: position\n  risk_posture: moderate\n"
+        "positions:\n  - ticker: OLD\n    shares: 1\n",
+        encoding="utf-8",
+    )
     rows, _, cash = _rows(
         _token(symbol="USDC", decimals=6, price="1.0", units=250),
         _token(contract="0xc02aaa", symbol="WETH", price="2400", units=1.5),
     )
-    portfolios.write_positions(tmp_path / "w.yaml", rows, source=wallet.SOURCE, cash=cash)
+    portfolios.write_positions(path, rows, source=wallet.SOURCE, cash=cash)
     book = portfolios.load("w", root=tmp_path)
     assert [p.holding.ticker for p in book.positions] == ["WETH"]
     assert book.positions[0].domain == "crypto"
