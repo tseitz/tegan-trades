@@ -35,6 +35,7 @@ NEEDS: ``ALCHEMY_API_KEY`` in ``.env``. Free tier; this spends nothing. The defa
 a famous public one (vitalik.eth), so the probe answers the coverage question without anyone
 having to paste a wallet they own into a terminal.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -45,16 +46,28 @@ from oracle import wallet
 
 # Public, well-known, and busy enough to exhibit all four traps above.
 DEFAULT_ADDRESS = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
-DEFAULT_NETWORKS = ("eth-mainnet", "base-mainnet", "arb-mainnet", "opt-mainnet",
-                    "matic-mainnet", "solana-mainnet")
+DEFAULT_NETWORKS = (
+    "eth-mainnet",
+    "base-mainnet",
+    "arb-mainnet",
+    "opt-mainnet",
+    "matic-mainnet",
+    "solana-mainnet",
+)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--address", default=DEFAULT_ADDRESS)
-    parser.add_argument("--network", action="append", dest="networks",
-                        help="repeatable; default probes each of the six one at a time")
-    parser.add_argument("--show", type=int, default=5, help="sample rows to print per network")
+    parser.add_argument(
+        "--network",
+        action="append",
+        dest="networks",
+        help="repeatable; default probes each of the six one at a time",
+    )
+    parser.add_argument(
+        "--show", type=int, default=5, help="sample rows to print per network"
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -72,21 +85,32 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{network:<16} REFUSED  {str(exc).split(': ', 1)[-1]}")
             continue
 
-        rows, skipped, cash = wallet.rows_from(found)
-        held = sum(1 for t in found.tokens if (t.get("tokenBalance") or "0x0") not in ("0x0", "0"))
+        rows, skipped, cash, _unpriced = wallet.rows_from(found)
+        held = sum(
+            1
+            for t in found.tokens
+            if (t.get("tokenBalance") or "0x0") not in ("0x0", "0")
+        )
         money = "-" if cash is None else f"${cash:,.2f}"
-        print(f"{network:<16} ok  {len(found.tokens):>4} returned  {held:>4} non-zero  "
-              f"{len(rows):>3} kept  {len(skipped):>4} dropped  {money} stables")
+        print(
+            f"{network:<16} ok  {len(found.tokens):>4} returned  {held:>4} non-zero  "
+            f"{len(rows):>3} kept  {len(skipped):>4} dropped  {money} stables"
+        )
         for why in found.failed:
             print(f"    partial: {why}")
-        for row in rows[:args.show]:
-            print(f"    {row.ticker:<10} {row.shares:>18.8f} @ {row.mark}  {row.figi or 'native'}")
-        for miss in skipped[:args.show]:
+        for row in rows[: args.show]:
+            print(
+                f"    {row.ticker:<10} {row.shares:>18.8f} @ {row.mark}  {row.figi or 'native'}"
+            )
+        for miss in skipped[: args.show]:
             print(f"    dropped {miss.what}: {miss.why}")
 
     # The native row, printed raw, because trap 1 is the one nobody believes without seeing it.
-    native = [t for t in wallet.read(args.address, ("eth-mainnet",)).tokens
-              if t.get("tokenAddress") is None]
+    native = [
+        t
+        for t in wallet.read(args.address, ("eth-mainnet",)).tokens
+        if t.get("tokenAddress") is None
+    ]
     if native:
         print(f"\nthe native row, verbatim:\n{json.dumps(native[0], indent=2)}")
     return 0

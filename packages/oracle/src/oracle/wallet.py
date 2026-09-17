@@ -25,13 +25,14 @@ WHAT THE CHAIN GIVES, AND THE FOUR TRAPS IN IT. Measured against Alchemy's
    ``USDC``. ``portfolios.load`` allows one row per ticker, so a collision is not a cosmetic
    problem — it fails the file. ``_fold`` resolves it by price; see there.
 """
+
 from __future__ import annotations
 
 import json
 import os
 import re
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from urllib.error import HTTPError
 
 from core.env import load_env
@@ -60,8 +61,13 @@ NATIVE = {
 # Five is the API's per-address maximum, and taking all five costs the same one request as
 # taking one. Narrow it with `networks:` on the address once you know which chains you use;
 # starting narrow would instead hide a position on a chain nobody thought to name.
-DEFAULT_EVM_NETWORKS = ("eth-mainnet", "base-mainnet", "arb-mainnet", "opt-mainnet",
-                        "matic-mainnet")
+DEFAULT_EVM_NETWORKS = (
+    "eth-mainnet",
+    "base-mainnet",
+    "arb-mainnet",
+    "opt-mainnet",
+    "matic-mainnet",
+)
 # `solana-mainnet`, NOT `sol-mainnet`. Alchemy's own docs and its published agent
 # reference both spell it `sol-mainnet`, and that name is rejected outright — the mistake
 # reads as "Solana is not enabled on your key", which sends you to the dashboard to toggle
@@ -75,9 +81,21 @@ DEFAULT_SOLANA_NETWORKS = ("solana-mainnet",)
 #
 # Plain, redeemable dollars only. A yield-bearing wrapper (sUSDe, sDAI) drifts from a dollar on
 # purpose, which makes it a position with a thesis, not a balance.
-STABLES = frozenset({
-    "USDC", "USDT", "DAI", "USDS", "PYUSD", "USDE", "FDUSD", "TUSD", "BUSD", "USDG", "RLUSD",
-})
+STABLES = frozenset(
+    {
+        "USDC",
+        "USDT",
+        "DAI",
+        "USDS",
+        "PYUSD",
+        "USDE",
+        "FDUSD",
+        "TUSD",
+        "BUSD",
+        "USDG",
+        "RLUSD",
+    }
+)
 
 # What a position has to be worth before it earns a row. A floor rather than a blocklist:
 # scam tokens are minted faster than any list could track, and the ones carrying a real quoted
@@ -115,6 +133,7 @@ class WalletError(Exception):
 @dataclass(frozen=True, slots=True)
 class Read:
     """One wallet's worth of chain data, and everything that went wrong getting it."""
+
     tokens: tuple[dict, ...]
     networks: tuple[str, ...]
     # Networks the API answered for with an error. Non-empty means the read is INCOMPLETE, and
@@ -129,7 +148,8 @@ def api_key() -> str:
     if not key:
         raise WalletError(
             "ALCHEMY_API_KEY is not set — make a free app at dashboard.alchemy.com and put "
-            "its key in .env (see .env.example)")
+            "its key in .env (see .env.example)"
+        )
     return key
 
 
@@ -139,20 +159,37 @@ def networks_for(address: str) -> tuple[str, ...]:
     Split on the address shape rather than configured per wallet, because asking a Solana
     network about a hex address is not a narrower query — it is a malformed one.
     """
-    return DEFAULT_EVM_NETWORKS if _EVM_ADDRESS.match(address) else DEFAULT_SOLANA_NETWORKS
+    return (
+        DEFAULT_EVM_NETWORKS if _EVM_ADDRESS.match(address) else DEFAULT_SOLANA_NETWORKS
+    )
+
+
+def is_solana(address: str) -> bool:
+    """The other half of ``networks_for``'s split, named for callers that only need the
+    boolean — ``wallet_cli`` deciding whether to also read stake accounts, not a chain list.
+    Kept beside ``networks_for`` so nothing outside this module tests ``_EVM_ADDRESS`` itself.
+    """
+    return not _EVM_ADDRESS.match(address)
 
 
 def post(path: str, payload: dict, *, timeout: int = 60, host: str = HOST) -> dict:
     """``host`` overrides the holdings API. Alchemy serves prices from a sibling host that takes
     the same key in the same place, and `scripts/probe_peg_drift.py` is its only caller."""
     body = json.dumps(payload).encode()
-    request = urllib.request.Request(f"{host}/{api_key()}{path}", data=body,
-                                     headers={"Content-Type": "application/json"})
+    request = urllib.request.Request(
+        f"{host}/{api_key()}{path}",
+        data=body,
+        headers={"Content-Type": "application/json"},
+    )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read())
     except HTTPError as exc:
-        raise WalletError(f"{path} failed ({exc.code}): {exc.read().decode()[:600]}") from exc
+        # `path or host`: a caller that overrides `host` with an RPC base and passes `path=""`
+        # (there is no sub-path to add) would otherwise print `" failed (401)"`, naming nothing.
+        raise WalletError(
+            f"{path or host} failed ({exc.code}): {exc.read().decode()[:600]}"
+        ) from exc
 
 
 def read(address: str, networks) -> Read:
@@ -204,14 +241,14 @@ def _units(raw, decimals: int) -> float | None:
     """Balance to whole units. Hex on EVM; accepts a plain decimal string too, because the
     Solana side of the same endpoint is not documented to use the same encoding."""
     if isinstance(raw, int | float):
-        return float(raw) / (10 ** decimals)
+        return float(raw) / (10**decimals)
     if not isinstance(raw, str) or not raw.strip():
         return None
     try:
         base = int(raw, 16) if raw.lower().startswith("0x") else int(raw)
     except ValueError:
         return None
-    return base / (10 ** decimals)
+    return base / (10**decimals)
 
 
 def _price(token: dict) -> float | None:
@@ -243,12 +280,20 @@ class _Candidate:
     ticker: str
     units: float
     price: float
-    where: str          # network + contract, for a skip line someone has to act on
+    where: str  # network + contract, for a skip line someone has to act on
     contract: str | None
+    # Staked units folded in after this candidate was built — same exposure, same chart, per
+    # ADR-0008. Not counted in `_fold`'s richest-first sort key (`c.units * c.price` below),
+    # so a ticker split across chains could in principle pick `figi`/`mark` from the wrong
+    # candidate once staking is bigger than every liquid holding. Harmless for native SOL: the
+    # only candidate `staked` ever attaches to has `contract=None`, so there is nothing to
+    # out-rank it with today.
+    staked: float = 0.0
 
 
-def _fold(candidates: list[_Candidate], prefer: dict[str, str]) -> tuple[list[Row],
-                                                                        list[Skipped]]:
+def _fold(
+    candidates: list[_Candidate], prefer: dict[str, str]
+) -> tuple[list[Row], list[Skipped]]:
     """One row per ticker, summing what is genuinely one asset and refusing to guess otherwise.
 
     Two rows share a ticker for opposite reasons, and telling them apart is the whole job:
@@ -280,37 +325,81 @@ def _fold(candidates: list[_Candidate], prefer: dict[str, str]) -> tuple[list[Ro
     for ticker, group in sorted(by_ticker.items()):
         pinned = str(prefer.get(ticker, "")).lower()
         if pinned:
-            group, dropped = ([c for c in group if (c.contract or "").lower() == pinned],
-                              [c for c in group if (c.contract or "").lower() != pinned])
+            group, dropped = (
+                [c for c in group if (c.contract or "").lower() == pinned],
+                [c for c in group if (c.contract or "").lower() != pinned],
+            )
             for other in dropped:
-                skipped.append(Skipped(what=f"{ticker} at {other.where}", kind="pinned",
-                                       why=f"`prefer:` pins {ticker} to {pinned}"))
+                skipped.append(
+                    Skipped(
+                        what=f"{ticker} at {other.where}",
+                        kind="pinned",
+                        why=f"`prefer:` pins {ticker} to {pinned}",
+                    )
+                )
             if not group:
-                skipped.append(Skipped(what=ticker, kind="collision",
-                                       why=f"`prefer:` pins it to {pinned}, which you do not hold"))
+                skipped.append(
+                    Skipped(
+                        what=ticker,
+                        kind="collision",
+                        why=f"`prefer:` pins it to {pinned}, which you do not hold",
+                    )
+                )
                 continue
 
         low, high = min(c.price for c in group), max(c.price for c in group)
         if high - low > SAME_ASSET_TOLERANCE * max(abs(high), 1e-12):
             where = ", ".join(f"{c.where} at {c.price:.6g}" for c in group)
-            skipped.append(Skipped(
-                what=ticker, kind="collision",
-                why=(f"{len(group)} tokens claim this ticker at prices that disagree ({where}) "
-                     f"— pin the real one with `prefer: {{{ticker}: <contract>}}`")))
+            skipped.append(
+                Skipped(
+                    what=ticker,
+                    kind="collision",
+                    why=(
+                        f"{len(group)} tokens claim this ticker at prices that disagree ({where}) "
+                        f"— pin the real one with `prefer: {{{ticker}: <contract>}}`"
+                    ),
+                )
+            )
             continue
 
         # Richest first only now that they are known to be one asset, so `figi` and `mark`
         # come from the contract holding the most of it rather than from an arbitrary chain.
         group = sorted(group, key=lambda c: c.units * c.price, reverse=True)
-        rows.append(Row(ticker=ticker, shares=sum(c.units for c in group), cost=None,
-                        domain="crypto", figi=group[0].contract, mark=group[0].price))
+        staked_total = sum(c.staked for c in group)
+        rows.append(
+            Row(
+                ticker=ticker,
+                shares=sum(c.units + c.staked for c in group),
+                cost=None,
+                domain="crypto",
+                figi=group[0].contract,
+                mark=group[0].price,
+                staked=(staked_total or None),
+            )
+        )
     return rows, skipped
 
 
-def rows_from(read_: Read, *, min_value: float = MIN_VALUE_USD,
-              prefer: dict[str, str] | None = None
-              ) -> tuple[tuple[Row, ...], tuple[Skipped, ...], float | None]:
-    """``(rows, skipped, cash)`` from what one or more wallets reported.
+def _native_price(read_: Read, ticker: str) -> float | None:
+    """The quote on ``ticker``'s own native row, so staked units are valued off the same quote
+    the liquid ones are — never a second source, per ``core.review.mark_disagrees``."""
+    for token in read_.tokens:
+        if token.get("tokenAddress") is not None:
+            continue
+        symbol, _decimals = _describe(token)
+        if symbol == ticker:
+            return _price(token)
+    return None
+
+
+def rows_from(
+    read_: Read,
+    *,
+    min_value: float = MIN_VALUE_USD,
+    prefer: dict[str, str] | None = None,
+    staked: dict[str, float] | None = None,
+) -> tuple[tuple[Row, ...], tuple[Skipped, ...], float | None, tuple[str, ...]]:
+    """``(rows, skipped, cash, unpriced)`` from what one or more wallets reported.
 
     ``prefer`` maps a ticker to the contract address that owns it, settling the collisions
     ``_fold`` will otherwise refuse to guess at.
@@ -318,11 +407,23 @@ def rows_from(read_: Read, *, min_value: float = MIN_VALUE_USD,
     ``cash`` is the stablecoin balance, which is money you could deploy today rather than a
     position with a chart — see ``STABLES``. It is None, never 0.0, when the wallets held no
     stablecoin at all, so "nothing to add with" stays distinct from "nobody said".
+
+    ``staked`` maps a ticker to extra units held in a stake account rather than a liquid
+    balance — a staked SOL is still SOL exposure, one row on one chart, per ADR-0008, not a
+    second position. It folds into the ticker's *native* candidate only (``contract is
+    None``), creating one where the liquid balance was zero or under the dust floor, and the
+    dust floor is then re-applied to the combined value rather than the liquid part alone.
+    ``unpriced`` names a staked ticker that did not make it into a row with its staking
+    intact — either its native row carried no quote to value it with, or ``_fold`` dropped
+    the whole ticker group as a price collision or a `prefer:` pin mismatch. Either way the
+    caller should treat it as a failed read, never a silently dropped row: a collision that
+    happens to catch a staked ticker would otherwise look exactly like the position was sold.
     """
     candidates: list[_Candidate] = []
     skipped: list[Skipped] = []
     cash = 0.0
     held_cash = False
+    staked = staked or {}
 
     for token in read_.tokens:
         network = str(token.get("network") or "?")
@@ -334,18 +435,28 @@ def rows_from(read_: Read, *, min_value: float = MIN_VALUE_USD,
             # Only ever reported for something that actually holds a balance: a wallet carries
             # hundreds of nameless zero rows, and naming them all would bury the one that matters.
             if _units(token.get("tokenBalance"), 18):
-                skipped.append(Skipped(what=where, why="no symbol or decimals to read it by",
-                                       kind="unreadable"))
+                skipped.append(
+                    Skipped(
+                        what=where,
+                        why="no symbol or decimals to read it by",
+                        kind="unreadable",
+                    )
+                )
             continue
 
         units = _units(token.get("tokenBalance"), decimals)
         if not units:
-            continue                    # trap 2: an emptied token is not news
+            continue  # trap 2: an emptied token is not news
 
         price = _price(token)
         if price is None:
-            skipped.append(Skipped(what=f"{symbol} at {where}", kind="unquoted",
-                                   why="nobody quotes it — almost always an airdropped token"))
+            skipped.append(
+                Skipped(
+                    what=f"{symbol} at {where}",
+                    kind="unquoted",
+                    why="nobody quotes it — almost always an airdropped token",
+                )
+            )
             continue
 
         if symbol in STABLES:
@@ -354,12 +465,85 @@ def rows_from(read_: Read, *, min_value: float = MIN_VALUE_USD,
             continue
 
         value = units * price
-        if value < min_value:
-            skipped.append(Skipped(what=f"{symbol} at {where}", kind="dust",
-                                   why=f"worth ${value:,.2f}, under the ${min_value:,.2f} floor"))
+        native = contract is None
+        # A ticker also carrying staked units is not judged on its liquid value alone — the
+        # combined-value check below re-tests it once staking has been folded in.
+        if value < min_value and not (native and symbol in staked):
+            skipped.append(
+                Skipped(
+                    what=f"{symbol} at {where}",
+                    kind="dust",
+                    why=f"worth ${value:,.2f}, under the ${min_value:,.2f} floor",
+                )
+            )
             continue
-        candidates.append(_Candidate(ticker=symbol, units=units, price=price, where=where,
-                                     contract=contract))
+        candidates.append(
+            _Candidate(
+                ticker=symbol, units=units, price=price, where=where, contract=contract
+            )
+        )
 
-    rows, collisions = _fold(candidates, {k.upper(): v for k, v in (prefer or {}).items()})
-    return tuple(rows), tuple(skipped + collisions), (cash if held_cash else None)
+    unpriced: list[str] = []
+    for ticker, extra in staked.items():
+        if not extra:
+            continue
+        native_candidate = next(
+            (c for c in candidates if c.ticker == ticker and c.contract is None), None
+        )
+        if native_candidate is not None:
+            candidates[candidates.index(native_candidate)] = replace(
+                native_candidate, staked=native_candidate.staked + extra
+            )
+            continue
+        price = _native_price(read_, ticker)
+        if price is None:
+            unpriced.append(ticker)
+            continue
+        candidates.append(
+            _Candidate(
+                ticker=ticker,
+                units=0.0,
+                price=price,
+                where=f"{ticker} staked",
+                contract=None,
+                staked=extra,
+            )
+        )
+
+    # The combined-value re-check promised above: a native candidate that skipped the dust
+    # filter because it carries staked units still has to clear the floor once combined.
+    final: list[_Candidate] = []
+    for candidate in candidates:
+        combined = (candidate.units + candidate.staked) * candidate.price
+        if candidate.staked and combined < min_value:
+            skipped.append(
+                Skipped(
+                    what=f"{candidate.ticker} at {candidate.where}",
+                    kind="dust",
+                    why=f"worth ${combined:,.2f} staked+liquid, under the ${min_value:,.2f} floor",
+                )
+            )
+            continue
+        final.append(candidate)
+
+    rows, collisions = _fold(final, {k.upper(): v for k, v in (prefer or {}).items()})
+
+    # `_fold` can still drop a whole ticker group — a price disagreement, or a `prefer:` pin
+    # excluding it — after staking was already folded into one of its candidates. That must
+    # not read as a quieter version of the no-quote case above: the sync would write a file
+    # with the staked position simply gone, looking exactly like it was sold.
+    folded_staked = {row.ticker: (row.staked or 0.0) for row in rows}
+    for ticker, extra in staked.items():
+        if (
+            extra
+            and folded_staked.get(ticker, 0.0) < extra - 1e-9
+            and ticker not in unpriced
+        ):
+            unpriced.append(ticker)
+
+    return (
+        tuple(rows),
+        tuple(skipped + collisions),
+        (cash if held_cash else None),
+        tuple(unpriced),
+    )

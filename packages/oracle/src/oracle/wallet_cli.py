@@ -8,6 +8,7 @@ The file is the configuration. A ``wallets:`` block names the addresses; everyth
 the document means what it always meant, and ``portfolios.load`` ignores the block entirely —
 which is why no reader had to change to make chain data reviewable.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -16,7 +17,7 @@ from datetime import UTC, datetime
 
 import yaml
 
-from oracle import portfolios, wallet
+from oracle import portfolios, stake_solana, wallet
 
 EXAMPLE = """\
 account: {name}
@@ -45,17 +46,31 @@ positions:
 def sync(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="wallet-sync",
-        description="Refresh portfolio files from the public wallet addresses written in them.")
-    parser.add_argument("portfolio", nargs="*",
-                        help="which accounts to refresh (default: every one with wallets)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="print what would change and write nothing")
-    parser.add_argument("--dropped", action="store_true",
-                        help="name every dropped token, not just the ones that cost you a "
-                             "position (several hundred per chain)")
-    parser.add_argument("--min-value", type=float, default=None,
-                        help=f"drop positions worth less than this many dollars "
-                             f"(default {wallet.MIN_VALUE_USD:g}, or `min_value:` in the file)")
+        description="Refresh portfolio files from the public wallet addresses written in them.",
+    )
+    parser.add_argument(
+        "portfolio",
+        nargs="*",
+        help="which accounts to refresh (default: every one with wallets)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print what would change and write nothing",
+    )
+    parser.add_argument(
+        "--dropped",
+        action="store_true",
+        help="name every dropped token, not just the ones that cost you a "
+        "position (several hundred per chain)",
+    )
+    parser.add_argument(
+        "--min-value",
+        type=float,
+        default=None,
+        help=f"drop positions worth less than this many dollars "
+        f"(default {wallet.MIN_VALUE_USD:g}, or `min_value:` in the file)",
+    )
     args = parser.parse_args(argv)
 
     # Defaults to files that name a wallet rather than every file on disk, for the same reason
@@ -66,8 +81,10 @@ def sync(argv: list[str] | None = None) -> int:
         if args.portfolio:
             print("no such account", file=sys.stderr)
             return 1
-        print("no wallet accounts — add a `wallets:` block to a file in "
-              f"{portfolios.DATA_ROOT}, like:\n\n{EXAMPLE.format(name='crypto')}")
+        print(
+            "no wallet accounts — add a `wallets:` block to a file in "
+            f"{portfolios.DATA_ROOT}, like:\n\n{EXAMPLE.format(name='crypto')}"
+        )
         return 0
 
     failures = 0
@@ -97,7 +114,10 @@ def sync(argv: list[str] | None = None) -> int:
             # Same refusal `plaid-sync` makes: `portfolios.load` rejects a portfolio with no
             # positions, so an empty write turns a bad read into an account that vanishes from
             # the review with nothing saying so.
-            print(f"{name}: no usable positions on chain — file left alone", file=sys.stderr)
+            print(
+                f"{name}: no usable positions on chain — file left alone",
+                file=sys.stderr,
+            )
             failures += 1
             continue
 
@@ -107,15 +127,22 @@ def sync(argv: list[str] | None = None) -> int:
         if not args.dry_run:
             portfolios.write_positions(path, rows, source=wallet.SOURCE, cash=cash)
         money = "" if cash is None else f", {cash:,.2f} in stablecoins"
-        print(f"{name}: {verb} {len(rows)} position(s) from {len(addresses)} wallet(s) "
-              f"across {len(counted)} network(s){money} -> {path}")
+        staked_note = "".join(
+            f", {r.staked:g} {r.ticker} staked" for r in rows if r.staked
+        )
+        print(
+            f"{name}: {verb} {len(rows)} position(s) from {len(addresses)} wallet(s) "
+            f"across {len(counted)} network(s){money}{staked_note} -> {path}"
+        )
         _report(before, {r.ticker for r in rows})
         _dropped(skipped, everything=args.dropped)
 
     if failures:
         return 1
-    print(f"\nsynced {datetime.now(UTC).date().isoformat()}. "
-          f"Prices: uv run fetch-prices --all-portfolios")
+    print(
+        f"\nsynced {datetime.now(UTC).date().isoformat()}. "
+        f"Prices: uv run fetch-prices --all-portfolios"
+    )
     return 0
 
 
@@ -128,6 +155,10 @@ def _one(name: str, addresses, floor: float):
     tokens: list[dict] = []
     failed: list[tuple[str, str]] = []
     counted: dict[str, None] = {}
+    # Accumulated across addresses, not per-entry: `rows_from` is called once over every
+    # wallet's tokens merged, so two Solana addresses staking the same ticker must arrive as
+    # one combined total rather than overwriting each other.
+    staked: dict[str, float] = {}
     for entry in addresses:
         try:
             found = wallet.read(entry["address"], entry["networks"])
@@ -148,6 +179,14 @@ def _one(name: str, addresses, floor: float):
                 else:
                     kept.extend(again.tokens)
             failed.extend((n, w) for n, w in found.failed if n == "*")
+
+            # A stake read that fails raises the same `wallet.WalletError` a token read does,
+            # so it is caught below and aborts the account exactly as an unreachable chain
+            # would — no second failure path to keep in sync with this one.
+            if wallet.is_solana(entry["address"]):
+                amount = stake_solana.staked_sol(stake_solana.read(entry["address"]))
+                if amount is not None:
+                    staked["SOL"] = staked.get("SOL", 0.0) + amount
         except wallet.WalletError as exc:
             print(f"{name}: {exc}", file=sys.stderr)
             return None, (), None, (), ()
@@ -155,9 +194,20 @@ def _one(name: str, addresses, floor: float):
         for network in found.networks:
             counted.setdefault(network, None)
 
-    rows, skipped, cash = wallet.rows_from(
+    rows, skipped, cash, unpriced = wallet.rows_from(
         wallet.Read(tokens=tuple(tokens), networks=tuple(counted)),
-        min_value=floor, prefer=_prefer(name))
+        min_value=floor,
+        prefer=_prefer(name),
+        staked=staked or None,
+    )
+    # A staked ticker that did not make it into a row is a failed read, not a dropped row:
+    # writing a file with the staked units silently missing would look like the position was
+    # sold. Covers both causes `wallet.rows_from` reports through `unpriced` — no quote on the
+    # native row, or `_fold` dropping the whole ticker as a price collision or `prefer:` pin.
+    failed.extend(
+        (ticker, "staked units were not priced or were dropped as a ticker collision")
+        for ticker in unpriced
+    )
     return rows, skipped, cash, tuple(failed), tuple(counted)
 
 
@@ -192,11 +242,16 @@ def _wallets(name: str) -> tuple[dict, ...]:
             continue
         address = _address(entry["address"])
         networks = entry.get("networks")
-        out.append({
-            "address": address,
-            "networks": (tuple(str(n) for n in networks) if isinstance(networks, list)
-                         else wallet.networks_for(address)),
-        })
+        out.append(
+            {
+                "address": address,
+                "networks": (
+                    tuple(str(n) for n in networks)
+                    if isinstance(networks, list)
+                    else wallet.networks_for(address)
+                ),
+            }
+        )
     return tuple(out)
 
 

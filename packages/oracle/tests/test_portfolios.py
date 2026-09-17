@@ -31,12 +31,14 @@ positions:
 
 # A generic mandate block for fixtures whose test has nothing to say about the mandate
 # itself — only that one is present so the file loads.
-MANDATE_BLOCK = ("mandate:\n"
-                  "  name: p\n"
-                  "  benchmarks:\n"
-                  "    - type: held_flat\n"
-                  "  horizon: position\n"
-                  "  risk_posture: moderate\n")
+MANDATE_BLOCK = (
+    "mandate:\n"
+    "  name: p\n"
+    "  benchmarks:\n"
+    "    - type: held_flat\n"
+    "  horizon: position\n"
+    "  risk_posture: moderate\n"
+)
 
 
 def _write(tmp_path, name, body):
@@ -58,7 +60,9 @@ def test_loads_a_portfolio(tmp_path):
 def test_tickers_are_upcased_but_not_otherwise_touched(tmp_path):
     """Canonicalisation is `core.canon`'s job and happens later, against the registry. Doing
     anything cleverer here would put a second asset-naming authority in the repo."""
-    root = _write(tmp_path, "p", MANDATE_BLOCK + "positions:\n  - {ticker: ' eth ', shares: 1}\n")
+    root = _write(
+        tmp_path, "p", MANDATE_BLOCK + "positions:\n  - {ticker: ' eth ', shares: 1}\n"
+    )
     assert load("p", root=root).holdings[0].ticker == "ETH"
 
 
@@ -79,7 +83,9 @@ def test_zero_and_negative_shares_are_refused(tmp_path):
 
 
 def test_a_row_without_a_ticker_names_its_position_in_the_file(tmp_path):
-    root = _write(tmp_path, "p", "positions:\n  - {shares: 3}\n  - {ticker: VTI, shares: 1}\n")
+    root = _write(
+        tmp_path, "p", "positions:\n  - {shares: 3}\n  - {ticker: VTI, shares: 1}\n"
+    )
     with pytest.raises(PortfolioError, match="position 1"):
         load("p", root=root)
 
@@ -100,7 +106,8 @@ def test_duplicate_tickers_are_refused(tmp_path):
     """Two rows for one ticker would produce two independent readings of the same position,
     each sized wrong. Merging them silently would be a guess about which cost basis is real."""
     root = _write(
-        tmp_path, "p",
+        tmp_path,
+        "p",
         "positions:\n  - {ticker: VTI, shares: 1}\n  - {ticker: vti, shares: 2}\n",
     )
     with pytest.raises(PortfolioError, match="VTI"):
@@ -115,14 +122,17 @@ def test_domain_defaults_to_stock_and_can_be_set_either_level(tmp_path):
     root = _write(tmp_path, "p", GOOD)
     assert [p.domain for p in load("p", root=root).positions] == ["stock", "stock"]
 
-    root = _write(tmp_path, "c",
-                  MANDATE_BLOCK + "domain: crypto\npositions:\n  - {ticker: BTC, shares: 1}\n")
+    root = _write(
+        tmp_path,
+        "c",
+        MANDATE_BLOCK + "domain: crypto\npositions:\n  - {ticker: BTC, shares: 1}\n",
+    )
     assert load("c", root=root).positions[0].domain == "crypto"
 
     root = _write(
-        tmp_path, "m",
-        MANDATE_BLOCK +
-        "domain: stock\npositions:\n"
+        tmp_path,
+        "m",
+        MANDATE_BLOCK + "domain: stock\npositions:\n"
         "  - {ticker: VTI, shares: 1}\n"
         "  - {ticker: BTC, shares: 1, domain: crypto}\n",
     )
@@ -130,10 +140,12 @@ def test_domain_defaults_to_stock_and_can_be_set_either_level(tmp_path):
 
 
 def test_domain_rows_are_offered_to_the_routing_table(tmp_path):
-    root = _write(tmp_path, "m",
-                  MANDATE_BLOCK +
-                  "positions:\n  - {ticker: VTI, shares: 1}\n"
-                  "  - {ticker: BTC, shares: 1, domain: crypto}\n")
+    root = _write(
+        tmp_path,
+        "m",
+        MANDATE_BLOCK + "positions:\n  - {ticker: VTI, shares: 1}\n"
+        "  - {ticker: BTC, shares: 1, domain: crypto}\n",
+    )
     assert load("m", root=root).domain_rows == (("VTI", "stock"), ("BTC", "crypto"))
 
 
@@ -155,7 +167,10 @@ def test_names_to_load_combines_explicit_and_every_without_duplicates(tmp_path):
     assert names_to_load(["retirement"], every=False, root=tmp_path) == ("retirement",)
     assert names_to_load([], every=True, root=tmp_path) == ("brokerage", "retirement")
     # Named AND asked for all: fetched once, and the named one keeps its position.
-    assert names_to_load(["retirement"], every=True, root=tmp_path) == ("retirement", "brokerage")
+    assert names_to_load(["retirement"], every=True, root=tmp_path) == (
+        "retirement",
+        "brokerage",
+    )
 
 
 def test_names_to_load_keeps_a_name_that_is_not_on_disk(tmp_path):
@@ -172,9 +187,12 @@ def test_level_kinds_default_to_all_four(tmp_path):
 def test_level_kinds_can_be_narrowed_in_the_file(tmp_path):
     """The scale-back knob. A decade-horizon account eventually wants the daily blocks gone,
     and that is a fact about the account rather than about the code."""
-    root = _write(tmp_path, "p",
-                  MANDATE_BLOCK +
-                  "levels: [weekly_zone, range_edge]\npositions:\n  - {ticker: VTI, shares: 1}\n")
+    root = _write(
+        tmp_path,
+        "p",
+        MANDATE_BLOCK
+        + "levels: [weekly_zone, range_edge]\npositions:\n  - {ticker: VTI, shares: 1}\n",
+    )
     assert load("p", root=root).level_kinds == (WEEKLY_ZONE, RANGE_EDGE)
 
 
@@ -182,8 +200,11 @@ def test_an_unknown_level_kind_is_refused_rather_than_matching_nothing(tmp_path)
     """`levels: [weekly]` is the obvious typo for `weekly_zone`. Passed through it would match
     nothing and print an empty section, which looks identical to an account with no levels
     near it — a wrong answer that cannot be told from a right one."""
-    root = _write(tmp_path, "p",
-                  MANDATE_BLOCK + "levels: [weekly]\npositions:\n  - {ticker: VTI, shares: 1}\n")
+    root = _write(
+        tmp_path,
+        "p",
+        MANDATE_BLOCK + "levels: [weekly]\npositions:\n  - {ticker: VTI, shares: 1}\n",
+    )
     with pytest.raises(PortfolioError, match="weekly"):
         load("p", root=root)
 
@@ -198,101 +219,132 @@ def test_a_missing_mandate_block_names_the_file(tmp_path):
 
 
 def test_a_mandate_that_is_not_a_mapping_is_refused(tmp_path):
-    root = _write(tmp_path, "p", "mandate: swing\npositions:\n  - {ticker: VTI, shares: 1}\n")
+    root = _write(
+        tmp_path, "p", "mandate: swing\npositions:\n  - {ticker: VTI, shares: 1}\n"
+    )
     with pytest.raises(PortfolioError, match="mandate"):
         load("p", root=root)
 
 
 def test_a_mandate_missing_its_name_is_refused(tmp_path):
-    root = _write(tmp_path, "p",
-                  "mandate:\n  benchmarks:\n    - type: held_flat\n"
-                  "  horizon: position\n  risk_posture: moderate\n"
-                  "positions:\n  - {ticker: VTI, shares: 1}\n")
+    root = _write(
+        tmp_path,
+        "p",
+        "mandate:\n  benchmarks:\n    - type: held_flat\n"
+        "  horizon: position\n  risk_posture: moderate\n"
+        "positions:\n  - {ticker: VTI, shares: 1}\n",
+    )
     with pytest.raises(PortfolioError, match="name"):
         load("p", root=root)
 
 
 def test_an_invalid_risk_posture_is_refused(tmp_path):
-    root = _write(tmp_path, "p",
-                  "mandate:\n  name: p\n  benchmarks:\n    - type: held_flat\n"
-                  "  horizon: position\n  risk_posture: yolo\n"
-                  "positions:\n  - {ticker: VTI, shares: 1}\n")
+    root = _write(
+        tmp_path,
+        "p",
+        "mandate:\n  name: p\n  benchmarks:\n    - type: held_flat\n"
+        "  horizon: position\n  risk_posture: yolo\n"
+        "positions:\n  - {ticker: VTI, shares: 1}\n",
+    )
     with pytest.raises(PortfolioError, match="risk_posture"):
         load("p", root=root)
 
 
 def test_an_empty_benchmarks_list_is_refused(tmp_path):
-    root = _write(tmp_path, "p",
-                  "mandate:\n  name: p\n  benchmarks: []\n"
-                  "  horizon: position\n  risk_posture: moderate\n"
-                  "positions:\n  - {ticker: VTI, shares: 1}\n")
+    root = _write(
+        tmp_path,
+        "p",
+        "mandate:\n  name: p\n  benchmarks: []\n"
+        "  horizon: position\n  risk_posture: moderate\n"
+        "positions:\n  - {ticker: VTI, shares: 1}\n",
+    )
     with pytest.raises(PortfolioError, match="benchmarks"):
         load("p", root=root)
 
 
 def test_more_than_three_benchmarks_is_refused(tmp_path):
-    root = _write(tmp_path, "p",
-                  "mandate:\n  name: p\n  benchmarks:\n"
-                  "    - type: held_flat\n    - type: held_flat\n"
-                  "    - type: held_flat\n    - type: held_flat\n"
-                  "  horizon: position\n  risk_posture: moderate\n"
-                  "positions:\n  - {ticker: VTI, shares: 1}\n")
+    root = _write(
+        tmp_path,
+        "p",
+        "mandate:\n  name: p\n  benchmarks:\n"
+        "    - type: held_flat\n    - type: held_flat\n"
+        "    - type: held_flat\n    - type: held_flat\n"
+        "  horizon: position\n  risk_posture: moderate\n"
+        "positions:\n  - {ticker: VTI, shares: 1}\n",
+    )
     with pytest.raises(PortfolioError, match="benchmarks"):
         load("p", root=root)
 
 
 def test_an_unknown_benchmark_type_is_refused(tmp_path):
-    root = _write(tmp_path, "p",
-                  "mandate:\n  name: p\n  benchmarks:\n    - type: nonsense\n"
-                  "  horizon: position\n  risk_posture: moderate\n"
-                  "positions:\n  - {ticker: VTI, shares: 1}\n")
+    root = _write(
+        tmp_path,
+        "p",
+        "mandate:\n  name: p\n  benchmarks:\n    - type: nonsense\n"
+        "  horizon: position\n  risk_posture: moderate\n"
+        "positions:\n  - {ticker: VTI, shares: 1}\n",
+    )
     with pytest.raises(PortfolioError, match="type"):
         load("p", root=root)
 
 
 def test_a_symbol_benchmark_missing_its_key_is_refused(tmp_path):
-    root = _write(tmp_path, "p",
-                  "mandate:\n  name: p\n  benchmarks:\n    - type: symbol\n"
-                  "  horizon: position\n  risk_posture: moderate\n"
-                  "positions:\n  - {ticker: VTI, shares: 1}\n")
+    root = _write(
+        tmp_path,
+        "p",
+        "mandate:\n  name: p\n  benchmarks:\n    - type: symbol\n"
+        "  horizon: position\n  risk_posture: moderate\n"
+        "positions:\n  - {ticker: VTI, shares: 1}\n",
+    )
     with pytest.raises(PortfolioError, match="key"):
         load("p", root=root)
 
 
 def test_a_flat_rate_benchmark_missing_its_rate_is_refused(tmp_path):
-    root = _write(tmp_path, "p",
-                  "mandate:\n  name: p\n  benchmarks:\n    - type: flat_rate\n"
-                  "  horizon: position\n  risk_posture: moderate\n"
-                  "positions:\n  - {ticker: VTI, shares: 1}\n")
+    root = _write(
+        tmp_path,
+        "p",
+        "mandate:\n  name: p\n  benchmarks:\n    - type: flat_rate\n"
+        "  horizon: position\n  risk_posture: moderate\n"
+        "positions:\n  - {ticker: VTI, shares: 1}\n",
+    )
     with pytest.raises(PortfolioError, match="rate"):
         load("p", root=root)
 
 
 def test_a_conservative_posture_leads_with_levels(tmp_path):
-    root = _write(tmp_path, "p",
-                  "mandate:\n  name: p\n  benchmarks:\n    - type: held_flat\n"
-                  "  horizon: position\n  risk_posture: conservative\n"
-                  "positions:\n  - {ticker: VTI, shares: 1}\n")
+    root = _write(
+        tmp_path,
+        "p",
+        "mandate:\n  name: p\n  benchmarks:\n    - type: held_flat\n"
+        "  horizon: position\n  risk_posture: conservative\n"
+        "positions:\n  - {ticker: VTI, shares: 1}\n",
+    )
     assert load("p", root=root).mandate.leads_with == "levels"
 
 
 @pytest.mark.parametrize("posture", ["moderate", "aggressive"])
 def test_a_non_conservative_posture_leads_with_sentiment(tmp_path, posture):
-    root = _write(tmp_path, "p",
-                  "mandate:\n  name: p\n  benchmarks:\n    - type: held_flat\n"
-                  f"  horizon: position\n  risk_posture: {posture}\n"
-                  "positions:\n  - {ticker: VTI, shares: 1}\n")
+    root = _write(
+        tmp_path,
+        "p",
+        "mandate:\n  name: p\n  benchmarks:\n    - type: held_flat\n"
+        f"  horizon: position\n  risk_posture: {posture}\n"
+        "positions:\n  - {ticker: VTI, shares: 1}\n",
+    )
     assert load("p", root=root).mandate.leads_with == "sentiment"
 
 
-def test_a_duplicate_top_level_key_is_refused_rather_than_silently_keeping_the_last(tmp_path):
+def test_a_duplicate_top_level_key_is_refused_rather_than_silently_keeping_the_last(
+    tmp_path,
+):
     """PyYAML resolves a repeated mapping key by silently keeping the last one — the same
     hazard `_GENERATED` already guards against for `cash:`. A second `mandate:` block must not
     win silently."""
     root = _write(
-        tmp_path, "p",
-        MANDATE_BLOCK +
-        "positions:\n  - {ticker: VTI, shares: 1}\n"
+        tmp_path,
+        "p",
+        MANDATE_BLOCK + "positions:\n  - {ticker: VTI, shares: 1}\n"
         "mandate:\n  name: p\n  benchmarks:\n    - type: held_flat\n"
         "  horizon: swing\n  risk_posture: aggressive\n",
     )
@@ -306,18 +358,24 @@ def test_a_duplicate_top_level_key_is_refused_rather_than_silently_keeping_the_l
 def test_horizon_uses_the_repos_own_vocabulary(tmp_path):
     """`scalp | swing | position | macro` is what `core.thesis` and `HalfLife` already speak.
     A fifth word here would be a second vocabulary for one idea."""
-    root = _write(tmp_path, "p",
-                  "mandate:\n  name: p\n  benchmarks:\n    - type: held_flat\n"
-                  "  horizon: swing\n  risk_posture: moderate\n"
-                  "positions:\n  - {ticker: VTI, shares: 1}\n")
+    root = _write(
+        tmp_path,
+        "p",
+        "mandate:\n  name: p\n  benchmarks:\n    - type: held_flat\n"
+        "  horizon: swing\n  risk_posture: moderate\n"
+        "positions:\n  - {ticker: VTI, shares: 1}\n",
+    )
     assert load("p", root=root).mandate.horizon == "swing"
 
 
 def test_an_invented_horizon_is_refused(tmp_path):
-    root = _write(tmp_path, "p",
-                  "mandate:\n  name: p\n  benchmarks:\n    - type: held_flat\n"
-                  "  horizon: long\n  risk_posture: moderate\n"
-                  "positions:\n  - {ticker: VTI, shares: 1}\n")
+    root = _write(
+        tmp_path,
+        "p",
+        "mandate:\n  name: p\n  benchmarks:\n    - type: held_flat\n"
+        "  horizon: long\n  risk_posture: moderate\n"
+        "positions:\n  - {ticker: VTI, shares: 1}\n",
+    )
     with pytest.raises(PortfolioError, match="horizon"):
         load("p", root=root)
 
@@ -332,55 +390,79 @@ def test_the_file_dates_itself_from_its_mtime_when_it_does_not_say(tmp_path):
 def test_an_explicit_updated_date_wins_over_the_mtime(tmp_path):
     """So a file restored from a backup, or one you touched for an unrelated reason, can
     still say when the positions were actually true."""
-    root = _write(tmp_path, "p",
-                  MANDATE_BLOCK + "updated: 2026-01-15\npositions:\n  - {ticker: V, shares: 1}\n")
+    root = _write(
+        tmp_path,
+        "p",
+        MANDATE_BLOCK + "updated: 2026-01-15\npositions:\n  - {ticker: V, shares: 1}\n",
+    )
     assert load("p", root=root).updated == date(2026, 1, 15)
 
 
 def test_an_unreadable_updated_date_is_refused_rather_than_ignored(tmp_path):
     """Falling back to the mtime would silently report a fresh file when you meant to say it
     was six months old — the wrong direction to be wrong in."""
-    root = _write(tmp_path, "p",
-                  MANDATE_BLOCK + "updated: last tuesday\npositions:\n  - {ticker: V, shares: 1}\n")
+    root = _write(
+        tmp_path,
+        "p",
+        MANDATE_BLOCK
+        + "updated: last tuesday\npositions:\n  - {ticker: V, shares: 1}\n",
+    )
     with pytest.raises(PortfolioError, match="updated"):
         load("p", root=root)
 
 
 def test_stale_after_defaults_to_the_horizons_half_life(tmp_path):
-    root = _write(tmp_path, "p",
-                  "mandate:\n  name: p\n  benchmarks:\n    - type: held_flat\n"
-                  "  horizon: swing\n  risk_posture: moderate\n"
-                  "positions:\n  - {ticker: V, shares: 1}\n")
+    root = _write(
+        tmp_path,
+        "p",
+        "mandate:\n  name: p\n  benchmarks:\n    - type: held_flat\n"
+        "  horizon: swing\n  risk_posture: moderate\n"
+        "positions:\n  - {ticker: V, shares: 1}\n",
+    )
     assert load("p", root=root).stale_after == 21
 
-    root = _write(tmp_path, "m",
-                  "mandate:\n  name: m\n  benchmarks:\n    - type: held_flat\n"
-                  "  horizon: macro\n  risk_posture: moderate\n"
-                  "positions:\n  - {ticker: V, shares: 1}\n")
+    root = _write(
+        tmp_path,
+        "m",
+        "mandate:\n  name: m\n  benchmarks:\n    - type: held_flat\n"
+        "  horizon: macro\n  risk_posture: moderate\n"
+        "positions:\n  - {ticker: V, shares: 1}\n",
+    )
     assert load("m", root=root).stale_after == 360
 
 
 def test_stale_after_can_be_set_per_account(tmp_path):
     """An actively traded account goes wrong in days, whatever its horizon says about how
     long you intend to hold. The default is a starting point, not a measurement."""
-    root = _write(tmp_path, "p",
-                  "mandate:\n  name: p\n  benchmarks:\n    - type: held_flat\n"
-                  "  horizon: macro\n  risk_posture: moderate\n"
-                  "stale_after: 14\npositions:\n  - {ticker: V, shares: 1}\n")
+    root = _write(
+        tmp_path,
+        "p",
+        "mandate:\n  name: p\n  benchmarks:\n    - type: held_flat\n"
+        "  horizon: macro\n  risk_posture: moderate\n"
+        "stale_after: 14\npositions:\n  - {ticker: V, shares: 1}\n",
+    )
     assert load("p", root=root).stale_after == 14
 
 
 def test_a_fresh_file_is_not_stale_and_an_old_one_is(tmp_path):
-    root = _write(tmp_path, "p",
-                  MANDATE_BLOCK + "stale_after: 30\npositions:\n  - {ticker: V, shares: 1}\n")
+    root = _write(
+        tmp_path,
+        "p",
+        MANDATE_BLOCK + "stale_after: 30\npositions:\n  - {ticker: V, shares: 1}\n",
+    )
     book = load("p", root=root)
     assert book.age_days(on=datetime.now(UTC).date()) == 0
     assert book.is_stale(on=datetime.now(UTC).date()) is False
 
-    old = load("o", root=_write(tmp_path, "o",
-                                MANDATE_BLOCK +
-                                "updated: 2026-01-01\nstale_after: 30\n"
-                                "positions:\n  - {ticker: V, shares: 1}\n"))
+    old = load(
+        "o",
+        root=_write(
+            tmp_path,
+            "o",
+            MANDATE_BLOCK + "updated: 2026-01-01\nstale_after: 30\n"
+            "positions:\n  - {ticker: V, shares: 1}\n",
+        ),
+    )
     assert old.is_stale(on=date(2026, 3, 1)) is True
 
 
@@ -409,8 +491,10 @@ def _seeded(tmp_path, filename, extra=""):
     round-trips through `write_positions` and then `load()` needs the mandate hand-typed in,
     same as it needs `account:`/`domain:` reasoned about today."""
     path = tmp_path / filename
-    path.write_text(MANDATE_BLOCK + extra + "positions:\n  - ticker: OLD\n    shares: 1\n",
-                    encoding="utf-8")
+    path.write_text(
+        MANDATE_BLOCK + extra + "positions:\n  - ticker: OLD\n    shares: 1\n",
+        encoding="utf-8",
+    )
     return path
 
 
@@ -428,25 +512,30 @@ def test_the_settings_you_wrote_survive_a_sync(tmp_path):
     """The whole reason a sync writes the file instead of replacing the reader: `levels:`,
     `stale_after:`, the mandate and the comments explaining them are yours, and a nightly that
     deleted them would silently widen a section you had deliberately narrowed."""
-    path = _file(tmp_path, "\n".join([
-        "# why this account is what it is",
-        "account: retirement",
-        "stale_after: 7",
-        "levels: [weekly_zone]",
-        "domain: stock",
-        "",
-        "mandate:",
-        "  name: retirement",
-        "  benchmarks:",
-        "    - type: held_flat",
-        "  horizon: macro",
-        "  risk_posture: conservative",
-        "",
-        "positions:",
-        "  - ticker: OLD",
-        "    shares: 1",
-        "",
-    ]))
+    path = _file(
+        tmp_path,
+        "\n".join(
+            [
+                "# why this account is what it is",
+                "account: retirement",
+                "stale_after: 7",
+                "levels: [weekly_zone]",
+                "domain: stock",
+                "",
+                "mandate:",
+                "  name: retirement",
+                "  benchmarks:",
+                "    - type: held_flat",
+                "  horizon: macro",
+                "  risk_posture: conservative",
+                "",
+                "positions:",
+                "  - ticker: OLD",
+                "    shares: 1",
+                "",
+            ]
+        ),
+    )
     write_positions(path, ROWS, source=SOURCE)
 
     text = path.read_text(encoding="utf-8")
@@ -460,11 +549,14 @@ def test_the_settings_you_wrote_survive_a_sync(tmp_path):
 
 
 def test_a_row_matching_the_file_default_does_not_repeat_it(tmp_path):
-    path = _file(tmp_path, "account: retirement\ndomain: crypto\n\npositions:\n  - ticker: X\n    shares: 1\n")
+    path = _file(
+        tmp_path,
+        "account: retirement\ndomain: crypto\n\npositions:\n  - ticker: X\n    shares: 1\n",
+    )
     write_positions(path, ROWS, source=SOURCE)
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     rows = {p["ticker"]: p for p in doc["positions"]}
-    assert "domain" not in rows["BTC"]      # same as the file's default
+    assert "domain" not in rows["BTC"]  # same as the file's default
     assert rows["VTI"]["domain"] == "stock"  # differs, so it must be said
 
 
@@ -494,12 +586,30 @@ def test_a_second_sync_does_not_stack_a_cash_line_or_a_banner(tmp_path):
 
 def test_identity_survives_the_round_trip_through_the_file(tmp_path):
     path = _seeded(tmp_path, "p.yaml")
-    write_positions(path,
-                    (Row("LEU", 3.0, None, "stock", "BBG000BQ2L37", 188.98),),
-                    source=SOURCE)
+    write_positions(
+        path, (Row("LEU", 3.0, None, "stock", "BBG000BQ2L37", 188.98),), source=SOURCE
+    )
     position = load("p", root=tmp_path).positions[0]
     assert position.figi == "BBG000BQ2L37"
     assert position.mark == 188.98
+
+
+def test_staked_survives_the_round_trip_through_the_file(tmp_path):
+    path = _seeded(tmp_path, "p.yaml")
+    write_positions(
+        path, (Row("SOL", 2.75, None, "crypto", None, 98.7, 2.34),), source=SOURCE
+    )
+    position = load("p", root=tmp_path).positions[0]
+    assert position.staked == pytest.approx(2.34)
+
+
+def test_a_row_with_no_staked_key_loads_as_none_not_zero(tmp_path):
+    """ "Nobody looked" and "nothing staked" are different facts — the same reason `cash` stays
+    None rather than 0.0 when a wallet held no stablecoin."""
+    path = _seeded(tmp_path, "p.yaml")
+    write_positions(path, (Row("LEU", 3.0, None, "stock"),), source=SOURCE)
+    assert "staked:" not in path.read_text(encoding="utf-8")
+    assert load("p", root=tmp_path).positions[0].staked is None
 
 
 def test_a_single_account_file_does_not_restate_its_own_total(tmp_path):

@@ -18,6 +18,7 @@ Every failure here raises rather than returning a partial book. A portfolio revi
 quietly drops the row it could not parse tells you the position is fine, which is the one
 answer it must never give by accident.
 """
+
 from __future__ import annotations
 
 import re
@@ -81,7 +82,8 @@ class _StrictLoader(yaml.SafeLoader):
             if isinstance(key, Hashable):
                 if key in keys:
                     raise yaml.constructor.ConstructorError(
-                        None, None, f"found duplicate key {key!r}", key_node.start_mark)
+                        None, None, f"found duplicate key {key!r}", key_node.start_mark
+                    )
                 keys.add(key)
         return super().construct_mapping(node, deep=deep)
 
@@ -93,6 +95,7 @@ class Position:
     ``domain`` lives here rather than on ``Holding`` because it is not part of owning
     something — it is a hint about where to find its price. ``core.review`` never reads it.
     """
+
     holding: Holding
     domain: str
     # What the broker says this holding is and what it is worth. Present only on a synced file;
@@ -100,6 +103,12 @@ class Position:
     # `core.review.mark_disagrees`, whose whole value is that it came from somewhere else.
     figi: str | None = None
     mark: float | None = None
+    # How much of `holding.shares` sits in a stake account rather than a liquid balance — a
+    # fact a chain source knows about the holding, not part of owning it, so it lives beside
+    # `figi`/`mark` rather than on `Holding` itself. None means nobody looked; a synced file
+    # with nothing staked leaves the key out of the YAML entirely (see `write_positions`),
+    # which also loads back as None.
+    staked: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +125,7 @@ class Benchmark:
     removing and re-linking it. Adding ``held_flat`` to a mandate that did not have it before is
     therefore not a free config change — see ``oracle.plaid``'s module docstring.
     """
+
     type: str
     key: str | None = None
     rate: float | None = None
@@ -129,6 +139,7 @@ class Mandate:
     different answers to the same chart — noted now so the file format does not have to change
     when the verdict engine (#68) starts acting on it.
     """
+
     name: str
     benchmarks: tuple[Benchmark, ...]
     horizon: str
@@ -136,7 +147,7 @@ class Mandate:
 
     @property
     def leads_with(self) -> str:
-        """"levels" | "sentiment" — the exact vocabulary ADR-0002 already keys its verdict
+        """ "levels" | "sentiment" — the exact vocabulary ADR-0002 already keys its verdict
         functions on. Derived, never stored: ADR-0001 rejected storing it as a second value
         that could drift from ``risk_posture``."""
         return LEVELS_LED if self.risk_posture == "conservative" else SENTIMENT_LED
@@ -145,6 +156,7 @@ class Mandate:
 @dataclass(frozen=True, slots=True)
 class Portfolio:
     """One account's holdings, as written down."""
+
     name: str
     mandate: Mandate
     positions: tuple[Position, ...]
@@ -222,7 +234,9 @@ def canonical_domain_rows(book: Portfolio, registry) -> list[tuple[str, str]]:
     """
     from core.canon import resolve_asset
 
-    return [(resolve_asset(p.holding.ticker, registry)[0], p.domain) for p in book.positions]
+    return [
+        (resolve_asset(p.holding.ticker, registry)[0], p.domain) for p in book.positions
+    ]
 
 
 def fetch_rows(domain_rows, *, since: date):
@@ -277,12 +291,19 @@ def load(name: str, *, root: Path = DATA_ROOT) -> Portfolio:
                 f"{seen[holding.ticker]} — one row per ticker"
             )
         seen[holding.ticker] = index
-        positions.append(Position(
-            holding=holding,
-            domain=str(row.get("domain") or fallback_domain),
-            figi=(str(row["figi"]) if row.get("figi") else None),
-            mark=_number(row.get("mark"), field="mark", where=f"{path} position {index}"),
-        ))
+        positions.append(
+            Position(
+                holding=holding,
+                domain=str(row.get("domain") or fallback_domain),
+                figi=(str(row["figi"]) if row.get("figi") else None),
+                mark=_number(
+                    row.get("mark"), field="mark", where=f"{path} position {index}"
+                ),
+                staked=_number(
+                    row.get("staked"), field="staked", where=f"{path} position {index}"
+                ),
+            )
+        )
 
     mandate = _mandate(doc.get("mandate"), path=path)
 
@@ -299,8 +320,11 @@ def load(name: str, *, root: Path = DATA_ROOT) -> Portfolio:
         # portfolio file rots. They are the right shape — a scalper's book turns over in days
         # and a retirement book in years — but an actively traded account goes wrong far
         # sooner than its horizon suggests, which is what `stale_after:` is for.
-        stale_after=(DEFAULT_HALF_LIFE.days_for(mandate.horizon) if stale_after is None
-                     else int(stale_after)),
+        stale_after=(
+            DEFAULT_HALF_LIFE.days_for(mandate.horizon)
+            if stale_after is None
+            else int(stale_after)
+        ),
     )
 
 
@@ -329,8 +353,9 @@ def _cash_by_account(raw, *, path: Path) -> dict[str, float]:
     if raw is None:
         return {}
     if not isinstance(raw, dict):
-        raise PortfolioError(f"{path}: `cash_by_account` must be a mapping of account "
-                             f"name to amount")
+        raise PortfolioError(
+            f"{path}: `cash_by_account` must be a mapping of account name to amount"
+        )
     out: dict[str, float] = {}
     for name, value in raw.items():
         amount = _number(value, field=f"cash_by_account.{name}", where=str(path))
@@ -351,13 +376,17 @@ def _mandate(raw, *, path: Path) -> Mandate:
 
     horizon = str(raw.get("horizon") or "")
     if horizon not in HORIZONS:
-        raise PortfolioError(f"{path}: unknown `mandate.horizon` {horizon!r} — "
-                             f"pick from {', '.join(HORIZONS)}")
+        raise PortfolioError(
+            f"{path}: unknown `mandate.horizon` {horizon!r} — "
+            f"pick from {', '.join(HORIZONS)}"
+        )
 
     risk_posture = raw.get("risk_posture")
     if risk_posture not in RISK_POSTURES:
-        raise PortfolioError(f"{path}: unknown `mandate.risk_posture` {risk_posture!r} — "
-                             f"pick from {', '.join(RISK_POSTURES)}")
+        raise PortfolioError(
+            f"{path}: unknown `mandate.risk_posture` {risk_posture!r} — "
+            f"pick from {', '.join(RISK_POSTURES)}"
+        )
 
     return Mandate(
         name=name.strip(),
@@ -373,23 +402,31 @@ def _benchmarks(raw, *, path: Path) -> tuple[Benchmark, ...]:
     compare against, so both raise rather than resolving to a benchmark that silently does
     nothing."""
     if not isinstance(raw, list) or not (1 <= len(raw) <= 3):
-        raise PortfolioError(f"{path}: `mandate.benchmarks` must be a list of 1-3 entries")
+        raise PortfolioError(
+            f"{path}: `mandate.benchmarks` must be a list of 1-3 entries"
+        )
 
     benchmarks = []
     for entry in raw:
         if not isinstance(entry, dict):
-            raise PortfolioError(f"{path}: each `mandate.benchmarks` entry must be a mapping")
+            raise PortfolioError(
+                f"{path}: each `mandate.benchmarks` entry must be a mapping"
+            )
         kind = entry.get("type")
         if kind not in BENCHMARK_TYPES:
-            raise PortfolioError(f"{path}: unknown benchmark `type` {kind!r} — "
-                                 f"pick from {', '.join(BENCHMARK_TYPES)}")
+            raise PortfolioError(
+                f"{path}: unknown benchmark `type` {kind!r} — "
+                f"pick from {', '.join(BENCHMARK_TYPES)}"
+            )
         if kind == "symbol":
             key = entry.get("key")
             if not isinstance(key, str) or not key.strip():
                 raise PortfolioError(f"{path}: a `symbol` benchmark needs a `key`")
             benchmarks.append(Benchmark(type=kind, key=key.strip()))
         elif kind == "flat_rate":
-            rate = _number(entry.get("rate"), field="mandate.benchmarks.rate", where=str(path))
+            rate = _number(
+                entry.get("rate"), field="mandate.benchmarks.rate", where=str(path)
+            )
             if rate is None:
                 raise PortfolioError(f"{path}: a `flat_rate` benchmark needs a `rate`")
             benchmarks.append(Benchmark(type=kind, rate=rate))
@@ -408,12 +445,15 @@ def _level_kinds(raw, *, path: Path) -> tuple[str, ...]:
     if raw is None:
         return DEFAULT_LEVEL_KINDS
     if not isinstance(raw, list) or not all(isinstance(k, str) for k in raw):
-        raise PortfolioError(f"{path}: `levels` must be a list of names from "
-                             f"{', '.join(ALL_KINDS)}")
+        raise PortfolioError(
+            f"{path}: `levels` must be a list of names from {', '.join(ALL_KINDS)}"
+        )
     unknown = [k for k in raw if k not in ALL_KINDS]
     if unknown:
-        raise PortfolioError(f"{path}: unknown level kind(s) {', '.join(unknown)} — "
-                             f"pick from {', '.join(ALL_KINDS)}")
+        raise PortfolioError(
+            f"{path}: unknown level kind(s) {', '.join(unknown)} — "
+            f"pick from {', '.join(ALL_KINDS)}"
+        )
     return tuple(raw)
 
 
@@ -433,10 +473,15 @@ def _holding(row, *, index: int, path: Path) -> Holding:
 
     shares = _number(row.get("shares"), field="shares", where=where)
     if shares is None or shares <= 0:
-        raise PortfolioError(f"{where}: `shares` must be a positive number, got {row.get('shares')!r}")
+        raise PortfolioError(
+            f"{where}: `shares` must be a positive number, got {row.get('shares')!r}"
+        )
 
-    return Holding(ticker=ticker, shares=shares, cost=_number(row.get("cost"), field="cost",
-                                                              where=where))
+    return Holding(
+        ticker=ticker,
+        shares=shares,
+        cost=_number(row.get("cost"), field="cost", where=where),
+    )
 
 
 def _number(value, *, field: str, where: str) -> float | None:
@@ -462,14 +507,16 @@ class Source:
     Only ``domain`` reaches the reader — the other two appear in comments, so a file says out
     loud which command owns its ``positions:`` block and will overwrite anything typed there.
     """
-    name: str        # how the banner spells it, e.g. "Plaid"
-    command: str     # what to re-run, e.g. "plaid-sync"
+
+    name: str  # how the banner spells it, e.g. "Plaid"
+    command: str  # what to re-run, e.g. "plaid-sync"
     domain: str = DEFAULT_DOMAIN
 
 
 @dataclass(frozen=True, slots=True)
 class Row:
     """One position, in the shape ``load`` will read back."""
+
     ticker: str
     shares: float
     cost: float | None
@@ -481,6 +528,10 @@ class Row:
     # is. `figi` is the broker's security id; on a wallet it is the token contract address.
     figi: str | None = None
     mark: float | None = None
+    # How much of `shares` is staked rather than liquid. Appended last, after `mark`: a test
+    # or a caller constructing `Row(...)` positionally already means six arguments, and adding
+    # a field ahead of `mark` would make `mark` silently receive the staked value instead.
+    staked: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -493,6 +544,7 @@ class Skipped:
     the rest. A wallet drops several hundred airdropped tokens per chain, and a report nobody
     can read to the end has failed in the same way as one that said nothing.
     """
+
     what: str
     why: str
     kind: str = ""
@@ -517,7 +569,8 @@ domain: {domain}
 # literal source name so a file keeps being recognised if it changes hands between syncs.
 _GENERATED = re.compile(
     r"^(cash:.*|cash_by_account:.*(?:\n[ \t]+\S.*)*|# Synced from \S+ .*)$\n?",
-    re.MULTILINE)
+    re.MULTILINE,
+)
 
 
 def _trimmed(value: float) -> str:
@@ -525,9 +578,14 @@ def _trimmed(value: float) -> str:
     return f"{value:.8f}".rstrip("0").rstrip(".") or "0"
 
 
-def write_positions(path: Path, rows, *, source: Source,
-                    cash: float | None = None,
-                    cash_by: dict[str, float] | None = None) -> None:
+def write_positions(
+    path: Path,
+    rows,
+    *,
+    source: Source,
+    cash: float | None = None,
+    cash_by: dict[str, float] | None = None,
+) -> None:
     """Replace the ``positions:`` block, keeping every line above it exactly as written.
 
     The settings and comments in a portfolio file are yours — ``levels:``, ``stale_after:``,
@@ -543,15 +601,22 @@ def write_positions(path: Path, rows, *, source: Source,
         head, marker, _ = text.partition("\npositions:")
         prefix = (head + "\n") if marker else text.rstrip("\n") + "\n\n"
     else:
-        prefix = HEADER.format(name=path.stem, command=source.command, domain=source.domain)
+        prefix = HEADER.format(
+            name=path.stem, command=source.command, domain=source.domain
+        )
 
     # The file's own `domain:` and not the source's: a per-row `domain:` is written only where
     # it differs from what this document already declares. Reading the source here instead
     # would stamp every row of a hand-started file that says `domain: crypto` with a redundant
     # line, or worse, omit the line that makes a row route correctly.
-    fallback = str((doc if isinstance(doc, dict) else {}).get("domain") or DEFAULT_DOMAIN)
-    lines = [_GENERATED.sub("", prefix).rstrip("\n"), "",
-             f"# Synced from {source.name} {datetime.now(UTC).date().isoformat()}."]
+    fallback = str(
+        (doc if isinstance(doc, dict) else {}).get("domain") or DEFAULT_DOMAIN
+    )
+    lines = [
+        _GENERATED.sub("", prefix).rstrip("\n"),
+        "",
+        f"# Synced from {source.name} {datetime.now(UTC).date().isoformat()}.",
+    ]
     if cash is not None:
         lines.append(f"cash: {cash:.2f}")
     # Only when a file covers more than one account. On a single-account book the split would
@@ -574,6 +639,8 @@ def write_positions(path: Path, rows, *, source: Source,
             lines.append(f"    figi: {row.figi}")
         if row.mark is not None:
             lines.append(f"    mark: {_trimmed(row.mark)}")
+        if row.staked is not None:
+            lines.append(f"    staked: {_trimmed(row.staked)}")
         lines.append("")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
