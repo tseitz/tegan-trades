@@ -3,9 +3,11 @@ import json
 from datetime import date, timedelta
 
 import pytest
+from core.transactions import InvestmentTransaction
 from oracle import cache
 from oracle.benchmarks import (
     DEFAULT_DOMAIN,
+    HeldFlat,
     Unresolved,
     Windows,
     benchmark_for,
@@ -16,6 +18,13 @@ from oracle.benchmarks import (
 )
 from oracle.portfolios import Benchmark
 from oracle.series import Bar, PriceSeries
+
+
+def _txn(d, type_, subtype, *, amount=0.0, quantity=None, ticker=None, security_id=None):
+    return InvestmentTransaction(
+        id="t", account_id="a", security_id=security_id, ticker=ticker, date=d,
+        quantity=quantity, price=None, amount=amount, fees=None, type=type_, subtype=subtype,
+    )
 
 
 def _series(*pairs, symbol="^GSPC", source="yahoo"):
@@ -80,15 +89,145 @@ def test_resolve_flat_rate_returns_the_rate_with_no_io(monkeypatch):
     assert resolve(Benchmark(type="flat_rate", rate=3.1)) == 3.1
 
 
-def test_resolve_held_flat_is_unresolved_and_names_71():
+HELD_FLAT_MANDATE = "retirement"
+HELD_FLAT_ANCHOR = date(2025, 1, 1)
+
+
+def _held_flat_price_on(prices):
+    return lambda ticker, day: prices.get((ticker, day))
+
+
+def test_resolve_held_flat_with_no_inputs_supplied_is_unresolved():
     resolved = resolve(Benchmark(type="held_flat"))
     assert isinstance(resolved, Unresolved)
-    assert "#71" in resolved.reason
+
+
+def test_resolve_held_flat_with_no_transaction_history_is_unresolved(tmp_path):
+    resolved = resolve(
+        Benchmark(type="held_flat"), holdings={"AAA": 10.0}, transactions=(),
+        price_on=_held_flat_price_on({}), mandate_name=HELD_FLAT_MANDATE,
+        anchor_root=tmp_path / "anchors.json",
+    )
+    assert isinstance(resolved, Unresolved)
+
+
+def test_resolve_held_flat_with_empty_basket_is_unresolved(tmp_path):
+    # Bought after the anchor, so anchor_shares reconstructs zero shares for it.
+    transactions = (_txn(date(2025, 2, 1), "buy", "buy", quantity=5.0, ticker="AAA", amount=500.0),)
+    resolved = resolve(
+        Benchmark(type="held_flat"), holdings={"AAA": 5.0}, transactions=transactions,
+        price_on=_held_flat_price_on({}), mandate_name=HELD_FLAT_MANDATE,
+        anchor_root=tmp_path / "anchors.json",
+    )
+    assert isinstance(resolved, Unresolved)
+
+
+def test_resolve_held_flat_with_negative_reconstruction_is_unresolved(tmp_path):
+    transactions = (_txn(date(2025, 2, 1), "buy", "buy", quantity=5.0, ticker="AAA", amount=500.0),)
+    resolved = resolve(
+        Benchmark(type="held_flat"), holdings={"AAA": 2.0}, transactions=transactions,
+        price_on=_held_flat_price_on({}), mandate_name=HELD_FLAT_MANDATE,
+        anchor_root=tmp_path / "anchors.json",
+    )
+    assert isinstance(resolved, Unresolved)
+
+
+def test_resolve_held_flat_with_unclassified_row_is_unresolved(tmp_path):
+    transactions = (
+        _txn(HELD_FLAT_ANCHOR, "transfer", "transfer", amount=-300.0, security_id="s1"),
+    )
+    resolved = resolve(
+        Benchmark(type="held_flat"), holdings={"AAA": 10.0}, transactions=transactions,
+        price_on=_held_flat_price_on({("AAA", HELD_FLAT_ANCHOR): 100.0}),
+        mandate_name=HELD_FLAT_MANDATE, anchor_root=tmp_path / "anchors.json",
+    )
+    assert isinstance(resolved, Unresolved)
+    assert "unclassified" in resolved.reason
+
+
+def test_resolve_held_flat_with_unpriced_anchor_holding_is_unresolved(tmp_path):
+    transactions = (_txn(HELD_FLAT_ANCHOR, "cash", "deposit", amount=-100.0),)
+    resolved = resolve(
+        Benchmark(type="held_flat"), holdings={"AAA": 10.0}, transactions=transactions,
+        price_on=_held_flat_price_on({}), mandate_name=HELD_FLAT_MANDATE,
+        anchor_root=tmp_path / "anchors.json",
+    )
+    assert isinstance(resolved, Unresolved)
+    assert "unpriced" in resolved.reason
+
+
+def test_resolve_held_flat_resolving_case_returns_a_held_flat(tmp_path):
+    transactions = (_txn(HELD_FLAT_ANCHOR, "cash", "deposit", amount=-100.0),)
+    resolved = resolve(
+        Benchmark(type="held_flat"), holdings={"AAA": 10.0}, transactions=transactions,
+        price_on=_held_flat_price_on({("AAA", HELD_FLAT_ANCHOR): 100.0}),
+        mandate_name=HELD_FLAT_MANDATE, anchor_root=tmp_path / "anchors.json",
+    )
+    assert isinstance(resolved, HeldFlat)
+    assert resolved.basket.anchor == HELD_FLAT_ANCHOR
+    assert resolved.basket.shares == {"AAA": 10.0}
+
+
+def test_resolve_held_flat_anchor_does_not_move_on_a_later_deeper_backfill(tmp_path):
+    """AC 1: a later, deeper transaction pull must not re-baseline an already-reported anchor."""
+    anchor_root = tmp_path / "anchors.json"
+    shallow_transactions = (_txn(HELD_FLAT_ANCHOR, "cash", "deposit", amount=-100.0),)
+    price_on = _held_flat_price_on({("AAA", HELD_FLAT_ANCHOR): 100.0})
+
+    first = resolve(
+        Benchmark(type="held_flat"), holdings={"AAA": 10.0}, transactions=shallow_transactions,
+        price_on=price_on, mandate_name=HELD_FLAT_MANDATE, anchor_root=anchor_root,
+    )
+    assert isinstance(first, HeldFlat)
+    assert first.basket.anchor == HELD_FLAT_ANCHOR
+
+    deeper_anchor = date(2024, 1, 1)
+    deeper_transactions = (
+        *shallow_transactions, _txn(deeper_anchor, "cash", "deposit", amount=-50.0),
+    )
+    second = resolve(
+        Benchmark(type="held_flat"), holdings={"AAA": 10.0}, transactions=deeper_transactions,
+        price_on=price_on, mandate_name=HELD_FLAT_MANDATE, anchor_root=anchor_root,
+    )
+    assert isinstance(second, HeldFlat)
+    assert second.basket.anchor == HELD_FLAT_ANCHOR
 
 
 # ── report() ────────────────────────────────────────────────────────────────────────────
 
 AS_OF = date(2026, 1, 1)
+
+
+def test_report_held_flat_five_windows_come_back_as_numbers(tmp_path):
+    prices = {
+        ("AAA", HELD_FLAT_ANCHOR): 100.0,
+        ("AAA", AS_OF - timedelta(days=7)): 105.0,
+        ("AAA", AS_OF - timedelta(days=30)): 102.0,
+        ("AAA", AS_OF - timedelta(days=90)): 98.0,
+        ("AAA", AS_OF - timedelta(days=365)): 90.0,
+        ("AAA", AS_OF): 110.0,
+    }
+    transactions = (_txn(HELD_FLAT_ANCHOR, "cash", "deposit", amount=-100.0),)
+    result = report(
+        Benchmark(type="held_flat"), mandate_name=HELD_FLAT_MANDATE, as_of=AS_OF,
+        anchor_root=tmp_path / "anchors.json",
+        holdings={"AAA": 10.0}, transactions=transactions, price_on=_held_flat_price_on(prices),
+    )
+    assert isinstance(result, dict)
+    for key in ("7d", "30d", "90d", "1y", "since_inception"):
+        assert isinstance(result[key], float)
+
+
+def test_report_held_flat_since_inception_pins_to_the_anchor_distance(tmp_path):
+    prices = {("AAA", HELD_FLAT_ANCHOR): 100.0, ("AAA", AS_OF): 110.0}
+    transactions = (_txn(HELD_FLAT_ANCHOR, "cash", "deposit", amount=-100.0),)
+    result = report(
+        Benchmark(type="held_flat"), mandate_name=HELD_FLAT_MANDATE, as_of=AS_OF,
+        anchor_root=tmp_path / "anchors.json", windows=Windows(1, 1, 1, 1),
+        holdings={"AAA": 10.0}, transactions=transactions, price_on=_held_flat_price_on(prices),
+    )
+    assert isinstance(result, dict)
+    assert result["since_inception"] is not None
 
 
 def test_report_flat_price_series_returns_zero_for_every_window(tmp_path, monkeypatch):
@@ -155,18 +294,20 @@ def test_report_unresolved_benchmark_returns_unresolved_not_a_partial_dict(tmp_p
 # ── flat_rate anchor persistence ───────────────────────────────────────────────────────────
 
 def test_flat_rate_anchor_set_on_first_call_grows_on_second_and_is_per_mandate(tmp_path):
+    """Key is widened to "mandate:benchmark_type" (see `_anchor`) so a mandate's `flat_rate`
+    and `held_flat` entries never share one anchor — verified separately below."""
     anchor_root = tmp_path / "anchors.json"
     benchmark = Benchmark(type="flat_rate", rate=3.1)
 
     first = report(benchmark, mandate_name="sofi", as_of=date(2026, 1, 1), anchor_root=anchor_root)
     assert isinstance(first, dict)
     assert first["since_inception"] == pytest.approx(0.0)
-    assert json.loads(anchor_root.read_text()) == {"sofi": "2026-01-01"}
+    assert json.loads(anchor_root.read_text()) == {"sofi:flat_rate": "2026-01-01"}
 
     second = report(benchmark, mandate_name="sofi", as_of=date(2026, 1, 11), anchor_root=anchor_root)
     assert isinstance(second, dict)
     assert second["since_inception"] == pytest.approx(3.1 / 100 * (10 / 365))
-    assert json.loads(anchor_root.read_text()) == {"sofi": "2026-01-01"}
+    assert json.loads(anchor_root.read_text()) == {"sofi:flat_rate": "2026-01-01"}
 
     third = report(
         benchmark, mandate_name="treasury", as_of=date(2026, 1, 11), anchor_root=anchor_root,
@@ -174,7 +315,25 @@ def test_flat_rate_anchor_set_on_first_call_grows_on_second_and_is_per_mandate(t
     assert isinstance(third, dict)
     assert third["since_inception"] == pytest.approx(0.0)
     assert json.loads(anchor_root.read_text()) == {
-        "sofi": "2026-01-01", "treasury": "2026-01-11",
+        "sofi:flat_rate": "2026-01-01", "treasury:flat_rate": "2026-01-11",
+    }
+
+
+def test_flat_rate_and_held_flat_anchors_on_one_mandate_do_not_share_a_key(tmp_path):
+    anchor_root = tmp_path / "anchors.json"
+    report(
+        Benchmark(type="flat_rate", rate=3.1), mandate_name=HELD_FLAT_MANDATE,
+        as_of=date(2026, 1, 1), anchor_root=anchor_root,
+    )
+    transactions = (_txn(HELD_FLAT_ANCHOR, "cash", "deposit", amount=-100.0),)
+    resolve(
+        Benchmark(type="held_flat"), holdings={"AAA": 10.0}, transactions=transactions,
+        price_on=_held_flat_price_on({("AAA", HELD_FLAT_ANCHOR): 100.0}),
+        mandate_name=HELD_FLAT_MANDATE, anchor_root=anchor_root,
+    )
+    assert json.loads(anchor_root.read_text()) == {
+        f"{HELD_FLAT_MANDATE}:flat_rate": "2026-01-01",
+        f"{HELD_FLAT_MANDATE}:held_flat": HELD_FLAT_ANCHOR.isoformat(),
     }
 
 
