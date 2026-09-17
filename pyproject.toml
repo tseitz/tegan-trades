@@ -16,6 +16,7 @@ requires-python = ">=3.12"
 # setups` from the root would fail.
 dependencies = [
     "brain",
+    "compare",
     "core",
     "digest",
     "distill",
@@ -41,6 +42,7 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 brain = { workspace = true }
+compare = { workspace = true }
 core = { workspace = true }
 digest = { workspace = true }
 distill = { workspace = true }

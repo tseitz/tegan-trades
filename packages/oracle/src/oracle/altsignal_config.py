@@ -26,9 +26,27 @@ class MarketEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class ProtocolEntry:
+    """One protocol, and the five distinct identifiers it needs across two sources.
+
+    See ``cfg/altsignal.yaml``'s header comment for what each field is and the failure mode of
+    getting it wrong — repeated there rather than here because that is where a future editor
+    adding a row will actually be looking.
+    """
+    asset: str                             # ticker as written in a portfolio file
+    llama_fees: str                        # DefiLlama parent slug, for fees/revenue
+    llama_tvl: str                         # DefiLlama slug for TVL — may differ from llama_fees
+    llama_oi: tuple[str, ...]              # DefiLlama child slug(s), for /overview/open-interest
+    coingecko: str                         # CoinGecko coin id, for /coins/markets
+    coingecko_derivatives: tuple[str, ...] # CoinGecko derivatives-exchange id(s)
+    venue: str                             # reserved — no reader yet, see cfg/altsignal.yaml
+
+
+@dataclass(frozen=True, slots=True)
 class AltSignalConfig:
     chains: tuple[ChainEntry, ...]
     markets: tuple[MarketEntry, ...]
+    protocols: tuple[ProtocolEntry, ...] = ()
 
 
 def load(config_dir) -> AltSignalConfig:
@@ -47,4 +65,16 @@ def load(config_dir) -> AltSignalConfig:
         )
         for row in data.get("markets") or ()
     )
-    return AltSignalConfig(chains=chains, markets=markets)
+    protocols = tuple(
+        ProtocolEntry(
+            asset=row["asset"],
+            llama_fees=row["llama_fees"],
+            llama_tvl=row["llama_tvl"],
+            llama_oi=tuple(row["llama_oi"]),
+            coingecko=row["coingecko"],
+            coingecko_derivatives=tuple(row["coingecko_derivatives"]),
+            venue=row["venue"],
+        )
+        for row in data.get("protocols") or ()
+    )
+    return AltSignalConfig(chains=chains, markets=markets, protocols=protocols)

@@ -48,6 +48,29 @@ def test_chain_lines_skips_a_configured_chain_with_no_stored_data_yet():
     assert lines == ()
 
 
+def test_chain_lines_ignores_a_protocol_reading_stored_under_a_colliding_key():
+    # `hyperliquid` is simultaneously a DefiLlama chain slug and HYPE's protocol parent slug —
+    # a config with both a `chains:` row and a `protocols:` row naming it would otherwise hand
+    # a non-numeric protocol reading straight to `_fmt_usd`, which raises on `abs(a_dict)`.
+    cfg = AltSignalConfig(chains=(ChainEntry(asset="HYPE", chain="hyperliquid"),), markets=())
+    stored = [
+        _defillama("chain_tvl", 6_668_380_330.0, key="hyperliquid"),
+        AltSignalReading(
+            source="defillama", kind="protocol_category", key="hyperliquid",
+            value="Derivatives", observed_at=AT,
+        ),
+        AltSignalReading(
+            source="defillama", kind="unlock_schedule", key="hyperliquid",
+            value={"unlocked_today": 1}, observed_at=AT,
+        ),
+    ]
+    (line,) = altsignal.chain_lines(
+        [_Reading()], ["HYPE"], altsignal_cfg=cfg, store_read=lambda **kw: stored
+    )
+    assert any("TVL" in text for text in line.lines)
+    assert len(line.lines) == 1  # the protocol_category and unlock_schedule rows are dropped
+
+
 def test_macro_block_matches_kalshi_by_exact_key():
     stored = {
         "kalshi": [AltSignalReading(source="kalshi", kind="market", key="KXFED-26DEC-T3.75",
