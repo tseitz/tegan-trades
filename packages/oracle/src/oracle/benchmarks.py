@@ -167,16 +167,27 @@ def _resolve_held_flat(
 
 def _load_anchors(*, root: Path = ANCHOR_ROOT) -> dict[str, str]:
     """``"mandate:benchmark_type"`` -> first-seen ISO date. Serves both flat_rate's
-    since-inception anchor and held_flat's basket anchor (#71) — one mechanism, one file."""
+    since-inception anchor and held_flat's basket anchor (#71) — one mechanism, one file.
+
+    A missing file means "first sight" and returns ``{}``, same as always. A file that exists
+    but fails to parse is a different fact — a torn write, not an empty history — and must
+    raise rather than be read as "no anchors yet", which would silently re-anchor every mandate
+    on the next call and reset since-inception to zero with no error anywhere."""
     try:
-        return json.loads(root.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        text = root.read_text(encoding="utf-8")
+    except OSError:
         return {}
+    return json.loads(text)
 
 
 def _save_anchors(anchors: dict[str, str], *, root: Path = ANCHOR_ROOT) -> None:
+    """Atomic: write to a sibling temp file and rename over the target, so a crash or a kill
+    mid-write leaves either the old file or the new one — never a half-written one that
+    `_load_anchors` would then have to reject."""
     root.parent.mkdir(parents=True, exist_ok=True)
-    root.write_text(json.dumps(anchors, indent=2, sort_keys=True), encoding="utf-8")
+    tmp = root.with_suffix(f"{root.suffix}.tmp")
+    tmp.write_text(json.dumps(anchors, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.replace(root)
 
 
 def _anchor(key: str, *, as_of: date, root: Path = ANCHOR_ROOT) -> date:

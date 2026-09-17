@@ -319,6 +319,19 @@ def test_flat_rate_anchor_set_on_first_call_grows_on_second_and_is_per_mandate(t
     }
 
 
+def test_corrupt_anchor_file_raises_rather_than_silently_resetting(tmp_path):
+    """A missing file means "first sight" and is fine; a file that exists but fails to parse
+    is a torn write, and must not be read as "no anchors yet" — that would silently re-anchor
+    every mandate on the next call with no error anywhere."""
+    anchor_root = tmp_path / "anchors.json"
+    anchor_root.write_text("{not valid json", encoding="utf-8")
+    with pytest.raises(json.JSONDecodeError):
+        report(
+            Benchmark(type="flat_rate", rate=3.1), mandate_name="sofi",
+            as_of=date(2026, 1, 1), anchor_root=anchor_root,
+        )
+
+
 def test_flat_rate_and_held_flat_anchors_on_one_mandate_do_not_share_a_key(tmp_path):
     anchor_root = tmp_path / "anchors.json"
     report(
