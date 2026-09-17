@@ -20,6 +20,7 @@ members = [
     "oracle",
     "review",
     "tegan-trades",
+    "treasury",
 ]
 
 [[package]]
@@ -2062,6 +2063,7 @@ dependencies = [
     { name = "llm" },
     { name = "oracle" },
     { name = "review" },
+    { name = "treasury" },
 ]
 
 [package.dev-dependencies]
@@ -2082,6 +2084,7 @@ requires-dist = [
     { name = "llm", editable = "packages/llm" },
     { name = "oracle", editable = "packages/oracle" },
     { name = "review", editable = "packages/review" },
+    { name = "treasury", editable = "packages/treasury" },
 ]
 
 [package.metadata.requires-dev]
@@ -2137,6 +2140,31 @@ sdist = { url = "https://files.pythonhosted.org/packages/dd/84/da0e5038228fa34df
 wheels = [
     { url = "https://files.pythonhosted.org/packages/01/50/5817619a0fca56aff06383dbfde7ae017b3ca383915b3f1e4713164273cf/tqdm-4.69.1-py3-none-any.whl", hash = "sha256:0a654b96f7a2660cceb615b56f307ec2bef96c515409014a429a561981ab52b4", size = 675452, upload-time = "2026-07-24T14:22:00.048Z" },
 ]
+
+[[package]]
+name = "treasury"
+version = "0.1.0"
+source = { editable = "packages/treasury" }
+dependencies = [
+    { name = "core" },
+    { name = "oracle" },
+    { name = "pyyaml" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "core", editable = "packages/core" },
+    { name = "oracle", editable = "packages/oracle" },
+    { name = "pyyaml", specifier = ">=6" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.1.1" }]
 
 [[package]]
 name = "typing-extensions"

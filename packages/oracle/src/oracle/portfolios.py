@@ -88,6 +88,19 @@ class _StrictLoader(yaml.SafeLoader):
         return super().construct_mapping(node, deep=deep)
 
 
+def strict_load(path: Path) -> dict:
+    """``yaml.load`` under ``_StrictLoader``, with a ``YAMLError`` turned into a
+    ``PortfolioError`` naming the file. Shared by every mandate-carrying loader in this
+    package — ``oracle.treasury_file`` reaches for this rather than the private loader
+    directly, so a second copy of the try/except cannot silently accept a YAML error the
+    first one would have refused.
+    """
+    try:
+        return yaml.load(path.read_text(encoding="utf-8"), Loader=_StrictLoader) or {}
+    except yaml.YAMLError as exc:
+        raise PortfolioError(f"{path} is not valid YAML: {exc}") from exc
+
+
 @dataclass(frozen=True, slots=True)
 class Position:
     """A holding plus the one routing fact the corpus cannot supply.
@@ -269,10 +282,7 @@ def load(name: str, *, root: Path = DATA_ROOT) -> Portfolio:
         listing = ", ".join(known) if known else "none found"
         raise PortfolioError(f"no portfolio {name!r} at {path} (available: {listing})")
 
-    try:
-        doc = yaml.load(path.read_text(encoding="utf-8"), Loader=_StrictLoader) or {}
-    except yaml.YAMLError as exc:
-        raise PortfolioError(f"{path} is not valid YAML: {exc}") from exc
+    doc = strict_load(path)
     if not isinstance(doc, dict):
         raise PortfolioError(f"{path} must be a mapping with a `positions:` list")
 
@@ -305,7 +315,7 @@ def load(name: str, *, root: Path = DATA_ROOT) -> Portfolio:
             )
         )
 
-    mandate = _mandate(doc.get("mandate"), path=path)
+    mandate = parse_mandate(doc.get("mandate"), path=path)
 
     stale_after = doc.get("stale_after")
     return Portfolio(
@@ -365,8 +375,13 @@ def _cash_by_account(raw, *, path: Path) -> dict[str, float]:
     return out
 
 
-def _mandate(raw, *, path: Path) -> Mandate:
-    """The `mandate:` block, required on every file — see ``Mandate`` for why it exists."""
+def parse_mandate(raw, *, path: Path) -> Mandate:
+    """The `mandate:` block, required on every file — see ``Mandate`` for why it exists.
+
+    Public because it is the shared mandate parser for every mandate-carrying file in this
+    package, not just a portfolio — ``oracle.treasury_file`` calls this directly rather than
+    growing a second parser that could quietly accept a mandate this one refuses.
+    """
     if not isinstance(raw, dict):
         raise PortfolioError(f"{path}: missing or malformed `mandate:` block")
 

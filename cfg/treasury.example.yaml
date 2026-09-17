@@ -1,0 +1,58 @@
+# Example treasury file for `uv run treasury`. Copy, don't edit in place:
+#
+#   cp cfg/treasury.example.yaml data/treasury.yaml
+#
+# The real file goes at `data/treasury.yaml`, which is gitignored — same reason
+# `cfg/portfolio.example.yaml` is committed and `data/portfolios/*.yaml` is not: this repo is
+# public and a parked amount is not configuration.
+#
+# NOTHING WRITES THIS FILE. Every portfolio sync (`plaid-sync`, `wallet-sync`) replaces only
+# the `positions:` block of the file it touches, and this file has no such block — it is
+# hand-kept, always. Deploying money into a yield venue is rare and deliberate, so typing the
+# row here is not a burden.
+#
+# Required, and validated exactly like a portfolio's `mandate:` block — but with one extra
+# rule: `benchmarks` here must be `flat_rate` only. Treasury is judged against a flat cash
+# rate and nothing else (ADR-0008): a bad-looking year against equities would teach the
+# reader to skip the section, so no `symbol` or `held_flat` entry is allowed. `name` must be
+# exactly `treasury` — `oracle.benchmarks` keys its since-inception anchor by this name, and
+# a typo here would silently anchor under a second key with no error anywhere.
+mandate:
+  name: treasury
+  benchmarks:
+    - type: flat_rate
+      rate: 3.1  # SoFi's own savings rate — the same number `data/portfolios/sofi.yaml`
+                 # carries as its benchmark. Two copies of one fact, accepted deliberately:
+                 # if SoFi moves its rate, both files need editing by hand.
+  horizon: macro
+  risk_posture: conservative
+
+# When these rows were last true. OPTIONAL — without it the file's own modified time is used.
+# Matters more here than on a portfolio: the whole risk of a hand-typed file is that its
+# numbers went stale, and a forgotten `updated:` would silently produce no staleness signal.
+updated: 2026-09-16
+
+# One row per parked amount. `amount` is USD, hand-typed — never `shares × price`. An
+# off-chain T-bill has no ticker and no price series, and Treasury's whole premise is that
+# this principal holds its value, so nothing here is ever re-priced.
+#
+# `apy` is what THIS row actually earns, hand-typed — not the venue's live headline rate.
+# The yields feed and the Safety gate that would resolve the latter are a separate ticket;
+# this number is the receipt for money already parked. `since` is optional and says how long
+# a row has been earning.
+#
+# A wrapper token held for PRICE EXPOSURE that happens to accrue — mETH, stkAAVE, staked SOL,
+# locked veAERO — does NOT belong here. You chose to hold ETH, AAVE, SOL or AERO; the wrapper
+# does not change that choice, so it stays in its own portfolio mandate under
+# `data/portfolios/`, and its yield is reported beside it in `review` instead.
+parked:
+  - what: USDC
+    amount: 5000.00
+    venue: aave-v3
+    apy: 4.21
+    since: 2026-08-01
+
+  - what: USDC
+    amount: 1200.00
+    venue: sofi
+    apy: 3.1

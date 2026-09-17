@@ -14,10 +14,20 @@
 # Shown in the report header. Defaults to the filename.
 account: retirement
 
-# scalp | swing | position | macro — `core.thesis`'s own vocabulary, not a new one. It sets
-# the default staleness tolerance below; a retirement book is `macro`, an actively traded
-# account is `swing` or `scalp`.
-horizon: macro
+# Why this account holds what it holds, and what "doing well" means for it — required on
+# every file. `horizon` is `core.thesis`'s own vocabulary (scalp | swing | position | macro),
+# not a new one, and sets the default staleness tolerance below; a retirement book is `macro`,
+# an actively traded account is `swing` or `scalp`. `risk_posture` (conservative | moderate |
+# aggressive) decides whether the verdict grid leads with levels or with the roster's sentiment.
+# `benchmarks` is a list of 1-3 entries — `symbol` (an index or coin, by its `oracle.benchmarks`
+# key), `held_flat` (what the account's own deposits would be worth doing nothing), or
+# `flat_rate` (a hand-typed cash rate, the only kind `data/treasury.yaml` is allowed to carry).
+mandate:
+  name: retirement
+  benchmarks:
+    - type: held_flat
+  horizon: macro
+  risk_posture: conservative
 
 # When these positions were last true. OPTIONAL — without it the file's own modified time is
 # used, which needs no bookkeeping and is usually what you meant. Set it explicitly when the

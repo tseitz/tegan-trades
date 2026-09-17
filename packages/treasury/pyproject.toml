@@ -1,0 +1,32 @@
+[project]
+name = "treasury"
+version = "0.1.0"
+description = "One place that says what money is parked and what it earns"
+requires-python = ">=3.12"
+dependencies = [
+    "core",
+    "oracle",
+    "pyyaml>=6",
+]
+
+[project.scripts]
+treasury = "treasury.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+core = { workspace = true }
+oracle = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: hits the network; run explicitly",
+    "needs_ore: reads cached ore from data/; run where the corpus exists",
+]

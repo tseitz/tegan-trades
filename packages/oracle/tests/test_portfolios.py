@@ -3,7 +3,9 @@ from datetime import UTC, date, datetime
 import pytest
 import yaml
 from core.nearby import ALL_KINDS, RANGE_EDGE, WEEKLY_ZONE
+from oracle import treasury_file
 from oracle.portfolios import (
+    DATA_ROOT,
     PortfolioError,
     Row,
     Source,
@@ -628,3 +630,17 @@ def test_the_split_survives_the_round_trip_and_never_stacks(tmp_path):
 
     assert path.read_text(encoding="utf-8").count("cash_by_account:") == 1
     assert load("p", root=tmp_path).cash_by_account == split
+
+
+def test_treasury_path_is_outside_the_portfolios_root(tmp_path):
+    """AC 1 + AC 2 (issue #72): a hand-kept treasury file loads and a position sync can never
+    overwrite it, and treasury rows never appear in the portfolio review. What actually holds
+    both is placement — `available()` globs whatever is in `portfolios.DATA_ROOT`, with no
+    opinion about a file's contents, so the guarantee is that `TREASURY_PATH` is never inside
+    that directory. (A treasury file also happens to fail `load()` — no `positions:` list —
+    and fail a sync — no `wallets:` block, no `.env` token — but those refusals are incidental,
+    not what this test pins.)"""
+    assert not treasury_file.TREASURY_PATH.is_relative_to(DATA_ROOT)
+
+    write_positions(tmp_path / "treasury.yaml", ROWS, source=SOURCE)
+    assert available(root=tmp_path) == ("treasury",)
