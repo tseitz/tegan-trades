@@ -30,6 +30,15 @@ stronger; disagree → shown, not overridden — the chart has final say, matchi
 asymmetry where a bullish roster into resistance stays `HOLD`). "Upgrade" needs a state below it
 to upgrade from; reusing `ADD`/`TRIM` would leave nothing to upgrade to.
 
+**`ADD` and `TRIM` are what the upgrade upgrades *to*.** `BUY_ZONE` plus a bullish roster is
+`ADD`; `SELL_ZONE` plus a bearish roster is `TRIM`. Written out because the paragraph above only
+implies it, and the whole two-verb design rests on it. The two new verbs are the lower states and
+the existing pair is the ceiling, so a levels-led mandate reaches the same top answers a
+sentiment-led one does — it just needs the chart to get there first.
+
+A **thin** roster (fewer than `MIN_VOICES`, per `core.review`) does not upgrade. `BUY_ZONE` is
+not asking anyone to move money and `ADD` is, which is the line `MIN_VOICES` was drawn on.
+
 **Trend is the only gate to `BUY_ZONE`/`SELL_ZONE` — an opinion cannot manufacture one on its
 own.** A bullish call at plain `AT_SUPPORT` with no trend confirmation stays labelled
 `AT_SUPPORT`; it does not get promoted to `BUY_ZONE`. Start narrow, loosen later if the trend gate
