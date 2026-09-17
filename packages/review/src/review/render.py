@@ -91,7 +91,7 @@ LEVEL_HEADERS = ("TICKER", "PRICE", "SIDE", "LEVEL", "WHAT", "", "ROSTER", "")
 
 def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
            stale: bool = False, cash: float | None = None, cash_by=None,
-           mismatched=(), mandate=None, history=None) -> str:
+           mismatched=(), mandate=None, history=None, by_size: bool = False) -> str:
     """The whole report. ``as_of`` is passed in rather than read from a clock so a replay of
     a past date prints that date, not today's.
 
@@ -113,7 +113,7 @@ def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
         tail = f"\n\n  {history_line}" if history_line else ""
         return f"{head}\n\n  no positions — nothing to review{tail}"
 
-    ranked = sorted(readings, key=_rank)
+    ranked = sorted(readings, key=_by_size) if by_size else sorted(readings, key=_rank)
     lines = [head, ""]
     if history_line:
         # Same position as the STALE banner, and for the same reason: above the table, where
@@ -223,6 +223,12 @@ def _rank(reading: Reading) -> tuple[int, float]:
     decision that moves the most money at the top of the group that wants a decision."""
     urgency = ORDER.index(reading.verdict) if reading.verdict in ORDER else len(ORDER)
     return (urgency, -(reading.market_value or 0.0))
+
+
+def _by_size(reading: Reading) -> float:
+    """Size alone, largest first. For surveying allocation shape rather than triaging action —
+    urgency plays no part."""
+    return -(reading.market_value or 0.0)
 
 
 def _table(readings, total: float) -> list[str]:

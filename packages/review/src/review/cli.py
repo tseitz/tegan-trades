@@ -286,6 +286,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="print every level near every holding, not the shortlist. "
                              "The section is capped by default because the raw scan finds "
                              "~230 levels on a 77-position account.")
+    parser.add_argument("--by-size", action="store_true",
+                        help="sort strictly by weight, largest first, for surveying "
+                             "allocation shape rather than triaging action. Default "
+                             "ordering (urgency, then size) is unchanged without it.")
     args = parser.parse_args(argv)
 
     if args.list:
@@ -320,7 +324,8 @@ def main(argv: list[str] | None = None) -> int:
     print(render(readings, portfolio=book.name, as_of=as_of,
                  age_days=book.age_days(on=as_of), stale=book.is_stale(on=as_of),
                  cash=book.cash, cash_by=book.cash_by_account,
-                 mismatched=result.mismatched, mandate=book.mandate, history=result.history))
+                 mismatched=result.mismatched, mandate=book.mandate, history=result.history,
+                 by_size=args.by_size))
 
     # The view hands back every level, uncapped — this is the one place that decides how much
     # fits on a screen. See `ReviewResult.levels` and `review.levels.cap`.

@@ -79,6 +79,24 @@ def test_the_sort_order_covers_every_verdict():
     assert set(ORDER) == {TRIM, ADD, "WATCH", HOLD, NO_VIEW, NO_READ}
 
 
+def test_by_size_sorts_strictly_by_weight_ignoring_urgency():
+    out = render(
+        [_reading("SMALL", verdict=TRIM, shares=1.0, price=10.0),
+         _reading("BIG", verdict=HOLD, shares=100.0, price=10.0)],
+        portfolio="p", as_of=AS_OF, by_size=True,
+    )
+    assert out.index("BIG") < out.index("SMALL")
+
+
+def test_by_size_off_by_default_urgency_still_wins():
+    out = render(
+        [_reading("SMALL", verdict=TRIM, shares=1.0, price=10.0),
+         _reading("BIG", verdict=HOLD, shares=100.0, price=10.0)],
+        portfolio="p", as_of=AS_OF,
+    )
+    assert out.index("SMALL") < out.index("BIG")
+
+
 def test_an_actionable_row_explains_itself_below_the_table():
     out = render([_reading("BTC", verdict=TRIM)], portfolio="p", as_of=AS_OF)
     assert "DonAlt" in out          # who is behind the call
