@@ -29,7 +29,7 @@ from types import SimpleNamespace
 
 import yaml
 from core.nearby import ALL_KINDS
-from core.review import Holding
+from core.review import LEVELS_LED, SENTIMENT_LED, Holding
 from core.setups import DEFAULT_HALF_LIFE
 
 DATA_ROOT = Path(__file__).resolve().parents[4] / "data" / "portfolios"
@@ -139,7 +139,7 @@ class Mandate:
         """"levels" | "sentiment" — the exact vocabulary ADR-0002 already keys its verdict
         functions on. Derived, never stored: ADR-0001 rejected storing it as a second value
         that could drift from ``risk_posture``."""
-        return "levels" if self.risk_posture == "conservative" else "sentiment"
+        return LEVELS_LED if self.risk_posture == "conservative" else SENTIMENT_LED
 
 
 @dataclass(frozen=True, slots=True)

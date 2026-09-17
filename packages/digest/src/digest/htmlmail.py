@@ -18,6 +18,18 @@ from __future__ import annotations
 import re
 from html import escape
 
+from core.review import (
+    ADD,
+    BUY_ZONE,
+    HOLD,
+    LOCATION_VERDICT,
+    NO_READ,
+    NO_VIEW,
+    SELL_ZONE,
+    TRIM,
+    WATCH,
+)
+
 # A stack, not one font. Menlo is on every Mac, Consolas on every Windows, and ``ui-monospace``
 # picks the system default where the client honours it. Any of them keeps the columns.
 MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace"
@@ -64,8 +76,19 @@ _TICKER = re.compile(r"\b[A-Z][A-Z0-9]{0,7}\b")
 
 # Capitalised words that are vocabulary rather than a symbol. Without this the first ALL-CAPS
 # token on "ADD  HOOD — was HOLD" is a link to a chart for a stock called ADD.
+#
+# Every ``core.review`` verdict word is listed by name (or via ``LOCATION_VERDICT.values()``)
+# rather than typed twice, so a renamed or added one cannot drift out of step here. Most of
+# them (``BUY_ZONE``, ``NO_READ``, the ``LOCATION_VERDICT`` strings) already cannot match
+# ``_TICKER`` on their own — ``_`` counts as a word character, so ``\b`` never falls inside
+# them and the character class cannot cross one to consume the whole token. That immunity is
+# an accident of the underscore, not a rule the regex enforces on purpose, so they are listed
+# anyway: a future rename to a bare word (``SELLZONE``) would otherwise start stealing the
+# ticker link with nothing here to catch it. ``MID`` has no underscore and needs the entry.
 _VOCABULARY = frozenset({
-    "ADD", "TRIM", "WATCH", "HOLD", "LONG", "SHORT", "STALE", "NOTE", "RUN", "BOOK", "R",
+    ADD, TRIM, WATCH, HOLD, NO_READ, NO_VIEW, BUY_ZONE, SELL_ZONE,
+    *LOCATION_VERDICT.values(),
+    "LONG", "SHORT", "STALE", "NOTE", "RUN", "BOOK", "R",
     "TP", "SL", "OVER", "PROBLEMS", "NO", "VIEW", "AT", "THE",
 })
 

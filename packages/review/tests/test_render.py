@@ -6,10 +6,14 @@ from core.review import (
     AT_RESISTANCE,
     AT_SUPPORT,
     BEARISH_ROSTER,
+    BELOW_RANGE,
     BULLISH_ROSTER,
+    BUY_ZONE,
     HOLD,
+    MID,
     NO_READ,
     NO_VIEW,
+    SELL_ZONE,
     SILENT,
     TRIM,
     UNREADABLE,
@@ -76,7 +80,43 @@ def test_actionable_rows_sort_above_quiet_ones():
 def test_the_sort_order_covers_every_verdict():
     """A verdict missing from ORDER would sort by its absence rather than its urgency, and
     the row would drift to an arbitrary place in the table without anything failing."""
-    assert set(ORDER) == {TRIM, ADD, "WATCH", HOLD, NO_VIEW, NO_READ}
+    assert set(ORDER) == {
+        TRIM, SELL_ZONE, ADD, BUY_ZONE, "WATCH", HOLD,
+        AT_RESISTANCE, AT_SUPPORT, MID, ABOVE_RANGE, BELOW_RANGE, NO_VIEW, NO_READ,
+    }
+
+
+def test_the_six_sentiment_led_verdicts_keep_their_relative_order():
+    """AC 5: a sentiment-led mandate's output must be identical to today. The levels-led
+    verdicts slot in beside the one they most resemble, but the six original verdicts must
+    stay in the same order relative to each other."""
+    sentiment_only = [v for v in ORDER if v in (TRIM, ADD, "WATCH", HOLD, NO_VIEW, NO_READ)]
+    assert sentiment_only == [TRIM, ADD, "WATCH", HOLD, NO_VIEW, NO_READ]
+
+
+def test_a_levels_led_verdict_sorts_and_earns_a_note():
+    out = render(
+        [_reading("SPY", verdict=BUY_ZONE, where=AT_SUPPORT, lean=_lean(SILENT, bulls=0,
+                                                                       bears=0, people=0,
+                                                                       age_days=None,
+                                                                       voices=()))],
+        portfolio="p", as_of=AS_OF,
+    )
+    assert "SPY" in out
+    assert "BUY_ZONE" in out
+
+
+def test_the_disagreement_marker_fires_only_against_the_opposing_lean():
+    disagreeing = _reading("SPY", verdict=SELL_ZONE, where=AT_RESISTANCE,
+                           lean=_lean(BULLISH_ROSTER, bulls=2, bears=0))
+    agreeing = _reading("QQQ", verdict=SELL_ZONE, where=AT_RESISTANCE,
+                        lean=_lean(BEARISH_ROSTER, bulls=0, bears=2))
+    out = render([disagreeing, agreeing], portfolio="p", as_of=AS_OF)
+    assert "[roster disagrees]" in out
+    disagreeing_note = next(line for line in out.splitlines() if "SPY —" in line)
+    agreeing_note = next(line for line in out.splitlines() if "QQQ —" in line)
+    assert "[roster disagrees]" in disagreeing_note
+    assert "[roster disagrees]" not in agreeing_note
 
 
 def test_by_size_sorts_strictly_by_weight_ignoring_urgency():

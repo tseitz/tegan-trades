@@ -91,6 +91,15 @@ def test_vocabulary_is_not_mistaken_for_a_symbol():
     assert "symbol=ADD" not in painted and "symbol=HOLD" not in painted
 
 
+def test_a_levels_led_loud_row_still_links_the_ticker_not_the_verdict():
+    """`SELL_ZONE`/`BUY_ZONE` cannot match `_TICKER` on their own — the underscore breaks the
+    word boundary the pattern needs — but they are still in `_VOCABULARY` so a future rename
+    to a bare word does not silently start stealing this link."""
+    painted = htmlmail.wrap("  SELL_ZONE HOOD — was TRIM · 5 bull/2 bear 10d")
+    assert "symbol=HOOD" in painted
+    assert "symbol=SELL_ZONE" not in painted and "symbol=SELL" not in painted
+
+
 def test_only_the_first_symbol_on_a_row_is_linked():
     """Every row leads with the thing it is about. Linking each match would make an arrival row
     a line of blue with no column to anchor on."""

@@ -403,14 +403,21 @@ def _holdings_section(deltas) -> list[str]:
 
         # Loud (ADD/TRIM) before quiet dropouts, ADD before TRIM within the loud group — a
         # reader wants to know what to buy and sell before what quietly stopped asking.
+        #
+        # 5 is the floor this column has always had, and it stays the floor regardless of
+        # which verdicts this portfolio's own changes happen to carry — AC 5 needs the exact
+        # width a sentiment-led account (ADD/TRIM only, both under 5 characters) always had.
+        # It only grows past 5 when a wider verdict (`SELL_ZONE`, `BUY_ZONE`) is present.
+        width = max(5, max((len(change.reading.verdict) for change in d.changed
+                            if change.reading.verdict in holdings.LOUD), default=0))
         for change in sorted(d.changed, key=_change_sort_key):
             verdict = change.reading.verdict
             was = "new to the file" if change.before is None else f"was {change.before}"
             if verdict in holdings.LOUD:
-                out.append(f"  {verdict:<5} {change.ticker} — {was} · "
+                out.append(f"  {verdict:<{width}} {change.ticker} — {was} · "
                            f"{roster_text(change.reading)} · {where_text(change.reading)}")
             else:
-                out.append(f"  {'':<5} {change.ticker} — no longer {change.before}, "
+                out.append(f"  {'':<{width}} {change.ticker} — no longer {change.before}, "
                            f"now {verdict}")
 
         # Price arriving somewhere is the most time-sensitive thing this section knows, so it

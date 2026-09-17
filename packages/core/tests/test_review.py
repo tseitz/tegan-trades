@@ -11,22 +11,29 @@ from core.review import (
     BEARISH_ROSTER,
     BELOW_RANGE,
     BULLISH_ROSTER,
+    BUY_ZONE,
     HOLD,
+    LEVELS_LED,
+    LOCATION_VERDICT,
     MID,
     MIN_VOICES,
     MIXED,
     NO_READ,
     NO_VIEW,
     PREMIUM_EDGE,
+    SELL_ZONE,
+    SENTIMENT_LED,
     SILENT,
     STALE_VIEW_DAYS,
     TRIM,
     UNREADABLE,
     WATCH,
     Holding,
+    levels_verdict_for,
     locate,
     mark_disagrees,
     review,
+    roster_disagrees,
     roster_lean,
     verdict_for,
 )
@@ -450,3 +457,106 @@ def test_the_chart_counts_as_the_second_voice_a_thin_roster_wanted():
     here is confirmed rather than softened."""
     assert verdict_for(BEARISH_ROSTER, AT_RESISTANCE, thin=True) == WATCH
     assert verdict_for(BEARISH_ROSTER, AT_RESISTANCE, thin=True, trend=DOWNTREND) == TRIM
+
+
+# ── the levels-led grid ──────────────────────────────────────────────────────
+
+
+def test_an_unreadable_chart_refuses_on_the_levels_led_path_too():
+    assert levels_verdict_for(SILENT, UNREADABLE) == NO_READ
+    assert levels_verdict_for(BULLISH_ROSTER, UNREADABLE, trend=UPTREND) == NO_READ
+
+
+@pytest.mark.parametrize(("where", "trend", "expected"), [
+    (AT_SUPPORT, UPTREND, BUY_ZONE),
+    (AT_RESISTANCE, DOWNTREND, SELL_ZONE),
+])
+def test_a_zone_fires_only_with_a_silent_roster_and_the_matching_trend(where, trend, expected):
+    assert levels_verdict_for(SILENT, where, trend=trend) == expected
+
+
+@pytest.mark.parametrize(("where", "trend"), [
+    (AT_SUPPORT, DOWNTREND),
+    (AT_SUPPORT, None),
+    (AT_RESISTANCE, UPTREND),
+    (AT_RESISTANCE, None),
+])
+def test_trend_is_the_only_gate_on_a_zone(where, trend):
+    """An opinion cannot manufacture a trend the weekly does not show. A support read in a
+    downtrend, or a resistance read in an uptrend, is not a zone call — it is just the
+    location, same as every other square on this grid."""
+    assert levels_verdict_for(BULLISH_ROSTER, where, trend=trend) == LOCATION_VERDICT[where]
+
+
+@pytest.mark.parametrize(("where", "expected"), [
+    (MID, "MID"),
+    (ABOVE_RANGE, "ABOVE_RANGE"),
+    (BELOW_RANGE, "BELOW_RANGE"),
+    (AT_SUPPORT, "AT_SUPPORT"),
+    (AT_RESISTANCE, "AT_RESISTANCE"),
+])
+def test_every_other_location_prints_as_itself(where, expected):
+    """No generic watch bucket on this path — a location the zone rule did not fire for is
+    the verdict, in its own uppercase spelling."""
+    assert levels_verdict_for(SILENT, where) == expected
+
+
+def test_a_matching_non_thin_roster_upgrades_the_zone():
+    assert levels_verdict_for(BULLISH_ROSTER, AT_SUPPORT, trend=UPTREND) == ADD
+    assert levels_verdict_for(BEARISH_ROSTER, AT_RESISTANCE, trend=DOWNTREND) == TRIM
+
+
+def test_thin_blocks_the_upgrade_only():
+    assert levels_verdict_for(BULLISH_ROSTER, AT_SUPPORT, trend=UPTREND, thin=True) == BUY_ZONE
+    assert levels_verdict_for(BEARISH_ROSTER, AT_RESISTANCE, trend=DOWNTREND,
+                              thin=True) == SELL_ZONE
+
+
+def test_a_disagreeing_roster_prints_the_zone_unchanged():
+    """Shown and not obeyed: the chart's call is not overridden by an opinion that runs the
+    other way, but it is not overridden into silence either."""
+    assert levels_verdict_for(BEARISH_ROSTER, AT_SUPPORT, trend=UPTREND) == BUY_ZONE
+    assert levels_verdict_for(BULLISH_ROSTER, AT_RESISTANCE, trend=DOWNTREND) == SELL_ZONE
+
+
+def test_the_thin_silent_resistance_relabel_is_deliberate():
+    """The one relabel ADR-0002 calls out by name: what `verdict_for` calls TRIM on a silent
+    or thin-bearish roster at resistance in a downtrend, this grid calls SELL_ZONE."""
+    assert verdict_for(SILENT, AT_RESISTANCE, trend=DOWNTREND) == TRIM
+    assert levels_verdict_for(SILENT, AT_RESISTANCE, trend=DOWNTREND) == SELL_ZONE
+
+
+def test_roster_disagrees_only_fires_against_the_opposing_lean():
+    assert roster_disagrees(BUY_ZONE, BEARISH_ROSTER) is True
+    assert roster_disagrees(SELL_ZONE, BULLISH_ROSTER) is True
+    assert roster_disagrees(BUY_ZONE, BULLISH_ROSTER) is False
+    assert roster_disagrees(BUY_ZONE, SILENT) is False
+    assert roster_disagrees(SELL_ZONE, SILENT) is False
+    assert roster_disagrees(TRIM, BULLISH_ROSTER) is False
+
+
+def test_review_defaults_to_sentiment_led():
+    reading = review(Holding(ticker="BTC", shares=1.0, cost=None), _ctx(price=190.0),
+                     folded=[_folded("A", "bearish"), _folded("B", "bearish")], as_of=AS_OF)
+    assert reading.leads_with == SENTIMENT_LED
+    assert reading.verdict == TRIM
+
+
+def test_review_on_the_levels_led_path():
+    """Support in an uptrend, nobody talking — the chart carries the call on its own, which
+    `verdict_for` could never do for a silent roster."""
+    reading = review(Holding(ticker="BTC", shares=1.0, cost=None), _ctx(price=90.0),
+                     folded=[], as_of=AS_OF, leads_with=LEVELS_LED)
+    assert reading.leads_with == LEVELS_LED
+    assert reading.verdict == BUY_ZONE
+
+
+def test_the_two_paths_disagree_where_adr_0002_says_they_should():
+    """Same holding, same chart, same silent roster, weekly falling into resistance — only
+    the mandate differs, and that alone relabels the same evidence from TRIM to SELL_ZONE."""
+    holding = Holding(ticker="BTC", shares=1.0, cost=None)
+    ctx = _ctx(price=190.0, weekly_trend=DOWNTREND)
+    sentiment = review(holding, ctx, folded=[], as_of=AS_OF)
+    levels = review(holding, ctx, folded=[], as_of=AS_OF, leads_with=LEVELS_LED)
+    assert sentiment.verdict == TRIM
+    assert levels.verdict == SELL_ZONE

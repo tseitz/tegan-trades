@@ -24,17 +24,20 @@ from core.review import (
     BEARISH_ROSTER,
     BELOW_RANGE,
     BULLISH_ROSTER,
+    BUY_ZONE,
     HOLD,
     MID,
     MIXED,
     NO_READ,
     NO_VIEW,
+    SELL_ZONE,
     SILENT,
     TRIM,
     UNREADABLE,
     WATCH,
     Reading,
     chart_trims,
+    roster_disagrees,
 )
 from core.structure import (
     DOWNTREND,
@@ -45,12 +48,19 @@ from core.structure import (
 )
 
 # Most urgent first. TRIM outranks ADD because it is the one that protects money you already
-# have; everything below WATCH is there to be seen, not read.
-ORDER = (TRIM, ADD, WATCH, HOLD, NO_VIEW, NO_READ)
+# have; everything below WATCH is there to be seen, not read. The six sentiment-led verdicts
+# keep their relative order — that is what holds AC 5 — and the levels-led ones slot in beside
+# the verdict they most resemble: a zone beside the upgrade it can become, a plain location
+# beside HOLD, the two refusals last.
+ORDER = (TRIM, SELL_ZONE, ADD, BUY_ZONE, WATCH, HOLD, AT_RESISTANCE, AT_SUPPORT, MID,
+         ABOVE_RANGE, BELOW_RANGE, NO_VIEW, NO_READ)
 
 # The verdicts that earn a paragraph. HOLD and NO_VIEW deliberately do not: they are the
-# answer "nothing to do", and it needs a row, not an argument.
-LOUD = (TRIM, ADD, WATCH)
+# answer "nothing to do", and it needs a row, not an argument. The plain locations
+# (AT_SUPPORT, MID, ...) stay quiet for the same reason — a levels-led mandate printing itself
+# is not a call to act. BUY_ZONE and SELL_ZONE are the two levels-led calls, so they join TRIM,
+# ADD and WATCH here.
+LOUD = (TRIM, SELL_ZONE, ADD, BUY_ZONE, WATCH)
 
 WHERE_LABEL = {
     AT_SUPPORT: "at support",
@@ -137,7 +147,13 @@ def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
         tail += f" (excludes {len(unpriced)} with no price)"
     lines += ["", tail, *_pnl_tail(ranked)]
 
-    notes = [_note(r) for r in ranked if r.verdict in LOUD]
+    loud = [r for r in ranked if r.verdict in LOUD]
+    # 5 is the floor this column has always had — wide enough for WATCH, the longest of the
+    # three original LOUD verdicts. A report with only TRIM/ADD rows and no WATCH must still
+    # use 5, or AC 5 breaks the day a report happens not to have a WATCH in it. The width only
+    # grows past 5 when a wider verdict (`SELL_ZONE`, `BUY_ZONE`) is actually present.
+    width = max(5, max((len(r.verdict) for r in loud), default=0))
+    notes = [_note(r, width) for r in loud]
     if notes:
         adds = sum(1 for r in ranked if r.verdict == ADD)
         # Beside the decisions rather than only in the header, and reported rather than acted
@@ -294,7 +310,7 @@ def trend_text(reading: Reading) -> str:
     return TREND_LABEL.get(reading.weekly_trend, reading.weekly_trend)
 
 
-def _note(reading: Reading) -> str:
+def _note(reading: Reading, width: int) -> str:
     lean = reading.roster
     age = "" if lean.age_days is None else f", newest {lean.age_days}d ago"
     # A lean of SILENT covers two different rooms: nobody spoke, and people spoke without
@@ -318,8 +334,14 @@ def _note(reading: Reading) -> str:
     chart = (" [weekly falling into resistance]"
              if chart_trims(reading.location.where, reading.weekly_trend,
                             lean.lean, lean.age_days) else "")
-    return (f"  {reading.verdict:<5} {reading.holding.ticker} — roster {side} "
-            f"({who}{age}){thin}{chart}; price {where_text(reading)}"
+    # A chart-led call (BUY_ZONE/SELL_ZONE) the roster's current lean argues against. Recomputed
+    # from `roster_disagrees` rather than inferred from the verdict, so this can never fire for
+    # a call the roster did not actually disagree with — the same discipline `chart` above
+    # already follows for `chart_trims`.
+    disagrees = (" [roster disagrees]"
+                if roster_disagrees(reading.verdict, lean.lean) else "")
+    return (f"  {reading.verdict:<{width}} {reading.holding.ticker} — roster {side} "
+            f"({who}{age}){thin}{chart}{disagrees}; price {where_text(reading)}"
             f"{'' if reading.weekly_trend is None else f', weekly {reading.weekly_trend}'}")
 
 
@@ -377,10 +399,11 @@ def _kind_phrase(kind: str) -> str:
 def render_levels(standing, closing, suppressed: int, *, kinds=()) -> str:
     """The chart's own section: what price is at, whatever the roster is doing.
 
-    Deliberately independent of the verdict grid above it. On the live account 30 holdings sat
-    on a weekly level and 14 of those had a silent roster — the grid correctly refuses to
-    advise there, and refusing to *report* it as well threw away the most concrete thing the
-    pipeline knew about them.
+    Deliberately independent of the verdict grid above it — on a sentiment-led mandate. On a
+    levels-led mandate the "standing on" group is folded into the verdict instead (ADR-0002):
+    the location a holding is standing on is now the call, so repeating it here would be the
+    same fact twice. ``main()`` does that fold, not this function — see ``review.cli.main``.
+    "Closing in" still prints on both paths, because an approaching level is not yet a verdict.
     """
     counted = ", ".join(_kind_phrase(k) for k in kinds) or "nothing"
     head = (f"LEVELS — {len(standing)} standing on one · {len(closing)} closing in "
