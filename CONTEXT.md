@@ -67,6 +67,10 @@ _Avoid_: Setup, opportunity, idea, signal.
 Whether a yield venue is safe enough to park money in — a hard gate a venue must clear entirely, not a score. Settled 2026-09-14: needs at least one audit on record, plus a minimum on-chain age gated by fork lineage. A venue that clears the gate still gets a separate safety score shown alongside it (incentive mix, history stability, incidents) — flagged, never hidden behind one pass/fail. Full reasoning: [ADR-0006](adr/0006-yield-venue-safety-gate.md).
 _Avoid_: Trust — reserved for the crypto roster's unrelated per-voice credibility grade (see issue #1), not this concept.
 
+**Validated fork**:
+A fork whose lineage names a specific parent protocol, and that parent itself already clears the Safety gate — the parent's own already-computed pass/fail supplies the "Lindy behind its parent" check for free, so there is no second list to keep in step with it. Needs 4 months on-chain rather than the 9 a standalone protocol needs. Resolved mechanically from DefiLlama's `forkedFromIds`, never a hand-kept allowlist.
+_Avoid_: Confirmed fork, trusted fork — the word that matters is which check it clears, not how sure anyone feels about it.
+
 **Treasury**:
 The Mandate that holds money parked for yield, benchmarked against a flat cash rate and nothing else. It is the floor the rest of the book is supposed to beat, so it must stay bond-like. Settled 2026-09-15 ([ADR-0008](adr/0008-treasury-as-a-pot-and-the-deployed-idle-line.md)).
 _Avoid_: Savings — that is the SoFi Mandate, which is Treasury's benchmark rather than its contents.
