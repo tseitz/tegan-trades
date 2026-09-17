@@ -307,6 +307,93 @@ def test_an_uncurated_asset_has_no_tradeable_override():
     assert route("HOOD", table).trade_symbol == "HOOD"
 
 
+# ── wraps: the reverse key, for a wrapper fund's roster fold ────────────────────────────────
+
+def test_load_wraps_on_a_file_with_no_wraps_section_returns_empty(tmp_path):
+    """Guards the two `assets:`-only fixtures above (`:318`, `:331`) — a loader that requires
+    the new section would break every table built before this ticket."""
+    (tmp_path / "oracle_map.yaml").write_text("assets:\n  BTC: {source: coinbase, symbol: BTC-USD}\n")
+    assert route_mod.load_wraps(tmp_path) == {}
+
+
+def test_load_wraps_reads_the_section(tmp_path):
+    (tmp_path / "oracle_map.yaml").write_text(
+        "assets: {}\nwraps:\n  HODL: BTC\n  ETHB: ETH\n"
+    )
+    assert route_mod.load_wraps(tmp_path) == {"HODL": "BTC", "ETHB": "ETH"}
+
+
+def _wraps():
+    from oracle.assemble import CONFIG_DIR
+    return route_mod.load_wraps(CONFIG_DIR)
+
+
+def test_wraps_keys_resolve_to_themselves():
+    """`build_readings` looks a wrap up by the canonical asset `resolve_asset` already produced
+    — so this map is keyed on canonical identity, not on the raw ticker. If `HODL` ever entered
+    `cfg/assets.yaml` or `cfg/tickers.json` as an alias for something else, `resolve_asset`
+    would stop returning `HODL` for `HODL` and the wrap would go dead with nothing failing —
+    the row would quietly revert to the `silent` this ticket exists to fix. Pinning today's
+    identity turns that into a loud failure instead."""
+    from core.canon import load_registry, resolve_asset
+    from oracle.assemble import CONFIG_DIR
+    registry = load_registry(CONFIG_DIR)
+    for key in _wraps():
+        assert resolve_asset(key, registry)[0] == key, (
+            f"{key} no longer resolves to itself — the wrap in cfg/oracle_map.yaml is dead"
+        )
+
+
+def test_wraps_targets_are_routable():
+    """The fold a wrapper borrows has to come from an asset this engine can actually price and
+    route — a typo'd target would attach a real-looking `via` suffix to nothing."""
+    table = route_mod.the_routing_table()
+    for target in _wraps().values():
+        assert isinstance(route(target, table), route_mod.Priceable), (
+            f"{target} does not route — a wraps: target must be a priceable asset"
+        )
+
+
+@pytest.mark.needs_ore
+def test_wraps_keys_have_no_theses_of_their_own():
+    """The curation test, stated as code: a `wraps:` entry only belongs where the wrapper never
+    speaks for itself. The day `HODL` gets its own thesis, replacing its fold with BTC's would
+    bury a real view rather than filling a silence."""
+    from core.canon import load_registry
+    from oracle.assemble import CONFIG_DIR
+    from oracle.corpus import iter_rows
+    covered = {row.asset for row in iter_rows(load_registry(CONFIG_DIR))}
+    for key in _wraps():
+        assert key not in covered, f"{key} now has its own theses — reconsider the wrap"
+
+
+@pytest.mark.needs_ore
+def test_wraps_targets_have_theses_to_lend():
+    """The mirror of the test above: a target with nothing in the corpus lends a wrapper
+    silence dressed up as a borrowed fold, which is indistinguishable from a mistyped target."""
+    from core.canon import load_registry
+    from oracle.assemble import CONFIG_DIR
+    from oracle.corpus import iter_rows
+    covered = {row.asset for row in iter_rows(load_registry(CONFIG_DIR))}
+    for key, target in _wraps().items():
+        assert target in covered, f"{target} has no theses of its own — {key} would borrow silence"
+
+
+def test_wraps_is_not_the_inverse_of_tradeable():
+    """`tradeable` and `wraps:` answer different questions and must never be derived from one
+    another. `IWM` is `tradeable` for RUT and still carries its own 7 theses
+    (`cfg/oracle_map.yaml:59-60`) — deriving `wraps:` from `tradeable` would merge Russell
+    sentiment into IWM's."""
+    tradeable_targets = {
+        spec["tradeable"] for spec in _curated_routes().values() if spec.get("tradeable")
+    }
+    offenders = set(_wraps()) & tradeable_targets
+    assert not offenders, (
+        f"{offenders} are both a `tradeable` target and a `wraps:` key — IWM's own theses show "
+        "why that reverse relation is not the same as `wraps:`"
+    )
+
+
 # ── the one correct way to build the table ──────────────────────────────────────────────────
 
 def test_the_routing_table_helper_carries_all_three_inputs(tmp_path):
@@ -314,8 +401,13 @@ def test_the_routing_table_helper_carries_all_three_inputs(tmp_path):
     still routes — it just refuses most of the corpus as ``conflict``, which reads as an engine
     fault. Three probes were debugged past that before the helper existed, so the test asserts
     the inputs actually arrive rather than that the call returns something.
+
+    ``wraps`` is a fourth input added alongside this ticket — an input arriving unasserted is
+    exactly the silent-stub failure this test exists to catch, so it is pinned here too.
     """
-    (tmp_path / "oracle_map.yaml").write_text("assets:\n  BTC: {source: coinbase, symbol: BTC-USD}\n")
+    (tmp_path / "oracle_map.yaml").write_text(
+        "assets:\n  BTC: {source: coinbase, symbol: BTC-USD}\nwraps:\n  HODL: BTC\n"
+    )
     rows = [SimpleNamespace(asset="ETH", domain="crypto"),
             SimpleNamespace(asset="ETH", domain="crypto")]
     table = route_mod.the_routing_table(
@@ -323,6 +415,7 @@ def test_the_routing_table_helper_carries_all_three_inputs(tmp_path):
     assert table.curated                      # cfg reached it
     assert table.domain_consensus == {"ETH": "crypto"}   # corpus rows reached it
     assert "ETH-USD" in table.coinbase_symbols          # listings reached it
+    assert table.wraps == {"HODL": "BTC"}               # the wraps section reached it
 
 
 def test_a_table_without_domain_consensus_refuses_rather_than_erroring(tmp_path):

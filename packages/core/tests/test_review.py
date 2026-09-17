@@ -289,6 +289,25 @@ def test_the_threshold_is_people_not_statements():
     assert MIN_VOICES == 2
 
 
+def test_review_carries_lean_from_without_changing_the_verdict():
+    """`lean_from` records where the fold was borrowed from — a wrapper fund reading BTC's
+    split rather than its own — and nothing about the grid reads it. `verdict_for` still sees
+    only `roster.lean`, the same shape `RosterLean.thin` already carries a caveat in without
+    the grid seeing it."""
+    with_source = review(
+        Holding(ticker="HODL", shares=1.0, cost=None), _ctx(price=190.0),
+        folded=[_folded("A", "bearish"), _folded("B", "bearish")], as_of=AS_OF,
+        lean_from="BTC",
+    )
+    without_source = review(
+        Holding(ticker="HODL", shares=1.0, cost=None), _ctx(price=190.0),
+        folded=[_folded("A", "bearish"), _folded("B", "bearish")], as_of=AS_OF,
+    )
+    assert with_source.lean_from == "BTC"
+    assert without_source.lean_from is None
+    assert with_source.verdict == without_source.verdict
+
+
 def test_review_applies_the_thin_rule_end_to_end():
     reading = review(
         Holding(ticker="CRM", shares=1.0, cost=None), _ctx(price=190.0),

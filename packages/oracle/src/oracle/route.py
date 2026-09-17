@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -152,6 +152,10 @@ class RoutingTable:
     coinbase_symbols: frozenset[str]
     kraken_symbols: frozenset[str]
     domain_consensus: Mapping[str, str]
+    # The asset a wrapper fund's roster fold should borrow (``HODL`` -> ``BTC``) — not a price
+    # route, and ``route()`` deliberately never reads it. Only ``review.cli.build_readings``
+    # does, to redirect the sentiment lookup while pricing stays on the held ticker.
+    wraps: Mapping[str, str] = field(default_factory=dict)
 
 
 def build_domain_consensus(rows: Iterable[tuple[str, str]]) -> dict[str, str]:
@@ -233,6 +237,16 @@ def load_curated(config_dir) -> dict[str, dict]:
     return data.get("assets", {}) or {}
 
 
+def load_wraps(config_dir) -> dict[str, str]:
+    """Read the ``wraps:`` section of ``cfg/oracle_map.yaml``. Missing file or missing section
+    -> empty map (no holding gets its fold redirected)."""
+    path = Path(config_dir) / "oracle_map.yaml"
+    if not path.exists():
+        return {}
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return data.get("wraps", {}) or {}
+
+
 def load_routing_table(
     config_dir,
     domain_rows: Iterable[tuple[str, str]],
@@ -252,6 +266,7 @@ def load_routing_table(
         coinbase_symbols=frozenset(listings.get("coinbase", ())),
         kraken_symbols=frozenset(listings.get("kraken", ())),
         domain_consensus=build_domain_consensus(domain_rows),
+        wraps=load_wraps(config_dir),
     )
 
 

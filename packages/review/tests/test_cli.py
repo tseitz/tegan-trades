@@ -36,9 +36,10 @@ def _series(symbol="VTI", *, source="yahoo", bars=400, start=100.0):
     return PriceSeries(symbol=symbol, source=source, bars=tuple(out))
 
 
-def _table(**consensus):
+def _table(*, wraps=None, **consensus):
     return RoutingTable(curated={}, coinbase_symbols=frozenset(),
-                        kraken_symbols=frozenset(), domain_consensus=consensus)
+                        kraken_symbols=frozenset(), domain_consensus=consensus,
+                        wraps=wraps or {})
 
 
 MANDATE = Mandate(name="test", benchmarks=(Benchmark(type="held_flat"),),
@@ -119,6 +120,31 @@ def test_readings_come_back_in_file_order():
         series_cache={},
     )
     assert [r.holding.ticker for r in readings] == ["AAA", "BBB", "CCC"]
+
+
+def test_a_wrapped_holding_reads_the_wrapped_folds_split_but_prices_on_its_own_ticker():
+    """The whole ticket in one assertion pair. A wrapper fund like HODL has no theses of its
+    own, so `folded_by_asset` is keyed on the asset it wraps (VTI, standing in for BTC here) —
+    but routing and pricing must stay on HODL's own series. Asserting only one half would pass
+    a broken implementation: reading the fold off the held ticker (silent, wrong) or routing
+    the price off the wrapped asset (repriced as the wrong instrument, also wrong)."""
+    readings, _ = build_readings(
+        _book("HODL"), registry=REGISTRY, table=_table(wraps={"HODL": "VTI"}, HODL="stock"),
+        folded_by_asset={"VTI": [_folded("A", "bearish"), _folded("B", "bearish")]},
+        as_of=AS_OF, series_cache={"HODL": _series(symbol="HODL")},
+    )
+    assert readings[0].roster.bears == 2          # the wrapped asset's fold
+    assert readings[0].lean_from == "VTI"
+    assert readings[0].price is not None          # priced on the holding's own series
+    assert readings[0].holding.ticker == "HODL"
+
+
+def test_an_unwrapped_holding_carries_no_lean_from():
+    readings, _ = build_readings(
+        _book("VTI"), registry=REGISTRY, table=_table(VTI="stock"), folded_by_asset={},
+        as_of=AS_OF, series_cache={"VTI": _series()},
+    )
+    assert readings[0].lean_from is None
 
 
 def test_the_structure_each_reading_was_drawn_from_comes_back_alongside_it():

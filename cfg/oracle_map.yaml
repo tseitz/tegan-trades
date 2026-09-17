@@ -181,3 +181,31 @@ assets:
   USRECESSION:       {unpriceable: event}
   IRAN_CEASEFIRE:    {unpriceable: event}
   IRAN_BOOTS_ON_GROUND: {unpriceable: event}
+
+# `wraps:` answers a different question than `assets:` does: not "where do I price this", but
+# "what asset is this fund's whole price story actually about". A holding in `wraps:` still
+# prices, values and P&Ls on its own ticker through `assets:` (or the Yahoo fallback) exactly as
+# before — this section only redirects the roster's sentiment fold, so a fund the roster never
+# discusses by name still shows what the roster thinks of the thing it holds.
+#
+# NOT the reverse of `tradeable` above, and not derived from it. `tradeable` names an ETF that
+# stands in for an unbuyable index at the SAME scale (DJI -> DIA, both track the Dow). `wraps:`
+# names a fund whose price is its OWN instrument, deliberately never priced here as an alias.
+# IWM is `tradeable` for RUT and still carries its own 7 theses (see the comment above) — proof
+# that "an ETF version of X" and "the thing X's fold should borrow" are different relations, and
+# collapsing them would merge Russell theses into IWM's.
+#
+# NOT `cfg/assets.yaml` either. An alias there makes `resolve_asset("HODL") == "BTC"`, which
+# reprices the holding as bitcoin — 451 HODL shares valued at BTC's ~$100,000 price instead of
+# the fund's own. `WETH` is aliased in that file because it genuinely IS ether; `HODL` is a fund
+# with its own price, fee and market hours, and this map borrows only its roster fold.
+#
+# The curation test: add a `wraps:` entry only where the instrument is a wrapper whose whole
+# price story is the named asset, and the roster never discusses the wrapper on its own terms.
+#
+# `METH` (a staked-ETH wrapper, held in the crypto book) is deliberately absent. It qualifies by
+# the same logic as `ETHB`, but issue #61 named only `HODL` and `ETHB` — adding it is a curation
+# judgement for a human, not something this ticket decided.
+wraps:
+  HODL: BTC   # Bitwise Bitcoin ETF
+  ETHB: ETH   # Bitwise Ethereum ETF

@@ -274,10 +274,17 @@ def _table(readings, total: float) -> list[str]:
 def roster_text(reading: Reading) -> str:
     """How the split stands, and how old it is — never the split alone. A 3-0 bearish read
     means something entirely different at eight days than at eight hundred, and a cell that
-    shows only the count invites acting on the second as if it were the first."""
+    shows only the count invites acting on the second as if it were the first.
+
+    A ``via`` suffix marks a fold borrowed from another asset (``lean_from``) — a wrapper fund
+    like ``HODL`` reading BTC's split rather than its own. Applies even to ``silent``: "silent
+    via BTC" is a real and useful answer, and dropping the suffix there would make a borrowed
+    fold look identical to a holding nobody covers at all.
+    """
     lean = reading.roster
+    via = "" if reading.lean_from is None else f" via {reading.lean_from}"
     if lean.people == 0:
-        return "silent"
+        return "silent" + via
     parts = []
     if lean.bulls:
         parts.append(f"{lean.bulls} bull")
@@ -286,9 +293,9 @@ def roster_text(reading: Reading) -> str:
     if not parts:
         # People spoke, but nobody picked a side. Distinct from silence and it has to read
         # that way, or an asset the roster is openly undecided on looks like one it ignores.
-        return f"{lean.people} undecided"
+        return f"{lean.people} undecided" + via
     age = "" if lean.age_days is None else f" {lean.age_days}d"
-    return "/".join(parts) + age
+    return "/".join(parts) + age + via
 
 
 def where_text(reading: Reading) -> str:
@@ -323,6 +330,9 @@ def _note(reading: Reading, width: int) -> str:
         side = {BULLISH_ROSTER: "bullish", BEARISH_ROSTER: "bearish",
                 MIXED: "split", SILENT: "silent"}.get(lean.lean, lean.lean)
         who = ", ".join(lean.voices) if lean.voices else "nobody"
+    # Matches `roster_text`'s suffix exactly, so the table and the paragraph never disagree
+    # about where a wrapper fund's fold came from.
+    via = "" if reading.lean_from is None else f" via {reading.lean_from}"
     # Says why a row that looks like an ADD or a TRIM came back as WATCH. Without it the
     # grid looks broken: the roster is bullish, price is at support, and the verdict is the
     # cautious one for a reason nothing on the line explains.
@@ -340,7 +350,7 @@ def _note(reading: Reading, width: int) -> str:
     # already follows for `chart_trims`.
     disagrees = (" [roster disagrees]"
                 if roster_disagrees(reading.verdict, lean.lean) else "")
-    return (f"  {reading.verdict:<{width}} {reading.holding.ticker} — roster {side} "
+    return (f"  {reading.verdict:<{width}} {reading.holding.ticker} — roster {side}{via} "
             f"({who}{age}){thin}{chart}{disagrees}; price {where_text(reading)}"
             f"{'' if reading.weekly_trend is None else f', weekly {reading.weekly_trend}'}")
 

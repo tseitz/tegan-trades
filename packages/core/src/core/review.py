@@ -264,6 +264,12 @@ class Reading:
     # single fact a consumer below the view needs, and `Reading` is what every one of them
     # already holds; see `oracle.portfolios.Mandate.leads_with` for where it originates.
     leads_with: str = SENTIMENT_LED
+    # The asset `roster` was actually folded from, when it differs from the held ticker — e.g.
+    # `HODL` borrowing BTC's fold. `None` means the holding speaks for itself. Carried rather
+    # than folded into `roster`, the same shape `RosterLean.thin` already uses: the fold is
+    # genuinely BTC's, and silently relabelling it as HODL's own view would be a lie about
+    # what the corpus holds.
+    lean_from: str | None = None
 
     @property
     def market_value(self) -> float | None:
@@ -500,7 +506,7 @@ def roster_disagrees(verdict: str, lean: str) -> bool:
 
 
 def review(holding: Holding, context: Context | None, *, folded, as_of: date,
-          leads_with: str = SENTIMENT_LED) -> Reading:
+          leads_with: str = SENTIMENT_LED, lean_from: str | None = None) -> Reading:
     """One holding's full reading. ``context is None`` when the asset could not be priced —
     reported as ``UNREADABLE`` rather than skipped, because a holding that silently vanishes
     from a portfolio review is worse than one you cannot value."""
@@ -520,4 +526,5 @@ def review(holding: Holding, context: Context | None, *, folded, as_of: date,
         price=None if context is None else context.price,
         weekly_trend=trend,
         leads_with=leads_with,
+        lean_from=lean_from,
     )

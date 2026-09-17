@@ -24,7 +24,7 @@ from core.review import (
 )
 from core.transactions import TransactionSpan
 from oracle.portfolios import Benchmark, Mandate
-from review.render import ORDER, render
+from review.render import ORDER, render, roster_text
 
 AS_OF = date(2025, 1, 10)
 
@@ -39,7 +39,8 @@ def _lean(lean=BEARISH_ROSTER, *, bulls=0, bears=3, people=3, age_days=8,
 
 
 def _reading(ticker="BTC", *, verdict=TRIM, lean=None, where=AT_RESISTANCE,
-             price=100.0, shares=2.0, cost=50.0, position=0.81, trend="uptrend"):
+             price=100.0, shares=2.0, cost=50.0, position=0.81, trend="uptrend",
+             lean_from=None):
     return Reading(
         holding=Holding(ticker=ticker, shares=shares, cost=cost),
         roster=lean or _lean(),
@@ -47,6 +48,7 @@ def _reading(ticker="BTC", *, verdict=TRIM, lean=None, where=AT_RESISTANCE,
         verdict=verdict,
         price=price,
         weekly_trend=trend,
+        lean_from=lean_from,
     )
 
 
@@ -487,6 +489,48 @@ def test_an_empty_roster_still_reads_as_silence():
     assert "silent" in note
     assert "nobody" in note
     assert "undecided" not in note
+
+
+# ── a fold borrowed from another asset (`lean_from`) ─────────────────────────
+
+
+def test_roster_text_appends_via_when_the_fold_was_borrowed():
+    """Every shape `roster_text` can print gets the suffix, including `silent` — "silent via
+    BTC" is a real and useful answer, distinct from a holding nobody covers at all."""
+    directional = _reading("HODL", lean=_lean(BEARISH_ROSTER, bulls=0, bears=2, people=2,
+                                              age_days=6, voices=("A", "B")),
+                           lean_from="BTC")
+    assert roster_text(directional) == "2 bear 6d via BTC"
+
+    silent = _reading("HODL", lean=_lean(SILENT, bulls=0, bears=0, people=0, age_days=None,
+                                        voices=()), lean_from="BTC")
+    assert roster_text(silent) == "silent via BTC"
+
+    undecided = _reading("HODL", lean=_lean(SILENT, bulls=0, bears=0, people=1, age_days=4,
+                                            voices=()), lean_from="BTC")
+    assert roster_text(undecided) == "1 undecided via BTC"
+
+
+def test_roster_text_is_unchanged_for_an_unwrapped_holding():
+    """`lean_from is None` is the ordinary case, and it must render byte-identical to before
+    this ticket — no trailing space, no empty ` via`."""
+    reading = _reading("BTC", lean=_lean(BEARISH_ROSTER, bulls=0, bears=2, people=2,
+                                        age_days=6, voices=("A", "B")))
+    assert roster_text(reading) == "2 bear 6d"
+    assert "via" not in roster_text(reading)
+
+
+def test_the_note_paragraph_carries_the_same_via_suffix_as_the_table():
+    """The table and the paragraph must never disagree about where a fold came from."""
+    out = render(
+        [_reading("HODL", verdict=TRIM,
+                  lean=_lean(BEARISH_ROSTER, bulls=0, bears=2, people=2, age_days=6,
+                            voices=("A", "B")),
+                  lean_from="BTC")],
+        portfolio="p", as_of=AS_OF,
+    )
+    note = _note_line(out, "HODL")
+    assert "via BTC" in note
 
 
 # ── transaction history — the printed line ──────────────────────────────────

@@ -110,7 +110,10 @@ def build_readings(book, *, registry, table, folded_by_asset, as_of: date,
     a review of what you own, which is the one answer this command must never give by accident.
 
     The ``Holding`` keeps the ticker as you wrote it while routing and the roster lookup both
-    use the canonical asset. You need to find your own row; they need the registry's name.
+    use the canonical asset. You need to find your own row; they need the registry's name. A
+    third name enters only for a wrapper fund in ``table.wraps`` (``HODL`` -> ``BTC``): routing
+    and pricing stay on the canonical asset as always, but the roster lookup borrows the wrapped
+    asset's fold instead, because the fund's own name has nothing behind it in the corpus.
 
     Ranking is deliberately left to the renderer. Sorting here as well would put two places in
     charge of what you look at first, and they would drift.
@@ -127,10 +130,12 @@ def build_readings(book, *, registry, table, folded_by_asset, as_of: date,
             daily = load_daily(resolved, table=table, series_cache=series_cache)
             if daily is not None:
                 context = build_context(daily.bars, to_weekly(daily).bars, as_of=as_of)
+        wrapped = table.wraps.get(asset)
         readings.append(review(
             holding, context,
-            folded=folded_by_asset.get(asset, ()), as_of=as_of,
+            folded=folded_by_asset.get(wrapped or asset, ()), as_of=as_of,
             leads_with=book.mandate.leads_with,
+            lean_from=wrapped,
         ))
         contexts.append(context)
     return Read(readings=readings, contexts=tuple(contexts))
