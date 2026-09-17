@@ -5,6 +5,7 @@ from core.review import (
     ADD,
     HOLD,
     NO_VIEW,
+    SELL_ZONE,
     TRIM,
     WATCH,
     Holding,
@@ -61,6 +62,26 @@ def test_dropping_out_of_an_action_is_reported():
 def test_a_side_flip_is_reported():
     d = holdings.delta("retirement", [_reading("ETN", TRIM)], {"ETN": ADD})
     assert d.changed[0].before == ADD
+
+
+def test_the_relabel_from_trim_to_sell_zone_still_reports_as_a_live_call():
+    """The regression #68 forces: on the first run after the levels-led relabel ships, a
+    conservative-book holding that was `TRIM` in memory is `SELL_ZONE` tonight — same trim,
+    new label. `LOUD` must widen to include `SELL_ZONE`/`BUY_ZONE`, or this reads as `TRIM`
+    quietly expiring back to nothing (`_loud(SELL_ZONE)` collapsing to `None`) rather than as
+    the same live call continuing under its new name.
+    """
+    remembered = {"HOOD": TRIM}
+    d = holdings.delta("retirement", [_reading("HOOD", SELL_ZONE)], remembered)
+    assert [(c.ticker, c.before, c.reading.verdict) for c in d.changed] == [
+        ("HOOD", TRIM, SELL_ZONE)]
+
+    out = "\n".join(render._holdings_section([_delta(
+        changed=(d.changed[0],), standing={SELL_ZONE: 1}, positions=1)]))
+    # The loud-row wording ("SELL_ZONE HOOD — was TRIM"), never the quiet-dropout wording
+    # ("no longer TRIM, now SELL_ZONE") holdings.LOUD would produce if it had stayed narrow.
+    assert "SELL_ZONE" in out and "was TRIM" in out
+    assert "no longer TRIM" not in out
 
 
 def test_a_position_you_just_added_to_the_file_has_no_before():

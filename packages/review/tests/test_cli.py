@@ -3,7 +3,17 @@ from types import SimpleNamespace
 
 import review.cli as cli
 from core.canon import load_registry
-from core.review import NO_VIEW, UNREADABLE, Holding, Location, Reading, RosterLean
+from core.review import (
+    LEVELS_LED,
+    NO_READ,
+    NO_VIEW,
+    SENTIMENT_LED,
+    UNREADABLE,
+    Holding,
+    Location,
+    Reading,
+    RosterLean,
+)
 from oracle.portfolios import Benchmark, Mandate, Portfolio, Position
 from oracle.route import RoutingTable
 from oracle.series import Bar, PriceSeries
@@ -212,3 +222,64 @@ def test_load_books_needs_no_warn_callback(monkeypatch):
     monkeypatch.setattr(cli.portfolios, "available", lambda: ("good", "bad"))
     monkeypatch.setattr(cli.portfolios, "load", _load)
     assert load_books() == [good]
+
+
+CONSERVATIVE = Mandate(name="c", benchmarks=(Benchmark(type="held_flat"),),
+                       horizon="position", risk_posture="conservative")
+
+
+def test_review_for_carries_leads_with_through_to_the_reading(monkeypatch):
+    """Seam 3. Without `build_readings` passing `book.mandate.leads_with` into `review()`,
+    every reading would silently stay sentiment-led no matter what the file says, and every
+    other test in this module — including `test_a_priced_holding_...` above — would still
+    pass. Every asset is forced unpriceable so the assertion holds regardless of what is
+    actually cached on disk; this test is about `leads_with`, not about pricing.
+    """
+    monkeypatch.setattr(cli.corpus, "iter_rows", lambda registry: iter(()))
+    monkeypatch.setattr(cli.listings, "load_or_fetch", lambda path: {})
+    monkeypatch.setattr(cli, "load_all_stances", lambda: [])
+    monkeypatch.setattr(cli, "route", lambda asset, table: object())
+
+    levels_book = Portfolio(name="levels", mandate=CONSERVATIVE, positions=_book("VTI").positions)
+    sentiment_book = _book("VTI")  # MANDATE's risk_posture is "moderate" — sentiment-led
+
+    [levels_result] = review_for([levels_book], as_of=AS_OF, registry=REGISTRY)
+    [sentiment_result] = review_for([sentiment_book], as_of=AS_OF, registry=REGISTRY)
+
+    assert levels_result.readings[0].leads_with == LEVELS_LED
+    assert levels_result.readings[0].verdict == NO_READ
+    assert sentiment_result.readings[0].leads_with == SENTIMENT_LED
+    assert sentiment_result.readings[0].verdict == NO_VIEW
+
+
+def test_main_drops_the_standing_group_on_a_levels_led_book_unless_dash_levels(monkeypatch):
+    """ADR-0002's fold happens in `main()`, not the view — this is the one place that decides
+    what fits on a screen, and it has to drop the standing group before `cap()` so `suppressed`
+    stays honest about what a run is actually withholding. `--levels` means "show me
+    everything" and must keep meaning that."""
+    reading = _reading("VTI")
+    book = Portfolio(name="test", mandate=CONSERVATIVE,
+                     positions=(Position(holding=reading.holding, domain="stock"),))
+    result = cli.ReviewResult(book=book, readings=[reading], contexts=(None,),
+                              mismatched=(), levels=(("standing-sentinel",), (), 0),
+                              chains=(), macro=())
+
+    monkeypatch.setattr(cli.portfolios, "load", lambda name: book)
+    monkeypatch.setattr(cli.altsignal_config, "load", lambda path: None)
+    monkeypatch.setattr(cli, "review_for", lambda books, **kw: [result])
+
+    calls = []
+    monkeypatch.setattr(
+        cli, "render_levels",
+        lambda standing, closing, suppressed, **kw: calls.append(
+            (standing, closing, suppressed)) or "LEVELS")
+
+    assert cli.main(["test"]) == 0
+    standing, _closing, suppressed = calls[-1]
+    assert standing == ()
+    assert suppressed == 0
+
+    assert cli.main(["test", "--levels"]) == 0
+    standing, _closing, suppressed = calls[-1]
+    assert standing == ("standing-sentinel",)
+    assert suppressed == 0

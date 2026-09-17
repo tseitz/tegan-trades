@@ -5,8 +5,9 @@ each line. This package cannot print that: a digest of 77 rows every morning is 
 a report nobody reads is worse than no section at all. So this reduces the same readings to
 the one thing a nightly can honestly carry: **which verdicts moved since last night.**
 
-The reduction is deliberately harsh. Only ``ADD`` and ``TRIM`` count as movement, because they
-are the only two that ask you to move money. ``HOLD``, ``WATCH`` and ``NO_VIEW`` all mean "do
+The reduction is deliberately harsh. Only ``ADD``, ``TRIM``, ``BUY_ZONE`` and ``SELL_ZONE``
+count as movement, because they are the only ones that ask you to move money or watch a chart
+argue for it on its own. ``HOLD``, ``WATCH`` and the plain-location verdicts all mean "do
 nothing", and a position drifting between them asks nothing of you — reporting those would put
 three rows a night above the one that mattered. ``WATCH`` still shows in the standing counts,
 which is where "keep an eye on this" belongs.
@@ -19,10 +20,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from core.review import ADD, TRIM
+from core.review import ADD, BUY_ZONE, SELL_ZONE, TRIM
 
-#: The verdicts that ask you to move money, and therefore the only ones a diff reports on.
-LOUD = (ADD, TRIM)
+#: The verdicts that ask you to move money — or, on a levels-led mandate, that the chart has
+#: fired a zone call on its own — and therefore the only ones a diff reports on.
+LOUD = (ADD, TRIM, BUY_ZONE, SELL_ZONE)
 
 
 @dataclass(frozen=True, slots=True)

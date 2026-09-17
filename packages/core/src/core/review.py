@@ -29,7 +29,7 @@ from typing import Protocol
 
 from core.rank import parse_date
 from core.setups import ARRIVAL, PROXIMITY_SPAN, WEEKLY, Context, Zone, approach_to
-from core.structure import BULLISH, DOWNTREND
+from core.structure import BULLISH, DOWNTREND, UPTREND
 
 # Where price sits on the weekly.
 AT_SUPPORT = "at_support"
@@ -66,6 +66,27 @@ HOLD = "HOLD"
 TRIM = "TRIM"
 WATCH = "WATCH"
 NO_VIEW = "NO_VIEW"
+
+# The two chart-only calls a levels-led mandate can fire on its own, with no roster required.
+BUY_ZONE = "BUY_ZONE"
+SELL_ZONE = "SELL_ZONE"
+
+# Every location that is not a zone call, mapped to its own verdict string rather than reused
+# via `where.upper()`. A map closes the bug the `NO_READ` comment above already names: reusing
+# one string for a location and a verdict let a lowercase location print in the verdict column
+# looking like a fourth kind of answer.
+LOCATION_VERDICT: dict[str, str] = {
+    AT_SUPPORT: "AT_SUPPORT",
+    AT_RESISTANCE: "AT_RESISTANCE",
+    MID: "MID",
+    ABOVE_RANGE: "ABOVE_RANGE",
+    BELOW_RANGE: "BELOW_RANGE",
+}
+
+# The vocabulary `oracle.portfolios.Mandate.leads_with` returns. Imported there rather than
+# spelled a second time.
+LEVELS_LED = "levels"
+SENTIMENT_LED = "sentiment"
 
 # The outer quarter of the weekly range at each end. Deliberately stricter than
 # `DealingRange.zone_at`, which splits at 0.5: that split answers the manifesto's permission
@@ -239,6 +260,10 @@ class Reading:
     verdict: str
     price: float | None
     weekly_trend: str | None
+    # "levels" | "sentiment" — which grid produced `verdict`. Carried here because it is the
+    # single fact a consumer below the view needs, and `Reading` is what every one of them
+    # already holds; see `oracle.portfolios.Mandate.leads_with` for where it originates.
+    leads_with: str = SENTIMENT_LED
 
     @property
     def market_value(self) -> float | None:
@@ -420,19 +445,79 @@ def verdict_for(lean: str, where: str, *, thin: bool = False, trend: str | None 
     return verdict
 
 
-def review(holding: Holding, context: Context | None, *, folded, as_of: date) -> Reading:
+def levels_verdict_for(lean: str, where: str, *, thin: bool = False,
+                       trend: str | None = None) -> str:
+    """The chart-led grid: what to do when the mandate leads with levels, not sentiment.
+
+    ``NO_READ`` comes first and is the only refusal on this path — ``NO_VIEW`` is retired here
+    (ADR-0002): a silent roster no longer short-circuits anything, because on a levels-led
+    mandate the chart is expected to carry the call on its own.
+
+    **Trend is the only gate.** ``AT_SUPPORT`` fires ``BUY_ZONE`` only in an ``UPTREND``, and
+    ``AT_RESISTANCE`` fires ``SELL_ZONE`` only in a ``DOWNTREND``. An opinion cannot manufacture
+    a trend the weekly does not show, so a matching lean never fires a zone on its own.
+
+    A **matching, non-thin** roster upgrades the call — ``BUY_ZONE`` + ``BULLISH_ROSTER`` to
+    ``ADD``, ``SELL_ZONE`` + ``BEARISH_ROSTER`` to ``TRIM``. ``thin`` blocks only this upgrade,
+    the same reasoning ``verdict_for`` uses for ``ADD``/``TRIM``: one voice should not be able
+    to move money alone. A disagreeing or silent roster leaves the zone verdict exactly as the
+    chart argued it, unobeyed rather than overridden — see ``roster_disagrees`` for how a
+    renderer flags that case.
+
+    Every other location prints as itself via ``LOCATION_VERDICT`` — there is no generic watch
+    bucket on this path. One deliberate consequence: a thin-bearish or silent roster at
+    ``AT_RESISTANCE`` in a downtrend is ``TRIM`` on ``verdict_for``'s grid (``chart_trims``) and
+    becomes ``SELL_ZONE`` here. That is the relabel ADR-0002 asks for, not a regression.
+    """
+    if where == UNREADABLE:
+        return NO_READ
+    if where == AT_SUPPORT and trend == UPTREND:
+        verdict = BUY_ZONE
+    elif where == AT_RESISTANCE and trend == DOWNTREND:
+        verdict = SELL_ZONE
+    else:
+        return LOCATION_VERDICT.get(where, WATCH)
+    if not thin:
+        if verdict == BUY_ZONE and lean == BULLISH_ROSTER:
+            return ADD
+        if verdict == SELL_ZONE and lean == BEARISH_ROSTER:
+            return TRIM
+    return verdict
+
+
+def roster_disagrees(verdict: str, lean: str) -> bool:
+    """Whether the roster's current lean argues against a chart-led call.
+
+    Recomputed from the verdict and the lean, never inferred from the verdict string alone —
+    the same shape ``chart_trims`` uses for its own note marker, so a row can never carry this
+    flag for a call the roster did not actually argue against.
+    """
+    if verdict == BUY_ZONE:
+        return lean == BEARISH_ROSTER
+    if verdict == SELL_ZONE:
+        return lean == BULLISH_ROSTER
+    return False
+
+
+def review(holding: Holding, context: Context | None, *, folded, as_of: date,
+          leads_with: str = SENTIMENT_LED) -> Reading:
     """One holding's full reading. ``context is None`` when the asset could not be priced —
     reported as ``UNREADABLE`` rather than skipped, because a holding that silently vanishes
     from a portfolio review is worse than one you cannot value."""
     roster = roster_lean(folded, as_of=as_of)
     location = Location(where=UNREADABLE, basis="none") if context is None else locate(context)
+    trend = None if context is None else context.weekly_trend
+    if leads_with == LEVELS_LED:
+        verdict = levels_verdict_for(roster.lean, location.where, thin=roster.thin, trend=trend)
+    else:
+        verdict = verdict_for(roster.lean, location.where, thin=roster.thin, trend=trend,
+                              view_age_days=roster.age_days)
     return Reading(
         holding=holding,
         roster=roster,
         location=location,
-        verdict=verdict_for(roster.lean, location.where, thin=roster.thin,
-                            trend=None if context is None else context.weekly_trend,
-                            view_age_days=roster.age_days),
+        verdict=verdict,
         price=None if context is None else context.price,
-        weekly_trend=None if context is None else context.weekly_trend,
+        weekly_trend=trend,
+        leads_with=leads_with,
     )

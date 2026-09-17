@@ -23,7 +23,7 @@ from brain.retrieve import fold_stances
 from brain.stance_store import load_all_stances
 from core.canon import load_registry, resolve_asset
 from core.nearby import levels_near
-from core.review import mark_disagrees, review
+from core.review import LEVELS_LED, mark_disagrees, review
 from core.setups import build_context
 from oracle import altsignal_config, cache, corpus, fetch_cli, listings, portfolios
 from oracle.assemble import load_daily
@@ -114,6 +114,7 @@ def build_readings(book, *, registry, table, folded_by_asset, as_of: date,
         readings.append(review(
             holding, context,
             folded=folded_by_asset.get(asset, ()), as_of=as_of,
+            leads_with=book.mandate.leads_with,
         ))
         contexts.append(context)
     return Read(readings=readings, contexts=tuple(contexts))
@@ -305,7 +306,15 @@ def main(argv: list[str] | None = None) -> int:
 
     # The view hands back every level, uncapped — this is the one place that decides how much
     # fits on a screen. See `ReviewResult.levels` and `review.levels.cap`.
-    standing, closing, suppressed = cap(*result.levels[:2], limit=None if args.levels else SHOWN)
+    raw_standing, raw_closing, _ = result.levels
+    # On a levels-led mandate the verdict already carries the location, so the standing group
+    # is folded into it — ADR-0002. `--levels` means "show me everything" and keeps meaning
+    # that, so it still prints the group; dropping it before `cap()` keeps `suppressed` honest
+    # about what this run is actually withholding.
+    if book.mandate.leads_with == LEVELS_LED and not args.levels:
+        raw_standing = ()
+    standing, closing, suppressed = cap(raw_standing, raw_closing,
+                                        limit=None if args.levels else SHOWN)
     print()
     print(render_levels(standing, closing, suppressed, kinds=book.level_kinds))
 
