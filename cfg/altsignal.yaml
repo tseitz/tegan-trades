@@ -15,6 +15,43 @@
 # go stale — Kalshi rolls to a new event per Fed meeting, Polymarket's yearly BTC/ETH target
 # events roll at year-end. Re-pull from the live market list rather than guessing a successor
 # ticker by pattern.
+#
+# `protocols:` feeds oracle/altsignal/{defillama,coingecko}.py's protocol-level fetching and
+# packages/compare. A ticker is not an identifier — DefiLlama, CoinGecko and a venue's own API
+# each name a protocol differently, and none of the three agree with each other or with the
+# ticker (`docs/research/protocol-comparison-metrics.md` §3):
+#   - `llama_fees` / `llama_tvl` are DefiLlama parent or child *slugs*, not the DefiLlama
+#     parent id — a wrong slug answers HTTP 200 with an EMPTY BODY, which reads as "no data"
+#     rather than "wrong name". Confirm any new row by hitting `/tvl/{slug}` and checking the
+#     body is non-empty, not by guessing from the name.
+#   - `llama_oi` is a LIST of DefiLlama child slugs under `/overview/open-interest` — one
+#     protocol can be split into several rows there (Lighter is `lighter-perps` +
+#     `lighter-robinhood-perps`), and summing only one row would undercount its open interest.
+#   - `coingecko` is the CoinGecko coin `id` for `/coins/markets` (market cap, FDV, supply).
+#     It is a copy of `gecko_id` off the DefiLlama *parent* object, not an independent check —
+#     confirmed here by price agreement, the same way `oracle_map.yaml` rows are confirmed.
+#   - `coingecko_derivatives` is a LIST of ids in CoinGecko's *derivatives-exchange* namespace
+#     (`/derivatives/exchanges`) — a different id space from `coingecko` above (`aster-2` the
+#     coin vs `aster` the exchange), and split into several rows the same way `llama_oi` is.
+#   - `venue` names which adapter under `oracle/sources/` reads per-market detail. No reader
+#     consumes it yet — reserved for a future ticket, kept here so it does not need re-adding.
+
+protocols:
+  - asset: HYPE
+    llama_fees: hyperliquid
+    llama_tvl: hyperliquid
+    llama_oi: [hyperliquid-perps]
+    coingecko: hyperliquid
+    coingecko_derivatives: [hyperliquid]
+    venue: hyperliquid
+  - asset: LIT
+    llama_fees: lighter
+    llama_tvl: lighter
+    llama_oi: [lighter-perps, lighter-robinhood-perps]
+    coingecko: lighter
+    coingecko_derivatives: [lighter, robinhood-chain-lighter-futures]
+    venue: lighter
+  # Confirmed live 2026-09-16 against /overview/open-interest and /derivatives/exchanges.
 
 chains:
   - asset: SOL

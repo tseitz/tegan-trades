@@ -1,11 +1,11 @@
 """``fetch-altsignal`` — pull the Phase 5 alt-signal sources.
 
 Free on every source: no money, safe to run from the nightly job — same tier as
-``fetch-funding``. DefiLlama, Kalshi and Polymarket fetch whatever ``cfg/altsignal.yaml``
-names. pump.fun is different — it's a global feed (recently graduated tokens), not a curated
-list, so it always runs; it needs a free Solana Tracker key (``SOLANATRACKER_API_KEY`` in
-``.env``, see ``oracle.altsignal.pumpfun``) and is skipped with a clear message if that's unset,
-same as any other unreachable source.
+``fetch-funding``. DefiLlama, CoinGecko, Kalshi and Polymarket fetch whatever
+``cfg/altsignal.yaml`` names. pump.fun is different — it's a global feed (recently graduated
+tokens), not a curated list, so it always runs; it needs a free Solana Tracker key
+(``SOLANATRACKER_API_KEY`` in ``.env``, see ``oracle.altsignal.pumpfun``) and is skipped with a
+clear message if that's unset, same as any other unreachable source.
 
     fetch-altsignal            snapshot every configured source, plus pump.fun
     fetch-altsignal --report   summarise what has been logged, per source per key
@@ -19,7 +19,7 @@ from pathlib import Path
 from core.altsignal import AltSignalReading
 
 from oracle import altsignal_config, altsignal_store
-from oracle.altsignal import defillama, kalshi, polymarket, pumpfun
+from oracle.altsignal import coingecko, defillama, kalshi, polymarket, pumpfun
 from oracle.http import FetchError
 
 CONFIG_DIR = Path(__file__).resolve().parents[4] / "cfg"
@@ -40,6 +40,23 @@ def _snapshot(cfg: altsignal_config.AltSignalConfig, verbose: bool = True) -> li
             # One source being unreachable must not cost the others — a gap in the log is
             # unrecoverable, so partial beats nothing. Same reasoning as fetch-funding.
             print(f"  ! defillama: {exc}")
+
+    if cfg.protocols:
+        try:
+            got = defillama.fetch_protocols(cfg.protocols, observed_at=at)
+            readings.extend(got)
+            if verbose:
+                print(f"  defillama (protocols): {len(got)} readings")
+        except FetchError as exc:
+            print(f"  ! defillama (protocols): {exc}")
+
+        try:
+            got = coingecko.fetch(cfg.protocols, observed_at=at)
+            readings.extend(got)
+            if verbose:
+                print(f"  coingecko: {len(got)} readings")
+        except FetchError as exc:
+            print(f"  ! coingecko: {exc}")
 
     kalshi_tickers = [m.key for m in cfg.markets if m.platform == "kalshi"]
     if kalshi_tickers:

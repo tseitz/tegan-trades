@@ -56,7 +56,12 @@ def chain_lines(
         stored = store_read(source="defillama", key=chain)
         if not stored:
             continue
-        latest_by_kind = {r.kind: r for r in stored}
+        # Narrowed to the chain kinds this function actually understands. The store is shared
+        # with the protocol-level readings `oracle.altsignal.defillama.fetch_protocols` writes,
+        # and `hyperliquid` is simultaneously a DefiLlama chain slug and HYPE's protocol parent
+        # slug — an unfiltered read would hand a non-numeric protocol reading (a str or a dict
+        # value) to `_fmt_usd`, whose `abs(value)` raises.
+        latest_by_kind = {r.kind: r for r in stored if r.kind in _LABELS}
         lines = tuple(
             f"{chain.title()} {_LABELS.get(kind, kind)}: {_fmt_usd(r.value)}"
             for kind, r in latest_by_kind.items()

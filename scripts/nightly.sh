@@ -15,7 +15,8 @@
 #   8. fetch-prices    free
 #   9. fetch-funding   free    what holding a position costs — must precede setups
 #  10. perp-fundamentals free free three-venue open-interest/volume report — was hand-run only
-#  11. fetch-altsignal free    Phase 5 alt-signal — DefiLlama/Kalshi/Polymarket for `review`
+#  11. fetch-altsignal free    Phase 5 alt-signal — DefiLlama/CoinGecko/Kalshi/Polymarket, for
+#                              `review`'s chain rows and `compare`'s protocol comparison card
 #  12. reconcile       free    settle what the venue did with yesterday's orders
 #  13. setups --list   free    the queue you actually read
 #
@@ -495,14 +496,20 @@ step fetch-funding  uv run fetch-funding
 # packages/core/src/core/interest.py and the plan this shipped with). Free: three public venue
 # APIs plus DefiLlama/CoinGecko, no key, nothing placed. After `fetch-funding` so open interest
 # is same-night, even though this reads the venues live rather than from `data/interest/`.
+#
+# **Kept, not superseded by `compare`'s CoinGecko-sourced open interest.** The two read OI by
+# different methods on purpose (this probe from each venue's own API; `compare` from CoinGecko
+# `/derivatives/exchanges`), and research measured those ~1.97x apart on Lighter — a
+# definitional split, not a bug. This step is the only thing that would catch the two
+# aggregators drifting from what the venues themselves report.
 step perp-fundamentals  uv run python scripts/probe_perp_venue_fundamentals.py
 
-# Free, order-independent of `setups`/`reconcile` — `review` reads `data/altsignal/` at report
-# time, not at fetch time, so this only needs to land before `review` is next run by hand. It
-# sits next to `fetch-funding` because both are the same shape: free third-party reads, safe
-# unattended, logged rather than cached. Includes pump.fun (needs SOLANATRACKER_API_KEY in
-# .env — skipped with a message, not a failure, if that's unset on a machine that hasn't set
-# one up yet).
+# Free, order-independent of `setups`/`reconcile` — `review` and `compare` both read
+# `data/altsignal/` at report time, not at fetch time, so this only needs to land before either
+# is next run by hand. It sits next to `fetch-funding` because both are the same shape: free
+# third-party reads, safe unattended, logged rather than cached. Includes pump.fun (needs
+# SOLANATRACKER_API_KEY in .env — skipped with a message, not a failure, if that's unset on a
+# machine that hasn't set one up yet).
 step fetch-altsignal  uv run fetch-altsignal
 
 # Ordered before `setups` for the same reason `fetch-funding` is: the queue is worth more when

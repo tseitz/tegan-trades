@@ -5,6 +5,7 @@ def test_missing_file_is_empty(tmp_path):
     cfg = altsignal_config.load(tmp_path)
     assert cfg.chains == ()
     assert cfg.markets == ()
+    assert cfg.protocols == ()
 
 
 def test_loads_chains_and_markets(tmp_path):
@@ -38,3 +39,40 @@ def test_empty_file_is_empty(tmp_path):
     cfg = altsignal_config.load(tmp_path)
     assert cfg.chains == ()
     assert cfg.markets == ()
+    assert cfg.protocols == ()
+
+
+def test_loads_protocols_with_list_valued_identifiers(tmp_path):
+    (tmp_path / "altsignal.yaml").write_text(
+        """
+protocols:
+  - asset: LIT
+    llama_fees: lighter
+    llama_tvl: lighter
+    llama_oi: [lighter-perps, lighter-robinhood-perps]
+    coingecko: lighter
+    coingecko_derivatives: [lighter, robinhood-chain-lighter-futures]
+    venue: lighter
+""",
+        encoding="utf-8",
+    )
+    cfg = altsignal_config.load(tmp_path)
+    assert cfg.protocols == (
+        altsignal_config.ProtocolEntry(
+            asset="LIT",
+            llama_fees="lighter",
+            llama_tvl="lighter",
+            llama_oi=("lighter-perps", "lighter-robinhood-perps"),
+            coingecko="lighter",
+            coingecko_derivatives=("lighter", "robinhood-chain-lighter-futures"),
+            venue="lighter",
+        ),
+    )
+
+
+def test_a_file_with_no_protocols_block_yields_empty(tmp_path):
+    (tmp_path / "altsignal.yaml").write_text(
+        "chains:\n  - asset: SOL\n    chain: solana\n", encoding="utf-8"
+    )
+    cfg = altsignal_config.load(tmp_path)
+    assert cfg.protocols == ()
