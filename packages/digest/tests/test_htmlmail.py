@@ -120,6 +120,13 @@ def test_a_heading_carries_no_link():
     assert "<a href" not in htmlmail.wrap("PORTFOLIO — retirement")
 
 
+def test_the_net_worth_heading_carries_no_link():
+    """``WORTH`` reads like a ticker to ``_TICKER``, same as ``TREASURY`` — the heading match
+    has to win before the scan ever runs. #75 added the equivalent test for TREASURY for
+    exactly this reason."""
+    assert "<a href" not in htmlmail.wrap("NET WORTH — $134,515.93 across 4 mandates")
+
+
 def test_a_long_crypto_symbol_still_links():
     """SOLVBTC and STKAAVE are real rows in the crypto account."""
     assert "symbol=SOLVBTC" in htmlmail.wrap("    SOLVBTC was on daily zone resistance")

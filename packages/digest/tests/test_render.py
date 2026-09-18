@@ -10,7 +10,7 @@ from __future__ import annotations
 from core import safety
 from core.trigger import ARMED, NO_TRIGGER, NO_ZONE_TAG
 from digest import book as diff_book
-from digest import diff, render
+from digest import diff, networth, render
 from digest import treasury as treasury_mod
 
 
@@ -608,3 +608,45 @@ def test_already_reported_opportunities_collapse_to_a_count():
     body = render.markdown(_quiet(), treasury_delta=_treasury_delta(standing=2))
     assert "2 opportunities standing" in body
     assert "aave-v3" not in body
+
+
+# ── the NET WORTH section ───────────────────────────────────────────────────────
+
+def _net_worth(**over) -> networth.NetWorth:
+    fields = {"total": 1000.0, "pots": 2, "unpriced": 0}
+    fields.update(over)
+    return networth.NetWorth(**fields)
+
+
+def test_no_net_worth_prints_no_section():
+    assert "NET WORTH" not in render.markdown(_quiet())
+
+
+def test_the_net_worth_line_carries_the_total_and_pot_count():
+    body = render.markdown(_quiet(), net_worth=_net_worth(total=134515.93, pots=4))
+    assert "NET WORTH — $134,515.93 across 4 mandates" in body
+
+
+def test_bootstrap_says_theres_nothing_to_compare_against_yet():
+    body = render.markdown(_quiet(), net_worth=_net_worth(bootstrap=True))
+    assert "first look, nothing to compare against yet" in body
+
+
+def test_the_unpriced_caveat_is_named_not_netted_out():
+    body = render.markdown(_quiet(), net_worth=_net_worth(unpriced=1))
+    assert "excludes 1 unpriced" in body
+
+
+def test_a_real_previous_total_prints_a_signed_percent_change():
+    net = networth.delta(_net_worth(total=1100.0), 1000.0)
+    body = render.markdown(_quiet(), net_worth=net)
+    assert "+10.0% vs last night" in body
+
+
+def test_a_zero_previous_total_falls_back_to_a_dollar_change():
+    """`change_pct` refuses to divide by a previous total of zero — the line still says
+    something rather than going silent about a real change."""
+    net = networth.delta(_net_worth(total=100.0), 0.0)
+    body = render.markdown(_quiet(), net_worth=net)
+    assert net.bootstrap is False
+    assert "+100.00 vs last night" in body

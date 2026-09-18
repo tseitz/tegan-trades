@@ -15,9 +15,11 @@ from datetime import UTC, datetime
 
 import pytest
 from core import safety
+from core.review import Holding, Location, Reading, RosterLean
 from core.trigger import ARMED, NO_ZONE_TAG
 from digest import cli
-from oracle.portfolios import Mandate
+from oracle.portfolios import Mandate, Portfolio, Position
+from review.cli import ReviewResult
 from treasury.book import IdleCash, ReadingsAsOf, TreasuryResult
 
 
@@ -497,4 +499,99 @@ def test_subject_only_never_calls_load_result(tmp_path, today, monkeypatch):
     snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
     subject, _, memory = build_with_memory(snaps, tmp_path, subject_only=True)
     assert subject
+    assert memory is None
+
+
+# ── the NET WORTH line ───────────────────────────────────────────────────────
+#
+# `quiet` stubs `load_result` (Treasury) but not `load_books`/`review_for` (portfolios) — no
+# existing test touched the PORTFOLIO path before this, which is why these three monkeypatch
+# both rather than reading this machine's real, gitignored `data/portfolios/`.
+
+def _networth_book(name: str, *, cash: float = 0.0) -> Portfolio:
+    mandate = Mandate(name=name, benchmarks=(), horizon="macro", risk_posture="conservative")
+    position = Position(holding=Holding(ticker="SPY", shares=1.0, cost=None), domain="stock")
+    return Portfolio(name=name, mandate=mandate, positions=(position,), cash=cash)
+
+
+def _networth_result(book: Portfolio, *, price: float) -> ReviewResult:
+    reading = Reading(
+        holding=Holding(ticker="SPY", shares=1.0, cost=None),
+        roster=RosterLean(lean="bullish", bulls=1, bears=0, people=1, newest=None,
+                          age_days=None, voices=("A",)),
+        location=Location(where="at_support", basis="range", position=0.1),
+        verdict="HOLD", price=price, weekly_trend="uptrend",
+    )
+    return ReviewResult(book=book, readings=[reading], contexts=(None,), mismatched=(),
+                        levels=((), (), 0), chains=(), macro=())
+
+
+def test_the_net_worth_line_carries_the_exact_total(tmp_path, today, monkeypatch):
+    books = [_networth_book("retirement", cash=100.0), _networth_book("brokerage", cash=0.0)]
+    results = [_networth_result(books[0], price=200.0), _networth_result(books[1], price=50.0)]
+    monkeypatch.setattr(cli, "load_books", lambda **kwargs: books)
+    monkeypatch.setattr(cli, "review_for", lambda books, *, as_of, registry: results)
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
+
+    _, body, _ = build_with_memory(snaps, tmp_path)
+    assert "NET WORTH" in body
+    assert "$350.00" in body  # (200 + 100 cash) + (50 + 0 cash)
+
+
+def test_the_net_worth_line_is_absent_when_no_book_loads(tmp_path, today, monkeypatch):
+    """Explicitly `[]`, not whatever this machine's real portfolio directory happens to hold —
+    the test must stay true whether or not the portfolio files have been migrated."""
+    monkeypatch.setattr(cli, "load_books", lambda **kwargs: [])
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
+
+    _, body, _ = build_with_memory(snaps, tmp_path)
+    assert "NET WORTH" not in body
+
+
+def test_a_raising_portfolio_pass_hides_net_worth_even_with_a_real_treasury_total(
+        tmp_path, today, monkeypatch):
+    """The one behaviour `_holdings`'s own docstring calls out as deliberate: a failed
+    portfolio pass hides the whole line even when Treasury alone has money to report, because
+    a total labelled "net worth" that is silently missing every portfolio is worse than none."""
+    def _explode(books, *, as_of, registry):
+        raise ValueError("no")
+
+    monkeypatch.setattr(cli, "load_books", lambda **kwargs: [_networth_book("retirement")])
+    monkeypatch.setattr(cli, "review_for", _explode)
+    monkeypatch.setattr(cli, "load_result",
+                        lambda **kwargs: _treasury_result(idle=()))
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
+
+    _, body, _ = build_with_memory(snaps, tmp_path)
+    assert "NET WORTH" not in body
+
+
+def test_a_raising_treasury_read_hides_net_worth_even_with_real_portfolio_results(
+        tmp_path, today, monkeypatch):
+    """The mirror case: `_treasury`'s except path returns `parked=None`, which must suppress
+    the line rather than fall back to a portfolio-only total."""
+    def _explode(**kwargs):
+        raise ValueError("no")
+
+    books = [_networth_book("retirement", cash=100.0)]
+    results = [_networth_result(books[0], price=200.0)]
+    monkeypatch.setattr(cli, "load_books", lambda **kwargs: books)
+    monkeypatch.setattr(cli, "review_for", lambda books, *, as_of, registry: results)
+    monkeypatch.setattr(cli, "load_result", _explode)
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
+
+    _, body, _ = build_with_memory(snaps, tmp_path)
+    assert "NET WORTH" not in body
+
+
+def test_subject_only_does_not_compute_net_worth(tmp_path, today, monkeypatch):
+    books = [_networth_book("retirement", cash=100.0)]
+    results = [_networth_result(books[0], price=200.0)]
+    monkeypatch.setattr(cli, "load_books", lambda **kwargs: books)
+    monkeypatch.setattr(cli, "review_for", lambda books, *, as_of, registry: results)
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
+
+    subject, body, memory = build_with_memory(snaps, tmp_path, subject_only=True)
+    assert "NET WORTH" not in subject
+    assert "NET WORTH" not in body
     assert memory is None

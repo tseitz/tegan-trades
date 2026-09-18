@@ -227,7 +227,7 @@ def test_the_portfolio_section_is_not_silently_swallowed_by_its_own_safety_net(m
     monkeypatch.setattr(cli, "review_for", lambda books, *, as_of, registry: [result])
 
     warnings = []
-    deltas, (verdicts, levels) = cli._holdings(
+    deltas, _results, (verdicts, levels) = cli._holdings(
         {}, books=[book], registry=object(), as_of=AS_OF, warn=warnings.append)
     assert warnings == []
     assert [c.ticker for c in deltas[0].changed] == ["WULF"]

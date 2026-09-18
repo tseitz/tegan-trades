@@ -46,7 +46,7 @@ from review.cli import load_books, review_for
 from treasury.cli import load_result
 
 from digest import book as book_mod
-from digest import diff, holdings, mail, narrate, render, roster, state, vault
+from digest import diff, holdings, mail, narrate, networth, render, roster, state, vault
 from digest import treasury as treasury_mod
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -316,16 +316,21 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
 
     as_of = datetime.now(UTC).date()
     books = _portfolios(warn)
-    holdings_deltas, holdings_memories = _holdings(
+    holdings_deltas, results, holdings_memories = _holdings(
         memory, books=books, registry=load_registry(CONFIG_DIR), as_of=as_of, warn=warn)
 
-    # Skipped on ``--subject-only``: `treasury_delta` feeds nothing into `subject()`, and the
-    # read costs a portfolio parse, an alt-signal store read and the anchors file's first-sight
-    # write. `with_llm` gets the same treatment for the same reason, just above.
+    # Skipped on ``--subject-only``: neither `treasury_delta` nor net worth feeds `subject()`,
+    # and the read costs a portfolio parse, an alt-signal store read and the anchors file's
+    # first-sight write. `with_llm` gets the same treatment for the same reason, just above.
+    # Net worth is skipped rather than computed from `parked=None` — that would read as a
+    # failed read rather than as a section nobody asked for.
     if subject_only:
-        treasury_delta, treasury_memory = None, state.treasury_opportunities_seen(memory)
+        treasury_delta, parked, treasury_memory = None, None, state.treasury_opportunities_seen(memory)
+        net_worth, net_worth_memory = None, state.net_worth_seen(memory)
     else:
-        treasury_delta, treasury_memory = _treasury(memory, books=books, as_of=as_of, warn=warn)
+        treasury_delta, parked, treasury_memory = _treasury(
+            memory, books=books, as_of=as_of, warn=warn)
+        net_worth, net_worth_memory = _networth(memory, results=results, parked=parked)
 
     xai_month = spend.total()
     body = render.markdown(delta, run=_run_row(today, warn), book=events, roster=narration,
@@ -335,13 +340,14 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
                            holding=holding, resting=len(resting_keys),
                            holdings_deltas=holdings_deltas,
                            treasury_delta=treasury_delta,
+                           net_worth=net_worth,
                            stale_as_of=stale, problems=warn.items)
     subject = render.subject(delta, book=events, stale_as_of=stale, problems=len(warn.items),
                              repeat=state.is_repeat(memory, delta.previous_run),
                              holdings_deltas=holdings_deltas)
     return (subject, body,
             _next_memory(memory, reported, xai_month, delta.previous_run, *holdings_memories,
-                        treasury_memory)
+                        treasury_memory, net_worth_memory)
             if state_path else None)
 
 
@@ -402,8 +408,16 @@ def _portfolios(warn) -> list:
         return []
 
 
-def _holdings(memory: dict, *, books, registry, as_of, warn) -> tuple[tuple, tuple[dict, dict]]:
-    """``(deltas, what to remember)`` for every portfolio on disk.
+def _holdings(memory: dict, *, books, registry, as_of, warn):
+    """``(deltas, results, what to remember)`` for every portfolio on disk.
+
+    ``results`` is the raw ``ReviewResult`` list — ``networth.of`` sums it directly, so it
+    travels alongside the deltas rather than being reassembled from them. **Empty on "no
+    accounts on disk", ``None`` on "the pass blew up"** — the same distinction the memory
+    values already draw, and now one ``networth.of`` actually acts on rather than merely
+    documents: a failed pass hides the net-worth line even when Treasury alone has money to
+    report, because a total labelled "net worth" that is silently missing every portfolio is
+    worse than no total.
 
     **Never raises.** A price cache that is not there, a registry that failed to load — none of
     those may take down a digest whose other six sections are fine. Every failure degrades to
@@ -417,11 +431,13 @@ def _holdings(memory: dict, *, books, registry, as_of, warn) -> tuple[tuple, tup
     previous_levels = state.holdings_levels_seen(memory)
     try:
         if not books:
-            return (), (previous, previous_levels)
+            return (), (), (previous, previous_levels)
 
         deltas = []
+        results = []
         remembered, remembered_levels = dict(previous), dict(previous_levels)
         for result in review_for(books, as_of=as_of, registry=registry):
+            results.append(result)
             # Uncapped on purpose. The display cap is about screen space; a level arrival that
             # happened to rank thirteenth still happened, and a diff that missed it would be
             # silently wrong rather than merely short.
@@ -434,14 +450,19 @@ def _holdings(memory: dict, *, books, registry, as_of, warn) -> tuple[tuple, tup
             ))
             remembered[result.book.name] = holdings.remember(result.readings)
             remembered_levels[result.book.name] = holdings.remember_levels(on_levels)
-        return tuple(deltas), (remembered, remembered_levels)
+        return tuple(deltas), tuple(results), (remembered, remembered_levels)
     except Exception as exc:  # noqa: BLE001 - one bad account must not cost the whole digest
         warn(f"warning: the portfolio section was dropped — {type(exc).__name__}: {exc}")
-        return (), (previous, previous_levels)
+        return (), None, (previous, previous_levels)
 
 
-def _treasury(memory: dict, *, books, as_of, warn) -> tuple[treasury_mod.TreasuryDelta | None, dict]:
-    """``(delta, what to remember)``, mirroring ``_holdings``.
+def _treasury(memory: dict, *, books, as_of, warn):
+    """``(delta, parked total, what to remember)``, mirroring ``_holdings``.
+
+    The parked total is ``result.total`` when there is a result, ``0.0`` when ``load_result``
+    returned ``None`` (no ``data/treasury.yaml`` — a real zero), and ``None`` on the ``except``
+    path (the read itself failed, so a total would be a guess). ``networth.of`` tells those
+    apart: the first two are knowable, the third makes net worth unknown for the night.
 
     **Never raises.** Returns the *previous* memory unchanged on failure, and also when
     ``result.readings_as_of.freshest is None`` — ``treasury_for`` returns ``advice=()`` with no
@@ -453,19 +474,33 @@ def _treasury(memory: dict, *, books, as_of, warn) -> tuple[treasury_mod.Treasur
     try:
         result = load_result(books=books, as_of=as_of, warn=lambda m: warn(f"warning: {m}"))
         if result is None:
-            return None, previous
+            return None, 0.0, previous
         delta = treasury_mod.delta(result, previous, has_idle=treasury_mod.has_idle(result))
         if result.readings_as_of.freshest is None:
-            return delta, previous
-        return delta, treasury_mod.remember(result)
+            return delta, result.total, previous
+        return delta, result.total, treasury_mod.remember(result)
     except Exception as exc:  # noqa: BLE001 - one bad read must not cost the whole digest
         warn(f"warning: the treasury section was dropped — {type(exc).__name__}: {exc}")
+        return None, None, previous
+
+
+def _networth(memory: dict, *, results, parked):
+    """``(net worth, what to remember)`` — the third sibling of ``_holdings``/``_treasury``.
+
+    Returns the previous memory unchanged when ``networth.of`` finds nothing to record, so a
+    night the total could not be computed does not erase tomorrow's baseline for comparison.
+    """
+    previous = state.net_worth_seen(memory)
+    net = networth.of(results, parked=parked)
+    if net is None:
         return None, previous
+    net = networth.delta(net, previous)
+    return net, networth.remember(net)
 
 
 def _next_memory(memory: dict, reported, xai_month: float, window_start: str | None,
                  holdings_memory: dict, holdings_levels: dict,
-                 treasury_memory: dict) -> dict:
+                 treasury_memory: dict, net_worth_memory: float | None) -> dict:
     """Tonight's memory. Pruned every run, not only on runs that reported something, so a quiet
     week still clears keys that have aged out."""
     return {
@@ -477,6 +512,7 @@ def _next_memory(memory: dict, reported, xai_month: float, window_start: str | N
         state.HOLDINGS: holdings_memory,
         state.HOLDINGS_LEVELS: holdings_levels,
         state.TREASURY_OPPORTUNITIES: treasury_memory,
+        state.NET_WORTH: net_worth_memory,
     }
 
 

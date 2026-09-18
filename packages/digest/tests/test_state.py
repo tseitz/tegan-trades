@@ -125,3 +125,19 @@ def test_treasury_opportunities_round_trip(tmp_path):
 def test_treasury_opportunities_of_the_wrong_shape_is_an_empty_memory():
     assert state.treasury_opportunities_seen(
         {state.TREASURY_OPPORTUNITIES: ["not", "a", "map"]}) == {}
+
+
+# ── the net-worth memory ───────────────────────────────────────────────────────
+
+def test_net_worth_round_trip(tmp_path):
+    path = tmp_path / "state.json"
+    assert state.save(path, {state.NET_WORTH: 134515.93})
+    assert state.net_worth_seen(state.load(path)) == 134515.93
+
+
+def test_net_worth_of_the_wrong_shape_is_unknown():
+    assert state.net_worth_seen({state.NET_WORTH: "not a number"}) is None
+
+
+def test_an_absent_net_worth_is_unknown():
+    assert state.net_worth_seen({}) is None
