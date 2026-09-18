@@ -37,9 +37,10 @@ updated: 2026-09-16
 # this principal holds its value, so nothing here is ever re-priced.
 #
 # `apy` is what THIS row actually earns, hand-typed — not the venue's live headline rate.
-# The yields feed and the Safety gate that would resolve the latter are a separate ticket;
-# this number is the receipt for money already parked. `since` is optional and says how long
-# a row has been earning.
+# `uv run treasury` prints the venue's live Safety gate and score beside a row whose `venue:`
+# matches a `venues:` entry in `cfg/altsignal.yaml` (#73) — but that is a fact ABOUT the venue,
+# never a substitute for this number, which is the receipt for what this specific row actually
+# earns. `since` is optional and says how long a row has been earning.
 #
 # A wrapper token held for PRICE EXPOSURE that happens to accrue — mETH, stkAAVE, staked SOL,
 # locked veAERO — does NOT belong here. You chose to hold ETH, AAVE, SOL or AERO; the wrapper

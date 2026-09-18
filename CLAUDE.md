@@ -32,7 +32,7 @@ Workspace members under `packages/`, in pipeline order. **Each module's docstrin
 - `digest/` — **a diff, not a report.** What changed since last night. Sits above the pipeline and reads down; nothing imports it. `digest`.
 - `review/` — **the mirror image of `setups`.** That queue asks *should I open this*; this asks *should I keep what I already hold*. `review`, free, places nothing. Portfolio files live in `data/portfolios/*.yaml`, **gitignored because this repo is public and share counts are not configuration**.
 - `compare/` — put one protocol beside another, the #66 comparison card. `compare`, free, reads `data/altsignal/` only, places nothing.
-- `treasury/` — what money is parked for its yield, and what it earns — the #72 Treasury mandate. `treasury`, free, reads the hand-kept `data/treasury.yaml` only, places nothing.
+- `treasury/` — what money is parked for its yield, and what it earns — the #72 Treasury mandate, plus the #73 Safety gate on it and on idle cash. `treasury`, free, reads the hand-kept `data/treasury.yaml`, every `data/portfolios/*.yaml` (idle cash), and `data/altsignal/` (Safety facts) — no fetch of its own, places nothing.
 - `core/` — pure logic and shared schema. Zero I/O, no network, no LLM. Imported by everything, imports nothing local.
 - `llm/` — the **only** LLM boundary (`claude -p`, subscription auth). Four call sites depend on it.
 
