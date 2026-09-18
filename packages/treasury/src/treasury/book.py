@@ -140,7 +140,7 @@ def treasury_for(
     )
 
     if store_read is None:
-        row_safety: dict = {}
+        row_safety = MappingProxyType({})
         advice: tuple = ()
         readings_as_of = ReadingsAsOf(freshest=None, oldest=None)
     else:
@@ -149,7 +149,7 @@ def treasury_for(
         all_rows = all_rows + pool_rows
 
         venues_by_name = {entry.venue: entry for entry in venues}
-        row_safety = _row_safety(book.rows, venues_by_name, protocol_facts, as_of=as_of)
+        row_safety = MappingProxyType(_row_safety(book.rows, venues_by_name, protocol_facts, as_of=as_of))
 
         stablecoin_candidates = tuple(c for c in candidates if c.stablecoin)
         advice = safety.rank(stablecoin_candidates, as_of=as_of, by_slug=protocol_facts)
@@ -184,6 +184,20 @@ def _idle_rows(books) -> tuple[IdleCash, ...]:
     return tuple(rows)
 
 
+def _latest(rows):
+    """The most recent of several stored rows for one key — `altsignal_store.read` returns
+    rows time-ordered ascending, so the last one is the latest."""
+    return rows[-1]
+
+
+def _latest_by_key(rows) -> dict:
+    """`_latest`, applied per key, across rows spanning more than one key."""
+    latest: dict = {}
+    for row in rows:
+        latest[row.key] = row
+    return latest
+
+
 def _protocol_facts(*, store_read):
     """Every stored ``venue_safety_facts``/``venue_first_tvl`` row, gathered once — keyed on
     every slug the store has ever seen, not just the configured ones, because `core.safety.gate`
@@ -191,12 +205,8 @@ def _protocol_facts(*, store_read):
     facts_rows = store_read(source=SOURCE_DEFILLAMA, kind="venue_safety_facts")
     age_rows = store_read(source=SOURCE_DEFILLAMA, kind="venue_first_tvl")
 
-    latest_facts = {}
-    for row in facts_rows:  # ascending order — the last write per key is the latest.
-        latest_facts[row.key] = row
-    latest_age: dict[str, str] = {}
-    for row in age_rows:
-        latest_age[row.key] = row.value
+    latest_facts = _latest_by_key(facts_rows)
+    latest_age = {slug: row.value for slug, row in _latest_by_key(age_rows).items()}
 
     out: dict[str, safety.VenueFacts] = {}
     for slug, row in latest_facts.items():
@@ -222,7 +232,7 @@ def _pool_candidates(venues: tuple[VenueEntry, ...], protocol_facts: dict, *, st
             if not pool_rows:
                 continue
             all_rows.extend(pool_rows)
-            value = pool_rows[-1].value  # time-ordered ascending — last is latest.
+            value = _latest(pool_rows).value
             candidates.append(safety.VenueFacts(
                 slug=entry.llama_protocol,
                 pool_id=pool_id,
