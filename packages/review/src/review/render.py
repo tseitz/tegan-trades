@@ -101,7 +101,8 @@ LEVEL_HEADERS = ("TICKER", "PRICE", "SIDE", "LEVEL", "WHAT", "", "ROSTER", "")
 
 def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
            stale: bool = False, cash: float | None = None, cash_by=None,
-           mismatched=(), mandate=None, history=None, by_size: bool = False) -> str:
+           mismatched=(), mandate=None, history=None, by_size: bool = False,
+           yield_notes=()) -> str:
     """The whole report. ``as_of`` is passed in rather than read from a clock so a replay of
     a past date prints that date, not today's.
 
@@ -154,26 +155,38 @@ def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
     # grows past 5 when a wider verdict (`SELL_ZONE`, `BUY_ZONE`) is actually present.
     width = max(5, max((len(r.verdict) for r in loud), default=0))
     notes = [_note(r, width) for r in loud]
-    if notes:
-        adds = sum(1 for r in ranked if r.verdict == ADD)
-        # Beside the decisions rather than only in the header, and reported rather than acted
-        # on. What an ADD is worth is not something this file knows, so turning cash into a
-        # gate would invent a position size nobody chose. Saying the number where the ADDs are
-        # is enough for the one judgement it supports: whether there is room to act at all.
-        if cash is not None and adds:
-            lines += ["", f"  {_money(cash)} cash to fund {adds} ADD(s)"]
-            # Only when the file covers more than one account, and it has to print here rather
-            # than in the header. Two IRAs are one book to think about and their positions
-            # genuinely sum, but their cash does not — you cannot buy in the Roth with
-            # Traditional money. Beside the ADDs is the one place that distinction changes what
-            # you do; anywhere else it is trivia.
-            if cash_by and len(cash_by) > 1:
-                split = " · ".join(f"{name} {_money(value)}"
-                                   for name, value in sorted(cash_by.items()))
-                lines.append(f"        spendable separately — {split}")
+    # Same order the table above them is ranked, so the two per-holding blocks never disagree
+    # about which holding comes first — looked up by identity, not equality, since two distinct
+    # readings can compare equal by value.
+    position_of = {id(r): i for i, r in enumerate(ranked)}
+    yield_lines = [
+        _yield_line(note, width)
+        for note in sorted(yield_notes, key=lambda n: position_of[id(n.reading)])
+    ]
+    if notes or yield_lines:
+        if notes:
+            adds = sum(1 for r in ranked if r.verdict == ADD)
+            # Beside the decisions rather than only in the header, and reported rather than acted
+            # on. What an ADD is worth is not something this file knows, so turning cash into a
+            # gate would invent a position size nobody chose. Saying the number where the ADDs are
+            # is enough for the one judgement it supports: whether there is room to act at all.
+            if cash is not None and adds:
+                lines += ["", f"  {_money(cash)} cash to fund {adds} ADD(s)"]
+                # Only when the file covers more than one account, and it has to print here
+                # rather than in the header. Two IRAs are one book to think about and their
+                # positions genuinely sum, but their cash does not — you cannot buy in the Roth
+                # with Traditional money. Beside the ADDs is the one place that distinction
+                # changes what you do; anywhere else it is trivia.
+                if cash_by and len(cash_by) > 1:
+                    split = " · ".join(f"{name} {_money(value)}"
+                                       for name, value in sorted(cash_by.items()))
+                    lines.append(f"        spendable separately — {split}")
+            else:
+                lines.append("")
+            lines += notes
         else:
             lines.append("")
-        lines += notes
+        lines += yield_lines
     return "\n".join(lines)
 
 
@@ -353,6 +366,22 @@ def _note(reading: Reading, width: int) -> str:
     return (f"  {reading.verdict:<{width}} {reading.holding.ticker} — roster {side}{via} "
             f"({who}{age}){thin}{chart}{disagrees}; price {where_text(reading)}"
             f"{'' if reading.weekly_trend is None else f', weekly {reading.weekly_trend}'}")
+
+
+def _yield_line(note, width: int) -> str:
+    """A same-asset wrapper suggested beside the holding it is about — see
+    ``review.yield_note``. ``width`` is shared with ``_note`` so the two read as one column of
+    per-holding sentences, and ``"YIELD"`` (5 characters) is the floor that column already has.
+    """
+    already = ""
+    if note.already:
+        parts = ", ".join(f"{_num(shares)} {ticker}" for ticker, shares in note.already)
+        already = f"; {parts} already wrapped"
+    gate_word = "passed" if note.gate.passed else "failed"
+    ticker = note.reading.holding.ticker
+    apy = f"{note.apy:.2f}%" if note.apy is not None else "—"
+    return (f"  {'YIELD':<{width}} {ticker} — {note.wrapper} pays {apy} for the "
+            f"same {ticker} exposure ({note.protocol}, Safety gate {gate_word}){already}")
 
 
 def _money(value: float | None) -> str:

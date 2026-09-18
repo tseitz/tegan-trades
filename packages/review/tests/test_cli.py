@@ -220,6 +220,40 @@ def test_review_for_bundles_mismatch_and_levels_onto_the_result(monkeypatch):
     assert result.history is None
 
 
+def test_review_for_wires_yield_notes_into_the_result(monkeypatch):
+    """Seam 3, and it is the one that matters. Every other `review_for` call in this module
+    passes no `altsignal_cfg`, so the branch `review_for` fills `yield_notes` in has no
+    end-to-end coverage without this — and a `yield_note.py`-level test supplies its own
+    `assets` list, which is exactly where a canonical-vs-file-ticker defect would hide.
+    """
+    monkeypatch.setattr(cli.corpus, "iter_rows", lambda registry: iter(()))
+    monkeypatch.setattr(cli.listings, "load_or_fetch", lambda path: {})
+    monkeypatch.setattr(cli, "load_all_stances", lambda: [])
+
+    reading = _reading("ETH", price=100.0)
+    monkeypatch.setattr(
+        cli, "build_readings",
+        lambda book, **_: cli.Read(readings=[reading], contexts=(None,)))
+
+    calls = []
+    sentinel = ("sentinel-note",)
+
+    def _fake_yield_notes(readings, assets, positions, *, altsignal_cfg, as_of, **kw):
+        calls.append((tuple(readings), tuple(assets), tuple(positions)))
+        return sentinel
+
+    monkeypatch.setattr(cli.yield_note, "yield_notes", _fake_yield_notes)
+
+    book = Portfolio(name="test", mandate=MANDATE,
+                     positions=(Position(holding=reading.holding, domain="stock", mark=50.0),))
+
+    altsignal_cfg = cli.altsignal_config.AltSignalConfig(chains=(), markets=())
+    [result] = review_for([book], as_of=AS_OF, registry=REGISTRY, altsignal_cfg=altsignal_cfg)
+    assert result.yield_notes == sentinel
+    assert calls[0][1] == ("ETH",)
+    assert calls[0][2] == book.positions
+
+
 def test_load_books_skips_a_bad_file_and_reports_it(monkeypatch):
     """The seam `digest` calls instead of reaching into `oracle.portfolios` directly — see
     ADR-0004. One bad file must not cost every other account's review."""

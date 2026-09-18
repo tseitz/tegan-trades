@@ -58,11 +58,28 @@ class VenueEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class WrapperEntry:
+    """One same-asset wrapper the yield note (#74, ``review.yield_note``) can suggest.
+
+    See ``cfg/altsignal.yaml``'s header comment for what each field is and the failure mode of
+    getting it wrong — repeated there rather than here for the same reason ``VenueEntry``'s
+    docstring gives. No ``chain:`` — nothing here reads one, for the same reason ``VenueEntry``
+    dropped it (a second unread field is a fact nothing can keep true).
+    """
+    asset: str                     # CANONICAL asset per cfg/assets.yaml, never the file's ticker
+    wrapper: str                    # the receipt token's ticker, as wallet-sync would write it
+    contract: str                   # the receipt token's address, matched against a held `figi`
+    llama_protocol: str             # DefiLlama protocol slug
+    llama_pools: tuple[str, ...]    # DefiLlama pool uuid(s), yields.llama.fi/pools
+
+
+@dataclass(frozen=True, slots=True)
 class AltSignalConfig:
     chains: tuple[ChainEntry, ...]
     markets: tuple[MarketEntry, ...]
     protocols: tuple[ProtocolEntry, ...] = ()
     venues: tuple[VenueEntry, ...] = ()
+    wrappers: tuple[WrapperEntry, ...] = ()
 
 
 def load(config_dir) -> AltSignalConfig:
@@ -103,4 +120,16 @@ def load(config_dir) -> AltSignalConfig:
         )
         for row in data.get("venues") or ()
     )
-    return AltSignalConfig(chains=chains, markets=markets, protocols=protocols, venues=venues)
+    wrappers = tuple(
+        WrapperEntry(
+            asset=row["asset"],
+            wrapper=row["wrapper"],
+            contract=row["contract"],
+            llama_protocol=row["llama_protocol"],
+            llama_pools=tuple(row["llama_pools"]),
+        )
+        for row in data.get("wrappers") or ()
+    )
+    return AltSignalConfig(
+        chains=chains, markets=markets, protocols=protocols, venues=venues, wrappers=wrappers
+    )

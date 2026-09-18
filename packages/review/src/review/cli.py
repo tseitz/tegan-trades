@@ -39,7 +39,7 @@ from oracle.assemble import load_daily
 from oracle.resample import to_weekly
 from oracle.route import Priceable, load_routing_table, route
 
-from review import altsignal
+from review import altsignal, yield_note
 from review.levels import SHOWN, cap, shortlist
 from review.render import render, render_altsignal, render_levels
 
@@ -71,7 +71,7 @@ class ReviewResult(NamedTuple):
     ``review.levels.shortlist`` — capping for a screen is a display decision, not something the
     view should decide on a caller's behalf. See ``review.levels.cap``.
 
-    ``chains``/``macro`` come back empty when ``review_for`` was called with no
+    ``chains``/``macro``/``yield_notes`` come back empty when ``review_for`` was called with no
     ``altsignal_cfg`` — see its docstring for why that is opt-in rather than always assembled.
 
     ``history`` is the account's cached transaction span, or ``None`` when no
@@ -88,6 +88,7 @@ class ReviewResult(NamedTuple):
     chains: tuple
     macro: tuple
     history: TransactionSpan | None = None
+    yield_notes: tuple = ()
 
 
 def canonical_rows(book, registry) -> list[tuple[str, str]]:
@@ -226,11 +227,14 @@ def review_for(books, *, as_of: date, registry=None, altsignal_cfg=None) -> list
         # time with `review.levels.cap`.
         levels = shortlist(level_pairs, limit=None)
 
-        chains, macro = (), ()
+        chains, macro, notes = (), (), ()
         if altsignal_cfg is not None:
             assets = [asset for asset, _domain in pairs]
             chains = altsignal.chain_lines(readings, assets, altsignal_cfg=altsignal_cfg)
             macro = altsignal.macro_block(altsignal_cfg=altsignal_cfg)
+            notes = yield_note.yield_notes(
+                readings, assets, book.positions, altsignal_cfg=altsignal_cfg, as_of=as_of
+            )
 
         cached = transaction_store.load(book.name)
         history = TransactionSpan.of(cached[0]) if cached is not None else None
@@ -239,6 +243,7 @@ def review_for(books, *, as_of: date, registry=None, altsignal_cfg=None) -> list
             book=book, readings=readings, contexts=contexts,
             mismatched=mismatched(book, readings),
             levels=levels, chains=chains, macro=macro, history=history,
+            yield_notes=notes,
         ))
     return results
 
@@ -331,7 +336,7 @@ def main(argv: list[str] | None = None) -> int:
                  age_days=book.age_days(on=as_of), stale=book.is_stale(on=as_of),
                  cash=book.cash, cash_by=book.cash_by_account,
                  mismatched=result.mismatched, mandate=book.mandate, history=result.history,
-                 by_size=args.by_size))
+                 by_size=args.by_size, yield_notes=result.yield_notes))
 
     # The view hands back every level, uncapped — this is the one place that decides how much
     # fits on a screen. See `ReviewResult.levels` and `review.levels.cap`.

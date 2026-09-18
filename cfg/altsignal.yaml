@@ -52,6 +52,32 @@
 #   - `chain` is DefiLlama's DISPLAY chain name, not its slug — `OP Mainnet`, not `Optimism`;
 #     `Optimism` and `Matic` both return zero pools.
 #
+# `wrappers:` feeds oracle/altsignal/defillama.py's `fetch_venues` (same reader as `venues:`
+# above, unchanged — see #74) and `review.yield_note` — a THIRD identifier space, answering "if
+# you hold this asset bare, what receipt token pays more for the same exposure":
+#   - `asset` is the CANONICAL asset per `cfg/assets.yaml`, not the ticker a portfolio file
+#     happens to use. This is the field most likely to be got wrong: `resolve_asset("WETH")`
+#     returns `"ETH"` because WETH genuinely IS ether (`cfg/assets.yaml:11`), so a row written
+#     `asset: WETH` matches nothing, ever, on a book that holds WETH. Write the canonical name.
+#   - `wrapper` is the receipt token's ticker, as `wallet-sync` would write it to a portfolio
+#     file (`METH`, `STETH`) — cosmetic, read only for the note's own wording.
+#   - `contract` is the receipt token's address, and it is what "already held" is read from: a
+#     position's `figi` is compared against this, case-insensitively, to drop a wrapper you
+#     already hold from the suggestion. Confirmed through
+#     `coins.llama.fi/prices/current/<chain>:<addr>` by symbol, never guessed from a ticker.
+#   - `llama_protocol`/`llama_pools` are spelled exactly as `venues:` spells them and read by
+#     the same `fetch_venues` call — a protocol named in both blocks collapses to one reading.
+#   - No `chain:` field, unlike `venues:` — nothing here reads one.
+#   - Two rows must not name the same pool uuid; the loader does not catch it, and the second
+#     one silently wins.
+#
+# NOT `cfg/oracle_map.yaml`'s `wraps:` block. That one redirects a FUND's roster fold (`HODL`
+# borrows BTC's sentiment) while still pricing the fund on its own ticker — this block is about
+# which RECEIPT TOKEN pays more for holding the same asset, and never touches pricing or roster
+# folds at all. NOT a `cfg/assets.yaml` alias either — an alias reprices a holding outright
+# (`WETH` -> `ETH`'s price), where this block leaves both instruments priced as themselves and
+# only compares which one is a better place to park the exposure.
+#
 # Two DefiLlama fields mean "parent" and they are NOT the same relation. `forkedFromIds` is
 # lineage — what the Safety gate reads to find a validated fork's parent. `parentProtocol` is
 # DefiLlama's own grouping of a protocol family (`aave-v3` groups under `parent#aave`) — reading
@@ -99,6 +125,29 @@ venues:
   # Confirmed live 2026-09-17 against /protocols and /pools. Both USDC pools under aave-v3
   # are real rows (3.60% at count 1316, 5.26% at count 124 with a reward component) — see the
   # header above for why a protocol lists more than one pool.
+
+wrappers:
+  - asset: ETH
+    wrapper: STETH
+    contract: "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84"
+    llama_protocol: lido
+    llama_pools: [747c1d2a-c668-4682-b9f9-296708a3dd90]
+  - asset: ETH
+    wrapper: RETH
+    contract: "0xae78736Cd615f374D3085123A210448E74Fc6393"
+    llama_protocol: rocket-pool
+    llama_pools: [d4b3c522-6127-4b89-bedf-83641cdcd2eb]
+  - asset: ETH
+    wrapper: METH
+    contract: "0xd5F7838F5C461fefF7FE49ea5ebaF7728bB0ADfa"
+    llama_protocol: meth-protocol
+    llama_pools: [b9f2f00a-ba96-4589-a171-dde979a23d87]
+  # Pool uuids and contract addresses confirmed live 2026-09-17 against /pools and
+  # coins.llama.fi/prices/current. The aave-v3/sparklend WETH supply pools are deliberately not
+  # seeded here — ADR-0008:10 enumerates staking and locking as what "price exposure that
+  # accrues" means, and a lending receipt adds bad-debt and counterparty risk a validator does
+  # not carry. `meth-protocol` is seeded because mETH is the one wrapper this held book actually
+  # carries (`data/portfolios/crypto.yaml`).
 
 chains:
   - asset: SOL

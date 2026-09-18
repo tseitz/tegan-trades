@@ -18,11 +18,11 @@ from types import MappingProxyType
 from typing import NamedTuple
 
 from core import safety
+from core.venue_facts import pool_candidates as _pool_candidates
+from core.venue_facts import protocol_facts as _protocol_facts
 from oracle import benchmarks
 from oracle.altsignal_config import VenueEntry
 from oracle.treasury_file import TreasuryBook
-
-SOURCE_DEFILLAMA = "defillama"
 
 # A configured venue (has a `venues:` row) that the store has never actually seen — zero
 # `venue_safety_facts` readings, ever. Distinct from `safety.UNCONFIGURED` (no row at all) and
@@ -182,72 +182,6 @@ def _idle_rows(books) -> tuple[IdleCash, ...]:
         elif portfolio.cash is not None:
             rows.append(IdleCash(mandate=portfolio.mandate.name, account=portfolio.name, amount=portfolio.cash))
     return tuple(rows)
-
-
-def _latest(rows):
-    """The most recent of several stored rows for one key — `altsignal_store.read` returns
-    rows time-ordered ascending, so the last one is the latest."""
-    return rows[-1]
-
-
-def _latest_by_key(rows) -> dict:
-    """`_latest`, applied per key, across rows spanning more than one key."""
-    latest: dict = {}
-    for row in rows:
-        latest[row.key] = row
-    return latest
-
-
-def _protocol_facts(*, store_read):
-    """Every stored ``venue_safety_facts``/``venue_first_tvl`` row, gathered once — keyed on
-    every slug the store has ever seen, not just the configured ones, because `core.safety.gate`
-    needs a resolved parent's own facts to validate a fork's lineage."""
-    facts_rows = store_read(source=SOURCE_DEFILLAMA, kind="venue_safety_facts")
-    age_rows = store_read(source=SOURCE_DEFILLAMA, kind="venue_first_tvl")
-
-    latest_facts = _latest_by_key(facts_rows)
-    latest_age = {slug: row.value for slug, row in _latest_by_key(age_rows).items()}
-
-    out: dict[str, safety.VenueFacts] = {}
-    for slug, row in latest_facts.items():
-        value = row.value
-        first_tvl_on = date.fromisoformat(latest_age[slug]) if slug in latest_age else None
-        out[slug] = safety.VenueFacts(
-            slug=slug,
-            audited=value.get("audited"),
-            first_tvl_on=first_tvl_on,
-            forked_from=tuple(value.get("forked_from") or ()),
-            incidents=value.get("incidents"),
-        )
-    return out, list(facts_rows) + list(age_rows)
-
-
-def _pool_candidates(venues: tuple[VenueEntry, ...], protocol_facts: dict, *, store_read):
-    candidates: list[safety.VenueFacts] = []
-    all_rows = []
-    for entry in venues:
-        base = protocol_facts.get(entry.llama_protocol)
-        for pool_id in entry.llama_pools:
-            pool_rows = store_read(source=SOURCE_DEFILLAMA, kind="venue_pool", key=pool_id)
-            if not pool_rows:
-                continue
-            all_rows.extend(pool_rows)
-            value = _latest(pool_rows).value
-            candidates.append(safety.VenueFacts(
-                slug=entry.llama_protocol,
-                pool_id=pool_id,
-                audited=base.audited if base else None,
-                first_tvl_on=base.first_tvl_on if base else None,
-                forked_from=base.forked_from if base else (),
-                incidents=base.incidents if base else None,
-                apy=value.get("apy"),
-                apy_reward=value.get("apy_reward"),
-                sigma=value.get("sigma"),
-                count=value.get("count"),
-                outlier=value.get("outlier"),
-                stablecoin=value.get("stablecoin"),
-            ))
-    return tuple(candidates), all_rows
 
 
 def _row_safety(rows, venues_by_name: dict, protocol_facts: dict, *, as_of: date) -> dict:

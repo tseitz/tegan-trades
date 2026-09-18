@@ -1,3 +1,4 @@
+import pytest
 from oracle import altsignal_config
 
 
@@ -111,3 +112,50 @@ def test_a_file_with_no_venues_block_yields_empty(tmp_path):
     )
     cfg = altsignal_config.load(tmp_path)
     assert cfg.venues == ()
+
+
+def test_loads_wrappers(tmp_path):
+    (tmp_path / "altsignal.yaml").write_text(
+        """
+wrappers:
+  - asset: ETH
+    wrapper: STETH
+    contract: "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84"
+    llama_protocol: lido
+    llama_pools: [747c1d2a-c668-4682-b9f9-296708a3dd90]
+""",
+        encoding="utf-8",
+    )
+    cfg = altsignal_config.load(tmp_path)
+    assert cfg.wrappers == (
+        altsignal_config.WrapperEntry(
+            asset="ETH",
+            wrapper="STETH",
+            contract="0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",
+            llama_protocol="lido",
+            llama_pools=("747c1d2a-c668-4682-b9f9-296708a3dd90",),
+        ),
+    )
+
+
+def test_a_wrapper_row_with_no_contract_raises(tmp_path):
+    (tmp_path / "altsignal.yaml").write_text(
+        """
+wrappers:
+  - asset: ETH
+    wrapper: STETH
+    llama_protocol: lido
+    llama_pools: [747c1d2a-c668-4682-b9f9-296708a3dd90]
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(KeyError):
+        altsignal_config.load(tmp_path)
+
+
+def test_a_file_with_no_wrappers_block_yields_empty(tmp_path):
+    (tmp_path / "altsignal.yaml").write_text(
+        "chains:\n  - asset: SOL\n    chain: solana\n", encoding="utf-8"
+    )
+    cfg = altsignal_config.load(tmp_path)
+    assert cfg.wrappers == ()

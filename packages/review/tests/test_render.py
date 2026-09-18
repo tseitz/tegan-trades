@@ -1,4 +1,5 @@
 from datetime import date
+from types import SimpleNamespace
 
 from core.review import (
     ABOVE_RANGE,
@@ -25,6 +26,7 @@ from core.review import (
 from core.transactions import TransactionSpan
 from oracle.portfolios import Benchmark, Mandate
 from review.render import ORDER, render, roster_text
+from review.yield_note import YieldNote
 
 AS_OF = date(2025, 1, 10)
 
@@ -564,3 +566,40 @@ def test_an_empty_book_still_prints_the_history_line():
     span = TransactionSpan(oldest=date(2024, 3, 1), newest=date(2025, 1, 1), count=40)
     out = render([], portfolio="retirement", as_of=AS_OF, mandate=HELD_FLAT, history=span)
     assert "2024-03-01" in out
+
+
+# ── yield notes (#74) ───────────────────────────────────────────────────────
+
+
+def _yield_note(reading, *, wrapper="STETH", protocol="lido", apy=2.25, already=()):
+    return YieldNote(
+        reading=reading, wrapper=wrapper, protocol=protocol, apy=apy, already=already,
+        gate=SimpleNamespace(passed=True), score=SimpleNamespace(),
+    )
+
+
+def test_a_yield_note_prints_beside_its_holding_with_no_heading_or_section():
+    reading = _reading("ETH", verdict=HOLD, lean=_lean(BULLISH_ROSTER, bulls=2, bears=0))
+    out = render([reading], portfolio="p", as_of=AS_OF,
+                 yield_notes=(_yield_note(reading, already=(("METH", 0.0246499),)),))
+    assert "YIELD" in out
+    assert "STETH" in out
+    assert "2.25" in out
+    assert "0.0246499 METH already wrapped" in out
+    # No heading and no separate section — it prints in the same block `_note` writes into.
+    assert "ALT-SIGNAL" not in out
+
+
+def test_yield_notes_print_even_with_no_loud_rows():
+    """AC 1: a report with a yield note and no TRIM/ADD/WATCH rows must still print it — the
+    separator blank line used to come only from the loud-notes branch."""
+    reading = _reading("ETH", verdict=HOLD, lean=_lean(BULLISH_ROSTER, bulls=2, bears=0))
+    out = render([reading], portfolio="p", as_of=AS_OF, yield_notes=(_yield_note(reading),))
+    assert "YIELD" in out
+
+
+def test_no_yield_notes_leaves_output_unchanged():
+    reading = _reading("BTC")
+    with_empty = render([reading], portfolio="p", as_of=AS_OF, yield_notes=())
+    without_arg = render([reading], portfolio="p", as_of=AS_OF)
+    assert with_empty == without_arg
