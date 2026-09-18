@@ -114,15 +114,18 @@ assets:
   # (STRK, $100 par) — confirmed by the thesis itself: it calls STRK "at a premium to $100 par"
   # on 2025-07-02, and Yahoo's cached close that week was ~$118, a premium. Not Starknet.
   STRK:     {source: yahoo, symbol: "STRK"}
+  # CoinGecko lists a Hyperliquid spot token under "PURR" (rank 378, cfg/tickers.json); the
+  # 2026-09-13 entry read that as the asset, routed to `unpriceable`, and so hid a held
+  # position from `review` entirely. Overruled 2026-09-18: Yahoo returns EQUITY "Hyperliquid
+  # Strategies Inc" on Nasdaq at 12.83, M1 marks the holding 11.44, and all 9 corpus theses
+  # mean the company — quoting $3.50-$5.50 entries and calling it "the HYPE-treasury vehicle".
+  # A thesis that means the token would price as the company with nothing to flag it: check
+  # `asset_heard` before trusting a new one.
+  PURR:     {source: yahoo, symbol: "PURR"}
 
   # ── crypto needing an explicit hand ──────────────────────────────────────
   # The other half of the SPX collision: this one really *is* the memecoin.
   SPX6900:  {source: coinbase, symbol: "SPX-USD"}
-  # Yahoo's "PURR" is a different, wrong instrument (confirm.py's collision list) — off by
-  # 2-4 orders of magnitude. Verified 2026-09-13: the Hyperliquid spot token is not listed on
-  # Coinbase or Kraken either, so none of the three fetchable sources carry the real thing.
-  # Unpriceable is the honest state until one does.
-  PURR:     {unpriceable: no_venue, detail: "Hyperliquid spot token; not on Yahoo/Coinbase/Kraken"}
 
   # ── dominance / index metrics: TradingView-only concepts, no price feed ──
   BTC.D:    {unpriceable: dominance_metric}

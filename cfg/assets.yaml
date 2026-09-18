@@ -53,6 +53,7 @@ RIVN: ["Rivian (RIVN)"]
 COIN: ["Coinbase (COIN)"]
 CRCL: ["Circle (CRCL)"]
 NFLX: []
+PURR: [PER, Purr, "PER / PURR", "PER / Purr / Hyperliquid Strategies", "per / purr (Hyperliquid)", "per / purr (treasury company holding Hyperliquid)", "Hyperliquid Strategies"]
 
 # ── ratios vs BTC (kept as the ratio, not a single asset) ──
 BTC/GOLD: ["BTC/Gold", "BTC/Gold Ratio", "Gold vs Bitcoin", "BTC vs Gold"]
