@@ -43,10 +43,26 @@ class ProtocolEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class VenueEntry:
+    """One yield venue the Safety gate (#73, ``core.safety``) can rank.
+
+    See ``cfg/altsignal.yaml``'s header comment for what each field is and the failure mode of
+    getting it wrong — repeated there rather than here for the same reason ``ProtocolEntry``'s
+    docstring gives.
+    """
+    venue: str                     # matches a `data/treasury.yaml` row's `venue:`
+    llama_protocol: str            # DefiLlama protocol slug
+    llama_pools: tuple[str, ...]   # DefiLlama pool uuid(s), yields.llama.fi/pools
+    asset: str                     # ticker the venue accepts, as a portfolio file writes it
+    chain: str                     # DefiLlama's display chain name
+
+
+@dataclass(frozen=True, slots=True)
 class AltSignalConfig:
     chains: tuple[ChainEntry, ...]
     markets: tuple[MarketEntry, ...]
     protocols: tuple[ProtocolEntry, ...] = ()
+    venues: tuple[VenueEntry, ...] = ()
 
 
 def load(config_dir) -> AltSignalConfig:
@@ -77,4 +93,14 @@ def load(config_dir) -> AltSignalConfig:
         )
         for row in data.get("protocols") or ()
     )
-    return AltSignalConfig(chains=chains, markets=markets, protocols=protocols)
+    venues = tuple(
+        VenueEntry(
+            venue=row["venue"],
+            llama_protocol=row["llama_protocol"],
+            llama_pools=tuple(row["llama_pools"]),
+            asset=row["asset"],
+            chain=row["chain"],
+        )
+        for row in data.get("venues") or ()
+    )
+    return AltSignalConfig(chains=chains, markets=markets, protocols=protocols, venues=venues)

@@ -58,6 +58,16 @@ def _snapshot(cfg: altsignal_config.AltSignalConfig, verbose: bool = True) -> li
         except FetchError as exc:
             print(f"  ! coingecko: {exc}")
 
+    if cfg.venues:
+        try:
+            known_ages = frozenset(r.key for r in altsignal_store.read(kind="venue_first_tvl"))
+            got = defillama.fetch_venues(cfg.venues, observed_at=at, known_ages=known_ages)
+            readings.extend(got)
+            if verbose:
+                print(f"  defillama (venues): {len(got)} readings")
+        except FetchError as exc:
+            print(f"  ! defillama (venues): {exc}")
+
     kalshi_tickers = [m.key for m in cfg.markets if m.platform == "kalshi"]
     if kalshi_tickers:
         try:

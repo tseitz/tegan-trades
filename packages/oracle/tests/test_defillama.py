@@ -2,7 +2,7 @@
 from datetime import UTC, datetime, timedelta
 
 from oracle.altsignal import defillama
-from oracle.altsignal_config import ProtocolEntry
+from oracle.altsignal_config import ProtocolEntry, VenueEntry
 from oracle.http import FetchError
 
 AT = datetime(2026, 9, 3, 6, 15, tzinfo=UTC)
@@ -235,3 +235,189 @@ def test_fetch_protocols_emits_one_open_interest_reading_per_llama_oi_slug_never
     assert {r.value for r in oi_readings} == {543_240_949, 199_512_921}
     # Category is reported once per protocol, from the first llama_oi slug only.
     assert len([r for r in readings if r.kind == "protocol_category"]) == 1
+
+
+# ------------------------------------------------------------------------- venue Safety (#73)
+
+AAVE_V3 = VenueEntry(
+    venue="aave-v3", llama_protocol="aave-v3",
+    llama_pools=("aa70268e-4b52-42bf-a116-608b370f9501",), asset="USDC", chain="Ethereum",
+)
+
+SPARKLEND = VenueEntry(
+    venue="sparklend", llama_protocol="sparklend",
+    llama_pools=("65ce8276-b4d9-41ba-9f6f-21fc374cf9bc",), asset="USDC", chain="Ethereum",
+)
+
+PROTOCOLS_PAYLOAD = [
+    {"id": "111", "slug": "aave-v3", "audits": "2", "forkedFromIds": None, "hallmarks": None},
+    {
+        "id": "222", "slug": "sparklend", "audits": "2", "forkedFromIds": ["111"],
+        "hallmarks": [[1700000000, "Exploit disclosed"]],
+    },
+    {"id": "333", "slug": "no-audit-protocol", "audits": "0", "forkedFromIds": None},
+    # Deliberately no `audits` key at all — the 0.2% DefiLlama does not report on.
+    {"id": "444", "slug": "unread-audit-protocol", "forkedFromIds": None},
+]
+
+# A wrong slug -> HTTP 200, EMPTY BODY -> `""`, which parses as no data, never a wrong name.
+EMPTY_BODY_PAYLOAD = ""
+
+POOLS_PAYLOAD = {
+    "data": [
+        {
+            "pool": "aa70268e-4b52-42bf-a116-608b370f9501", "project": "aave-v3",
+            "apy": 3.59532, "apyBase": 3.59532, "apyReward": None, "sigma": 0.15467,
+            "count": 1316, "outlier": False, "stablecoin": True,
+        },
+        {
+            "pool": "65ce8276-b4d9-41ba-9f6f-21fc374cf9bc", "project": "sparklend",
+            "apy": 3.54196, "apyBase": 3.54196, "apyReward": None, "sigma": 0.14989,
+            "count": 1051, "outlier": False, "stablecoin": True,
+        },
+        {
+            "pool": "unrequested-pool", "project": "aave-v3", "apy": 99.0,
+            "apyBase": None, "apyReward": 99.0, "sigma": 0.0, "count": 1, "outlier": True,
+            "stablecoin": True,
+        },
+    ]
+}
+
+
+def test_parse_venue_metadata_reads_the_decision_fields_for_a_requested_slug():
+    out = defillama.parse_venue_metadata(PROTOCOLS_PAYLOAD, slugs=["aave-v3"])
+    assert out["aave-v3"] == {"audited": True, "forked_from": [], "incidents": 0}
+
+
+def test_parse_venue_metadata_resolves_forked_from_ids_to_parent_slugs():
+    out = defillama.parse_venue_metadata(PROTOCOLS_PAYLOAD, slugs=["sparklend"])
+    assert out["sparklend"]["forked_from"] == ["aave-v3"]
+    assert out["sparklend"]["incidents"] == 1
+
+
+def test_parse_venue_metadata_returns_a_record_for_the_resolved_parent_too():
+    """AC 2: the parent needs its own age/audit facts, not just the fork's."""
+    out = defillama.parse_venue_metadata(PROTOCOLS_PAYLOAD, slugs=["sparklend"])
+    assert "aave-v3" in out
+    assert out["aave-v3"]["audited"] is True
+
+
+def test_parse_venue_metadata_no_audit_field_is_none_not_false():
+    out = defillama.parse_venue_metadata(PROTOCOLS_PAYLOAD, slugs=["unread-audit-protocol"])
+    assert out["unread-audit-protocol"]["audited"] is None
+
+
+def test_parse_venue_metadata_audits_zero_is_false_not_none():
+    out = defillama.parse_venue_metadata(PROTOCOLS_PAYLOAD, slugs=["no-audit-protocol"])
+    assert out["no-audit-protocol"]["audited"] is False
+
+
+def test_parse_venue_metadata_a_protocol_with_no_forked_from_ids_yields_empty_list():
+    out = defillama.parse_venue_metadata(PROTOCOLS_PAYLOAD, slugs=["aave-v3"])
+    assert out["aave-v3"]["forked_from"] == []
+
+
+def test_parse_venue_pools_reads_only_requested_pools():
+    out = defillama.parse_venue_pools(
+        POOLS_PAYLOAD, pool_ids=["aa70268e-4b52-42bf-a116-608b370f9501"]
+    )
+    assert set(out) == {"aa70268e-4b52-42bf-a116-608b370f9501"}
+    assert out["aa70268e-4b52-42bf-a116-608b370f9501"]["apy"] == 3.59532
+    assert out["aa70268e-4b52-42bf-a116-608b370f9501"]["count"] == 1316
+
+
+def test_parse_first_tvl_date_takes_the_first_non_zero_point():
+    payload = {
+        "tvl": [
+            {"date": 1600000000, "totalLiquidityUSD": 0},
+            {"date": 1600100000, "totalLiquidityUSD": 0},
+            {"date": 1600200000, "totalLiquidityUSD": 51234.5},
+            {"date": 1600300000, "totalLiquidityUSD": 90000.0},
+        ]
+    }
+    assert defillama.parse_first_tvl_date(payload) == "2020-09-15"
+
+
+def test_parse_first_tvl_date_all_zero_points_is_none():
+    payload = {"tvl": [{"date": 1600000000, "totalLiquidityUSD": 0}]}
+    assert defillama.parse_first_tvl_date(payload) is None
+
+
+def test_parse_first_tvl_date_empty_body_payload_is_none():
+    assert defillama.parse_first_tvl_date(EMPTY_BODY_PAYLOAD) is None
+
+
+def _fetch_venues_router(*, history_payloads: dict):
+    def fake_get_json(url, params=None, **kwargs):
+        if url == defillama.PROTOCOLS_BASE:
+            return PROTOCOLS_PAYLOAD
+        if url == defillama.POOLS_BASE:
+            return POOLS_PAYLOAD
+        for slug, payload in history_payloads.items():
+            if url == f"{defillama.PROTOCOL_HISTORY_BASE}/{slug}":
+                return payload
+        raise AssertionError(f"unexpected URL {url}")
+
+    return fake_get_json
+
+
+def test_fetch_venues_writes_safety_facts_age_and_pool_readings():
+    history = {
+        "aave-v3": {"tvl": [{"date": 1600000000, "totalLiquidityUSD": 90000.0}]},
+        "sparklend": {"tvl": [{"date": 1650000000, "totalLiquidityUSD": 12345.0}]},
+    }
+    readings = defillama.fetch_venues(
+        [SPARKLEND], get_json=_fetch_venues_router(history_payloads=history), observed_at=AT
+    )
+    by_kind = {(r.kind, r.key): r for r in readings}
+    assert ("venue_safety_facts", "sparklend") in by_kind
+    assert ("venue_safety_facts", "aave-v3") in by_kind  # the resolved parent
+    assert ("venue_first_tvl", "sparklend") in by_kind
+    assert by_kind[("venue_first_tvl", "sparklend")].value == "2022-04-15"
+    assert ("venue_pool", "65ce8276-b4d9-41ba-9f6f-21fc374cf9bc") in by_kind
+
+
+def test_fetch_venues_skips_the_history_fetch_for_a_slug_already_in_known_ages():
+    def fake_get_json(url, params=None, **kwargs):
+        if url == defillama.PROTOCOLS_BASE:
+            return PROTOCOLS_PAYLOAD
+        if url == defillama.POOLS_BASE:
+            return POOLS_PAYLOAD
+        raise AssertionError(f"history fetch must have been skipped: {url}")
+
+    readings = defillama.fetch_venues(
+        [AAVE_V3], get_json=fake_get_json, observed_at=AT, known_ages=frozenset({"aave-v3"})
+    )
+    kinds = {r.kind for r in readings}
+    assert "venue_first_tvl" not in kinds
+    assert "venue_safety_facts" in kinds
+
+
+def test_fetch_venues_a_failed_history_fetch_writes_no_venue_first_tvl_row():
+    def fake_get_json(url, params=None, **kwargs):
+        if url == defillama.PROTOCOLS_BASE:
+            return PROTOCOLS_PAYLOAD
+        if url == defillama.POOLS_BASE:
+            return POOLS_PAYLOAD
+        if url.startswith(defillama.PROTOCOL_HISTORY_BASE):
+            raise FetchError("500 for protocol history")
+        raise AssertionError(f"unexpected URL {url}")
+
+    readings = defillama.fetch_venues([AAVE_V3], get_json=fake_get_json, observed_at=AT)
+    assert not any(r.kind == "venue_first_tvl" for r in readings)
+    assert any(r.kind == "venue_safety_facts" for r in readings)
+
+
+def test_fetch_venues_a_down_pools_endpoint_still_yields_safety_facts():
+    def fake_get_json(url, params=None, **kwargs):
+        if url == defillama.PROTOCOLS_BASE:
+            return PROTOCOLS_PAYLOAD
+        if url == defillama.POOLS_BASE:
+            raise FetchError("500 for pools")
+        if url.startswith(defillama.PROTOCOL_HISTORY_BASE):
+            return {"tvl": [{"date": 1600000000, "totalLiquidityUSD": 90000.0}]}
+        raise AssertionError(f"unexpected URL {url}")
+
+    readings = defillama.fetch_venues([AAVE_V3], get_json=fake_get_json, observed_at=AT)
+    assert any(r.kind == "venue_safety_facts" for r in readings)
+    assert not any(r.kind == "venue_pool" for r in readings)

@@ -76,3 +76,38 @@ def test_a_file_with_no_protocols_block_yields_empty(tmp_path):
     )
     cfg = altsignal_config.load(tmp_path)
     assert cfg.protocols == ()
+
+
+def test_loads_venues_with_a_list_valued_llama_pools(tmp_path):
+    (tmp_path / "altsignal.yaml").write_text(
+        """
+venues:
+  - venue: aave-v3
+    llama_protocol: aave-v3
+    llama_pools: [aa70268e-4b52-42bf-a116-608b370f9501, 6f00d46b-8735-49ae-9ced-2a0fccc56ad0]
+    asset: USDC
+    chain: Ethereum
+""",
+        encoding="utf-8",
+    )
+    cfg = altsignal_config.load(tmp_path)
+    assert cfg.venues == (
+        altsignal_config.VenueEntry(
+            venue="aave-v3",
+            llama_protocol="aave-v3",
+            llama_pools=(
+                "aa70268e-4b52-42bf-a116-608b370f9501",
+                "6f00d46b-8735-49ae-9ced-2a0fccc56ad0",
+            ),
+            asset="USDC",
+            chain="Ethereum",
+        ),
+    )
+
+
+def test_a_file_with_no_venues_block_yields_empty(tmp_path):
+    (tmp_path / "altsignal.yaml").write_text(
+        "chains:\n  - asset: SOL\n    chain: solana\n", encoding="utf-8"
+    )
+    cfg = altsignal_config.load(tmp_path)
+    assert cfg.venues == ()

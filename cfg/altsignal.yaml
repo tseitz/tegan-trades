@@ -35,6 +35,38 @@
 #     coin vs `aster` the exchange), and split into several rows the same way `llama_oi` is.
 #   - `venue` names which adapter under `oracle/sources/` reads per-market detail. No reader
 #     consumes it yet — reserved for a future ticket, kept here so it does not need re-adding.
+#
+# `venues:` feeds oracle/altsignal/defillama.py's `fetch_venues` and `core.safety` (the Safety
+# gate, #73) — a DIFFERENT identifier space from `protocols:` above, even where a slug repeats:
+#   - `venue` must match a `data/treasury.yaml` row's `venue:` field exactly — this is what
+#     `treasury` looks a row's safety facts up by, and what its advice prints. Wrong, and a
+#     parked row silently shows no safety.
+#   - `llama_protocol` is a DefiLlama protocol slug for `/protocols` and `/protocol/{slug}` —
+#     same failure mode as `llama_fees`/`llama_tvl` above: a wrong slug answers HTTP 200 with
+#     an EMPTY BODY, which reads as "no data" rather than "wrong name".
+#   - `llama_pools` is a LIST of DefiLlama pool uuids from `yields.llama.fi/pools` — one
+#     protocol serves several pools (aave-v3 alone serves six `stablecoin: true` pools on
+#     Ethereum), and a single hand-picked uuid would decide what gets ranked by whichever pool
+#     someone happened to paste. Every listed pool ranks as its own candidate.
+#   - `asset` is the ticker this venue accepts, as a portfolio or treasury file writes it.
+#   - `chain` is DefiLlama's DISPLAY chain name, not its slug — `OP Mainnet`, not `Optimism`;
+#     `Optimism` and `Matic` both return zero pools.
+#
+# Two DefiLlama fields mean "parent" and they are NOT the same relation. `forkedFromIds` is
+# lineage — what the Safety gate reads to find a validated fork's parent. `parentProtocol` is
+# DefiLlama's own grouping of a protocol family (`aave-v3` groups under `parent#aave`) — reading
+# it as lineage would hand a protocol its own family as a "validated parent", which is not what
+# ADR-0006 means by "a specific parent protocol [that] already clears this same gate".
+#
+# This list of slugs and pool uuids is NOT the hand-kept trustworthy-venue allowlist ADR-0006
+# forbids. What is forbidden is a list of venues judged safe by whoever edited this file; every
+# fact the gate actually decides on (audit, age, lineage) is read fresh from DefiLlama at fetch
+# time, never asserted here. This file only says which protocols and pools to ask about.
+#
+# `sparklend` forks from `aave-v3` (confirmed live 2026-09-17: `forkedFromIds: ["1599"]`,
+# `1599` -> `aave-v3`) — the one row here that actually exercises a validated-fork lineage
+# resolution. `aave-v3` and `lido` both carry `forkedFromIds: None`, so seeding only a
+# standalone protocol would ship the fork-lineage code path fixture-only.
 
 protocols:
   - asset: HYPE
@@ -52,6 +84,21 @@ protocols:
     coingecko_derivatives: [lighter, robinhood-chain-lighter-futures]
     venue: lighter
   # Confirmed live 2026-09-16 against /overview/open-interest and /derivatives/exchanges.
+
+venues:
+  - venue: aave-v3
+    llama_protocol: aave-v3
+    llama_pools: [aa70268e-4b52-42bf-a116-608b370f9501, 6f00d46b-8735-49ae-9ced-2a0fccc56ad0]
+    asset: USDC
+    chain: Ethereum
+  - venue: sparklend
+    llama_protocol: sparklend
+    llama_pools: [65ce8276-b4d9-41ba-9f6f-21fc374cf9bc]
+    asset: USDC
+    chain: Ethereum
+  # Confirmed live 2026-09-17 against /protocols and /pools. Both USDC pools under aave-v3
+  # are real rows (3.60% at count 1316, 5.26% at count 124 with a reward component) — see the
+  # header above for why a protocol lists more than one pool.
 
 chains:
   - asset: SOL

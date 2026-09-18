@@ -40,6 +40,38 @@ data and both worth stating beside the parser that avoids them:
   window. Compute the 30-day delta from `documentedData` yourself; do not read this field.
 - `documentedData` extends **into the future** — Lighter's series runs to 2029-12-29. Take the
   last point *at or before* the reference time, never the series' last point.
+
+Venue-level (#73): `fetch_venues` reads three more endpoints, sizes and shapes measured live
+2026-09-17:
+
+    https://api.llama.fi/protocols       audits, forkedFromIds, hallmarks — 8.85 MB, ~8,280
+                                          protocols, one download per run
+    https://yields.llama.fi/pools        apy, apyReward, sigma, count, outlier, stablecoin —
+                                          11.37 MB, ~16,550 pools, one download per run
+    https://api.llama.fi/protocol/{slug} the honest age: first non-zero point in `tvl[]` —
+                                          29.4 MB for aave-v3, 2.04 MB for lido, so this one is
+                                          fetched once per slug, EVER, never re-polled
+
+`tvl[]` points are `{"date": <unix>, "totalLiquidityUSD": <float>}` — neither name is guessable
+from the field names the other three endpoints use. `listedAt` is **not** used even as a
+fallback for the age: it is DefiLlama's listing date, not a deployment date, and Lido carries
+none at all.
+
+`audits` is present on 99.8% of protocols; reading its 35.5%-nonzero share as *coverage* would
+overstate how gappy the audit check is. The decision rule is `audits != "0"`. `audit_links`
+(34.6%) is not read — it is a URL list that disagrees with `audits` in both directions, and the
+gate needs one rule, not a union of two. `forkedFromIds` (lineage) and `parentProtocol`
+(DefiLlama's own family grouping, e.g. `aave-v3 -> "parent#aave"`) are two different relations
+under one English word — only `forkedFromIds` is lineage.
+
+**`venue_first_tvl` is its own write-once store kind, never folded into `venue_safety_facts`.**
+`venue_safety_facts` is rewritten every night from the bulk `/protocols` payload, which carries
+no age. `altsignal_store`'s reader takes only the latest row per key, so if the age lived in
+that same nightly dict, the second night's write — with no history fetch attached — would
+silently erase the date, and the Safety gate would start failing every venue from night two
+onward with no error anywhere. Keeping it separate, keyed on protocol slug, and written once on
+a successful fetch (never on failure, and never overwritten) is what a "date a protocol first
+had TVL" fact actually needs: it cannot move.
 """
 from __future__ import annotations
 
@@ -56,6 +88,9 @@ FEES_BASE = "https://api.llama.fi/summary/fees"
 PROTOCOL_TVL_BASE = "https://api.llama.fi/tvl"
 OPEN_INTEREST_BASE = "https://api.llama.fi/summary/open-interest"
 EMISSIONS_BASE = "https://defillama-datasets.llama.fi/emissions"
+PROTOCOLS_BASE = "https://api.llama.fi/protocols"
+POOLS_BASE = "https://yields.llama.fi/pools"
+PROTOCOL_HISTORY_BASE = "https://api.llama.fi/protocol"
 
 # Days-back/forward windows the unlock schedule reports over. TUNE.
 UNLOCK_LOOKBACK_DAYS = 30
@@ -325,5 +360,167 @@ def fetch_protocols(
                     value=unlocks, observed_at=at,
                 )
             )
+
+    return readings
+
+
+# ------------------------------------------------------------------------- venue Safety (#73)
+
+
+def parse_venue_metadata(payload, *, slugs: list[str]) -> dict[str, dict]:
+    """Gate-level facts for every requested slug **plus one per resolved parent**.
+
+    ``id`` is a string (`"182"`), and `forkedFromIds` names parents by id, not slug — so this
+    indexes the bulk payload by both `id` and `slug` in one pass and resolves every fork edge
+    it can before returning. A parent slug picked up this way is walked too, so a two-generation
+    fork chain still resolves; a parent this payload doesn't carry (a bad id, or the id
+    genuinely absent) is silently dropped from `forked_from` rather than raising — `core.safety`
+    reads that as `unresolved_parent`, which is the correct reading of "we could not confirm
+    this lineage", not an error.
+
+    ``audited`` is ``None`` only when the `audits` field itself is absent (0.2% of protocols) —
+    every other protocol gets a real ``True``/``False`` from `audits != "0"`. ``incidents`` is
+    a bare count of `hallmarks` entries; DefiLlama does not distinguish an incident from a
+    routine milestone inside that list, so this counts the list rather than guessing which are
+    good news.
+    """
+    by_id: dict[str, dict] = {}
+    by_slug: dict[str, dict] = {}
+    for entry in payload or ():
+        protocol_id = entry.get("id")
+        slug = entry.get("slug")
+        if protocol_id is not None:
+            by_id[str(protocol_id)] = entry
+        if slug is not None:
+            by_slug[slug] = entry
+
+    out: dict[str, dict] = {}
+    queue = list(slugs)
+    queued = set(slugs)
+    while queue:
+        slug = queue.pop()
+        entry = by_slug.get(slug)
+        if entry is None:
+            continue
+        parent_slugs = [
+            by_id[str(parent_id)]["slug"]
+            for parent_id in (entry.get("forkedFromIds") or ())
+            if str(parent_id) in by_id
+        ]
+        audits_raw = entry.get("audits")
+        out[slug] = {
+            "audited": None if audits_raw is None else audits_raw != "0",
+            "forked_from": parent_slugs,
+            "incidents": len(entry.get("hallmarks") or ()),
+        }
+        for parent_slug in parent_slugs:
+            if parent_slug not in queued:
+                queued.add(parent_slug)
+                queue.append(parent_slug)
+    return out
+
+
+def parse_venue_pools(payload, *, pool_ids: list[str]) -> dict[str, dict]:
+    """Score- and ranking-level facts for every requested pool uuid, found on the pool's own
+    row — never presummed or renamed, so a caller reads exactly what DefiLlama reported."""
+    wanted = set(pool_ids)
+    out: dict[str, dict] = {}
+    for entry in (payload or {}).get("data") or ():
+        pool_id = entry.get("pool")
+        if pool_id not in wanted:
+            continue
+        out[pool_id] = {
+            "apy": entry.get("apy"),
+            "apy_reward": entry.get("apyReward"),
+            "sigma": entry.get("sigma"),
+            "count": entry.get("count"),
+            "outlier": entry.get("outlier"),
+            "stablecoin": entry.get("stablecoin"),
+        }
+    return out
+
+
+def parse_first_tvl_date(payload) -> str | None:
+    """The honest deployment age: the first point in `tvl[]` whose `totalLiquidityUSD` is
+    non-zero, as an ISO-8601 date string — never `date`, which `altsignal_store.append` cannot
+    serialise (see its own docstring). `None` when the protocol has no such point at all."""
+    for point in (payload or {}).get("tvl") or ():
+        value = point.get("totalLiquidityUSD")
+        if not value:
+            continue
+        timestamp = point.get("date")
+        if timestamp is None:
+            continue
+        return datetime.fromtimestamp(timestamp, tz=UTC).date().isoformat()
+    return None
+
+
+def _first_tvl_date(slug: str, *, get_json) -> str | None:
+    try:
+        payload = get_json(f"{PROTOCOL_HISTORY_BASE}/{slug}")
+    except http.FetchError:
+        return None
+    return parse_first_tvl_date(payload)
+
+
+def fetch_venues(
+    entries, *, get_json=http.get_json, observed_at: datetime | None = None,
+    known_ages: frozenset[str] = frozenset(),
+) -> list[AltSignalReading]:
+    """Every Safety-gate reading for a `venues:` list — gate-level facts keyed on protocol
+    slug, the once-ever age keyed the same way, and pool-level score/ranking facts keyed on
+    pool uuid. See the module docstring for why the age is its own write-once store kind.
+
+    ``known_ages`` is the set of protocol slugs `venue_first_tvl` already has a row for — the
+    caller reads it from the store before calling this, and every slug in it skips the (heavy,
+    once-only) history fetch. A slug's history fetch failing writes **no** `venue_first_tvl`
+    row at all, never a null: recording one would skip that slug's history fetch forever and
+    fail it permanently, with no error anywhere to say why.
+
+    The three endpoints fail independently, the same convention `fetch_protocols` uses: a
+    down `/pools` must not cost the gate-level facts from `/protocols`, or vice versa.
+    """
+    at = observed_at or datetime.now(UTC)
+    readings: list[AltSignalReading] = []
+
+    slugs = [entry.llama_protocol for entry in entries]
+    try:
+        protocols_payload = get_json(PROTOCOLS_BASE)
+    except http.FetchError:
+        protocols_payload = None
+
+    if protocols_payload is not None:
+        for slug, facts in parse_venue_metadata(protocols_payload, slugs=slugs).items():
+            readings.append(
+                AltSignalReading(
+                    source=SOURCE, kind="venue_safety_facts", key=slug,
+                    value=facts, observed_at=at,
+                )
+            )
+            if slug in known_ages:
+                continue
+            first_tvl_on = _first_tvl_date(slug, get_json=get_json)
+            if first_tvl_on is not None:
+                readings.append(
+                    AltSignalReading(
+                        source=SOURCE, kind="venue_first_tvl", key=slug,
+                        value=first_tvl_on, observed_at=at,
+                    )
+                )
+
+    pool_ids = [pool_id for entry in entries for pool_id in entry.llama_pools]
+    if pool_ids:
+        try:
+            pools_payload = get_json(POOLS_BASE)
+        except http.FetchError:
+            pools_payload = None
+        if pools_payload is not None:
+            for pool_id, pool_facts in parse_venue_pools(pools_payload, pool_ids=pool_ids).items():
+                readings.append(
+                    AltSignalReading(
+                        source=SOURCE, kind="venue_pool", key=pool_id,
+                        value=pool_facts, observed_at=at,
+                    )
+                )
 
     return readings
