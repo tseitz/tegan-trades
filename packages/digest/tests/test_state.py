@@ -112,3 +112,16 @@ def test_an_unknown_baseline_is_not_a_repeat():
     """`None` is the bootstrap night. Marking it "again" would be wrong on the one run where
     the reader most needs to trust the header."""
     assert state.is_repeat({state.WINDOW: None}, None) is False
+
+
+# ── the Treasury opportunity memory ───────────────────────────────────────────
+
+def test_treasury_opportunities_round_trip(tmp_path):
+    path = tmp_path / "state.json"
+    assert state.save(path, {state.TREASURY_OPPORTUNITIES: {"pool-1": "aave-v3"}})
+    assert state.treasury_opportunities_seen(state.load(path)) == {"pool-1": "aave-v3"}
+
+
+def test_treasury_opportunities_of_the_wrong_shape_is_an_empty_memory():
+    assert state.treasury_opportunities_seen(
+        {state.TREASURY_OPPORTUNITIES: ["not", "a", "map"]}) == {}

@@ -24,6 +24,9 @@ dependencies = [
     # not reimplement the grid. Acyclic — `review` reads brain and oracle and imports nothing
     # here, exactly as this package imports and is imported by nothing.
     "review",
+    # A surface reading a view, exactly like `review` above. Acyclic — `treasury` imports
+    # nothing here.
+    "treasury",
 ]
 
 [project.scripts]
@@ -41,6 +44,7 @@ ingestion = { workspace = true }
 llm = { workspace = true }
 oracle = { workspace = true }
 review = { workspace = true }
+treasury = { workspace = true }
 
 [dependency-groups]
 dev = [

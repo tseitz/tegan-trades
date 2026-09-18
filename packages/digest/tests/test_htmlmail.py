@@ -91,6 +91,13 @@ def test_vocabulary_is_not_mistaken_for_a_symbol():
     assert "symbol=ADD" not in painted and "symbol=HOLD" not in painted
 
 
+def test_a_gate_verdict_word_does_not_steal_the_link():
+    """`treasury.render` prints a gate verdict as "Safety OK". `_ticker` scans the whole line,
+    not the first token, so an "OK" anywhere on a row would otherwise become a chart link."""
+    painted = htmlmail.wrap("  aave-v3        4.20% · Safety OK")
+    assert "<a href" not in painted
+
+
 def test_a_levels_led_loud_row_still_links_the_ticker_not_the_verdict():
     """`SELL_ZONE`/`BUY_ZONE` cannot match `_TICKER` on their own — the underscore breaks the
     word boundary the pattern needs — but they are still in `_VOCABULARY` so a future rename

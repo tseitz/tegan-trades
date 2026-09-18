@@ -90,6 +90,10 @@ _VOCABULARY = frozenset({
     *LOCATION_VERDICT.values(),
     "LONG", "SHORT", "STALE", "NOTE", "RUN", "BOOK", "R",
     "TP", "SL", "OVER", "PROBLEMS", "NO", "VIEW", "AT", "THE",
+    # `treasury.render` prints a gate verdict as "Safety OK". The TREASURY section in `render`
+    # does not print one today, but the word costs nothing here and a future line that does
+    # carry one would otherwise silently steal the ticker link.
+    "OK",
 })
 
 

@@ -224,12 +224,11 @@ def test_the_portfolio_section_is_not_silently_swallowed_by_its_own_safety_net(m
                            age_days=lambda *, on: 0)
     result = ReviewResult(book=book, readings=[_reading("WULF", ADD)], contexts=(None,),
                           mismatched=(), levels=((), (), 0), chains=(), macro=())
-    monkeypatch.setattr(cli, "load_books", lambda *, warn=None: [book])
     monkeypatch.setattr(cli, "review_for", lambda books, *, as_of, registry: [result])
 
     warnings = []
     deltas, (verdicts, levels) = cli._holdings(
-        {}, registry=object(), as_of=AS_OF, warn=warnings.append)
+        {}, books=[book], registry=object(), as_of=AS_OF, warn=warnings.append)
     assert warnings == []
     assert [c.ticker for c in deltas[0].changed] == ["WULF"]
     assert verdicts == {"retirement": {"WULF": ADD}}

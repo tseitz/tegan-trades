@@ -43,9 +43,11 @@ from oracle.assemble import load_daily
 from oracle.decisions import load_decisions
 from oracle.route import Priceable, route, the_routing_table
 from review.cli import load_books, review_for
+from treasury.cli import load_result
 
 from digest import book as book_mod
 from digest import diff, holdings, mail, narrate, render, roster, state, vault
+from digest import treasury as treasury_mod
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 CONFIG_DIR = REPO_ROOT / "cfg"
@@ -254,7 +256,7 @@ def _roster_section(current: dict, orders, open_keys, *, previous, with_llm: boo
 
 
 def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
-          state_path=None) -> tuple[str, str, dict | None]:
+          state_path=None, subject_only: bool = False) -> tuple[str, str, dict | None]:
     """The digest, as ``(subject, body, memory)``. Never raises on a missing or malformed input.
 
     ``memory`` is what to write back once the digest has been delivered, or ``None`` when
@@ -312,8 +314,18 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
     # The one comparison that decides whether anything else can be believed.
     stale = current.get("as_of") if current.get("as_of") != today else None
 
+    as_of = datetime.now(UTC).date()
+    books = _portfolios(warn)
     holdings_deltas, holdings_memories = _holdings(
-        memory, registry=load_registry(CONFIG_DIR), as_of=datetime.now(UTC).date(), warn=warn)
+        memory, books=books, registry=load_registry(CONFIG_DIR), as_of=as_of, warn=warn)
+
+    # Skipped on ``--subject-only``: `treasury_delta` feeds nothing into `subject()`, and the
+    # read costs a portfolio parse, an alt-signal store read and the anchors file's first-sight
+    # write. `with_llm` gets the same treatment for the same reason, just above.
+    if subject_only:
+        treasury_delta, treasury_memory = None, state.treasury_opportunities_seen(memory)
+    else:
+        treasury_delta, treasury_memory = _treasury(memory, books=books, as_of=as_of, warn=warn)
 
     xai_month = spend.total()
     body = render.markdown(delta, run=_run_row(today, warn), book=events, roster=narration,
@@ -322,12 +334,14 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
                            xai_changed=state.xai_changed(memory, xai_month),
                            holding=holding, resting=len(resting_keys),
                            holdings_deltas=holdings_deltas,
+                           treasury_delta=treasury_delta,
                            stale_as_of=stale, problems=warn.items)
     subject = render.subject(delta, book=events, stale_as_of=stale, problems=len(warn.items),
                              repeat=state.is_repeat(memory, delta.previous_run),
                              holdings_deltas=holdings_deltas)
     return (subject, body,
-            _next_memory(memory, reported, xai_month, delta.previous_run, *holdings_memories)
+            _next_memory(memory, reported, xai_month, delta.previous_run, *holdings_memories,
+                        treasury_memory)
             if state_path else None)
 
 
@@ -368,13 +382,32 @@ def _marks(holding, *, as_of, warn) -> dict[str, float]:
         return {}
 
 
-def _holdings(memory: dict, *, registry, as_of, warn) -> tuple[tuple, tuple[dict, dict]]:
+def _portfolios(warn) -> list:
+    """Every account on disk, loaded once so ``_holdings`` and ``_treasury`` do not each glob
+    and parse ``data/portfolios/`` on their own — a second load means the 77-position
+    retirement file parsed twice and two near-identical "portfolio ... was skipped" warnings
+    for the same bad file.
+
+    **Never raises.** A directory that cannot be listed costs the PORTFOLIO and TREASURY
+    sections' portfolio-derived content, not the whole digest.
+    """
+    try:
+        # `load_books` is `review`'s seam for this, not `oracle.portfolios` directly — see
+        # ADR-0004. Its warn messages carry no "warning:" prefix of their own, since that
+        # convention belongs to this package, not to `review`.
+        return load_books(warn=lambda m: warn(f"warning: {m}"))
+    except Exception as exc:  # noqa: BLE001 - the whole digest must survive this
+        warn(f"warning: portfolios could not be loaded, so the PORTFOLIO and TREASURY sections "
+             f"are missing — {type(exc).__name__}: {exc}")
+        return []
+
+
+def _holdings(memory: dict, *, books, registry, as_of, warn) -> tuple[tuple, tuple[dict, dict]]:
     """``(deltas, what to remember)`` for every portfolio on disk.
 
-    **Never raises.** A portfolio file with a typo in it, a price cache that is not there, a
-    registry that failed to load — none of those may take down a digest whose other six
-    sections are fine. Every failure degrades to no section plus a warning that reaches the
-    body, which is this package's standing contract.
+    **Never raises.** A price cache that is not there, a registry that failed to load — none of
+    those may take down a digest whose other six sections are fine. Every failure degrades to
+    no section plus a warning that reaches the body, which is this package's standing contract.
 
     Returns the *previous* memories unchanged on failure rather than empty ones. Writing back
     an empty memory would make tomorrow's run report all 77 positions as new, turning one bad
@@ -383,10 +416,6 @@ def _holdings(memory: dict, *, registry, as_of, warn) -> tuple[tuple, tuple[dict
     previous = state.holdings_seen(memory)
     previous_levels = state.holdings_levels_seen(memory)
     try:
-        # `load_books` is `review`'s seam for this, not `oracle.portfolios` directly — see
-        # ADR-0004. Its warn messages carry no "warning:" prefix of their own, since that
-        # convention belongs to this package, not to `review`.
-        books = load_books(warn=lambda m: warn(f"warning: {m}"))
         if not books:
             return (), (previous, previous_levels)
 
@@ -411,8 +440,32 @@ def _holdings(memory: dict, *, registry, as_of, warn) -> tuple[tuple, tuple[dict
         return (), (previous, previous_levels)
 
 
+def _treasury(memory: dict, *, books, as_of, warn) -> tuple[treasury_mod.TreasuryDelta | None, dict]:
+    """``(delta, what to remember)``, mirroring ``_holdings``.
+
+    **Never raises.** Returns the *previous* memory unchanged on failure, and also when
+    ``result.readings_as_of.freshest is None`` — ``treasury_for`` returns ``advice=()`` with no
+    exception when the alt-signal store is empty or the fetch failed, and writing that back as
+    tonight's memory would make every pool read as new tomorrow, the exact repeat this memory
+    exists to prevent.
+    """
+    previous = state.treasury_opportunities_seen(memory)
+    try:
+        result = load_result(books=books, as_of=as_of, warn=lambda m: warn(f"warning: {m}"))
+        if result is None:
+            return None, previous
+        delta = treasury_mod.delta(result, previous, has_idle=treasury_mod.has_idle(result))
+        if result.readings_as_of.freshest is None:
+            return delta, previous
+        return delta, treasury_mod.remember(result)
+    except Exception as exc:  # noqa: BLE001 - one bad read must not cost the whole digest
+        warn(f"warning: the treasury section was dropped — {type(exc).__name__}: {exc}")
+        return None, previous
+
+
 def _next_memory(memory: dict, reported, xai_month: float, window_start: str | None,
-                 holdings_memory: dict, holdings_levels: dict) -> dict:
+                 holdings_memory: dict, holdings_levels: dict,
+                 treasury_memory: dict) -> dict:
     """Tonight's memory. Pruned every run, not only on runs that reported something, so a quiet
     week still clears keys that have aged out."""
     return {
@@ -423,6 +476,7 @@ def _next_memory(memory: dict, reported, xai_month: float, window_start: str | N
         state.WINDOW: window_start,
         state.HOLDINGS: holdings_memory,
         state.HOLDINGS_LEVELS: holdings_levels,
+        state.TREASURY_OPPORTUNITIES: treasury_memory,
     }
 
 
@@ -462,7 +516,8 @@ def main(argv: list[str] | None = None) -> int:
     subject, body, memory = build(
         snapshots_path=args.snapshots, orders_path=args.orders,
         with_llm=not args.no_llm and not args.subject_only,
-        state_path=None if args.subject_only else STATE)
+        state_path=None if args.subject_only else STATE,
+        subject_only=args.subject_only)
     if args.subject_only:
         print(subject)
         return 0

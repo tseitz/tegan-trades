@@ -7,9 +7,11 @@ buried under them.
 """
 from __future__ import annotations
 
+from core import safety
 from core.trigger import ARMED, NO_TRIGGER, NO_ZONE_TAG
 from digest import book as diff_book
 from digest import diff, render
+from digest import treasury as treasury_mod
 
 
 def _entry(key: str, **over) -> dict:
@@ -560,3 +562,49 @@ def test_an_exit_without_reasons_still_admits_it_does_not_know():
     lines = _health(_run(1))
     assert "exit 1" in lines[0]
     assert "see the log" in lines[0]
+
+
+# ── the TREASURY section ───────────────────────────────────────────────────────
+
+def _ranked(slug: str, pool_id: str, apy: float = 4.0) -> safety.RankedVenue:
+    facts = safety.VenueFacts(slug=slug, pool_id=pool_id, apy=apy, stablecoin=True)
+    gate_result = safety.GateResult(passed=True, reasons=(), required_age_days=274,
+                                    lineage=safety.STANDALONE)
+    return safety.RankedVenue(facts=facts, gate=gate_result,
+                              score=safety.SafetyScore(incentive_share=None, apy_volatility=None,
+                                                       observations=None, incidents=None))
+
+
+def _treasury_delta(**over) -> treasury_mod.TreasuryDelta:
+    fields = {"mandate_name": "treasury", "rows": 1, "total": 1000.0, "weighted_apy": 4.21,
+              "apy_rows": 1, "apy_amount": 1000.0}
+    fields.update(over)
+    return treasury_mod.TreasuryDelta(**fields)
+
+
+def test_no_treasury_delta_prints_no_section():
+    assert "TREASURY" not in render.markdown(_quiet())
+
+
+def test_a_treasury_delta_with_nothing_new_still_prints_the_deployed_head():
+    body = render.markdown(_quiet(), treasury_delta=_treasury_delta())
+    assert "TREASURY — treasury · 1 row(s) · $1,000.00 total · weighted APY 4.21%" in body
+
+
+def test_a_partial_apy_coverage_note_matches_the_treasury_cards_own_wording():
+    body = render.markdown(_quiet(), treasury_delta=_treasury_delta(
+        rows=2, total=2000.0, apy_rows=1, apy_amount=1000.0))
+    assert "1/2 rows, $1,000.00 of $2,000.00 — partial" in body
+
+
+def test_new_opportunities_print_in_full_the_first_night():
+    body = render.markdown(_quiet(), treasury_delta=_treasury_delta(
+        new=(_ranked("aave-v3", "pool-1", apy=5.5),), bootstrap=True))
+    assert "aave-v3" in body and "5.50%" in body
+    assert "first look, nothing to compare against yet" in body
+
+
+def test_already_reported_opportunities_collapse_to_a_count():
+    body = render.markdown(_quiet(), treasury_delta=_treasury_delta(standing=2))
+    assert "2 opportunities standing" in body
+    assert "aave-v3" not in body

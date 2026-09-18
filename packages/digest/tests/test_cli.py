@@ -11,10 +11,14 @@ pieces that are covered.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 import pytest
+from core import safety
 from core.trigger import ARMED, NO_ZONE_TAG
 from digest import cli
+from oracle.portfolios import Mandate
+from treasury.book import IdleCash, ReadingsAsOf, TreasuryResult
 
 
 def _entry(key: str, **over) -> dict:
@@ -62,6 +66,9 @@ def quiet(monkeypatch, tmp_path):
     monkeypatch.setattr(cli.store, "awaiting_exit_keys", lambda *a, **k: set())
     monkeypatch.setattr(cli, "DECISIONS", tmp_path / "no-decisions.jsonl")
     monkeypatch.setattr(cli, "HISTORY", tmp_path / "no-history.jsonl")
+    # `load_result` reaches `data/treasury.yaml`, every portfolio and `data/altsignal/` — kept
+    # off all three by default. A test that wants the TREASURY section overrides this.
+    monkeypatch.setattr(cli, "load_result", lambda **kwargs: None)
 
 
 # ── the stale-snapshot guard ──────────────────────────────────────────────────
@@ -214,12 +221,13 @@ def build(snapshots, tmp_path, *, orders=None, with_llm=False, state_path=None):
     return subject, body
 
 
-def build_with_memory(snapshots, tmp_path, *, orders=None, with_llm=False, state_path=None):
+def build_with_memory(snapshots, tmp_path, *, orders=None, with_llm=False, state_path=None,
+                      subject_only=False):
     if orders is None:
         orders = tmp_path / "empty-orders.jsonl"
         orders.write_text("", encoding="utf-8")
     return cli.build(snapshots_path=snapshots, orders_path=orders, with_llm=with_llm,
-                     state_path=state_path)
+                     state_path=state_path, subject_only=subject_only)
 
 
 # ── the bootstrap warning must not cry wolf ───────────────────────────────────
@@ -421,3 +429,72 @@ def test_the_next_night_is_not_marked_as_a_repeat(tmp_path, today):
                    _snap("2026-08-21", [_entry("a")]))
     subject, _ = build(snaps, tmp_path, state_path=path)
     assert not subject.startswith("again")
+
+
+# ── the TREASURY section ───────────────────────────────────────────────────────
+
+_MANDATE = Mandate(name="treasury", benchmarks=(), horizon="macro", risk_posture="conservative")
+
+
+def _ranked(slug: str, pool_id: str, apy: float = 4.0) -> safety.RankedVenue:
+    facts = safety.VenueFacts(slug=slug, pool_id=pool_id, apy=apy, stablecoin=True)
+    gate_result = safety.GateResult(passed=True, reasons=(), required_age_days=274,
+                                    lineage=safety.STANDALONE)
+    return safety.RankedVenue(facts=facts, gate=gate_result,
+                              score=safety.SafetyScore(incentive_share=None, apy_volatility=None,
+                                                       observations=None, incidents=None))
+
+
+def _treasury_result(*, advice=(), idle=None, freshest=None) -> TreasuryResult:
+    from oracle.treasury_file import ParkedRow
+    if idle is None:
+        idle = (IdleCash(mandate="retirement", account="cash", amount=500.0),)
+    if freshest is None:
+        freshest = datetime(2026, 8, 21, tzinfo=UTC)
+    rows = (ParkedRow(what="USDC", amount=1000.0, venue="aave-v3", apy=4.0),)
+    return TreasuryResult(
+        mandate=_MANDATE, rows=rows, total=1000.0, weighted_apy=4.0, apy_rows=1, apy_amount=1000.0,
+        benchmark={}, updated=None, age_days=None, as_of=None, idle=idle, advice=advice,
+        readings_as_of=ReadingsAsOf(freshest=freshest, oldest=freshest))
+
+
+def test_the_treasury_section_reaches_the_body_and_the_memory(tmp_path, today, monkeypatch):
+    monkeypatch.setattr(cli, "load_result",
+                        lambda **kwargs: _treasury_result(advice=(_ranked("aave-v3", "pool-1"),)))
+    path = tmp_path / "state.json"
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
+
+    _, body, memory = build_with_memory(snaps, tmp_path, state_path=path)
+    assert "TREASURY" in body and "aave-v3" in body
+    assert memory[cli.state.TREASURY_OPPORTUNITIES] == {"pool-1": "aave-v3"}
+
+
+def test_a_raising_treasury_view_costs_a_warning_not_the_digest(tmp_path, today, monkeypatch):
+    def _explode(**kwargs):
+        raise ValueError("no")
+
+    monkeypatch.setattr(cli, "load_result", _explode)
+    path = tmp_path / "state.json"
+    cli.state.save(path, {cli.state.TREASURY_OPPORTUNITIES: {"pool-1": "aave-v3"}})
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
+
+    subject, body, memory = build_with_memory(snaps, tmp_path, state_path=path)
+    assert subject
+    assert "PROBLEMS" in body and "treasury section was dropped" in body
+    assert "TREASURY" not in body
+    # The previous memory survives — writing back an empty one would make the pool read as
+    # new tomorrow.
+    assert memory[cli.state.TREASURY_OPPORTUNITIES] == {"pool-1": "aave-v3"}
+
+
+def test_subject_only_never_calls_load_result(tmp_path, today, monkeypatch):
+    """The section feeds nothing into `subject()`, and the read costs a portfolio parse, an
+    alt-signal store read and the anchors file's first-sight write."""
+    def _explode(**kwargs):
+        raise AssertionError("load_result must not be called on --subject-only")
+
+    monkeypatch.setattr(cli, "load_result", _explode)
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
+    subject, _, memory = build_with_memory(snaps, tmp_path, subject_only=True)
+    assert subject
+    assert memory is None

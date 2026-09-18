@@ -36,6 +36,10 @@ HOLDINGS = "holdings_verdicts"
 HOLDINGS_LEVELS = "holdings_levels"
 XAI = "xai_reported"
 WINDOW = "last_window_start"
+#: ``{pool_id: slug}`` for every Treasury opportunity reported so far. A gate-clearing pool is
+#: standing state, not an event — without last night's copy every pool would read as new every
+#: morning, which is the exact repeat this key exists to prevent.
+TREASURY_OPPORTUNITIES = "treasury_opportunities"
 
 
 def load(path: Path, *, warn=None) -> dict:
@@ -119,4 +123,11 @@ def holdings_seen(state: dict) -> dict:
 def holdings_levels_seen(state: dict) -> dict:
     """Last night's ``{portfolio: {ticker: level key}}``, or an empty memory."""
     seen = state.get(HOLDINGS_LEVELS)
+    return seen if isinstance(seen, dict) else {}
+
+
+def treasury_opportunities_seen(state: dict) -> dict:
+    """Last night's ``{pool_id: slug}``, or an empty memory. Degrades like every other reader
+    here — the cost is one repeated opportunity, never a dropped section."""
+    seen = state.get(TREASURY_OPPORTUNITIES)
     return seen if isinstance(seen, dict) else {}

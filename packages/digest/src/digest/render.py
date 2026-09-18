@@ -22,7 +22,7 @@ from core.rank import parse_date
 from core.trigger import ARMED, FIRED, NO_TRIGGER, NO_ZONE_TAG, UNREADABLE
 from review.render import roster_text, where_text
 
-from digest import book, diff, holdings
+from digest import book, diff, holdings, treasury
 from digest.fmt import money, num, pct
 
 # How close to the monthly xAI cap before spend is worth a reader's attention. Below this the
@@ -147,6 +147,7 @@ def markdown(delta: diff.QueueDelta, *, run=None, book=None, roster: str | None 
              roster_withheld: str | None = None, xai_month: float | None = None,
              xai_cap: float | None = None, xai_changed: bool = True,
              holding=(), resting: int = 0, holdings_deltas=(),
+             treasury_delta: treasury.TreasuryDelta | None = None,
              stale_as_of: str | None = None, problems=()) -> str:
     """The digest body.
 
@@ -200,6 +201,7 @@ def markdown(delta: diff.QueueDelta, *, run=None, book=None, roster: str | None 
     # this morning, a fill overnight. A long-horizon account moves on a scale where one day
     # rarely matters, so it reads after the things that do.
     out.extend(_holdings_section(holdings_deltas))
+    out.extend(_treasury_section(treasury_delta))
     out.extend(_run_section(run, xai_month=xai_month, xai_cap=xai_cap,
                             xai_changed=xai_changed))
     out.extend(_problems_section(problems))
@@ -479,6 +481,54 @@ def holdings_subject(deltas) -> list[str]:
     # between "nothing happened" and "we are reading a file from two months ago".
     parts += [f"{d.portfolio} stale" for d in deltas if d.stale]
     return parts
+
+
+def _treasury_money(value: float) -> str:
+    """Typed principal, never signed — `digest.fmt.money` carries a forced +/- for a profit or
+    loss, which a parked total is not. Mirrors `treasury.render._money` exactly, since this is
+    the same figure about the same rows."""
+    return f"${value:,.2f}"
+
+
+def _treasury_head(delta: treasury.TreasuryDelta) -> str:
+    """Mandate, row count, typed total and weighted APY — mirroring
+    `treasury.render._apy_line`'s partial-coverage note, since this is the same figure about
+    the same rows."""
+    if delta.weighted_apy is None:
+        apy = "weighted APY — no row states one"
+    else:
+        apy = f"weighted APY {delta.weighted_apy:.2f}%"
+        if delta.apy_rows < delta.rows:
+            apy += (f" ({delta.apy_rows}/{delta.rows} rows, "
+                    f"{_treasury_money(delta.apy_amount)} of {_treasury_money(delta.total)} "
+                    f"— partial)")
+    note = (f"{delta.mandate_name} · {delta.rows} row(s) · "
+            f"{_treasury_money(delta.total)} total · {apy}")
+    if delta.bootstrap:
+        note += " · first look, nothing to compare against yet"
+    return note
+
+
+def _treasury_section(delta: treasury.TreasuryDelta | None) -> list[str]:
+    """Parked money, and any standing yield opportunity idle cash could move to.
+
+    The deployed half is standing state and prints unconditionally whenever there is a
+    Treasury file at all — the same reasoning `_holding_section` gives for the trading book: a
+    position parked three weeks ago produces no event tonight, so a diff would never mention
+    it. The opportunity half is a diff: a gate-clearing pool prints in full its first night and
+    only as a count after that, `_holdings_section`'s rule for a standing verdict.
+    """
+    if delta is None:
+        return []
+
+    out = ["", f"TREASURY — {_treasury_head(delta)}"]
+    for ranked in delta.new:
+        apy = f"{ranked.facts.apy:.2f}%" if ranked.facts.apy is not None else "—"
+        out.append(f"  {ranked.facts.slug:<14} {apy:>7}")
+    if delta.standing:
+        out.append(f"  {delta.standing} opportunit{'y' if delta.standing == 1 else 'ies'} "
+                   f"standing")
+    return out
 
 
 def _book_section(book) -> list[str]:
