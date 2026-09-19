@@ -479,6 +479,17 @@ def test_an_undecided_roster_is_not_described_as_silent():
     assert "nobody" not in note
 
 
+def test_an_undecided_roster_still_carries_its_age():
+    """`roster_text` promises the split is never shown alone, and undecided is a split. It
+    used to return before the age was appended, so the table said "1 undecided" beside a note
+    saying "newest 227d ago" — the exact cell the docstring warns invites acting on a very old
+    read as if it were a fresh one."""
+    assert roster_text(
+        _reading("HUBS", lean=_lean(SILENT, bulls=0, bears=0, people=1, age_days=227,
+                                    voices=()))
+    ) == "1 undecided 227d"
+
+
 def test_an_empty_roster_still_reads_as_silence():
     """The other half of the distinction. Nobody has said anything, so there is no date to
     report and no one to name."""
@@ -510,7 +521,7 @@ def test_roster_text_appends_via_when_the_fold_was_borrowed():
 
     undecided = _reading("HODL", lean=_lean(SILENT, bulls=0, bears=0, people=1, age_days=4,
                                             voices=()), lean_from="BTC")
-    assert roster_text(undecided) == "1 undecided via BTC"
+    assert roster_text(undecided) == "1 undecided 4d via BTC"
 
 
 def test_roster_text_is_unchanged_for_an_unwrapped_holding():

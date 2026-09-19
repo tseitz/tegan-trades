@@ -303,11 +303,13 @@ def roster_text(reading: Reading) -> str:
         parts.append(f"{lean.bulls} bull")
     if lean.bears:
         parts.append(f"{lean.bears} bear")
+    # Computed before the undecided branch, not after it: every shape that had people speak
+    # carries the age, or the cell this docstring warns about is exactly what undecided prints.
+    age = "" if lean.age_days is None else f" {lean.age_days}d"
     if not parts:
         # People spoke, but nobody picked a side. Distinct from silence and it has to read
         # that way, or an asset the roster is openly undecided on looks like one it ignores.
-        return f"{lean.people} undecided" + via
-    age = "" if lean.age_days is None else f" {lean.age_days}d"
+        return f"{lean.people} undecided{age}{via}"
     return "/".join(parts) + age + via
 
 
@@ -365,7 +367,7 @@ def _note(reading: Reading, width: int) -> str:
                 if roster_disagrees(reading.verdict, lean.lean) else "")
     return (f"  {reading.verdict:<{width}} {reading.holding.ticker} — roster {side}{via} "
             f"({who}{age}){thin}{chart}{disagrees}; price {where_text(reading)}"
-            f"{'' if reading.weekly_trend is None else f', weekly {reading.weekly_trend}'}")
+            f"{'' if reading.weekly_trend is None else f', weekly {trend_text(reading)}'}")
 
 
 def _yield_line(note, width: int) -> str:
@@ -501,7 +503,9 @@ def _level_row(spot) -> list[str]:
         what,
         note,
         roster_text(spot.reading),
-        f"+{spot.others} more" if spot.others else "",
+        # Named, not just "+3 more": this cell sits against ROSTER, where a bare count reads
+        # as more voices rather than more levels.
+        f"+{spot.others} levels" if spot.others else "",
     ]
 
 
