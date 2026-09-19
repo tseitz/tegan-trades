@@ -71,6 +71,14 @@ done
 # first, so the manifest is only fetched on a poll that would otherwise go.
 GATE_FILE="$REPO/data/data-pull.gate"
 STAMP_FILE="$REPO/data/data-pull.last-run"
+# Epoch seconds of the first poll that found the mirror unmoved. Cleared the moment it moves, so
+# on a healthy cycle it never survives a morning. See the escalation below for what it is for.
+UNCHANGED_FILE="$REPO/data/data-pull.unchanged-since"
+
+# How long the mirror may sit unmoved before that becomes a reported failure rather than a quiet
+# defer. 36h, not 24: one cycle is a day, and a droplet running a few hours late on a single
+# morning must not page you. Anything past a day and a half is a dead pipeline, not a late one.
+MIRROR_STALE_AFTER="${MIRROR_STALE_AFTER:-129600}"
 
 # Local HHMM, but the constraint it encodes is UTC: the droplet's cron fires at 11:00 UTC and
 # `backup.sh` is its second-to-last step. Across 2026-09-04..16 the run ended between 11:57Z
@@ -162,8 +170,28 @@ if [ "$SCHEDULED" -eq 1 ]; then
 
   # Nothing new to fetch. Deliberately does NOT stamp: the droplet may simply be running late,
   # and the next poll should still catch it rather than writing the day off at 07:00.
-  [ "$REMOTE_AT" = "$(cat "$REPO/data/.last-pull" 2>/dev/null)" ] \
-    && defer "mirror unchanged since $REMOTE_AT"
+  #
+  # **But "unchanged" cannot stay quiet forever, and this is the subtle one.**
+  # `oracle/freshness.py` spells out the trap this check walks into: `backup.sh` writes the
+  # manifest *after* the rclone copy it exits on, so a night the droplet's backup fails leaves
+  # `backed_up_at` frozen at yesterday. Compared against `.last-pull` that reads as "nothing new,
+  # all is well" — a guard derived from the pipeline whose failure it is meant to detect, failing
+  # closed to healthy. So a mirror that has not moved in over a cycle escalates to the
+  # notification rather than deferring into silence. That module measures local price-cache mtime
+  # for the same reason and remains the honest staleness signal; this is only the scheduler
+  # noticing it has nothing to do.
+  if [ "$REMOTE_AT" = "$(cat "$REPO/data/.last-pull" 2>/dev/null)" ]; then
+    [ -f "$UNCHANGED_FILE" ] || date +%s > "$UNCHANGED_FILE"
+    UNCHANGED_FOR=$(( $(date +%s) - $(cat "$UNCHANGED_FILE") ))
+    if [ "$UNCHANGED_FOR" -gt "$MIRROR_STALE_AFTER" ]; then
+      # Stamped before failing so this notifies once and then holds until tomorrow, rather than
+      # every half hour for as long as the droplet stays down.
+      date +%F > "$STAMP_FILE"
+      fail "mirror has not moved in $(( UNCHANGED_FOR / 3600 ))h (still $REMOTE_AT) — the droplet's nightly or its backup step is failing"
+    fi
+    defer "mirror unchanged since $REMOTE_AT"
+  fi
+  rm -f "$UNCHANGED_FILE"
 
   date +%F > "$STAMP_FILE"
 fi
