@@ -33,6 +33,7 @@ from oracle import (
     fetch_cli,
     listings,
     portfolios,
+    setups_sync,
     transaction_store,
 )
 from oracle.assemble import load_daily
@@ -301,6 +302,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="sort strictly by weight, largest first, for surveying "
                              "allocation shape rather than triaging action. Default "
                              "ordering (urgency, then size) is unchanged without it.")
+    # Same flag and same meaning as `setups --no-sync`: the cache's age prints either way, and
+    # this only governs whether being stale may trigger a pull. Offline work needs it, and so
+    # does the suite, which must never reach the network.
+    parser.add_argument("--no-sync", action="store_true",
+                        help="never pull from the mirror, however stale the price cache is")
     args = parser.parse_args(argv)
 
     if args.list:
@@ -315,6 +321,22 @@ def main(argv: list[str] | None = None) -> int:
         print("--refresh warms today's bars and cannot serve a replay of a past date",
               file=sys.stderr)
         return 2
+
+    # Before the portfolio loads, because a pull rewrites `data/portfolios/` too — `plaid-sync`
+    # and `wallet-sync` are the droplet's steps 7 and 8 and their output comes down in the same
+    # transfer. Loading first would read yesterday's share counts and then fetch today's, and
+    # the header would say `written today` over positions that are not.
+    #
+    # Skipped on a replay for the reason `--refresh` is: a pull writes today's bars into the
+    # cache, which is the one thing that makes a past-date read untrue.
+    #
+    # **Why `review` needs this at all, when it already prints a portfolio age.** That age is the
+    # mtime of one YAML file; every price, level and verdict below comes from the price cache,
+    # which had no age check here. Between 2026-09-17 and 2026-09-19 the rclone token was dead
+    # and this command rendered a full grid off three-day-old bars — the portfolio line was the
+    # only tell, and it reads as a note rather than a warning.
+    if not args.as_of:
+        setups_sync.ensure_fresh(enabled=not args.no_sync)
 
     try:
         book = portfolios.load(args.portfolio)

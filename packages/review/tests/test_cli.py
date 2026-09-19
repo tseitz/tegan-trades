@@ -330,6 +330,10 @@ def test_main_drops_the_standing_group_on_a_levels_led_book_unless_dash_levels(m
     monkeypatch.setattr(cli.portfolios, "load", lambda name: book)
     monkeypatch.setattr(cli.altsignal_config, "load", lambda path: None)
     monkeypatch.setattr(cli, "review_for", lambda books, **kw: [result])
+    # `main` now runs the freshness gate, which shells out to `data-pull.sh` on a stale cache.
+    # Stubbed rather than passed `--no-sync`: this test is about the levels fold, and it must
+    # not start depending on a flag that has nothing to do with what it asserts.
+    monkeypatch.setattr(cli.setups_sync, "ensure_fresh", lambda **kw: True)
 
     calls = []
     monkeypatch.setattr(
@@ -346,3 +350,45 @@ def test_main_drops_the_standing_group_on_a_levels_led_book_unless_dash_levels(m
     standing, _closing, suppressed = calls[-1]
     assert standing == ("standing-sentinel",)
     assert suppressed == 0
+
+
+# ── the price cache's age, not just the portfolio file's ───────────────────
+
+
+def _gated_main(monkeypatch, argv):
+    """`main` with everything below the freshness gate stubbed out, recording how the gate ran."""
+    reading = _reading("VTI")
+    book = Portfolio(name="test", mandate=CONSERVATIVE,
+                     positions=(Position(holding=reading.holding, domain="stock"),))
+    result = cli.ReviewResult(book=book, readings=[reading], contexts=(None,),
+                              mismatched=(), levels=((), (), 0), chains=(), macro=())
+    monkeypatch.setattr(cli.portfolios, "load", lambda name: book)
+    monkeypatch.setattr(cli.altsignal_config, "load", lambda path: None)
+    monkeypatch.setattr(cli, "review_for", lambda books, **kw: [result])
+    monkeypatch.setattr(cli, "render_levels", lambda *a, **kw: "LEVELS")
+
+    calls = []
+    monkeypatch.setattr(cli.setups_sync, "ensure_fresh",
+                        lambda **kw: calls.append(kw) or True)
+    assert cli.main(argv) == 0
+    return calls
+
+
+def test_review_checks_the_price_cache_age_like_setups_does(monkeypatch):
+    """The portfolio age in the header is one YAML file's mtime; every price, level and verdict
+    below it comes from the price cache, which this command used to read without ever asking how
+    old it was. Between 2026-09-17 and 2026-09-19 that gap rendered a full grid off three-day-old
+    bars while the header said the positions were current."""
+    assert _gated_main(monkeypatch, ["test"]) == [{"enabled": True}]
+
+
+def test_no_sync_reaches_the_gate(monkeypatch):
+    """Same flag and same meaning as `setups --no-sync` — the age still prints, the pull does
+    not happen. The suite and offline work both depend on it."""
+    assert _gated_main(monkeypatch, ["test", "--no-sync"]) == [{"enabled": False}]
+
+
+def test_a_replay_never_pulls(monkeypatch):
+    """A pull writes today's bars into the cache, which is exactly what makes a past-date read
+    untrue — the same reason `--refresh` is refused alongside `--as-of`."""
+    assert _gated_main(monkeypatch, ["test", "--as-of", "2026-01-02"]) == []
