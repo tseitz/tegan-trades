@@ -10,6 +10,12 @@
 # nothing. The backup was built to survive one laptop dying; this makes the same mirror the way
 # a second laptop catches up.
 #
+# **`--scheduled` is how the laptop runs it unattended** — the gate launchd polls against, with
+# `scripts/com.tseitz.tegan-trades.data-pull.plist`. The nightly on the droplet runs this script
+# as its own step 2 with no flags, which is the unconditional form; `--scheduled` adds the
+# earliest-hour, once-a-day and lid checks, skips the transfer when the mirror has not moved, and
+# turns a failure into a notification instead of a line in a log nobody opens.
+#
 # **`--update` by default, and it is the whole safety story.** Both directions are `copy`, which
 # overwrites the destination when a file differs. Pulling therefore *can* replace local ore with
 # an older remote copy — the exact failure the backup direction cannot have, because there the
@@ -44,33 +50,123 @@ DEST="${TEGAN_BACKUP_DEST:-gdrive:Coding/tegan-trades}"
 
 UPDATE_FLAG="--update"
 DRY_RUN=""
+SCHEDULED=0
 for arg in "$@"; do
   case "$arg" in
-    --force)   UPDATE_FLAG="" ;;
-    --dry-run) DRY_RUN="--dry-run" ;;
-    *) echo "usage: $0 [--force] [--dry-run]" >&2; exit 2 ;;
+    --force)     UPDATE_FLAG="" ;;
+    --dry-run)   DRY_RUN="--dry-run" ;;
+    --scheduled) SCHEDULED=1 ;;
+    *) echo "usage: $0 [--force] [--dry-run] [--scheduled]" >&2; exit 2 ;;
   esac
 done
 
-if ! command -v rclone >/dev/null 2>&1; then
-  echo "data-pull: rclone not installed — brew install rclone" >&2
+# ── --scheduled: the gate launchd polls against ──────────────────────────────────
+#
+# **This polls; it does not schedule.** Same shape and same reasoning as nightly.sh's gate —
+# read that one first, including the DarkWake measurement that forced it. A
+# `StartCalendarInterval` fires with the lid shut and the job then freezes and thaws for hours.
+#
+# The one structural difference: this gate ends in a network call, so it cannot run every 120s
+# the way the nightly's can. The plist polls at 1800s and the cheap local checks below run
+# first, so the manifest is only fetched on a poll that would otherwise go.
+GATE_FILE="$REPO/data/data-pull.gate"
+STAMP_FILE="$REPO/data/data-pull.last-run"
+
+# Local HHMM, but the constraint it encodes is UTC: the droplet's cron fires at 11:00 UTC and
+# `backup.sh` is its second-to-last step. Across 2026-09-04..16 the run ended between 11:57Z
+# and 13:09Z and the duration is trending up (43min mid-month, 65min on the 16th). 0700 PDT is
+# 14:00Z — about an hour of margin, two once the clocks go back. 0630 would leave twenty
+# minutes, which the trend eats. Raise it, don't lower it.
+PULL_EARLIEST="${PULL_EARLIEST:-0700}"
+
+mkdir -p "$REPO/data"
+
+# One line, overwritten every poll — a log would bury the day that mattered under "not yet".
+# `cat data/data-pull.gate`.
+defer() {
+  printf '%s  deferred: %s\n' "$(date '+%Y-%m-%d %H:%M')" "$1" > "$GATE_FILE"
+  exit 0
+}
+
+# **A failed pull has to interrupt someone.** The rclone OAuth token expired on 2026-09-17 and
+# nothing noticed for two days — `review` kept printing verdicts against a corpus that had
+# stopped moving, and its `written N days ago` line is the only tell. A gate file would have
+# gone unread for the same two days. This is a LaunchAgent in the GUI session, so osascript
+# reaches the notification centre; on the droplet (no osascript) it degrades to the stderr line
+# that was already there.
+fail() {
+  echo "data-pull: $1" >&2
+  printf '%s  FAILED: %s\n' "$(date '+%Y-%m-%d %H:%M')" "$1" > "$GATE_FILE"
+  if [ "$SCHEDULED" -eq 1 ] && command -v osascript >/dev/null 2>&1; then
+    osascript -e "display notification \"$1\" with title \"tegan-trades: data-pull failed\"" \
+      >/dev/null 2>&1
+  fi
   exit 1
+}
+
+if [ "$SCHEDULED" -eq 1 ]; then
+  # Base 10 forced: `date +%H%M` zero-pads and 0700 is not a valid octal literal.
+  [ "$((10#$(date +%H%M)))" -lt "$((10#$PULL_EARLIEST))" ] && defer "before $PULL_EARLIEST"
+
+  # Written before the transfer, not after, so a poll landing mid-pull cannot start a second
+  # one — and so a failure notifies once rather than every half hour until you fix it.
+  [ "$(cat "$STAMP_FILE" 2>/dev/null)" = "$(date +%F)" ] && defer "already pulled today"
+
+  # Only the lid matters here, and only on battery: a closed-lid machine sleeps through the
+  # transfer. No battery floor — this is a four-minute download, not the nightly's hour.
+  if [ "$(uname -s)" = "Darwin" ] \
+     && ! pmset -g batt 2>/dev/null | grep -q "'AC Power'"; then
+    LID="$(ioreg -r -k AppleClamshellState -d 4 2>/dev/null \
+      | sed -n 's/.*"AppleClamshellState" = \(.*\)/\1/p' | head -1)"
+    [ "$LID" = "Yes" ] && defer "lid closed on battery"
+  fi
+fi
+
+if ! command -v rclone >/dev/null 2>&1; then
+  fail "rclone not installed — brew install rclone"
 fi
 
 REMOTE="${DEST%%:*}"
 if [ "$REMOTE" != "$DEST" ] && ! rclone listremotes 2>/dev/null | grep -qx "$REMOTE:"; then
-  echo "data-pull: rclone remote '$REMOTE:' not configured (HOME=$HOME)" >&2
   echo "           rclone config create $REMOTE drive scope=drive" >&2
-  exit 1
+  fail "rclone remote '$REMOTE:' not configured (HOME=$HOME)"
 fi
 
 # Who wrote this snapshot and when. Printed before the transfer rather than after, because the
 # answer decides whether you want the transfer at all: a manifest naming *this* host means the
 # mirror is your own last run and a pull will move nothing.
+#
+# Fetched into a variable rather than piped straight to the terminal because `--scheduled`
+# decides on its contents, and a second `rclone cat` would be a second chance for the two reads
+# to disagree. stderr is kept rather than dropped: "the mirror is empty" and "your OAuth token
+# expired" are the same silence otherwise, and it was the second one both times.
+if MANIFEST="$(rclone cat "$DEST/MANIFEST.txt" 2>&1)"; then
+  MANIFEST_ERR=""
+else
+  MANIFEST_ERR="$(printf '%s' "$MANIFEST" | tail -1)"
+  MANIFEST=""
+fi
 echo "[data-pull] source snapshot:"
-rclone cat "$DEST/MANIFEST.txt" 2>/dev/null | sed 's/^/  /' || echo "  (no manifest — mirror may be empty)"
+if [ -n "$MANIFEST" ]; then printf '%s\n' "$MANIFEST" | sed 's/^/  /'
+else echo "  (no manifest — mirror may be empty or unreachable: ${MANIFEST_ERR:-no error reported})"; fi
 echo "[data-pull] this host: $(hostname)"
 echo
+
+if [ "$SCHEDULED" -eq 1 ]; then
+  # An unreadable manifest is a failure, not an empty mirror. This is the call that surfaces a
+  # dead OAuth token, and treating it as "nothing new" is precisely how the last outage stayed
+  # invisible — the transfer below would have failed anyway, one step later and just as quietly.
+  REMOTE_AT="$(printf '%s\n' "$MANIFEST" | awk '/^backed_up_at:/{print $2}')"
+  [ -n "$REMOTE_AT" ] \
+    || fail "cannot read the mirror manifest — ${MANIFEST_ERR:-no backed_up_at line}. Try: rclone config reconnect $REMOTE:"
+
+  # Nothing new to fetch. Deliberately does NOT stamp: the droplet may simply be running late,
+  # and the next poll should still catch it rather than writing the day off at 07:00.
+  [ "$REMOTE_AT" = "$(cat "$REPO/data/.last-pull" 2>/dev/null)" ] \
+    && defer "mirror unchanged since $REMOTE_AT"
+
+  date +%F > "$STAMP_FILE"
+fi
 
 # The files both machines APPEND to are held out of the bulk copy and reconciled below instead.
 # `rclone copy` replaces the destination wholesale, which is right for ore and silently lossy for
@@ -86,15 +182,14 @@ echo
 # Built with a while-read loop rather than `mapfile`: macOS ships bash 3.2, where `mapfile` does
 # not exist. The shebang is `#!/bin/bash`, so this runs under 3.2 on the laptop and under 5.x on
 # the droplet, and only the older dialect is safe to use.
-EXCLUDES_RAW="$(uv run python -m oracle.mirror excludes)" || {
-  echo "data-pull: could not read the exclude list from oracle.mirror" >&2; exit 1; }
+EXCLUDES_RAW="$(uv run python -m oracle.mirror excludes)" \
+  || fail "could not read the exclude list from oracle.mirror"
 HELD_OUT=()
 while IFS= read -r held_line; do
   [ -n "$held_line" ] && HELD_OUT+=("$held_line")
 done <<< "$EXCLUDES_RAW"
 if [ "${#HELD_OUT[@]}" -eq 0 ]; then
-  echo "data-pull: the exclude list came back empty — refusing to overwrite append-only logs" >&2
-  exit 1
+  fail "the exclude list came back empty — refusing to overwrite append-only logs"
 fi
 
 # --checksum for the same reason backup.sh uses it: part of the mirror predates rclone and carries
@@ -107,7 +202,7 @@ rclone copy "$DEST/data/" data/ \
   --exclude 'logs/nightly/*.log' \
   "${HELD_OUT[@]}" \
   --stats-one-line --stats 10s \
-  || { echo "data-pull: rclone copy from $DEST/data/ failed" >&2; exit 1; }
+  || fail "rclone copy from $DEST/data/ failed"
 
 if [ -n "$DRY_RUN" ]; then
   echo "[data-pull] dry run — nothing was written"
@@ -133,18 +228,24 @@ else
   #
   # Exits non-zero on failure rather than warning: this script has no `set -e`, so a warning
   # would be swallowed and the pull would go on to print success over a merge that never ran.
-  uv run python -m oracle.mirror reconcile --dest "$DEST" --root "$REPO/data" || {
-    echo "data-pull: reconciling the append-only files failed — local rows are untouched" >&2
-    exit 1; }
+  uv run python -m oracle.mirror reconcile --dest "$DEST" --root "$REPO/data" \
+    || fail "reconciling the append-only files failed — local rows are untouched"
 fi
 
 # Written only after everything above succeeded, so a failed pull cannot leave a receipt claiming
 # this machine is current. `oracle.freshness` is the primary staleness signal and needs no
 # network; this receipt answers the narrower question of which mirror snapshot was last taken.
-if BACKED_UP_AT="$(rclone cat "$DEST/MANIFEST.txt" 2>/dev/null | awk '/^backed_up_at:/{print $2}')" \
-   && [ -n "$BACKED_UP_AT" ]; then
+#
+# Taken from the manifest read at the top rather than a fresh one: that is the snapshot this run
+# actually copied, so a droplet push landing mid-transfer cannot have us claim ore we never got.
+BACKED_UP_AT="$(printf '%s\n' "$MANIFEST" | awk '/^backed_up_at:/{print $2}')"
+if [ -n "$BACKED_UP_AT" ]; then
   printf '%s\n' "$BACKED_UP_AT" > data/.last-pull
 fi
+
+# Success clears whatever the last defer or failure left behind, so the file only ever describes
+# a live condition. A stale `FAILED:` line sitting next to a healthy corpus is its own bug report.
+rm -f "$GATE_FILE"
 
 echo "[data-pull] pulled into data/"
 if [ ! -f data/brain/index.db ]; then

@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Morning corpus catch-up for tegan-trades, on the laptop.
+
+  Install:
+    cp scripts/com.tseitz.tegan-trades.data-pull.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.tseitz.tegan-trades.data-pull.plist
+
+  Run it once by hand without waiting for the poll:
+    launchctl kickstart -p gui/$(id -u)/com.tseitz.tegan-trades.data-pull
+
+  Remove:
+    launchctl bootout gui/$(id -u)/com.tseitz.tegan-trades.data-pull
+
+  **Why this exists.** The nightly cycle moved to the droplet's cron, which left nothing on the
+  laptop pulling the mirror back down — `data/` is gitignored, so a clone that never pulls runs
+  `review`, `setups` and `digest` against a corpus frozen on whatever day you last ran the pull
+  by hand. Observed 2026-09-19: three days behind, and the only tell was `review`'s
+  `written N days ago` line.
+
+  **This polls; it does not schedule.** All the policy lives in `data-pull.sh --scheduled`.
+  See the gate comment in scripts/nightly.sh for the DarkWake measurement that forced the
+  pattern — the short version is that a `StartCalendarInterval` fires with the lid shut and the
+  job then freezes and thaws seconds at a time for hours.
+
+  Nothing here wakes the machine. A day the laptop never opens is a day the pull does not run;
+  launchd runs a missed interval on wake, so opening the lid at noon still catches it.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.tseitz.tegan-trades.data-pull</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/tseitz/code/projects/tegan-trades/scripts/data-pull.sh</string>
+    <string>--scheduled</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/tseitz/code/projects/tegan-trades</string>
+
+  <!-- 30 minutes, not the nightly's 2. This gate ends in an `rclone cat` of the mirror manifest,
+       so a gated poll costs a network round-trip rather than 50ms of `ioreg`. Half-hourly is
+       invisible against a once-a-day pull, and it keeps checking past 07:00 on a morning the
+       droplet is running late instead of writing the day off. -->
+  <key>StartInterval</key>
+  <integer>1800</integer>
+
+  <!-- The script's own record is one line in data/data-pull.gate, overwritten each poll. These
+       catch what escapes it, including a failure to start at all — the case the script by
+       definition cannot record. -->
+  <key>StandardOutPath</key>
+  <string>/Users/tseitz/code/projects/tegan-trades/data/logs/data-pull.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/tseitz/code/projects/tegan-trades/data/logs/data-pull.err</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- launchd hands over a minimal PATH. rclone is in /opt/homebrew/bin and uv in
+         ~/.local/bin; the pull shells out to `uv run python -m oracle.mirror` for the
+         exclude list, so both are load-bearing. -->
+    <key>PATH</key>
+    <string>/Users/tseitz/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>/Users/tseitz</string>
+  </dict>
+
+  <key>KeepAlive</key>
+  <false/>
+  <key>RunAtLoad</key>
+  <false/>
+
+  <!-- A hung transfer should not hold the slot all day. The observed pull is ~215s; a first
+       pull onto an empty clone is legitimately much longer. -->
+  <key>ExitTimeOut</key>
+  <integer>3600</integer>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>LowPriorityIO</key>
+  <true/>
+</dict>
+</plist>
