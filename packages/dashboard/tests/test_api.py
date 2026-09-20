@@ -10,6 +10,7 @@ import dashboard.assets as assets
 import pytest
 import review.cli as review_cli
 import review.render as render_module
+import treasury.cli as treasury_cli
 from core.nearby import RESISTANCE, SUPPORT, WEEKLY_ZONE, Level
 from core.review import (
     HOLD,
@@ -21,12 +22,17 @@ from core.review import (
     Reading,
     RosterLean,
 )
+from core.safety import UNCONFIGURED, GateResult, RankedVenue, SafetyScore, VenueFacts
 from core.setups import WEEKLY
 from fastapi.testclient import TestClient
+from oracle.benchmarks import Unresolved
 from oracle.portfolios import Benchmark, Mandate, Portfolio, Position
+from oracle.treasury_file import ParkedRow
 from review.altsignal import ChainLine, MacroRow
 from review.cli import ReviewResult
 from review.levels import SHOWN, Spotlight, cap
+from treasury import render as treasury_render
+from treasury.book import NOT_FETCHED, IdleCash, TreasuryResult
 
 MANDATE = Mandate(name="test", benchmarks=(Benchmark(type="held_flat"),),
                   horizon="position", risk_posture="moderate")
@@ -746,3 +752,153 @@ def test_the_headline_is_levels_headline_over_the_full_post_fold_groups(monkeypa
 
     assert body["levels"]["headline"] == render_module.levels_headline(
         standing, closing, kinds=book.level_kinds)
+
+
+# ── the Treasury card (#94) ─────────────────────────────────────────────────
+
+TREASURY_MANDATE = Mandate(
+    name="treasury", benchmarks=(Benchmark(type="flat_rate", rate=3.1),),
+    horizon="macro", risk_posture="conservative",
+)
+
+FULL_BENCHMARK = {"7d": 0.001, "30d": None, "90d": 0.008, "1y": 0.031, "since_inception": 0.0}
+
+
+def _treasury_result(**overrides) -> TreasuryResult:
+    base = {
+        "mandate": TREASURY_MANDATE,
+        "rows": (ParkedRow(what="USDC", amount=1000.0, venue="aave-v3", apy=4.21,
+                           since=date(2026, 8, 1)),),
+        "total": 1000.0, "weighted_apy": 4.21, "apy_rows": 1, "apy_amount": 1000.0,
+        "benchmark": FULL_BENCHMARK, "updated": date(2026, 9, 1), "age_days": 15,
+        "as_of": date(2026, 9, 16),
+    }
+    base.update(overrides)
+    return TreasuryResult(**base)
+
+
+def _treasury_response(monkeypatch, tmp_path, result):
+    monkeypatch.setattr(assets, "WEB_DIST", tmp_path / "no-dist")
+    app = api.create_app()
+    app.dependency_overrides[api.treasury_result] = lambda: result
+    client = TestClient(app)
+    return client.get("/api/treasury")
+
+
+def test_a_parked_book_renders_its_rows(monkeypatch, tmp_path):
+    body = _treasury_response(monkeypatch, tmp_path, _treasury_result()).json()
+
+    assert body["empty_note"] is None
+    card = body["treasury"]
+    assert card["header"] == {
+        "mandate": "treasury", "rows": 1, "total": 1000.0, "as_of": "2026-09-16",
+        "written": treasury_render.written_text(15),
+    }
+    assert card["rows"] == [{
+        "what": "USDC", "amount": 1000.0, "venue": "aave-v3",
+        "apy": treasury_render.row_apy_text(4.21),
+        "since": treasury_render.row_since_text(date(2026, 8, 1)),
+        "safety": None,
+    }]
+
+
+def test_the_four_safety_states_reach_the_wire_distinctly(monkeypatch, tmp_path):
+    gate_fail = GateResult(passed=False, reasons=("no audit on record",),
+                           required_age_days=274, lineage="standalone")
+    gate_pass = GateResult(passed=True, reasons=(), required_age_days=274, lineage="standalone")
+    score = SafetyScore(incentive_share=None, apy_volatility=None, observations=None, incidents=2)
+
+    rows = (
+        ParkedRow(what="USDC", amount=100.0, venue="unconfigured-venue", apy=None),
+        ParkedRow(what="USDC", amount=100.0, venue="not-fetched-venue", apy=None),
+        ParkedRow(what="USDC", amount=100.0, venue="failing-venue", apy=None),
+        ParkedRow(what="USDC", amount=100.0, venue="passing-venue", apy=None),
+    )
+    safety = {
+        "unconfigured-venue": UNCONFIGURED,
+        "not-fetched-venue": NOT_FETCHED,
+        "failing-venue": (gate_fail, score),
+        "passing-venue": (gate_pass, score),
+    }
+    result = _treasury_result(rows=rows, total=400.0, weighted_apy=None, apy_rows=0,
+                              apy_amount=0.0, safety=safety)
+    body = _treasury_response(monkeypatch, tmp_path, result).json()
+
+    safety_by_venue = {row["venue"]: row["safety"] for row in body["treasury"]["rows"]}
+    assert safety_by_venue["unconfigured-venue"] is None
+    assert safety_by_venue["not-fetched-venue"] == "Safety: not fetched yet"
+    assert "Safety FAILS" in safety_by_venue["failing-venue"]
+    assert safety_by_venue["passing-venue"] == "Safety OK, 2 incident(s)"
+
+
+def test_an_unresolved_benchmark_crosses_as_text_not_a_blank(monkeypatch, tmp_path):
+    unresolved = Unresolved(TREASURY_MANDATE.benchmarks[0], "flat_rate benchmark has no rate")
+    result = _treasury_result(benchmark=unresolved)
+    body = _treasury_response(monkeypatch, tmp_path, result).json()
+
+    card = body["treasury"]
+    assert card["benchmark_cells"] == []
+    assert card["benchmark_note"] == treasury_render.benchmark_unresolved_note(unresolved)
+
+
+def test_nothing_parked_returns_the_envelopes_empty_note_not_an_empty_screen(monkeypatch, tmp_path):
+    body = _treasury_response(monkeypatch, tmp_path, None).json()
+
+    assert body["treasury"] is None
+    assert body["empty_note"] == treasury_cli.no_treasury_note()
+
+
+def test_idle_cash_with_no_clearing_venue_prints_no_advice_block(monkeypatch, tmp_path):
+    idle = (IdleCash(mandate="checking", account="checking", amount=2000.0),)
+    result = _treasury_result(idle=idle, advice=())
+    body = _treasury_response(monkeypatch, tmp_path, result).json()
+
+    assert body["treasury"]["idle"] == []
+    assert body["treasury"]["advice"] == []
+
+
+def test_idle_cash_with_a_clearing_venue_populates_both_blocks(monkeypatch, tmp_path):
+    idle = (IdleCash(mandate="checking", account="checking", amount=2000.0),)
+    ranked = RankedVenue(
+        facts=VenueFacts(slug="aave-v3", apy=5.0),
+        gate=GateResult(passed=True, reasons=(), required_age_days=274, lineage="standalone"),
+        score=SafetyScore(incentive_share=None, apy_volatility=None, observations=None, incidents=0),
+    )
+    result = _treasury_result(idle=idle, advice=(ranked,))
+    body = _treasury_response(monkeypatch, tmp_path, result).json()
+
+    assert body["treasury"]["idle"] == [
+        {"mandate": "checking", "account": "checking", "amount": 2000.0},
+    ]
+    assert body["treasury"]["advice"] == [
+        {"slug": "aave-v3", "apy": treasury_render.row_apy_text(5.0)},
+    ]
+
+
+def test_default_treasury_dependency_reaches_treasury_cli_load_result(monkeypatch, tmp_path):
+    """Drives the endpoint through the real dependency, with `treasury.cli.load_result` itself
+    stubbed — the only thing pinning "never a second reimplementation of the loader", and the
+    only safe way to prove it: this machine's real `data/treasury.yaml` and
+    `data/benchmarks/anchors.json` must never be touched by the suite."""
+    monkeypatch.setattr(assets, "WEB_DIST", tmp_path / "no-dist")
+    calls = []
+
+    def fake_load_result(*, as_of, books, warn):
+        calls.append((as_of, books))
+        return
+
+    monkeypatch.setattr(api, "load_result", fake_load_result)
+    app = api.create_app()
+    books = [_book("retirement")]
+    app.dependency_overrides[api.mandate_books] = lambda: books
+    client = TestClient(app)
+
+    response = client.get("/api/treasury")
+
+    assert response.status_code == 200
+    assert calls, "treasury.cli.load_result (via dashboard.api.load_result) was never called"
+    # AC: `as_of_today`'s one-value-per-request guard and `_MANDATE_BOOKS`'s already-loaded
+    # portfolios both reach `load_result` — a page load must not re-read every portfolio file.
+    called_as_of, called_books = calls[0]
+    assert called_as_of == datetime.now(UTC).date()
+    assert called_books == books

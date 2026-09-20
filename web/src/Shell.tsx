@@ -41,6 +41,20 @@ export function Shell() {
           {listError && <span className="text-xs text-down">Mandates failed to load: {listError}</span>}
         </nav>
 
+        {/* Outside `mandates.map` and set off by its own border — Treasury sits beside the
+            Mandate switcher, never inside it (`data/treasury.yaml` is not a `data/portfolios/*`
+            file, see #94's design note). */}
+        <NavLink
+          to="/treasury"
+          className={({ isActive }) =>
+            `rounded-md border-l border-line px-2.5 py-1 pl-3 font-mono text-xs ${
+              isActive ? "bg-raised text-ink" : "text-muted hover:bg-surface hover:text-ink"
+            }`
+          }
+        >
+          Treasury
+        </NavLink>
+
         {state === "failed" && error && (
           <span className="text-xs text-down">Refresh failed: {error}</span>
         )}

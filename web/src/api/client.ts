@@ -6,6 +6,7 @@ export type ReviewHeader = components["schemas"]["ReviewHeader"];
 export type LevelsSection = components["schemas"]["LevelsSection"];
 export type AltSignalSection = components["schemas"]["AltSignalSection"];
 export type RefreshJobStatus = components["schemas"]["RefreshJobStatus"];
+export type TreasuryResponse = components["schemas"]["TreasuryResponse"];
 
 export async function fetchMandates(): Promise<MandateList> {
   const response = await fetch("/api/mandates");
@@ -21,6 +22,14 @@ export async function fetchReview(name: string): Promise<ReviewDocument> {
     throw new Error(`GET /api/mandates/${name}/review failed: ${response.status}`);
   }
   return response.json() as Promise<ReviewDocument>;
+}
+
+export async function fetchTreasury(): Promise<TreasuryResponse> {
+  const response = await fetch("/api/treasury");
+  if (!response.ok) {
+    throw new Error(`GET /api/treasury failed: ${response.status}`);
+  }
+  return response.json() as Promise<TreasuryResponse>;
 }
 
 export async function startRefresh(): Promise<RefreshJobStatus> {

@@ -54,8 +54,8 @@ def delta(result: TreasuryResult, remembered: dict[str, str], *, has_idle: bool)
 
     ``remembered`` is last night's ``{pool_id: slug}``. The opportunity half only ever shows
     when ``has_idle`` (non-zero idle cash) **and** ``result.advice`` is non-empty — the same
-    ``idle and advice`` rule ``treasury.render._idle_block`` already applies, with a fixed
-    corner: a zero-amount idle account must not be able to turn the block on. Nothing is
+    rule ``treasury.render.shows_idle`` already applies, with a fixed corner: a zero-amount
+    idle account must not be able to turn the block on. Nothing is
     invented beyond that; there is no APY threshold.
 
     A pool with no ``pool_id`` is skipped rather than counted — ``pool_id`` is typed

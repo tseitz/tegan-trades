@@ -72,6 +72,13 @@ def load_result(
                         store_read=store_read, anchor_root=anchor_root)
 
 
+def no_treasury_note(file: Path = TREASURY_PATH) -> str:
+    """The sentence `main()` prints when `load_result` returns `None` — public so a second
+    Surface (the dashboard) words a `None` card identically rather than growing a second
+    spelling of it."""
+    return f"no treasury file at {file} — copy `cfg/treasury.example.yaml` there to get started"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="What money is parked, and what it earns. Reads only; places nothing.")
@@ -95,8 +102,7 @@ def main(argv: list[str] | None = None) -> int:
     if result is None:
         # Named rather than silently printing nothing. Nothing parked is a valid state — unlike
         # `compare`'s empty store, this returns 0 rather than 1.
-        print(f"no treasury file at {args.file} — "
-              f"copy `cfg/treasury.example.yaml` there to get started")
+        print(no_treasury_note(args.file))
         return 0
 
     print(render(result))

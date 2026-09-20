@@ -5,8 +5,9 @@ Pure — a ``TreasuryResult`` in, one string out, the same split ``review.render
 against a constructed result, per spec #63.
 
 **This is the first rendering of a `benchmarks.report()` dict, and of a `core.safety.GateResult`,
-anywhere in the repo** — keep both plain, since #75's `digest` section and any future dashboard
-will copy this shape rather than invent their own.
+anywhere in the repo** — keep both plain. #75's `digest` and #94's dashboard both now copy this
+shape rather than inventing their own, which is why the wording helpers below are public and the
+fixed-width layout helpers (`_rows_block`, `_idle_block`) stay private.
 """
 from __future__ import annotations
 
@@ -16,22 +17,27 @@ from oracle.benchmarks import Unresolved
 from treasury.book import NOT_FETCHED, TreasuryResult
 
 # ADR-0003's reporting-window order, verbatim.
-_WINDOWS = (("7d", "7d"), ("30d", "30d"), ("90d", "90d"), ("1y", "1y"),
-            ("since_inception", "since inception"))
+WINDOWS = (("7d", "7d"), ("30d", "30d"), ("90d", "90d"), ("1y", "1y"),
+           ("since_inception", "since inception"))
+
+IDLE_TITLE = "IDLE CASH"
+ADVICE_TITLE = "ADVICE — Safety-gate cleared, ranked by APY"
 
 
 def render(result: TreasuryResult) -> str:
-    written = ""
-    if result.age_days is not None:
-        written = f" · written {'today' if result.age_days == 0 else f'{result.age_days} days ago'}"
+    clause = written_text(result.age_days)
+    written = "" if clause is None else f" · {clause}"
     head = (f"{result.mandate.name} · {len(result.rows)} row(s) · "
-            f"{_money(result.total)} total · as of {result.as_of.isoformat()}{written}")
+            f"{money(result.total)} total · as of {result.as_of.isoformat()}{written}")
 
-    lines = [head, "", _rows_block(result), "", _apy_line(result), "", _benchmark_block(result)]
+    lines = [head, "", _rows_block(result), "",
+             apy_line(result.weighted_apy, result.apy_rows, len(result.rows),
+                       result.apy_amount, result.total),
+             "", _benchmark_block(result)]
 
-    readings_line = _readings_line(result)
-    if readings_line:
-        lines += ["", readings_line]
+    line = readings_line(result.readings_as_of.freshest, result.readings_as_of.oldest)
+    if line:
+        lines += ["", line]
 
     idle_block = _idle_block(result)
     if idle_block:
@@ -43,19 +49,28 @@ def render(result: TreasuryResult) -> str:
 def _rows_block(result: TreasuryResult) -> str:
     out = []
     for row in result.rows:
-        apy = f"{row.apy:.2f}%" if row.apy is not None else "—"
-        since = f", since {row.since.isoformat()}" if row.since is not None else ""
-        line = f"  {row.what:<10} {_money(row.amount):>14}  {row.venue:<12}  {apy:>7}{since}"
-        line += _safety_suffix(row.venue, result)
+        apy = row_apy_text(row.apy)
+        since = row_since_text(row.since)
+        line = f"  {row.what:<10} {money(row.amount):>14}  {row.venue:<12}  {apy:>7}{since}"
+        line += safety_suffix(result.safety.get(row.venue))
         out.append(line)
     return "\n".join(out)
 
 
-def _safety_suffix(venue: str, result: TreasuryResult) -> str:
+def row_apy_text(apy: float | None) -> str:
+    return f"{apy:.2f}%" if apy is not None else "—"
+
+
+def row_since_text(since) -> str:
+    return f", since {since.isoformat()}" if since is not None else ""
+
+
+def safety_suffix(entry) -> str:
     """Nothing at all for `UNCONFIGURED` — an off-chain venue like SoFi was never meant to
     clear a DeFi gate, and printing "no audit on record" about it would be a confident wrong
-    answer about an account this gate does not judge."""
-    entry = result.safety.get(venue)
+    answer about an account this gate does not judge. Takes the row's own already-looked-up
+    `safety` entry rather than `(venue, result)`, so a caller holding one row's entry — the
+    dashboard wire included — can use it without a second lookup."""
     if entry is None or entry == UNCONFIGURED:
         return ""
     if entry == NOT_FETCHED:
@@ -69,55 +84,91 @@ def _safety_suffix(venue: str, result: TreasuryResult) -> str:
     return "  · " + ", ".join(parts)
 
 
-def _apy_line(result: TreasuryResult) -> str:
-    if result.weighted_apy is None:
+def apy_line(weighted_apy: float | None, apy_rows: int, row_count: int,
+             apy_amount: float, total: float) -> str:
+    if weighted_apy is None:
         return "  weighted APY — no row states one"
-    line = f"  weighted APY {result.weighted_apy:.2f}%"
-    if result.apy_rows < len(result.rows):
-        line += (f" ({result.apy_rows}/{len(result.rows)} rows, "
-                  f"{_money(result.apy_amount)} of {_money(result.total)} — partial)")
+    line = f"  weighted APY {weighted_apy:.2f}%"
+    if apy_rows < row_count:
+        line += (f" ({apy_rows}/{row_count} rows, "
+                  f"{money(apy_amount)} of {money(total)} — partial)")
     return line
 
 
-def _benchmark_block(result: TreasuryResult) -> str:
-    if isinstance(result.benchmark, Unresolved):
-        return f"  BENCHMARK — could not be priced: {result.benchmark.reason}"
+def benchmark_cells(benchmark: dict | Unresolved) -> list[tuple[str, str]]:
+    """The `(label, text)` pairs — `_benchmark_block` composes them into the terminal's line;
+    the dashboard wire wants the cells on their own. `[]` for an `Unresolved` benchmark —
+    `benchmark_unresolved_note` is the wire's other half of that branch, so neither caller
+    has to import `oracle.benchmarks.Unresolved` to ask the question itself."""
+    if isinstance(benchmark, Unresolved):
+        return []
     cells = []
-    for key, label in _WINDOWS:
-        value = result.benchmark.get(key)
+    for key, label in WINDOWS:
+        value = benchmark.get(key)
         text = "—" if value is None else f"{value:+.1%}"
-        cells.append(f"{label} {text}")
-    return "  BENCHMARK  " + "  ".join(cells)
+        cells.append((label, text))
+    return cells
 
 
-def _readings_line(result: TreasuryResult) -> str:
+def benchmark_unresolved_note(benchmark: dict | Unresolved) -> str | None:
+    """`None` for a priced benchmark; "could not be priced: <reason>" for an `Unresolved` one —
+    so a caller across the dashboard boundary (`test_boundaries.FORBIDDEN` blocks `oracle`) can
+    ask this without importing `Unresolved` itself. Deliberately just the sentence, not the
+    `"BENCHMARK — "` heading — that is structure, the same split `LevelsSection.empty_note` and
+    `AltSignalSection.empty_note` already draw between a title and its note."""
+    return f"could not be priced: {benchmark.reason}" if isinstance(benchmark, Unresolved) else None
+
+
+def _benchmark_block(result: TreasuryResult) -> str:
+    note = benchmark_unresolved_note(result.benchmark)
+    if note is not None:
+        return f"  BENCHMARK — {note}"
+    cells = benchmark_cells(result.benchmark)
+    return "  BENCHMARK  " + "  ".join(f"{label} {text}" for label, text in cells)
+
+
+def readings_line(freshest, oldest) -> str:
     """A stale store reads as current unless this prints — the age banner
     `compare.card`/`render` already carries for the same reason."""
-    freshest = result.readings_as_of.freshest
     if freshest is None:
         return ""
-    oldest = result.readings_as_of.oldest
     if oldest == freshest:
         return f"  safety readings as of {freshest:%Y-%m-%d}"
     return f"  safety readings {oldest:%Y-%m-%d} to {freshest:%Y-%m-%d}"
 
 
+def shows_idle(result: TreasuryResult) -> bool:
+    """Whether the idle/advice block has anything to print. One definition, so the dashboard
+    wire asks the same question rather than growing a second copy of the rule."""
+    return bool(result.idle and result.advice)
+
+
+def idle_lines(idle) -> list[str]:
+    return [f"  {f'{row.mandate}/{row.account}':<30} {money(row.amount):>14}" for row in idle]
+
+
+def advice_lines(advice) -> list[str]:
+    return [f"  {ranked.facts.slug:<14} {row_apy_text(ranked.facts.apy):>7}" for ranked in advice]
+
+
 def _idle_block(result: TreasuryResult) -> str:
     """Only when there is idle cash **and** at least one venue clears the gate — nothing to
     say prints no block, the rule #75 inherits."""
-    if not result.idle or not result.advice:
+    if not shows_idle(result):
         return ""
-    idle_lines = [
-        f"  {f'{row.mandate}/{row.account}':<30} {_money(row.amount):>14}" for row in result.idle
-    ]
-    advice_lines = []
-    for ranked in result.advice:
-        apy = f"{ranked.facts.apy:.2f}%" if ranked.facts.apy is not None else "—"
-        advice_lines.append(f"  {ranked.facts.slug:<14} {apy:>7}")
     return "\n".join([
-        "IDLE CASH", *idle_lines, "", "ADVICE — Safety-gate cleared, ranked by APY", *advice_lines,
+        IDLE_TITLE, *idle_lines(result.idle), "", ADVICE_TITLE, *advice_lines(result.advice),
     ])
 
 
-def _money(value: float) -> str:
+def written_text(age_days: int | None) -> str | None:
+    """The clause naming how old the book is, with no leading separator — `render()` composes
+    the ` · ` itself. Deliberately the same name and signature as `review.render.written_text`:
+    it is the same sentence about a different file, and a second spelling would drift from it."""
+    if age_days is None:
+        return None
+    return f"written {'today' if age_days == 0 else f'{age_days} days ago'}"
+
+
+def money(value: float) -> str:
     return f"${value:,.2f}"

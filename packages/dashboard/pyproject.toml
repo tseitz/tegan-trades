@@ -6,14 +6,15 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn>=0.30",
-    # `review` and `core` are declared, not `oracle`, `execution`, `llm` or `brain` — this is
-    # the import rule, not the whole truth: `review` itself depends on `brain`, `core` and
-    # `oracle` (packages/review/pyproject.toml), and `brain` pulls `llm`, so the venv and the
+    # `review`, `treasury` and `core` are declared, not `oracle`, `execution`, `llm` or `brain`
+    # — this is the import rule, not the whole truth: `review` itself depends on `brain`, `core`
+    # and `oracle` (packages/review/pyproject.toml), and `brain` pulls `llm`, so the venv and the
     # process are not clean of them. `tests/test_boundaries.py` holds the two pins that make
     # the declaration mean something: an AST scan of this package's own imports, and a
     # `sys.modules` check that `execution` never arrives transitively (ADR-0010).
     "core",
     "review",
+    "treasury",
 ]
 
 [project.scripts]
@@ -26,6 +27,7 @@ build-backend = "uv_build"
 [tool.uv.sources]
 core = { workspace = true }
 review = { workspace = true }
+treasury = { workspace = true }
 
 [dependency-groups]
 dev = [

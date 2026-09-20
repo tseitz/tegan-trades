@@ -38,6 +38,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/treasury": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Treasury */
+        get: operations["get_treasury_api_treasury_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/refresh": {
         parameters: {
             query?: never;
@@ -93,6 +110,13 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AdviceRow */
+        AdviceRow: {
+            /** Slug */
+            slug: string;
+            /** Apy */
+            apy: string;
+        };
         /** AltSignalChain */
         AltSignalChain: {
             /** Ticker */
@@ -113,10 +137,26 @@ export interface components {
             /** Empty Note */
             empty_note: string | null;
         };
+        /** BenchmarkCell */
+        BenchmarkCell: {
+            /** Label */
+            label: string;
+            /** Text */
+            text: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** IdleRow */
+        IdleRow: {
+            /** Mandate */
+            mandate: string;
+            /** Account */
+            account: string;
+            /** Amount */
+            amount: number;
         };
         /** LevelGroup */
         LevelGroup: {
@@ -260,6 +300,71 @@ export interface components {
             /** Lines */
             lines: string[];
         };
+        /** TreasuryCard */
+        TreasuryCard: {
+            header: components["schemas"]["TreasuryHeader"];
+            /** Rows */
+            rows: components["schemas"]["TreasuryRow"][];
+            /** Apy Line */
+            apy_line: string | null;
+            /** Benchmark Cells */
+            benchmark_cells: components["schemas"]["BenchmarkCell"][];
+            /** Benchmark Note */
+            benchmark_note: string | null;
+            /** Readings Line */
+            readings_line: string | null;
+            /** Idle Title */
+            idle_title: string;
+            /** Idle */
+            idle: components["schemas"]["IdleRow"][];
+            /** Advice Title */
+            advice_title: string;
+            /** Advice */
+            advice: components["schemas"]["AdviceRow"][];
+        };
+        /** TreasuryHeader */
+        TreasuryHeader: {
+            /** Mandate */
+            mandate: string;
+            /** Rows */
+            rows: number;
+            /** Total */
+            total: number;
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            /** Written */
+            written: string | null;
+        };
+        /**
+         * TreasuryResponse
+         * @description An envelope, not a nullable document: `load_result` returning `None` means the *whole*
+         *     card is absent — no mandate, no `as_of`, no total. Putting `empty_note` on `TreasuryCard`
+         *     (mirroring `LevelsSection.empty_note`) would force every other field optional, a worse
+         *     contract for a card that, when present, always carries every field.
+         */
+        TreasuryResponse: {
+            treasury: components["schemas"]["TreasuryCard"] | null;
+            /** Empty Note */
+            empty_note: string | null;
+        };
+        /** TreasuryRow */
+        TreasuryRow: {
+            /** What */
+            what: string;
+            /** Amount */
+            amount: number;
+            /** Venue */
+            venue: string;
+            /** Apy */
+            apy: string;
+            /** Since */
+            since: string;
+            /** Safety */
+            safety: string | null;
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -329,6 +434,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_treasury_api_treasury_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TreasuryResponse"];
                 };
             };
         };

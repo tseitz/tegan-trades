@@ -6,6 +6,7 @@ import "./index.css";
 import { MandatePage } from "./MandatePage";
 import { RefreshProvider } from "./refresh/RefreshProvider";
 import { Shell } from "./Shell";
+import { TreasuryPage } from "./TreasuryPage";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
@@ -15,6 +16,7 @@ createRoot(document.getElementById("root")!).render(
           <Route element={<Shell />}>
             <Route path="/" element={<App />} />
             <Route path="/mandate/:name" element={<MandatePage />} />
+            <Route path="/treasury" element={<TreasuryPage />} />
           </Route>
         </Routes>
       </RefreshProvider>

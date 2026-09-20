@@ -21,6 +21,7 @@ from __future__ import annotations
 from core.rank import parse_date
 from core.trigger import ARMED, FIRED, NO_TRIGGER, NO_ZONE_TAG, UNREADABLE
 from review.render import roster_text, where_text
+from treasury import render as treasury_render
 
 from digest import book, diff, holdings, networth, treasury
 from digest.fmt import money, num, pct
@@ -487,27 +488,14 @@ def holdings_subject(deltas) -> list[str]:
     return parts
 
 
-def _treasury_money(value: float) -> str:
-    """Typed principal, never signed — `digest.fmt.money` carries a forced +/- for a profit or
-    loss, which a parked total is not. Mirrors `treasury.render._money` exactly, since this is
-    the same figure about the same rows."""
-    return f"${value:,.2f}"
-
-
 def _treasury_head(delta: treasury.TreasuryDelta) -> str:
-    """Mandate, row count, typed total and weighted APY — mirroring
-    `treasury.render._apy_line`'s partial-coverage note, since this is the same figure about
-    the same rows."""
-    if delta.weighted_apy is None:
-        apy = "weighted APY — no row states one"
-    else:
-        apy = f"weighted APY {delta.weighted_apy:.2f}%"
-        if delta.apy_rows < delta.rows:
-            apy += (f" ({delta.apy_rows}/{delta.rows} rows, "
-                    f"{_treasury_money(delta.apy_amount)} of {_treasury_money(delta.total)} "
-                    f"— partial)")
+    """Mandate, row count, typed total and weighted APY — calls `treasury.render.apy_line` and
+    `.money` (stripped of their two-space terminal indent) rather than a second copy of either,
+    since this is the same figure about the same rows."""
+    apy = treasury_render.apy_line(delta.weighted_apy, delta.apy_rows, delta.rows,
+                                    delta.apy_amount, delta.total).strip()
     note = (f"{delta.mandate_name} · {delta.rows} row(s) · "
-            f"{_treasury_money(delta.total)} total · {apy}")
+            f"{treasury_render.money(delta.total)} total · {apy}")
     if delta.bootstrap:
         note += " · first look, nothing to compare against yet"
     return note
@@ -555,7 +543,7 @@ def _networth_section(net: networth.NetWorth | None) -> list[str]:
         change = ""
 
     unpriced = f", excludes {net.unpriced} unpriced" if net.unpriced else ""
-    return ["", f"NET WORTH — {_treasury_money(net.total)} across {net.pots} "
+    return ["", f"NET WORTH — {treasury_render.money(net.total)} across {net.pots} "
                f"mandate{'' if net.pots == 1 else 's'}{change}{unpriced}"]
 
 

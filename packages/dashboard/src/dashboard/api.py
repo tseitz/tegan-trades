@@ -8,15 +8,18 @@ from datetime import UTC, date, datetime
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from review.cli import altsignal_settings, load_books, price_freshness, review_for
+from treasury.cli import load_result
 
 from dashboard.refresh import RefreshJobs
 from dashboard.wire import (
     MandateList,
     RefreshJobStatus,
     ReviewDocument,
+    TreasuryResponse,
     refresh_job_status,
     review_document,
     summarise,
+    treasury_response,
 )
 
 
@@ -94,6 +97,29 @@ def mandate_review(name: str, books: list = _MANDATE_BOOKS, as_of: date = _AS_OF
 _MANDATE_REVIEW = Depends(mandate_review)
 
 
+def treasury_result(books: list = _MANDATE_BOOKS, as_of: date = _AS_OF_TODAY):
+    """The Treasury book's `TreasuryResult`, or `None` when nothing is parked — a FastAPI
+    dependency mirroring `mandate_review`, so `test_api` overrides this one thing instead of
+    driving the real loader.
+
+    Passes `as_of` and `books` through for the same two reasons `mandate_review` does: one day
+    across every dependency in a request (`as_of_today`'s UTC-midnight guard), and no second
+    read-and-warn of every portfolio file `_MANDATE_BOOKS` already loaded.
+
+    **This GET is not side-effect-free, and that is accepted deliberately.** `load_result` ->
+    `treasury_for` -> `benchmarks.report`, whose first-ever call for a mandate's `flat_rate` or
+    `held_flat` benchmark writes an anchor date to `data/benchmarks/anchors.json`
+    (`oracle/benchmarks.py:238`). ADR-0010's write line permits it — `data/` is regenerable ore
+    — and `uv run treasury` already does exactly this; the browser only makes it reachable from
+    a page load, not new.
+    """
+    return load_result(as_of=as_of, books=books,
+                       warn=lambda m: print(f"warning: {m}", file=sys.stderr))
+
+
+_TREASURY_RESULT = Depends(treasury_result)
+
+
 def refresh_jobs(request: Request) -> RefreshJobs:
     """The one registry per app instance, off `app.state` — mirrors `mandate_books` so
     `test_refresh.py` can override this one dependency with a stubbed registry instead of
@@ -133,6 +159,10 @@ def create_app() -> FastAPI:
     def get_mandate_review(result=_MANDATE_REVIEW, as_of: date = _AS_OF_TODAY,
                            freshness=_DATA_FRESHNESS) -> ReviewDocument:
         return review_document(result, as_of=as_of, freshness=freshness)
+
+    @app.get("/api/treasury")
+    def get_treasury(result=_TREASURY_RESULT) -> TreasuryResponse:
+        return treasury_response(result)
 
     @app.post("/api/refresh")
     def start_refresh(request: Request, jobs: RefreshJobs = _REFRESH_JOBS) -> RefreshJobStatus:

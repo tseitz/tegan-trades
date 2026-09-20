@@ -17,6 +17,8 @@ from core.review import LEVELS_LED
 from pydantic import BaseModel
 from review import render
 from review.levels import SHOWN, cap
+from treasury import render as treasury_render
+from treasury.cli import no_treasury_note
 
 
 class MandateSummary(BaseModel):
@@ -242,6 +244,132 @@ def altsignal_section(result) -> AltSignalSection:
         macro=macro,
         empty_note=render.NOTHING_CONFIGURED if not chains and not macro else None,
     )
+
+
+# ── the Treasury card (#94) ─────────────────────────────────────────────────
+
+
+class TreasuryRow(BaseModel):
+    what: str
+    amount: float
+    venue: str
+    apy: str            # treasury_render.row_apy_text
+    since: str           # treasury_render.row_since_text; "" when the row carries no `since:`
+    safety: str | None   # treasury_render.safety_suffix, layout prefix stripped; None for
+                          # UNCONFIGURED or no entry at all
+
+
+class TreasuryHeader(BaseModel):
+    mandate: str
+    rows: int
+    total: float
+    as_of: date
+    written: str | None   # treasury_render.written_text; None with no `updated:` on the book
+
+
+class BenchmarkCell(BaseModel):
+    label: str   # treasury_render.WINDOWS' label half
+    text: str
+
+
+class IdleRow(BaseModel):
+    mandate: str
+    account: str
+    amount: float
+
+
+class AdviceRow(BaseModel):
+    slug: str
+    apy: str   # treasury_render.row_apy_text
+
+
+class TreasuryCard(BaseModel):
+    header: TreasuryHeader
+    rows: list[TreasuryRow]
+    apy_line: str | None                   # treasury_render.apy_line, layout indent stripped
+    benchmark_cells: list[BenchmarkCell]    # treasury_render.benchmark_cells; [] when Unresolved
+    benchmark_note: str | None              # treasury_render.benchmark_unresolved_note
+    readings_line: str | None                # treasury_render.readings_line, indent stripped
+    idle_title: str      # treasury_render.IDLE_TITLE
+    idle: list[IdleRow]  # [] unless `treasury_render.shows_idle` — the same both-non-empty
+    advice_title: str       # treasury_render.ADVICE_TITLE
+    advice: list[AdviceRow]  # rule the terminal's `_idle_block` applies, one definition
+
+
+class TreasuryResponse(BaseModel):
+    """An envelope, not a nullable document: `load_result` returning `None` means the *whole*
+    card is absent — no mandate, no `as_of`, no total. Putting `empty_note` on `TreasuryCard`
+    (mirroring `LevelsSection.empty_note`) would force every other field optional, a worse
+    contract for a card that, when present, always carries every field."""
+    treasury: TreasuryCard | None
+    empty_note: str | None   # treasury.cli.no_treasury_note()'s wording when nothing is parked
+
+
+def _safety_text(entry) -> str | None:
+    """`treasury_render.safety_suffix`'s leading `"  · "` is a terminal layout artifact, not
+    wording, so it is stripped here — the browser renders the bare sentence, or nothing at all
+    for the `""` UNCONFIGURED/blank case, never an empty element."""
+    return treasury_render.safety_suffix(entry).removeprefix("  · ") or None
+
+
+def treasury_card(result) -> TreasuryCard:
+    """`TreasuryResult` (untyped, same reason `review_document`'s `result` is) -> the browser's
+    Treasury card. Every piece of wording comes from `treasury.render`'s public helpers, never
+    re-decided here — task 1's whole point, and the reason `digest` collapsed its own copy of
+    the same wording alongside this.
+
+    `result.mandate` is `object  # oracle.portfolios.Mandate` (`treasury/book.py:97`) and stays
+    unannotated for the same reason `summarise(book)`'s `book` does: naming it is the `oracle`
+    import `test_boundaries.FORBIDDEN` blocks.
+    """
+    header = TreasuryHeader(
+        mandate=result.mandate.name,
+        rows=len(result.rows),
+        total=result.total,
+        as_of=result.as_of,
+        written=treasury_render.written_text(result.age_days),
+    )
+    rows = [
+        TreasuryRow(
+            what=row.what,
+            amount=row.amount,
+            venue=row.venue,
+            apy=treasury_render.row_apy_text(row.apy),
+            since=treasury_render.row_since_text(row.since),
+            safety=_safety_text(result.safety.get(row.venue)),
+        )
+        for row in result.rows
+    ]
+    shows_idle = treasury_render.shows_idle(result)
+    return TreasuryCard(
+        header=header,
+        rows=rows,
+        apy_line=treasury_render.apy_line(
+            result.weighted_apy, result.apy_rows, len(result.rows),
+            result.apy_amount, result.total,
+        ).strip() or None,
+        benchmark_cells=[
+            BenchmarkCell(label=label, text=text)
+            for label, text in treasury_render.benchmark_cells(result.benchmark)
+        ],
+        benchmark_note=treasury_render.benchmark_unresolved_note(result.benchmark),
+        readings_line=treasury_render.readings_line(
+            result.readings_as_of.freshest, result.readings_as_of.oldest,
+        ).strip() or None,
+        idle_title=treasury_render.IDLE_TITLE,
+        idle=([IdleRow(mandate=row.mandate, account=row.account, amount=row.amount)
+              for row in result.idle] if shows_idle else []),
+        advice_title=treasury_render.ADVICE_TITLE,
+        advice=([AdviceRow(slug=ranked.facts.slug, apy=treasury_render.row_apy_text(ranked.facts.apy))
+                for ranked in result.advice] if shows_idle else []),
+    )
+
+
+def treasury_response(result) -> TreasuryResponse:
+    """`TreasuryResult | None` -> the browser's envelope — `None` when nothing is parked."""
+    if result is None:
+        return TreasuryResponse(treasury=None, empty_note=no_treasury_note())
+    return TreasuryResponse(treasury=treasury_card(result), empty_note=None)
 
 
 # ── refresh (#93) ────────────────────────────────────────────────────────────
