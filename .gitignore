@@ -23,6 +23,12 @@ __pycache__/
 # Worktrees (local dev only)
 worktrees/
 
+# Node toolchain — web/src/api/schema.d.ts and pnpm-lock.yaml ARE committed, same reason
+# uv.lock is: tsc must run without Python, and the lock pins what a fresh clone builds.
+web/node_modules/
+web/dist/
+web/*.tsbuildinfo
+
 # Personal sandbox/permission overrides (machine-specific paths, e.g. ~/vault)
 .claude/settings.local.json
 # Working plans — ephemeral, not deliverables.

@@ -1,0 +1,39 @@
+[project]
+name = "dashboard"
+version = "0.1.0"
+description = "A browser Surface over the existing Views, starting with review"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    # `review` and `core` are declared, not `oracle`, `execution`, `llm` or `brain` — this is
+    # the import rule, not the whole truth: `review` itself depends on `brain`, `core` and
+    # `oracle` (packages/review/pyproject.toml), and `brain` pulls `llm`, so the venv and the
+    # process are not clean of them. `tests/test_boundaries.py` holds the two pins that make
+    # the declaration mean something: an AST scan of this package's own imports, and a
+    # `sys.modules` check that `execution` never arrives transitively (ADR-0010).
+    "core",
+    "review",
+]
+
+[project.scripts]
+dashboard = "dashboard.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+core = { workspace = true }
+review = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: hits the network; run explicitly",
+    "needs_ore: reads cached ore from data/; run where the corpus exists",
+]

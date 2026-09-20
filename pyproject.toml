@@ -18,6 +18,7 @@ dependencies = [
     "brain",
     "compare",
     "core",
+    "dashboard",
     "digest",
     "distill",
     "execution",
@@ -45,6 +46,7 @@ members = ["packages/*"]
 brain = { workspace = true }
 compare = { workspace = true }
 core = { workspace = true }
+dashboard = { workspace = true }
 digest = { workspace = true }
 distill = { workspace = true }
 execution = { workspace = true }

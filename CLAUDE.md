@@ -35,6 +35,9 @@ Workspace members under `packages/`, in pipeline order. **Each module's docstrin
 - `treasury/` — what money is parked for its yield, and what it earns — the #72 Treasury mandate, plus the #73 Safety gate on it and on idle cash. `treasury`, free, reads the hand-kept `data/treasury.yaml`, every `data/portfolios/*.yaml` (idle cash), and `data/altsignal/` (Safety facts) — no fetch of its own, places nothing.
 - `core/` — pure logic and shared schema. Zero I/O, no network, no LLM. Imported by everything, imports nothing local.
 - `llm/` — the **only** LLM boundary (`claude -p`, subscription auth). Four call sites depend on it.
+- `dashboard/` — the #84/#85 browser Surface over `review`. `dashboard`, free, reads Mandates only through `review.cli.load_books` (never `oracle.portfolios` directly). Binds `127.0.0.1` with no flag to widen it and imports neither `execution` nor `llm` (ADR-0010) — it cannot spend and cannot sign.
+
+Alongside `packages/` is `web/` — the TypeScript + React front end `dashboard` serves, at the repo root rather than a workspace member (its `node_modules` must stay out of the Python globs, and it is never `cd`'d into either). Run it as `pnpm --dir web <script>` from the repo root — same rule as the uv workspace, different toolchain. A clone that has not run `pnpm --dir web build` gets a plain-text 503 from `uv run dashboard` by design, naming the command to run; that is the expected first experience, not a bug.
 
 Other:
 
@@ -60,6 +63,18 @@ uv run pytest packages/brain -q        # scope by path, not by --package
 **Before re-running any pipeline command, check `docs/ARCHITECTURE.md` for its cost tier.** `distill-roster --force` and `brain-extract --force` are full-corpus LLM passes (666 calls each); both are resume-safe *without* `--force`.
 
 Transcript fetching needs a clean IP — YouTube IP-blocks the caption endpoint for flagged and datacenter IPs. Set `WEBSHARE_PROXY_USERNAME` / `WEBSHARE_PROXY_PASSWORD` (see `.env.example`) to route through a rotating residential proxy; metadata fetches direct and is unaffected. The two `@pytest.mark.integration` tests in `packages/ingestion/tests/` hit YouTube live and fail without it — environmental, not a regression.
+
+**The dashboard's Node half:**
+
+```bash
+pnpm --dir web install
+uv run dashboard                       # serves web/dist on 127.0.0.1:8000; 503 if unbuilt
+pnpm --dir web dev                     # localhost:5173, proxies /api to the Python process
+pnpm --dir web typecheck
+pnpm --dir web build                   # writes web/dist
+./scripts/gen-api-types.sh             # regenerate web/src/api/schema.d.ts from the live schema
+./scripts/gen-api-types.sh --check     # non-zero on drift; not yet wired into ./scripts/check.sh
+```
 
 ## Agent skills
 
