@@ -17,12 +17,12 @@ const EMPTY_COLUMN_LABELS: Record<number, string> = {
 
 export function LevelsTable({ levels, expanded, onToggle }: LevelsTableProps) {
   return (
-    <div>
-      <p>{levels.headline}</p>
+    <section>
+      <h2 className="mb-3 font-mono text-sm font-semibold text-ink">{levels.headline}</h2>
       {levels.groups.length === 0 ? (
-        <p>{levels.empty_note}</p>
+        <p className="text-muted">{levels.empty_note}</p>
       ) : (
-        <table>
+        <table className="data-table">
           <thead>
             <tr>
               {levels.columns.map((column, i) => (
@@ -35,7 +35,7 @@ export function LevelsTable({ levels, expanded, onToggle }: LevelsTableProps) {
           <tbody>
             {levels.groups.map((group) => (
               <Fragment key={group.label}>
-                <tr>
+                <tr className="group-row">
                   <td colSpan={levels.columns.length}>{group.label}</td>
                 </tr>
                 {(expanded ? group.rows : group.rows.slice(0, levels.shown)).map((row, i) => (
@@ -51,10 +51,14 @@ export function LevelsTable({ levels, expanded, onToggle }: LevelsTableProps) {
         </table>
       )}
       {levels.withheld > 0 && (
-        <button type="button" onClick={onToggle}>
+        <button
+          type="button"
+          onClick={onToggle}
+          className="mt-3 rounded-md border border-line bg-surface px-3 py-1 text-xs text-muted hover:bg-raised hover:text-ink"
+        >
           {expanded ? "show fewer" : `show ${levels.withheld} more`}
         </button>
       )}
-    </div>
+    </section>
   );
 }
