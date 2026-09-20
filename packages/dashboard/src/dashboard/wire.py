@@ -10,7 +10,8 @@ from the View, and it is translated field by field rather than handed to the bro
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
+from typing import Literal
 
 from core.review import LEVELS_LED
 from pydantic import BaseModel
@@ -240,4 +241,38 @@ def altsignal_section(result) -> AltSignalSection:
         macro_label=render.MACRO_LABEL,
         macro=macro,
         empty_note=render.NOTHING_CONFIGURED if not chains and not macro else None,
+    )
+
+
+# ── refresh (#93) ────────────────────────────────────────────────────────────
+
+RefreshStepState = Literal["pending", "running", "succeeded", "failed"]
+RefreshJobState = Literal["running", "succeeded", "failed"]
+
+
+class RefreshStepStatus(BaseModel):
+    name: str
+    state: RefreshStepState
+    detail: str | None = None
+
+
+class RefreshJobStatus(BaseModel):
+    id: str
+    state: RefreshJobState
+    steps: list[RefreshStepStatus]
+    started: datetime
+    finished: datetime | None = None
+
+
+def refresh_job_status(record) -> RefreshJobStatus:
+    """`RefreshJobs`' internal `JobRecord` -> the browser's poll response. `record` is untyped
+    for the same reason `summarise`'s `book` is: importing `dashboard.refresh`'s dataclasses
+    here would be exactly the coupling ADR-0011 avoids for `ReviewResult`."""
+    return RefreshJobStatus(
+        id=record.id,
+        state=record.state,
+        steps=[RefreshStepStatus(name=s.name, state=s.state, detail=s.detail)
+              for s in record.steps],
+        started=record.started,
+        finished=record.finished,
     )

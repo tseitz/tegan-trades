@@ -4,6 +4,7 @@ import { fetchReview, type ReviewDocument, type ReviewHeader } from "./api/clien
 import { AltSignalSection } from "./altsignal/AltSignalSection";
 import { nextSort, sortRows, type GridSort } from "./grid/sort";
 import { LevelsTable } from "./levels/LevelsTable";
+import { useRefresh } from "./refresh/RefreshProvider";
 
 interface ReviewHeaderBlockProps {
   header: ReviewHeader;
@@ -29,32 +30,44 @@ function ReviewHeaderBlock({ header, unpriced }: ReviewHeaderBlockProps) {
 
 export function MandatePage() {
   const { name } = useParams<{ name: string }>();
+  const { completedAt } = useRefresh();
   const [review, setReview] = useState<ReviewDocument | null>(null);
+  const [loadedName, setLoadedName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<GridSort | null>(null);
   const [expanded, setExpanded] = useState(false);
 
+  // Its own effect, keyed on [name] alone — the fetch effect below also depends on
+  // completedAt, and resetting these on every refresh would throw away the column the reader
+  // sorted by.
   useEffect(() => {
-    if (!name) return;
-    setReview(null);
-    setError(null);
     setSort(null);
     setExpanded(false);
-    fetchReview(name)
-      .then(setReview)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
   }, [name]);
 
-  if (error) {
-    return (
-      <div>
-        <h1>{name}</h1>
-        <p>Failed to load: {error}</p>
-      </div>
-    );
-  }
+  useEffect(() => {
+    if (!name) return;
+    // No setReview(null) here — a refresh-triggered refetch must not blank a grid the reader
+    // is looking at. loadedName, not review.mandate !== name, gates the loading state: the
+    // wire deliberately does not promise those are equal (wire.py, test_api.py:317-322).
+    setError(null);
+    fetchReview(name)
+      .then((doc) => {
+        setReview(doc);
+        setLoadedName(name);
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+  }, [name, completedAt]);
 
-  if (!review) {
+  if (!review || loadedName !== name) {
+    if (error) {
+      return (
+        <div>
+          <h1>{name}</h1>
+          <p>Failed to load: {error}</p>
+        </div>
+      );
+    }
     return (
       <div>
         <h1>{name}</h1>
@@ -67,6 +80,7 @@ export function MandatePage() {
     return (
       <div>
         <h1>{review.mandate}</h1>
+        {error && <p>Failed to refresh: {error}</p>}
         <ReviewHeaderBlock header={review.header} unpriced={review.grid.totals.unpriced} />
         <p>no positions — nothing to review</p>
       </div>
@@ -76,6 +90,9 @@ export function MandatePage() {
   return (
     <div>
       <h1>{review.mandate}</h1>
+      {/* A transient failed refetch renders above the grid rather than replacing it — a good
+          screen must survive a bad poll. */}
+      {error && <p>Failed to refresh: {error}</p>}
       <ReviewHeaderBlock header={review.header} unpriced={review.grid.totals.unpriced} />
       <table>
         <thead>
