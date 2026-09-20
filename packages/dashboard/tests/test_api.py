@@ -206,6 +206,24 @@ def test_the_grid_is_cell_by_cell_identical_to_the_terminal(monkeypatch, tmp_pat
         assert re.split(r"\s{2,}", row_line.strip()) == [c["text"] for c in row["cells"]]
 
 
+def test_sorting_by_value_matches_the_terminals_by_size_ranking(monkeypatch, tmp_path):
+    """AC3, at #84's agreed seam — the JSON the browser receives, not a front-end runner.
+    `render.ranked` is already public so a second Surface sorts identically rather than
+    growing its own copy of `_by_size`; `web/src/grid/sort.ts` is that second copy, and this
+    pins the rule it implements: descending by `cells[3]["value"]`, nulls last."""
+    readings = _grid_readings()
+    body = _review_response(monkeypatch, tmp_path, _grid_result(readings)).json()
+
+    def sort_key(row):
+        value = row["cells"][3]["value"]
+        return (value is None, -value if value is not None else 0)
+
+    sorted_tickers = [row["ticker"] for row in sorted(body["grid"]["rows"], key=sort_key)]
+    expected = render_module.ranked(list(readings), by_size=True)
+
+    assert sorted_tickers == [reading.holding.ticker for reading in expected]
+
+
 def test_numeric_cells_are_correct_to_the_cent(monkeypatch, tmp_path):
     readings = _grid_readings()
     graded = readings[0]
