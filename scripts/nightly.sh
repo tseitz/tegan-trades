@@ -25,6 +25,11 @@
 # recorded and the run's exit code reflects the worst of them, so a partial night is visible
 # rather than passing as a good one.
 #
+# **`preflight` is the one exception, and it is deliberately the only one.** It parses every
+# mandate-carrying file before anything costs time or money, and a file that will not load stops
+# the run there. Carrying on would mean spending an hour on a corpus the run cannot price — which
+# is what happened on 2026-09-18, nine steps deep. See `scripts/preflight.py`.
+#
 # Costs are totalled from the two places they are actually reported — `cost_in_usd_ticks` in the
 # xAI raw response, and the `[claude-code-backend] usage-equivalent cost:` lines. They were
 # grepped away by hand once and the number was lost, which is exactly what this exists to stop.
@@ -177,7 +182,7 @@ ONLY_STEPS=""
 # defers with "already ran today" as though nothing had been asked for.
 declare -a ORIGINAL_ARGS=("$@")
 
-ALL_STEPS="code-update data-pull verify-roster ingest-roster ingest-x distill-roster brain-extract brain-index \
+ALL_STEPS="code-update preflight data-pull verify-roster ingest-roster ingest-x distill-roster brain-extract brain-index \
 plaid-sync wallet-sync fetch-prices fetch-funding perp-fundamentals fetch-altsignal reconcile reconcile-perps setups \
 fetch-tickers \
 canon-drift backup digest"
@@ -235,9 +240,15 @@ for want in $ONLY_STEPS $SKIP_STEPS; do
   esac
 done
 
+# Set by `halt` when the preflight refuses. Everything after it reports `halted` rather than
+# running, so the summary, the history row and the log-rotation at the end still happen — an
+# aborted run must still explain itself, which an `exit` here would skip.
+HALTED=""
+
 # Single gate for both `step` and the ingest-x block, so a step cannot be selectable one way
 # and not the other.
 should_run() {
+  [ -n "$HALTED" ] && return 1
   case " $SKIP_STEPS " in *" $1 "*) return 1 ;; esac
   [ -z "$ONLY_STEPS" ] && return 0
   case " $ONLY_STEPS " in *" $1 "*) return 0 ;; esac
@@ -359,11 +370,17 @@ declare -a STATUS_LINES
 # row at the end. The pretty lines above answer "what happened last night"; this answers "is
 # distill getting slower", which no single run's log can. See scripts/nightly_report.py.
 declare -a STEP_RECORDS
-# Reasons the run is not clean that NO step status can carry. A step is marked from its exit
-# code, and several commands report a failure while exiting 0 — `ingest-roster` aborting on a
-# YouTube IP block is the one that exposed this. Others belong to no step at all (`claude`
-# auth expiring, the xAI cap). Before this existed those raised WORST while every step stayed
-# `ok`, so the run exited 1 and the morning mail could only say "none individually flagged".
+# Every reason the run is not clean, whatever noticed it. Two sources feed this and both must:
+# `step` files the ones an exit code carries, and `flag` files the ones it cannot — several
+# commands report a failure while exiting 0 (`ingest-roster` aborting on a YouTube IP block is
+# the one that exposed this), and some belong to no step at all (`claude` auth expiring, the
+# xAI cap).
+#
+# `step` used to write only STATUS_LINES, so a step that failed outright was the one kind of
+# failure the summary could not name: 2026-09-17 and 09-18 both exited 2 with `fetch-prices`
+# recorded `fail`, and `reasons` listed only the ingest warning. `setups` then ran on prices
+# frozen since 09-16 and the digest went out on them.
+#
 # Keep it parallel to STATUS_LINES: the log gets the pretty line, this survives into
 # history.jsonl and therefore into the mail.
 declare -a REASONS
@@ -376,10 +393,42 @@ flag() {
   return 0
 }
 
+# Stop the run, but do not leave the script — see HALTED above.
+#
+# Clears the run stamp, because a halted run did no work and the day must stay retryable. The
+# stamp is written before any step (see `$STAMP_FILE` above), so without this a bad portfolio
+# file would cost the whole day: you fix it, the next poll says "already ran today", and nothing
+# runs until tomorrow. Under `--force` there is no stamp to clear and `rm -f` is a no-op.
+halt() {
+  HALTED=1
+  STATUS_LINES+=("  HALT  $1")
+  # Replaces rather than appends: `step` has just filed its own "exited rc=N" line for the same
+  # failure, and this one says everything that one did plus what it cost. Two lines about one
+  # event is noise in the one place designed to be read. Indexed the long way round because
+  # macOS ships bash 3.2, where `REASONS[-1]` is a literal index, not the last element.
+  if [ "${#REASONS[@]}" -gt 0 ]; then
+    REASONS[$(( ${#REASONS[@]} - 1 ))]="$1"
+  else
+    REASONS+=("$1")
+  fi
+  WORST=2
+  rm -f "$STAMP_FILE"
+  return 0
+}
+
+# The exit code of the step that just ran, for the one caller that needs to branch on it
+# (`preflight`). 0 when the step was skipped, so a deselected preflight cannot halt the run.
+LAST_RC=0
+
 step() {
   local name="$1"; shift
+  LAST_RC=0
   if ! should_run "$name"; then
-    STATUS_LINES+=("  skip  $name — deselected")
+    if [ -n "$HALTED" ]; then
+      STATUS_LINES+=("  halt  $name — not run, preflight refused")
+    else
+      STATUS_LINES+=("  skip  $name — deselected")
+    fi
     return 0
   fi
   local started
@@ -388,16 +437,19 @@ step() {
   echo "───── $name ─────" | tee -a "$LOG"
   "$@" >>"$LOG" 2>&1
   local rc=$?
+  LAST_RC=$rc
   local secs=$(( $(date +%s) - started ))
   # verify-roster exits non-zero to flag a disagreement, which is information, not a reason to
   # skip the night's ingestion. Recorded as a warning so it still surfaces in the summary.
   if [ "$name" = "verify-roster" ] && [ $rc -ne 0 ]; then
     STATUS_LINES+=("  WARN  $name (${secs}s) — roster disagrees with reality, see log")
     STEP_RECORDS+=("$name|warn|$secs")
+    REASONS+=("$name — roster disagrees with reality, see log")
     [ $WORST -lt 1 ] && WORST=1
   elif [ $rc -ne 0 ]; then
     STATUS_LINES+=("  FAIL  $name (${secs}s) rc=$rc")
     STEP_RECORDS+=("$name|fail|$secs")
+    REASONS+=("$name — exited rc=$rc after ${secs}s, see log")
     WORST=2
   else
     STATUS_LINES+=("  ok    $name (${secs}s)")
@@ -418,6 +470,12 @@ echo "tegan-trades nightly · $(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$LOG"
 # without stopping the run.
 # First of all, because every other step runs whatever version of the code this reports on.
 step code-update    code_update_status
+
+# Second, and before anything costs time or money: every mandate-carrying file must still load.
+# After `code-update` on purpose — a file broken by a schema change is exactly the case this
+# catches, so it must read the code the rest of the run will use.
+step preflight      uv run python scripts/preflight.py
+[ "$LAST_RC" -eq 0 ] || halt "preflight — a mandate-carrying file will not load, see log"
 
 step data-pull      ./scripts/data-pull.sh
 
