@@ -34,14 +34,29 @@ def test_no_forbidden_package_is_imported_by_dashboard_source():
 
 
 def test_execution_never_arrives_transitively():
-    for name in ("oracle", "execution", "llm", "ingestion", "distill", "brain"):
-        sys.modules.pop(name, None)
+    # Popping only the top-level names leaves an already-imported submodule (e.g.
+    # `ingestion.channel`) orphaned in sys.modules: a later bare `import ingestion` then
+    # creates a fresh module object with no `.channel` attribute, since that attribute is
+    # set by importing the dotted submodule path, not by importing the parent alone. That
+    # broke `monkeypatch.setattr("ingestion.channel.proxy_url", ...)` in a different test
+    # file whenever this one ran first. Popping and restoring every matching submodule too
+    # keeps this test's mutation from leaking into the rest of the suite.
+    saved = {
+        name: module
+        for name, module in list(sys.modules.items())
+        if any(name == forbidden or name.startswith(f"{forbidden}.") for forbidden in FORBIDDEN)
+    }
+    for name in saved:
+        del sys.modules[name]
 
-    import dashboard.api as api
+    try:
+        import dashboard.api as api
 
-    api.create_app()
+        api.create_app()
 
-    assert "execution" not in sys.modules
+        assert "execution" not in sys.modules
+    finally:
+        sys.modules.update(saved)
 
 
 def test_host_is_loopback_with_no_flag_to_change_it():
