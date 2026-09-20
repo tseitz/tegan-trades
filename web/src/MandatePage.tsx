@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { fetchReview, type ReviewDocument, type ReviewHeader } from "./api/client";
 import { nextSort, sortRows, type GridSort } from "./grid/sort";
+import { LevelsTable } from "./levels/LevelsTable";
 
 interface ReviewHeaderBlockProps {
   header: ReviewHeader;
@@ -30,12 +31,14 @@ export function MandatePage() {
   const [review, setReview] = useState<ReviewDocument | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<GridSort | null>(null);
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     if (!name) return;
     setReview(null);
     setError(null);
     setSort(null);
+    setExpanded(false);
     fetchReview(name)
       .then(setReview)
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
@@ -113,6 +116,11 @@ export function MandatePage() {
         </tbody>
       </table>
       <pre>{review.grid.totals.lines.join("\n")}</pre>
+      <LevelsTable
+        levels={review.levels}
+        expanded={expanded}
+        onToggle={() => setExpanded((current) => !current)}
+      />
     </div>
   );
 }

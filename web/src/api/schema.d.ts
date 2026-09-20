@@ -64,6 +64,28 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** LevelGroup */
+        LevelGroup: {
+            /** Label */
+            label: string;
+            /** Rows */
+            rows: string[][];
+        };
+        /** LevelsSection */
+        LevelsSection: {
+            /** Headline */
+            headline: string;
+            /** Columns */
+            columns: string[];
+            /** Groups */
+            groups: components["schemas"]["LevelGroup"][];
+            /** Shown */
+            shown: number;
+            /** Withheld */
+            withheld: number;
+            /** Empty Note */
+            empty_note: string | null;
+        };
         /** MandateList */
         MandateList: {
             /** Mandates */
@@ -96,6 +118,7 @@ export interface components {
             as_of: string;
             grid: components["schemas"]["ReviewGrid"];
             header: components["schemas"]["ReviewHeader"];
+            levels: components["schemas"]["LevelsSection"];
         };
         /** ReviewGrid */
         ReviewGrid: {

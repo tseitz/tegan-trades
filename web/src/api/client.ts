@@ -3,6 +3,7 @@ import type { components } from "./schema";
 export type MandateList = components["schemas"]["MandateList"];
 export type ReviewDocument = components["schemas"]["ReviewDocument"];
 export type ReviewHeader = components["schemas"]["ReviewHeader"];
+export type LevelsSection = components["schemas"]["LevelsSection"];
 
 export async function fetchMandates(): Promise<MandateList> {
   const response = await fetch("/api/mandates");
