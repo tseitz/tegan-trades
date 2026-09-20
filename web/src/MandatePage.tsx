@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { fetchReview, type ReviewDocument, type ReviewHeader } from "./api/client";
 import { nextSort, sortRows, type GridSort } from "./grid/sort";
@@ -95,11 +95,20 @@ export function MandatePage() {
         </thead>
         <tbody>
           {sortRows(review.grid.rows, sort).map((row) => (
-            <tr key={row.ticker} className={row.unpriced ? "unpriced" : undefined}>
-              {row.cells.map((cell, i) => (
-                <td key={i}>{cell.text}</td>
+            <Fragment key={row.ticker}>
+              <tr className={row.unpriced ? "unpriced" : undefined}>
+                {row.cells.map((cell, i) => (
+                  <td key={i}>{cell.text}</td>
+                ))}
+              </tr>
+              {row.notes.map((note) => (
+                <tr key={note.label}>
+                  <td colSpan={review.grid.columns.length}>
+                    {note.label} — {note.text}
+                  </td>
+                </tr>
               ))}
-            </tr>
+            </Fragment>
           ))}
         </tbody>
       </table>

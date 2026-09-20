@@ -29,12 +29,14 @@ from review.render import (
     HEADERS,
     ORDER,
     Cell,
+    note_text,
     ranked,
     render,
     roster_text,
     row_cells,
     totals,
     totals_lines,
+    yield_text,
 )
 from review.yield_note import YieldNote
 
@@ -684,6 +686,20 @@ def test_no_yield_notes_leaves_output_unchanged():
 
 
 # ── the newly public symbols (#87) — what `render()` cannot observe ────────
+
+
+def test_note_text_and_yield_text_are_bare_sentences():
+    """`_note` and `_yield_line` build a whole terminal line — two-space indent, the verdict
+    column, the ticker, `" — "`, then the sentence. `render()`'s own output can only ever show
+    the two concatenated; this is the one place the sentence's own shape is observable."""
+    reading = _reading("COST", verdict=TRIM)
+    text = note_text(reading)
+    assert not text[:1].isspace()
+    assert "TRIM" not in text and "COST" not in text
+
+    ytext = yield_text(_yield_note(reading))
+    assert not ytext[:1].isspace()
+    assert "YIELD" not in ytext
 
 
 def test_row_cells_line_up_with_headers_and_no_cell_is_empty():

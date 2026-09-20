@@ -116,6 +116,21 @@ export interface components {
             /** Mismatches */
             mismatches: string[];
         };
+        /**
+         * ReviewNote
+         * @description A loud note or a yield note, detached from the terminal's fixed-width column. `label`
+         *     is that column's own word — the verdict, or `"YIELD"` — carried even though it repeats
+         *     `cells[10]` for a loud note: `"YIELD"` names a *kind* of note with no cell of its own, so
+         *     the field has to exist regardless, and giving the loud note a different shape to avoid one
+         *     repeated word would cost a branch on both ends of the wire. The ticker is deliberately
+         *     absent — the row it lives on already names it.
+         */
+        ReviewNote: {
+            /** Label */
+            label: string;
+            /** Text */
+            text: string;
+        };
         /** ReviewRow */
         ReviewRow: {
             /** Ticker */
@@ -124,6 +139,8 @@ export interface components {
             cells: components["schemas"]["ReviewCell"][];
             /** Unpriced */
             unpriced: boolean;
+            /** Notes */
+            notes: components["schemas"]["ReviewNote"][];
         };
         /** ReviewTotals */
         ReviewTotals: {

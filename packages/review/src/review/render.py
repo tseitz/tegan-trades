@@ -410,7 +410,10 @@ def trend_text(reading: Reading) -> str:
     return TREND_LABEL.get(reading.weekly_trend, reading.weekly_trend)
 
 
-def _note(reading: Reading, width: int) -> str:
+def note_text(reading: Reading) -> str:
+    """Public alongside ``roster_text`` and ``where_text`` so the dashboard renders the same
+    sentence beside the row rather than growing a second spelling. ``width`` stays behind in
+    ``_note`` deliberately — it is a fixed-width column artifact, not part of the wording."""
     lean = reading.roster
     age = "" if lean.age_days is None else f", newest {lean.age_days}d ago"
     # A lean of SILENT covers two different rooms: nobody spoke, and people spoke without
@@ -443,9 +446,30 @@ def _note(reading: Reading, width: int) -> str:
     # already follows for `chart_trims`.
     disagrees = (" [roster disagrees]"
                 if roster_disagrees(reading.verdict, lean.lean) else "")
-    return (f"  {reading.verdict:<{width}} {reading.holding.ticker} — roster {side}{via} "
-            f"({who}{age}){thin}{chart}{disagrees}; price {where_text(reading)}"
+    return (f"roster {side}{via} ({who}{age}){thin}{chart}{disagrees}; "
+            f"price {where_text(reading)}"
             f"{'' if reading.weekly_trend is None else f', weekly {trend_text(reading)}'}")
+
+
+def _note(reading: Reading, width: int) -> str:
+    return f"  {reading.verdict:<{width}} {reading.holding.ticker} — {note_text(reading)}"
+
+
+def yield_text(note) -> str:
+    """Public alongside ``note_text`` so the dashboard renders the same sentence beside the row
+    rather than growing a second spelling. ``width`` stays behind in ``_yield_line``
+    deliberately — it is a fixed-width column artifact, not part of the wording."""
+    already = ""
+    if note.already:
+        parts = ", ".join(f"{_num(shares)} {ticker}" for ticker, shares in note.already)
+        already = f"; {parts} already wrapped"
+    gate_word = "passed" if note.gate.passed else "failed"
+    # The ticker is used twice — here and by `_yield_line`'s own prefix — so it is recomputed
+    # rather than threaded through as a parameter.
+    ticker = note.reading.holding.ticker
+    apy = f"{note.apy:.2f}%" if note.apy is not None else "—"
+    return (f"{note.wrapper} pays {apy} for the same {ticker} exposure "
+            f"({note.protocol}, Safety gate {gate_word}){already}")
 
 
 def _yield_line(note, width: int) -> str:
@@ -453,15 +477,8 @@ def _yield_line(note, width: int) -> str:
     ``review.yield_note``. ``width`` is shared with ``_note`` so the two read as one column of
     per-holding sentences, and ``"YIELD"`` (5 characters) is the floor that column already has.
     """
-    already = ""
-    if note.already:
-        parts = ", ".join(f"{_num(shares)} {ticker}" for ticker, shares in note.already)
-        already = f"; {parts} already wrapped"
-    gate_word = "passed" if note.gate.passed else "failed"
     ticker = note.reading.holding.ticker
-    apy = f"{note.apy:.2f}%" if note.apy is not None else "—"
-    return (f"  {'YIELD':<{width}} {ticker} — {note.wrapper} pays {apy} for the "
-            f"same {ticker} exposure ({note.protocol}, Safety gate {gate_word}){already}")
+    return f"  {'YIELD':<{width}} {ticker} — {yield_text(note)}"
 
 
 def _money(value: float | None) -> str:

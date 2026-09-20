@@ -40,6 +40,17 @@ class ReviewCell(BaseModel):
     value: float | None = None
 
 
+class ReviewNote(BaseModel):
+    """A loud note or a yield note, detached from the terminal's fixed-width column. `label`
+    is that column's own word — the verdict, or `"YIELD"` — carried even though it repeats
+    `cells[10]` for a loud note: `"YIELD"` names a *kind* of note with no cell of its own, so
+    the field has to exist regardless, and giving the loud note a different shape to avoid one
+    repeated word would cost a branch on both ends of the wire. The ticker is deliberately
+    absent — the row it lives on already names it."""
+    label: str
+    text: str
+
+
 class ReviewRow(BaseModel):
     # Carried beside `cells[0]` — React needs a key, and a key read out of a positional cell
     # breaks silently the day a column moves.
@@ -49,6 +60,10 @@ class ReviewRow(BaseModel):
     # terminal` pins every cell's text against `render()`'s own output, so a row-level mark is
     # the only place this can live.
     unpriced: bool
+    # Required, not defaulted: a pydantic default would generate `notes?: ReviewNote[]` in
+    # `schema.d.ts`, the same optional `undefined` `web/src/grid/sort.ts` already carries a
+    # comment about working around.
+    notes: list[ReviewNote]
 
 
 class ReviewHeader(BaseModel):
@@ -104,9 +119,20 @@ def review_document(result, *, as_of: date, freshness) -> ReviewDocument:
             cells=[ReviewCell(text=c.text, value=c.value)
                    for c in render.row_cells(reading, total=t.market_value)],
             unpriced=reading.price is None,
+            notes=([ReviewNote(label=reading.verdict, text=render.note_text(reading))]
+                   if reading.verdict in render.LOUD else []),
         )
         for reading in readings
     ]
+    # Walked from the notes, not the rows: `render.py`'s own `position_of` lookup is built the
+    # same direction and raises a `KeyError` on a note whose reading is not in `readings`. Keying
+    # this map the other way around would drop that same orphan silently instead — the browser
+    # going quiet on data the terminal crashes on.
+    row_by_reading_id = {id(reading): row for reading, row in zip(readings, rows, strict=True)}
+    for note in result.yield_notes:
+        row_by_reading_id[id(note.reading)].notes.append(
+            ReviewNote(label="YIELD", text=render.yield_text(note))
+        )
     grid = ReviewGrid(
         columns=list(render.HEADERS),
         rows=rows,

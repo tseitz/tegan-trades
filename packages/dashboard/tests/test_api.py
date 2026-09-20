@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import dashboard.api as api
 import dashboard.assets as assets
+import pytest
 import review.cli as review_cli
 import review.render as render_module
 from core.review import (
@@ -228,10 +229,14 @@ def test_sorting_by_value_matches_the_terminals_by_size_ranking(monkeypatch, tmp
         value = row["cells"][3]["value"]
         return (value is None, -value if value is not None else 0)
 
-    sorted_tickers = [row["ticker"] for row in sorted(body["grid"]["rows"], key=sort_key)]
+    sorted_rows = sorted(body["grid"]["rows"], key=sort_key)
     expected = render_module.ranked(list(readings), by_size=True)
 
-    assert sorted_tickers == [reading.holding.ticker for reading in expected]
+    assert [row["ticker"] for row in sorted_rows] == [r.holding.ticker for r in expected]
+    # AC4, at the same seam: a sort reorders whole row objects, so the TRIM note stays on the
+    # AAA row after the permutation rather than being left behind by ticker.
+    aaa = next(row for row in sorted_rows if row["ticker"] == "AAA")
+    assert [n["label"] for n in aaa["notes"]] == ["TRIM"]
 
 
 def test_numeric_cells_are_correct_to_the_cent(monkeypatch, tmp_path):
@@ -296,6 +301,89 @@ def test_review_mandate_comes_from_book_name_not_the_url_path(monkeypatch, tmp_p
 
     assert response.status_code == 200
     assert response.json()["mandate"] == "actual-name"
+
+
+# ── row notes (#90) ──────────────────────────────────────────────────────────
+
+
+def _yield_note(reading, *, wrapper="STETH", protocol="lido", apy=2.25, already=()):
+    """A pure `SimpleNamespace` stand-in for `review.yield_note.YieldNote` — `render.yield_text`
+    reads only `wrapper`/`apy`/`protocol`/`already`/`gate.passed`, and the wire reads only
+    `note.reading`, so this keeps `oracle.altsignal_*` and `core.safety` out of a dashboard
+    test's imports, the same reason `_fake_freshness` is a `SimpleNamespace` and not a real
+    `Freshness`."""
+    return SimpleNamespace(reading=reading, wrapper=wrapper, protocol=protocol, apy=apy,
+                           already=already, gate=SimpleNamespace(passed=True))
+
+
+def _note_line(terminal: str, ticker: str, label: str) -> str:
+    """Selects by label *and* ticker — a YIELD line's second token is also the ticker, so a
+    ticker-only match on a row carrying both notes would silently return the loud one twice."""
+    return next(line for line in terminal.splitlines()
+               if line.strip().split()[:2] == [label, ticker])
+
+
+def test_a_loud_row_carries_its_note_and_a_quiet_row_carries_none(monkeypatch, tmp_path):
+    readings = _grid_readings()  # AAA TRIM, BBB HOLD, CCC NO_VIEW
+    body = _review_response(monkeypatch, tmp_path, _grid_result(readings)).json()
+
+    terminal = render_module.render(list(readings), portfolio="retirement",
+                                    as_of=date.fromisoformat(body["as_of"]))
+    expected = _note_line(terminal, "AAA", "TRIM").split(" — ", 1)[1]
+
+    rows_by_ticker = {row["ticker"]: row for row in body["grid"]["rows"]}
+    assert [n["label"] for n in rows_by_ticker["AAA"]["notes"]] == ["TRIM"]
+    assert rows_by_ticker["AAA"]["notes"][0]["text"] == expected
+    assert rows_by_ticker["BBB"]["notes"] == []
+    assert rows_by_ticker["CCC"]["notes"] == []
+
+
+def test_a_yield_note_lands_on_its_own_reading_and_no_other(monkeypatch, tmp_path):
+    readings = _grid_readings()
+    result = ReviewResult(
+        book=_book("retirement"), readings=list(readings), contexts=(), mismatched=(),
+        levels=((), (), 0), chains=(), macro=(),
+        yield_notes=(_yield_note(readings[1]),),  # BBB — a HOLD, not itself LOUD
+    )
+    body = _review_response(monkeypatch, tmp_path, result).json()
+
+    rows_by_ticker = {row["ticker"]: row for row in body["grid"]["rows"]}
+    assert [n["label"] for n in rows_by_ticker["BBB"]["notes"]] == ["YIELD"]
+    assert [n["label"] for n in rows_by_ticker["AAA"]["notes"]] == ["TRIM"]
+    assert rows_by_ticker["CCC"]["notes"] == []
+
+
+def test_a_loud_row_with_a_yield_note_carries_both_loud_first(monkeypatch, tmp_path):
+    readings = _grid_readings()
+    yield_notes = (_yield_note(readings[0]),)  # AAA — already TRIM
+    result = ReviewResult(
+        book=_book("retirement"), readings=list(readings), contexts=(), mismatched=(),
+        levels=((), (), 0), chains=(), macro=(), yield_notes=yield_notes,
+    )
+    body = _review_response(monkeypatch, tmp_path, result).json()
+    terminal = render_module.render(list(readings), portfolio="retirement",
+                                    as_of=date.fromisoformat(body["as_of"]),
+                                    yield_notes=yield_notes)
+
+    notes = next(row for row in body["grid"]["rows"] if row["ticker"] == "AAA")["notes"]
+    assert [n["label"] for n in notes] == ["TRIM", "YIELD"]
+    assert notes[0]["text"] == _note_line(terminal, "AAA", "TRIM").split(" — ", 1)[1]
+    assert notes[1]["text"] == _note_line(terminal, "AAA", "YIELD").split(" — ", 1)[1]
+
+
+def test_an_orphan_yield_note_fails_the_request_rather_than_vanishing(monkeypatch, tmp_path):
+    """The direction `wire.review_document` builds its lookup in — keyed by reading, walked
+    from the notes — makes this a `KeyError`, matching `render.py:156-160`'s own crash on the
+    same data. The reverse direction would drop this note without a trace."""
+    readings = _grid_readings()
+    orphan = _reading("ZZZ", verdict=HOLD, price=1.0)
+    result = ReviewResult(
+        book=_book("retirement"), readings=list(readings), contexts=(), mismatched=(),
+        levels=((), (), 0), chains=(), macro=(), yield_notes=(_yield_note(orphan),),
+    )
+
+    with pytest.raises(KeyError):
+        _review_response(monkeypatch, tmp_path, result)
 
 
 # ── the review header (#89) ─────────────────────────────────────────────────
