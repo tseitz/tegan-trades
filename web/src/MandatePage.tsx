@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { fetchReview, type ReviewDocument, type ReviewHeader } from "./api/client";
+import { AltSignalSection } from "./altsignal/AltSignalSection";
 import { nextSort, sortRows, type GridSort } from "./grid/sort";
 import { LevelsTable } from "./levels/LevelsTable";
 
@@ -121,6 +122,7 @@ export function MandatePage() {
         expanded={expanded}
         onToggle={() => setExpanded((current) => !current)}
       />
+      <AltSignalSection altsignal={review.altsignal} />
     </div>
   );
 }

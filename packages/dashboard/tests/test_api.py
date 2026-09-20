@@ -24,6 +24,7 @@ from core.review import (
 from core.setups import WEEKLY
 from fastapi.testclient import TestClient
 from oracle.portfolios import Benchmark, Mandate, Portfolio, Position
+from review.altsignal import ChainLine, MacroRow
 from review.cli import ReviewResult
 from review.levels import SHOWN, Spotlight, cap
 
@@ -64,10 +65,11 @@ def _grid_readings():
     )
 
 
-def _grid_result(readings, *, book_name="retirement", mandate=MANDATE, levels=((), (), 0)):
+def _grid_result(readings, *, book_name="retirement", mandate=MANDATE, levels=((), (), 0),
+                 chains=(), macro=()):
     return ReviewResult(
         book=_book(book_name, mandate=mandate), readings=list(readings), contexts=(),
-        mismatched=(), levels=levels, chains=(), macro=(),
+        mismatched=(), levels=levels, chains=chains, macro=macro,
     )
 
 
@@ -586,6 +588,152 @@ def test_an_empty_scan_carries_empty_note_and_no_groups(monkeypatch, tmp_path):
     body = _review_response(monkeypatch, tmp_path, _grid_result([])).json()
     assert body["levels"]["groups"] == []
     assert body["levels"]["empty_note"] == render_module.NOTHING_NEAR
+
+
+# ── the alt-signal section (#92) ──────────────────────────────────────────
+
+
+def test_altsignal_chains_and_macro_are_line_for_line_the_terminals_own(monkeypatch, tmp_path):
+    """AC1. Partitions on `line.startswith("    ")` *before* stripping — the block's only
+    structure is indent depth (2 spaces for a chain ticker and for `MACRO`, 4 for content), and
+    stripping first makes a ticker line, the `MACRO` label and a content line
+    indistinguishable. #91's `line.strip() not in labels` filter does not transfer — it works
+    there because the groups carry labels."""
+    chains = (
+        ChainLine(reading=_reading("AAA", verdict=HOLD, price=100.0),
+                 lines=("Chain A TVL: $1.00B", "Chain A stablecoins: $2.00B")),
+        ChainLine(reading=_reading("BBB", verdict=HOLD, price=50.0),
+                 lines=("Chain B TVL: $3.00B",)),
+    )
+    macro = (
+        MacroRow(why="Fed decision", top=(("KXFED-26DEC-T3.75", 0.72),), others=0),
+        MacroRow(why="BTC target", top=(("evt:strike-1", 0.5),), others=4),
+    )
+    result = _grid_result([], chains=chains, macro=macro)
+    body = _review_response(monkeypatch, tmp_path, result).json()
+
+    terminal = render_module.render_altsignal(chains, macro).splitlines()
+    macro_idx = terminal.index(f"  {render_module.MACRO_LABEL}")
+
+    parsed_chains: list[dict] = []
+    for line in terminal[1:macro_idx]:
+        if line.startswith("    "):
+            parsed_chains[-1]["lines"].append(line.strip())
+        elif line.startswith("  "):
+            parsed_chains.append({"ticker": line.strip(), "lines": []})
+
+    macro_lines = [line.strip() for line in terminal[macro_idx + 1:] if line.startswith("    ")]
+
+    assert parsed_chains == body["altsignal"]["chains"]
+    assert macro_lines == body["altsignal"]["macro"]
+
+
+def test_altsignal_title_and_macro_label_are_renders_own_constants(monkeypatch, tmp_path):
+    body = _review_response(monkeypatch, tmp_path, _grid_result([])).json()
+    assert body["altsignal"]["title"] == render_module.ALTSIGNAL_TITLE
+    assert body["altsignal"]["macro_label"] == render_module.MACRO_LABEL
+
+
+def test_an_unconfigured_altsignal_result_carries_the_configured_empty_note(
+    monkeypatch, tmp_path,
+):
+    body = _review_response(monkeypatch, tmp_path, _grid_result([])).json()
+    assert body["altsignal"]["chains"] == []
+    assert body["altsignal"]["macro"] == []
+    assert body["altsignal"]["empty_note"] == render_module.NOTHING_CONFIGURED
+
+    configured = _grid_result([], chains=(
+        ChainLine(reading=_reading("AAA", verdict=HOLD, price=100.0), lines=("x",)),
+    ))
+    body = _review_response(monkeypatch, tmp_path, configured).json()
+    assert body["altsignal"]["empty_note"] is None
+
+
+def test_mandate_review_passes_a_populated_altsignal_config_through_to_review_for(
+    monkeypatch, tmp_path,
+):
+    """AC2 + AC3, the load-bearing one. Drives the real `mandate_review`, overriding only
+    `mandate_books`, `data_freshness` and the new `altsignal_cfg`, with `api.review_for`
+    stubbed by a `fake` that mirrors `review_for`'s own branch. `fake` branches on the config
+    being *populated* (`kw["altsignal_cfg"].chains`), not merely non-`None`, so an empty
+    config fails here too.
+
+    Be honest about its reach: this catches deleting the kwarg from `api.py`'s
+    `mandate_review`, and a config that arrives empty. It cannot prove the View populates
+    anything, because the populating is this fake's own re-implementation of
+    `review.cli.review_for`'s branch — `test_cli.py`'s
+    `test_review_for_fills_chains_and_macro_from_a_populated_config` is the other half, and
+    neither is sufficient alone.
+    """
+    monkeypatch.setattr(assets, "WEB_DIST", tmp_path / "no-dist")
+
+    populated_cfg = review_cli.altsignal_config.AltSignalConfig(
+        chains=(review_cli.altsignal_config.ChainEntry(asset="SOL", chain="solana"),),
+        markets=(),
+    )
+    chain = ChainLine(reading=_reading("SOL", verdict=HOLD, price=100.0), lines=("x",))
+    stub_result = _grid_result(_grid_readings())
+
+    def _fake_review_for(books, *, as_of, altsignal_cfg=None, **kw):
+        if altsignal_cfg is not None and altsignal_cfg.chains:
+            return [stub_result._replace(chains=(chain,))]
+        return [stub_result]
+
+    monkeypatch.setattr(api, "review_for", _fake_review_for)
+
+    app = api.create_app()
+    app.dependency_overrides[api.mandate_books] = lambda: [_book("retirement")]
+    app.dependency_overrides[api.data_freshness] = lambda: _fake_freshness()
+    app.dependency_overrides[api.altsignal_cfg] = lambda: populated_cfg
+    client = TestClient(app)
+
+    response = client.get("/api/mandates/retirement/review")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["altsignal"]["chains"] == [{"ticker": "SOL", "lines": ["x"]}]
+
+
+def test_the_altsignal_config_handed_to_review_for_is_the_dependencys_own_object(
+    monkeypatch, tmp_path,
+):
+    """AC2: catches a future "helpfully" rebuilt config that would carry the same values but
+    lose the point of a `Depends` — a test being able to swap the object out from under it."""
+    monkeypatch.setattr(assets, "WEB_DIST", tmp_path / "no-dist")
+    sentinel = review_cli.altsignal_config.AltSignalConfig(chains=(), markets=())
+    stub_result = _grid_result(_grid_readings())
+    captured = []
+
+    def _fake_review_for(books, *, as_of, altsignal_cfg=None, **kw):
+        captured.append(altsignal_cfg)
+        return [stub_result]
+
+    monkeypatch.setattr(api, "review_for", _fake_review_for)
+
+    app = api.create_app()
+    app.dependency_overrides[api.mandate_books] = lambda: [_book("retirement")]
+    app.dependency_overrides[api.data_freshness] = lambda: _fake_freshness()
+    app.dependency_overrides[api.altsignal_cfg] = lambda: sentinel
+    client = TestClient(app)
+
+    response = client.get("/api/mandates/retirement/review")
+
+    assert response.status_code == 200
+    assert captured[0] is sentinel
+
+
+def test_the_default_altsignal_cfg_dependency_returns_a_populated_config():
+    """Not "has the attributes" — a missing `cfg/altsignal.yaml` returns
+    `AltSignalConfig(chains=(), markets=())`, which has both, so an attribute check would pass
+    a wrong `CONFIG_DIR`, a renamed file, or a packaging move that shifts `cli.py`'s
+    `parents[4]` — and ship the screen saying "nothing configured yet", #92's stated trap word
+    for word. `cfg/altsignal.yaml` is committed and holds real chains and markets, so asserting
+    non-empty is fresh-clone safe and needs no `needs_ore` marker. Duck-typed rather than
+    `isinstance` — this test is about the seam's *answer*, not about coupling it to a boundary
+    it does not need to know about.
+    """
+    cfg = api.altsignal_cfg()
+    assert cfg.chains and cfg.markets
 
 
 def test_the_headline_is_levels_headline_over_the_full_post_fold_groups(monkeypatch, tmp_path):

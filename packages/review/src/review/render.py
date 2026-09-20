@@ -103,6 +103,10 @@ LEVEL_HEADERS = ("TICKER", "PRICE", "SIDE", "LEVEL", "WHAT", "", "ROSTER", "")
 LEVEL_GROUPS = ("standing on it", "closing in")
 NOTHING_NEAR = "nothing near a level"
 
+ALTSIGNAL_TITLE = "ALT-SIGNAL"
+MACRO_LABEL = "MACRO"
+NOTHING_CONFIGURED = "nothing configured yet (see cfg/altsignal.yaml)"
+
 
 def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
            stale: bool = False, cash: float | None = None, cash_by=None,
@@ -618,14 +622,23 @@ def level_row(spot) -> list[str]:
     ]
 
 
+def macro_text(row) -> str:
+    """One finished MACRO line — `review.altsignal.MacroRow` -> ``"<why>: <top> (+N more)"``."""
+    # A Polymarket key is "<event slug>:<market slug>" — only the market half reads
+    # as a line item here, the event half is already carried by `why`.
+    top = ", ".join(f"{key.rsplit(':', 1)[-1]} {value:.0%}" for key, value in row.top)
+    suffix = f" (+{row.others} more)" if row.others else ""
+    return f"{row.why}: {top}{suffix}"
+
+
 def render_altsignal(chains, macro) -> str:
     """Phase 5 alt-signal: DefiLlama confirms a holding, Kalshi/Polymarket confirm macro
     context. Independent of the verdict grid and of LEVELS above it, same reasoning as
     ``render_levels`` — this reports what an outside source says, not what to do about it."""
     if not chains and not macro:
-        return "ALT-SIGNAL — nothing configured yet (see cfg/altsignal.yaml)"
+        return f"{ALTSIGNAL_TITLE} — {NOTHING_CONFIGURED}"
 
-    out = ["ALT-SIGNAL"]
+    out = [ALTSIGNAL_TITLE]
     if chains:
         out.append("")
         for c in chains:
@@ -633,11 +646,7 @@ def render_altsignal(chains, macro) -> str:
             out += [f"    {line}" for line in c.lines]
     if macro:
         out.append("")
-        out.append("  MACRO")
+        out.append(f"  {MACRO_LABEL}")
         for row in macro:
-            # A Polymarket key is "<event slug>:<market slug>" — only the market half reads
-            # as a line item here, the event half is already carried by `why`.
-            top = ", ".join(f"{key.rsplit(':', 1)[-1]} {value:.0%}" for key, value in row.top)
-            suffix = f" (+{row.others} more)" if row.others else ""
-            out.append(f"    {row.why}: {top}{suffix}")
+            out.append(f"    {macro_text(row)}")
     return "\n".join(out)

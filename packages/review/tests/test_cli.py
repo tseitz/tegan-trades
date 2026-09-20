@@ -20,6 +20,7 @@ from oracle.route import RoutingTable
 from oracle.series import Bar, PriceSeries
 from review.cli import (
     CONFIG_DIR,
+    altsignal_settings,
     build_readings,
     load_books,
     price_freshness,
@@ -262,11 +263,61 @@ def test_review_for_wires_yield_notes_into_the_result(monkeypatch):
     assert calls[0][2] == book.positions
 
 
+def test_review_for_fills_chains_and_macro_from_a_populated_config(monkeypatch):
+    """The View half of AC3, which nothing asserted before #92 —
+    `test_review_for_wires_yield_notes_into_the_result` above covers only the yield-note
+    branch. Patches `cli.altsignal.chain_lines`/`macro_block` directly, the same shape as that
+    test's `cli.yield_note.yield_notes` patch. **Not** `cli.altsignal.altsignal_store.read`:
+    `store_read`'s default is bound to the original function at `altsignal.py`'s import time,
+    so patching the module attribute afterward never reaches a call that omits `store_read`.
+    """
+    monkeypatch.setattr(cli.corpus, "iter_rows", lambda registry: iter(()))
+    monkeypatch.setattr(cli.listings, "load_or_fetch", lambda path: {})
+    monkeypatch.setattr(cli, "load_all_stances", lambda: [])
+
+    reading = _reading("SOL", price=100.0)
+    monkeypatch.setattr(
+        cli, "build_readings",
+        lambda book, **_: cli.Read(readings=[reading], contexts=(None,)))
+
+    chains_sentinel = ("sentinel-chain",)
+    macro_sentinel = ("sentinel-macro",)
+    monkeypatch.setattr(cli.altsignal, "chain_lines", lambda *a, **kw: chains_sentinel)
+    monkeypatch.setattr(cli.altsignal, "macro_block", lambda **kw: macro_sentinel)
+
+    book = Portfolio(name="test", mandate=MANDATE,
+                     positions=(Position(holding=reading.holding, domain="stock", mark=50.0),))
+
+    altsignal_cfg = cli.altsignal_config.AltSignalConfig(
+        chains=(cli.altsignal_config.ChainEntry(asset="SOL", chain="solana"),), markets=())
+    [result] = review_for([book], as_of=AS_OF, registry=REGISTRY, altsignal_cfg=altsignal_cfg)
+    assert result.chains == chains_sentinel
+    assert result.macro == macro_sentinel
+
+
 def test_price_freshness_agrees_with_oracle_freshness_check(tmp_path):
     """`price_freshness` has zero callers inside `review` today — `main()` still goes through
     `setups_sync.ensure_fresh` — so this is the only thing pinning `header.prices` to
     anything at all."""
     assert price_freshness(root=tmp_path) == freshness.check(root=tmp_path)
+
+
+def test_altsignal_settings_agrees_with_oracle_altsignal_config(tmp_path):
+    """The sibling of `test_price_freshness_agrees_with_oracle_freshness_check` above — this
+    is the only thing pinning the seam to `oracle.altsignal_config.load`'s own answer, on both
+    a populated file and the missing-file case."""
+    (tmp_path / "altsignal.yaml").write_text(
+        "chains:\n  - asset: SOL\n    chain: solana\n"
+        "markets:\n  - platform: kalshi\n    ticker: KXFED-26DEC-T3.75\n    why: Fed decision\n",
+        encoding="utf-8",
+    )
+    assert (altsignal_settings(config_dir=tmp_path)
+            == cli.altsignal_config.load(tmp_path))
+
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    assert (altsignal_settings(config_dir=empty_dir)
+            == cli.altsignal_config.AltSignalConfig(chains=(), markets=()))
 
 
 def test_load_books_skips_a_bad_file_and_reports_it(monkeypatch):

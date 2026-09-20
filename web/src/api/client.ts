@@ -4,6 +4,7 @@ export type MandateList = components["schemas"]["MandateList"];
 export type ReviewDocument = components["schemas"]["ReviewDocument"];
 export type ReviewHeader = components["schemas"]["ReviewHeader"];
 export type LevelsSection = components["schemas"]["LevelsSection"];
+export type AltSignalSection = components["schemas"]["AltSignalSection"];
 
 export async function fetchMandates(): Promise<MandateList> {
   const response = await fetch("/api/mandates");

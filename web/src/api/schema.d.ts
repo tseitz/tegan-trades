@@ -59,6 +59,26 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AltSignalChain */
+        AltSignalChain: {
+            /** Ticker */
+            ticker: string;
+            /** Lines */
+            lines: string[];
+        };
+        /** AltSignalSection */
+        AltSignalSection: {
+            /** Title */
+            title: string;
+            /** Chains */
+            chains: components["schemas"]["AltSignalChain"][];
+            /** Macro Label */
+            macro_label: string;
+            /** Macro */
+            macro: string[];
+            /** Empty Note */
+            empty_note: string | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -119,6 +139,7 @@ export interface components {
             grid: components["schemas"]["ReviewGrid"];
             header: components["schemas"]["ReviewHeader"];
             levels: components["schemas"]["LevelsSection"];
+            altsignal: components["schemas"]["AltSignalSection"];
         };
         /** ReviewGrid */
         ReviewGrid: {

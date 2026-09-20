@@ -107,12 +107,26 @@ class LevelsSection(BaseModel):
     empty_note: str | None   # render.NOTHING_NEAR when both groups are empty, else None
 
 
+class AltSignalChain(BaseModel):
+    ticker: str
+    lines: list[str]         # review.altsignal.ChainLine.lines, already finished sentences
+
+
+class AltSignalSection(BaseModel):
+    title: str               # render.ALTSIGNAL_TITLE
+    chains: list[AltSignalChain]
+    macro_label: str         # render.MACRO_LABEL
+    macro: list[str]         # render.macro_text per row
+    empty_note: str | None   # render.NOTHING_CONFIGURED when both lists are empty, else None
+
+
 class ReviewDocument(BaseModel):
     mandate: str
     as_of: date
     grid: ReviewGrid
     header: ReviewHeader
     levels: LevelsSection
+    altsignal: AltSignalSection
 
 
 def review_document(result, *, as_of: date, freshness) -> ReviewDocument:
@@ -167,7 +181,7 @@ def review_document(result, *, as_of: date, freshness) -> ReviewDocument:
         mismatches=render.mismatch_lines(result.mismatched),
     )
     return ReviewDocument(mandate=book.name, as_of=as_of, grid=grid, header=header,
-                          levels=levels_section(result))
+                          levels=levels_section(result), altsignal=altsignal_section(result))
 
 
 def levels_section(result) -> LevelsSection:
@@ -201,4 +215,29 @@ def levels_section(result) -> LevelsSection:
         shown=SHOWN,
         withheld=withheld,
         empty_note=render.NOTHING_NEAR if not groups else None,
+    )
+
+
+def altsignal_section(result) -> AltSignalSection:
+    """`ReviewResult.chains`/`.macro` -> the browser's ALT-SIGNAL section, line-for-line the
+    terminal's — same reasoning as `levels_section`'s docstring for why the wording lives in
+    `render.py` and this function only shapes it onto the wire.
+
+    A macro row is one finished line, not `{why, text}`: `render.macro_text` puts `why` inside
+    the line already, and splitting the field here would make the browser own that separator.
+    `title` and `empty_note` are split, unlike the terminal's single `"TITLE — note"` line,
+    because a heading is structure, not wording — the same shape `levels_section` already uses
+    for `NOTHING_NEAR`.
+    """
+    chains = [
+        AltSignalChain(ticker=c.reading.holding.ticker, lines=list(c.lines))
+        for c in result.chains
+    ]
+    macro = [render.macro_text(row) for row in result.macro]
+    return AltSignalSection(
+        title=render.ALTSIGNAL_TITLE,
+        chains=chains,
+        macro_label=render.MACRO_LABEL,
+        macro=macro,
+        empty_note=render.NOTHING_CONFIGURED if not chains and not macro else None,
     )

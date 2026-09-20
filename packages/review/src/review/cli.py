@@ -284,6 +284,20 @@ def price_freshness(*, root=None):
     return freshness.check(root=root)
 
 
+def altsignal_settings(*, config_dir=CONFIG_DIR):
+    """Which chains and markets to track — the fact `main()` reads straight off
+    `oracle.altsignal_config` and a Surface calling `review_for` directly cannot.
+
+    Untyped return, deliberately, for `load_books`'s own reason — naming
+    `oracle.altsignal_config.AltSignalConfig` in `dashboard` source is precisely the import
+    `test_boundaries.FORBIDDEN` blocks.
+
+    This is the seam a surface calls instead of reaching into ``oracle.altsignal_config``
+    directly — see ADR-0004.
+    """
+    return altsignal_config.load(config_dir)
+
+
 def refresh_argv(portfolio: str) -> list[str]:
     """What ``--refresh`` asks ``fetch-prices`` for.
 
@@ -368,7 +382,7 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
 
     as_of = args.as_of or datetime.now(UTC).date()
-    [result] = review_for([book], as_of=as_of, altsignal_cfg=altsignal_config.load(CONFIG_DIR))
+    [result] = review_for([book], as_of=as_of, altsignal_cfg=altsignal_settings())
     readings = result.readings
     print(render(readings, portfolio=book.name, as_of=as_of,
                  age_days=book.age_days(on=as_of), stale=book.is_stale(on=as_of),
