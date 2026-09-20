@@ -6,10 +6,18 @@ from __future__ import annotations
 import sys
 from datetime import UTC, date, datetime
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from review.cli import load_books, price_freshness, review_for
 
-from dashboard.wire import MandateList, ReviewDocument, review_document, summarise
+from dashboard.refresh import RefreshJobs
+from dashboard.wire import (
+    MandateList,
+    RefreshJobStatus,
+    ReviewDocument,
+    refresh_job_status,
+    review_document,
+    summarise,
+)
 
 
 def mandate_books() -> list:
@@ -69,8 +77,36 @@ def mandate_review(name: str, books: list = _MANDATE_BOOKS, as_of: date = _AS_OF
 _MANDATE_REVIEW = Depends(mandate_review)
 
 
+def refresh_jobs(request: Request) -> RefreshJobs:
+    """The one registry per app instance, off `app.state` — mirrors `mandate_books` so
+    `test_refresh.py` can override this one dependency with a stubbed registry instead of
+    reaching into module state."""
+    return request.app.state.refresh_jobs
+
+
+_REFRESH_JOBS = Depends(refresh_jobs)
+
+_SAFE_SEC_FETCH_SITE = {"same-origin", "same-site", "none"}
+
+
+def _refuse_cross_site(request: Request) -> None:
+    """POST /api/refresh is unauthenticated and side-effecting — the dashboard has no CORS or
+    auth layer by design (ADR-0010, localhost-only), so it is the first route where that
+    posture matters: any open tab can otherwise POST here silently and start a ~90-minute
+    mirror pull plus three third-party fetches. `Sec-Fetch-Site` is sent by every current
+    browser and cannot be set from a page's own JS, so refusing `cross-site` closes the
+    drive-by POST without an origin allowlist to keep in sync with `vite.config.ts`'s dev
+    proxy. Absent entirely (curl, a script) is let through — this is a browser-CSRF guard, not
+    authentication.
+    """
+    site = request.headers.get("sec-fetch-site")
+    if site is not None and site not in _SAFE_SEC_FETCH_SITE:
+        raise HTTPException(status_code=403, detail="cross-site request refused")
+
+
 def create_app() -> FastAPI:
     app = FastAPI()
+    app.state.refresh_jobs = RefreshJobs()
 
     @app.get("/api/mandates")
     def list_mandates(books: list = _MANDATE_BOOKS) -> MandateList:
@@ -81,6 +117,21 @@ def create_app() -> FastAPI:
                            freshness=_DATA_FRESHNESS) -> ReviewDocument:
         return review_document(result, as_of=as_of, freshness=freshness)
 
+    @app.post("/api/refresh")
+    def start_refresh(request: Request, jobs: RefreshJobs = _REFRESH_JOBS) -> RefreshJobStatus:
+        _refuse_cross_site(request)
+        job_id = jobs.start()
+        return refresh_job_status(jobs.get(job_id))
+
+    @app.get("/api/refresh/{job_id}")
+    def get_refresh(job_id: str, jobs: RefreshJobs = _REFRESH_JOBS) -> RefreshJobStatus:
+        record = jobs.get(job_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"no such refresh job: {job_id!r}")
+        return refresh_job_status(record)
+
+    # Both registered before mount_web(app) — Starlette matches in registration order, so
+    # assets.py's catch-all would shadow anything registered after it.
     from dashboard.assets import mount_web
 
     mount_web(app)
