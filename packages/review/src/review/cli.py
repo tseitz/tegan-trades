@@ -31,6 +31,7 @@ from oracle import (
     cache,
     corpus,
     fetch_cli,
+    freshness,
     listings,
     portfolios,
     setups_sync,
@@ -266,6 +267,21 @@ def load_books(names=None, *, warn=None) -> list:
             if warn is not None:
                 warn(f"portfolio {name!r} was skipped — {exc}")
     return books
+
+
+def price_freshness(*, root=None):
+    """How old the price cache is — the fact `main()` gets from `setups_sync.ensure_fresh`
+    and a Surface calling `review_for` directly does not. Reports, never pulls: under #84 a
+    page load renders from disk and Refresh is the only thing that syncs.
+
+    Untyped return, deliberately, for `load_books`'s own reason — naming
+    `oracle.freshness.Freshness` in `dashboard` source is precisely the import
+    `test_boundaries.FORBIDDEN` blocks.
+
+    This is the seam a surface calls instead of reaching into ``oracle.freshness`` directly —
+    see ADR-0004.
+    """
+    return freshness.check(root=root)
 
 
 def refresh_argv(portfolio: str) -> list[str]:

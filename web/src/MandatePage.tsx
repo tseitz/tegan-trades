@@ -1,7 +1,29 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { fetchReview, type ReviewDocument } from "./api/client";
+import { fetchReview, type ReviewDocument, type ReviewHeader } from "./api/client";
 import { nextSort, sortRows, type GridSort } from "./grid/sort";
+
+interface ReviewHeaderBlockProps {
+  header: ReviewHeader;
+  unpriced: number;
+}
+
+// Riskiest first, the same order `render()` prints them and for the same reason
+// (`render.py:132-137`): above the table, never below, because by then every verdict has
+// been read as fact.
+function ReviewHeaderBlock({ header, unpriced }: ReviewHeaderBlockProps) {
+  return (
+    <>
+      {header.mismatches.length > 0 && <pre>{header.mismatches.join("\n")}</pre>}
+      {header.stale_banner && <p>{header.stale_banner}</p>}
+      <p>
+        {header.prices}
+        {header.written ? ` · ${header.written}` : ""}
+        {unpriced > 0 ? ` · excludes ${unpriced} with no price` : ""}
+      </p>
+    </>
+  );
+}
 
 export function MandatePage() {
   const { name } = useParams<{ name: string }>();
@@ -41,6 +63,7 @@ export function MandatePage() {
     return (
       <div>
         <h1>{review.mandate}</h1>
+        <ReviewHeaderBlock header={review.header} unpriced={review.grid.totals.unpriced} />
         <p>no positions — nothing to review</p>
       </div>
     );
@@ -49,6 +72,7 @@ export function MandatePage() {
   return (
     <div>
       <h1>{review.mandate}</h1>
+      <ReviewHeaderBlock header={review.header} unpriced={review.grid.totals.unpriced} />
       <table>
         <thead>
           <tr>
@@ -71,7 +95,7 @@ export function MandatePage() {
         </thead>
         <tbody>
           {sortRows(review.grid.rows, sort).map((row) => (
-            <tr key={row.ticker}>
+            <tr key={row.ticker} className={row.unpriced ? "unpriced" : undefined}>
               {row.cells.map((cell, i) => (
                 <td key={i}>{cell.text}</td>
               ))}

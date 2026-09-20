@@ -95,6 +95,7 @@ export interface components {
              */
             as_of: string;
             grid: components["schemas"]["ReviewGrid"];
+            header: components["schemas"]["ReviewHeader"];
         };
         /** ReviewGrid */
         ReviewGrid: {
@@ -104,12 +105,25 @@ export interface components {
             rows: components["schemas"]["ReviewRow"][];
             totals: components["schemas"]["ReviewTotals"];
         };
+        /** ReviewHeader */
+        ReviewHeader: {
+            /** Written */
+            written: string | null;
+            /** Stale Banner */
+            stale_banner: string | null;
+            /** Prices */
+            prices: string;
+            /** Mismatches */
+            mismatches: string[];
+        };
         /** ReviewRow */
         ReviewRow: {
             /** Ticker */
             ticker: string;
             /** Cells */
             cells: components["schemas"]["ReviewCell"][];
+            /** Unpriced */
+            unpriced: boolean;
         };
         /** ReviewTotals */
         ReviewTotals: {

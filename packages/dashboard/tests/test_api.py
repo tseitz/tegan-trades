@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import UTC, date, datetime
 from functools import partial
+from types import SimpleNamespace
 
 import dashboard.api as api
 import dashboard.assets as assets
@@ -26,13 +27,14 @@ MANDATE = Mandate(name="test", benchmarks=(Benchmark(type="held_flat"),),
                   horizon="position", risk_posture="moderate")
 
 
-def _book(name, *, mandate=MANDATE, tickers=("VTI",)):
+def _book(name, *, mandate=MANDATE, tickers=("VTI",), updated=None):
     return Portfolio(
         name=name, mandate=mandate,
         positions=tuple(
             Position(holding=Holding(ticker=t, shares=1.0, cost=None), domain="stock")
             for t in tickers
         ),
+        updated=updated,
     )
 
 
@@ -63,10 +65,18 @@ def _grid_result(readings, *, book_name="retirement"):
     )
 
 
-def _review_response(monkeypatch, tmp_path, result, *, name="retirement"):
+def _fake_freshness(message="prices: fetched 1 hours ago"):
+    """A tiny stand-in for `oracle.freshness.Freshness` — not that type itself, which would
+    put `oracle` in a dashboard test's imports (allowed there, but pointlessly coupling this
+    file to a boundary it doesn't need to know about)."""
+    return SimpleNamespace(message=message)
+
+
+def _review_response(monkeypatch, tmp_path, result, *, name="retirement", freshness=None):
     monkeypatch.setattr(assets, "WEB_DIST", tmp_path / "no-dist")
     app = api.create_app()
     app.dependency_overrides[api.mandate_review] = lambda: result
+    app.dependency_overrides[api.data_freshness] = lambda: freshness or _fake_freshness()
     client = TestClient(app)
     return client.get(f"/api/mandates/{name}/review")
 
@@ -288,12 +298,107 @@ def test_review_mandate_comes_from_book_name_not_the_url_path(monkeypatch, tmp_p
     assert response.json()["mandate"] == "actual-name"
 
 
+# ── the review header (#89) ─────────────────────────────────────────────────
+
+
+def _result_with_book(book, readings=None, *, mismatched=()):
+    return ReviewResult(
+        book=book, readings=list(readings or _grid_readings()), contexts=(),
+        mismatched=mismatched, levels=((), (), 0), chains=(), macro=(),
+    )
+
+
+def test_an_unpriced_row_is_marked_and_its_priced_siblings_are_not(monkeypatch, tmp_path):
+    readings = _grid_readings()  # AAA priced, BBB priced, CCC unpriced
+    body = _review_response(monkeypatch, tmp_path, _grid_result(readings)).json()
+
+    unpriced_by_ticker = {row["ticker"]: row["unpriced"] for row in body["grid"]["rows"]}
+    assert unpriced_by_ticker == {"AAA": False, "BBB": False, "CCC": True}
+
+
+def test_mismatches_reach_the_header_and_match_render(monkeypatch, tmp_path):
+    mismatched = (("AAA", 100.0, 20.0),)
+    result = _result_with_book(_book("retirement"), mismatched=mismatched)
+    body = _review_response(monkeypatch, tmp_path, result).json()
+
+    assert body["header"]["mismatches"] == render_module.mismatch_lines(mismatched)
+
+
+def test_a_clean_book_has_no_mismatches_in_the_header(monkeypatch, tmp_path):
+    body = _review_response(monkeypatch, tmp_path, _grid_result(_grid_readings())).json()
+
+    assert body["header"]["mismatches"] == []
+
+
+def test_header_prices_is_present_on_every_response_including_an_empty_book(monkeypatch, tmp_path):
+    body = _review_response(monkeypatch, tmp_path, _grid_result([]),
+                            freshness=_fake_freshness("prices: fetched 3 hours ago")).json()
+
+    assert body["header"]["prices"] == "prices: fetched 3 hours ago"
+
+
+def test_written_reflects_the_books_age_and_is_none_without_one(monkeypatch, tmp_path):
+    dated = _result_with_book(_book("retirement", updated=date(2025, 1, 1)))
+    body = _review_response(monkeypatch, tmp_path, dated).json()
+    as_of = date.fromisoformat(body["as_of"])
+    assert body["header"]["written"] == render_module.written_text(
+        dated.book.age_days(on=as_of))
+
+    undated = _result_with_book(_book("retirement"))
+    body = _review_response(monkeypatch, tmp_path, undated).json()
+    assert body["header"]["written"] is None
+
+
+def test_stale_banner_matches_render_for_a_stale_book_and_is_none_for_a_fresh_one(
+    monkeypatch, tmp_path,
+):
+    stale = _result_with_book(_book("retirement", updated=date(2020, 1, 1)))
+    body = _review_response(monkeypatch, tmp_path, stale).json()
+    as_of = date.fromisoformat(body["as_of"])
+    assert stale.book.is_stale(on=as_of)
+    assert body["header"]["stale_banner"] == render_module.stale_banner(
+        stale.book.age_days(on=as_of))
+
+    fresh = _result_with_book(_book("retirement", updated=datetime.now(UTC).date()))
+    body = _review_response(monkeypatch, tmp_path, fresh).json()
+    as_of = date.fromisoformat(body["as_of"])
+    assert not fresh.book.is_stale(on=as_of)
+    assert body["header"]["stale_banner"] is None
+
+
+def test_a_page_load_never_syncs_the_price_cache(monkeypatch, tmp_path):
+    """AC6 / #84 story 37: `oracle.setups_sync.ensure_fresh` must never be reached from a page
+    load. `api.review_for` is stubbed too — the real one reaches `listings.load_or_fetch`,
+    which fetches over HTTP when the cache file is absent (`oracle/listings.py:62-70`), so an
+    unstubbed version would break this test on a fresh clone regardless of the sync guard.
+    Drives the real `mandate_review`, not an override, so its own lookup logic runs for real.
+    """
+    monkeypatch.setattr(assets, "WEB_DIST", tmp_path / "no-dist")
+
+    def _must_not_sync(*args, **kwargs):
+        raise AssertionError("setups_sync.ensure_fresh must never run from a page load")
+
+    monkeypatch.setattr(review_cli.setups_sync, "ensure_fresh", _must_not_sync)
+    stub_result = _grid_result(_grid_readings())
+    monkeypatch.setattr(api, "review_for", lambda books, **kw: [stub_result])
+
+    app = api.create_app()
+    app.dependency_overrides[api.mandate_books] = lambda: [_book("retirement")]
+    app.dependency_overrides[api.data_freshness] = lambda: _fake_freshness()
+    client = TestClient(app)
+
+    response = client.get("/api/mandates/retirement/review")
+
+    assert response.status_code == 200
+
+
 def test_404_for_an_unknown_mandate(monkeypatch, tmp_path):
     """Drives the real `mandate_review`, only overriding `mandate_books` — proving the
     dependency is reachable and that a bad name never gets as far as `review_for`."""
     monkeypatch.setattr(assets, "WEB_DIST", tmp_path / "no-dist")
     app = api.create_app()
     app.dependency_overrides[api.mandate_books] = lambda: [_book("retirement")]
+    app.dependency_overrides[api.data_freshness] = lambda: _fake_freshness()
     client = TestClient(app)
 
     response = client.get("/api/mandates/nope/review")

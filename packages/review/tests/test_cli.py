@@ -14,10 +14,18 @@ from core.review import (
     Reading,
     RosterLean,
 )
+from oracle import freshness
 from oracle.portfolios import Benchmark, Mandate, Portfolio, Position
 from oracle.route import RoutingTable
 from oracle.series import Bar, PriceSeries
-from review.cli import CONFIG_DIR, build_readings, load_books, refresh_argv, review_for
+from review.cli import (
+    CONFIG_DIR,
+    build_readings,
+    load_books,
+    price_freshness,
+    refresh_argv,
+    review_for,
+)
 
 AS_OF = date(2025, 6, 30)
 REGISTRY = load_registry(CONFIG_DIR)
@@ -252,6 +260,13 @@ def test_review_for_wires_yield_notes_into_the_result(monkeypatch):
     assert result.yield_notes == sentinel
     assert calls[0][1] == ("ETH",)
     assert calls[0][2] == book.positions
+
+
+def test_price_freshness_agrees_with_oracle_freshness_check(tmp_path):
+    """`price_freshness` has zero callers inside `review` today — `main()` still goes through
+    `setups_sync.ensure_fresh` — so this is the only thing pinning `header.prices` to
+    anything at all."""
+    assert price_freshness(root=tmp_path) == freshness.check(root=tmp_path)
 
 
 def test_load_books_skips_a_bad_file_and_reports_it(monkeypatch):

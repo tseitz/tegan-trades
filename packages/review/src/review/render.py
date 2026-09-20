@@ -114,9 +114,8 @@ def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
     thing standing between that and a confidently wrong answer is the reader knowing how old
     the input is.
     """
-    written = ""
-    if age_days is not None:
-        written = f" · written {'today' if age_days == 0 else f'{age_days} days ago'}"
+    clause = written_text(age_days)
+    written = "" if clause is None else f" · {clause}"
     money = "" if cash is None else f" · {_money(cash)} cash"
     mandate_clause = "" if mandate is None else f" · {mandate.name} ({mandate.leads_with} leads)"
     head = (f"{portfolio}{mandate_clause} · {len(readings)} position(s){money} "
@@ -135,11 +134,11 @@ def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
     if stale:
         # Above the table, never below it. Under the rows it reads as a footnote about
         # something else, and by then the reader has taken every verdict as fact.
-        lines += [f"  STALE — these positions were written down {age_days} days ago. "
-                  f"Anything traded since is missing, and every verdict below is computed "
-                  f"against holdings that may no longer exist.", ""]
+        lines += [f"  {stale_banner(age_days)}", ""]
     t = totals(ranked_readings)
-    lines += _mismatch_block(mismatched)
+    mismatch = mismatch_lines(mismatched)
+    if mismatch:
+        lines += [f"  {line}" for line in mismatch] + [""]
     lines += _table(ranked_readings, t.market_value)
 
     lines += ["", *(f"  {line}" for line in totals_lines(t))]
@@ -205,7 +204,28 @@ def _history_line(history, mandate) -> str:
     return ""
 
 
-def _mismatch_block(mismatched) -> list[str]:
+def written_text(age_days: int | None) -> str | None:
+    """The clause naming how old the positions are, with no leading separator — `render()`
+    composes the ` · ` itself. `None` when `age_days is None`, mirroring `render()`'s own
+    "print nothing" branch rather than inventing a sentence about an unknown age.
+
+    Public alongside `roster_text`/`where_text`/`totals_lines` so a second Surface (the
+    dashboard) words this identically rather than growing a second spelling.
+    """
+    if age_days is None:
+        return None
+    return f"written {'today' if age_days == 0 else f'{age_days} days ago'}"
+
+
+def stale_banner(age_days: int | None) -> str:
+    """The STALE sentence, unindented — `render()` re-adds its two-space indent and keeps
+    deciding *whether* to print it. Public for the same reason `written_text` is."""
+    return (f"STALE — these positions were written down {age_days} days ago. Anything traded "
+            f"since is missing, and every verdict below is computed against holdings that may "
+            f"no longer exist.")
+
+
+def mismatch_lines(mismatched) -> list[str]:
     """The broker disagreeing with our own price for the same holding.
 
     **First thing on the page when it fires, and it should almost never fire.** A price this
@@ -213,15 +233,20 @@ def _mismatch_block(mismatched) -> list[str]:
     verdict, the level and the P&L on that row are all confidently about the wrong company —
     and nothing else in the report would look wrong. `figi:` in the portfolio file is how you
     settle which one it really is.
+
+    Unindented at its own level — the header at none, the detail rows at two spaces relative
+    to it — and with no trailing blank line; `render()` re-adds its own two-space indent and
+    the blank separator, the same contract `totals_lines` follows. Public for the same reason:
+    the dashboard prints these verbatim rather than re-wording the "WRONG INSTRUMENT?" call.
     """
     if not mismatched:
         return []
-    out = [f"  WRONG INSTRUMENT? {len(mismatched)} holding(s) priced far from the broker's own "
+    out = [f"WRONG INSTRUMENT? {len(mismatched)} holding(s) priced far from the broker's own "
            f"mark. Check `figi:` in the portfolio file before trusting these rows."]
     for ticker, ours, mark in mismatched:
         gap = f"{ours / mark:,.1f}x" if mark and ours / mark >= 2 else f"{(ours - mark) / mark:+.1%}"
-        out.append(f"    {ticker}  ours {_money(ours)}  broker {_money(mark)}  ({gap})")
-    return [*out, ""]
+        out.append(f"  {ticker}  ours {_money(ours)}  broker {_money(mark)}  ({gap})")
+    return out
 
 
 def _rank(reading: Reading) -> tuple[int, float]:

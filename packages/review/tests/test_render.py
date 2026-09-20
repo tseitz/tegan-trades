@@ -358,6 +358,13 @@ def test_the_header_says_how_old_the_positions_are():
     assert "written 3 days ago" in out
 
 
+def test_the_written_clause_is_byte_exact():
+    """Pins the ` · written N days ago` separator and wording before #89 extracts it into
+    `written_text` — nothing else in this file checks the exact head line."""
+    out = render([_reading()], portfolio="retirement", as_of=AS_OF, age_days=3)
+    assert out.splitlines()[0] == "retirement · 1 position(s) · as of 2025-01-10 · written 3 days ago"
+
+
 def test_a_file_written_today_says_today_rather_than_zero_days():
     out = render([_reading()], portfolio="p", as_of=AS_OF, age_days=0)
     assert "today" in out
@@ -373,6 +380,18 @@ def test_a_stale_file_is_called_out_above_the_table():
     warning = next(i for i, text in enumerate(lines) if "STALE" in text)
     first_row = next(i for i, text in enumerate(lines) if "BTC" in text)
     assert warning < first_row
+
+
+def test_the_stale_banner_is_byte_exact():
+    """Pins the STALE sentence and its two-space indent before #89 extracts it into
+    `stale_banner` — the existing tests only check `"STALE" in line` plus ordering."""
+    out = render([_reading()], portfolio="p", as_of=AS_OF, age_days=40, stale=True)
+    banner = next(line for line in out.splitlines() if "STALE" in line)
+    assert banner == (
+        "  STALE — these positions were written down 40 days ago. Anything traded since is "
+        "missing, and every verdict below is computed against holdings that may no longer "
+        "exist."
+    )
 
 
 def test_a_fresh_file_gets_no_warning():
@@ -428,6 +447,21 @@ def test_the_header_names_the_mandate_and_which_reading_leads():
 def test_the_header_says_nothing_about_a_mandate_when_none_is_passed():
     out = render([_reading()], portfolio="retirement", as_of=AS_OF)
     assert "leads)" not in out
+
+
+def test_the_mismatch_block_is_byte_exact():
+    """Pins both indents and the blank separator line before #89 extracts this into
+    `mismatch_lines` — the existing test only checks index ordering and a `"5.0x"` substring."""
+    out = render([_reading(ticker="LINK", price=24.30)], portfolio="retirement", as_of=AS_OF,
+                 mismatched=(("LINK", 24.30, 4.85),))
+    lines = out.splitlines()
+    header_index = next(i for i, line in enumerate(lines) if "TICKER" in line)
+    assert lines[header_index - 3:header_index] == [
+        "  WRONG INSTRUMENT? 1 holding(s) priced far from the broker's own mark. Check "
+        "`figi:` in the portfolio file before trusting these rows.",
+        "    LINK  ours 24.30  broker 4.85  (5.0x)",
+        "",
+    ]
 
 
 def test_a_clean_account_prints_no_mismatch_banner():

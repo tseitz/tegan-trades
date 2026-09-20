@@ -4,10 +4,10 @@ through `review.cli.load_books`, and every shaping decision lives in `dashboard.
 from __future__ import annotations
 
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from fastapi import Depends, FastAPI, HTTPException
-from review.cli import load_books, review_for
+from review.cli import load_books, price_freshness, review_for
 
 from dashboard.wire import MandateList, ReviewDocument, review_document, summarise
 
@@ -23,20 +23,46 @@ def mandate_books() -> list:
 _MANDATE_BOOKS = Depends(mandate_books)
 
 
-def mandate_review(name: str, books: list = _MANDATE_BOOKS):
+def as_of_today() -> date:
+    """One value per request — FastAPI caches a dependency per request, so `mandate_review`
+    and `get_mandate_review` see the same day. Without it, `mandate_review` and the header's
+    age math each read the clock separately, and a request straddling UTC midnight could
+    render a STALE banner computed a day ahead of the grid it sits above.
+    """
+    return datetime.now(UTC).date()
+
+
+_AS_OF_TODAY = Depends(as_of_today)
+
+
+def data_freshness():
+    """How old the price cache is, reported once per request — never pulled. The thing that
+    pulls, `setups_sync.ensure_fresh`, is behind the boundary wall this package cannot cross
+    (`test_boundaries.FORBIDDEN` blocks `oracle.setups_sync`), so "a page load performs no
+    sync" stays true by construction here too. A FastAPI dependency, mirroring
+    `mandate_books`, so `test_api` can override it instead of stat-walking this machine's
+    real `data/prices`.
+    """
+    return price_freshness()
+
+
+_DATA_FRESHNESS = Depends(data_freshness)
+
+
+def mandate_review(name: str, books: list = _MANDATE_BOOKS, as_of: date = _AS_OF_TODAY):
     """The named Mandate's `ReviewResult`, fresh — mirrors `mandate_books` so `test_api` can
     override this one dependency instead of driving a real `review_for` call through it.
 
-    Two things #87 deliberately leaves out, each owned by a later ticket: **no alt-signal
-    config** (#92) — `review_for` is called with `altsignal_cfg=None`, so `chains`, `macro`
-    and `yield_notes` come back empty. **No sync** (#89) — this package cannot even import
-    `oracle.setups_sync` (`test_boundaries.FORBIDDEN` blocks it), so "a page load performs no
-    sync" is true by construction, not by an `if` this file remembered to write.
+    One thing #87 deliberately left out and still does: **no alt-signal config** (#92) —
+    `review_for` is called with `altsignal_cfg=None`, so `chains`, `macro` and `yield_notes`
+    come back empty. **No sync** is still true after #89 too — this package cannot even
+    import `oracle.setups_sync` (`test_boundaries.FORBIDDEN` blocks it) — but #89 does add
+    *reporting* the price cache's age, via `data_freshness`, which never pulls.
     """
     book = next((b for b in books if b.name == name), None)
     if book is None:
         raise HTTPException(status_code=404, detail=f"no such Mandate: {name!r}")
-    [result] = review_for([book], as_of=datetime.now(UTC).date())
+    [result] = review_for([book], as_of=as_of)
     return result
 
 
@@ -51,8 +77,9 @@ def create_app() -> FastAPI:
         return MandateList(mandates=[summarise(book) for book in books])
 
     @app.get("/api/mandates/{name}/review")
-    def get_mandate_review(result=_MANDATE_REVIEW) -> ReviewDocument:
-        return review_document(result, as_of=datetime.now(UTC).date())
+    def get_mandate_review(result=_MANDATE_REVIEW, as_of: date = _AS_OF_TODAY,
+                           freshness=_DATA_FRESHNESS) -> ReviewDocument:
+        return review_document(result, as_of=as_of, freshness=freshness)
 
     from dashboard.assets import mount_web
 
