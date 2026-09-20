@@ -4,16 +4,18 @@
 #
 #     prek install
 #
-# **The ruff and pytest hooks are `local` + `language: system` deliberately.** The idiomatic form
-# pins a mirror repo — `astral-sh/ruff-pre-commit` at its own `rev` — which would make the hook's
-# ruff a *second* source of truth against the one in `uv.lock`. The two would drift on the first
-# bump of either, and the hook would start disagreeing with what `uv run ruff check` says at the
-# terminal, which is the worst possible failure for a gate: it is wrong precisely when you are
+# **The ruff, pytest, and web hooks are `local` + `language: system` deliberately.** The idiomatic
+# form pins a mirror repo — `astral-sh/ruff-pre-commit` at its own `rev` — which would make the
+# hook's ruff a *second* source of truth against the one in `uv.lock`. The two would drift on the
+# first bump of either, and the hook would start disagreeing with what `uv run ruff check` says at
+# the terminal, which is the worst possible failure for a gate: it is wrong precisely when you are
 # trusting it. Calling the locked binary means there is one version and it is the one in the lock.
 #
-# Split across two stages because the cost is split. ruff is 0.03s and belongs on every commit;
-# the suite is ~14s, which is fine per push and is exactly the sort of wait that teaches you to
-# type `--no-verify` if it lands on every commit. A gate you routinely bypass is not a gate.
+# Split across stages because the cost is split. ruff is 0.03s and belongs on every commit; the
+# web hook is ~1.4s and only fires when web-affecting paths are staged, so it also belongs on
+# pre-commit; the suite is ~14s, which is fine per push and is exactly the sort of wait that
+# teaches you to type `--no-verify` if it lands on every commit. A gate you routinely bypass is
+# not a gate.
 default_install_hook_types: [pre-commit, pre-push]
 
 repos:
@@ -35,6 +37,18 @@ repos:
         pass_filenames: false
         types: [python]
         stages: [pre-push]
+
+      - id: web
+        name: web (schema drift + tsc)
+        entry: scripts/check-web.sh --skip-if-missing
+        language: system
+        pass_filenames: false
+        # `files:` rather than `types:` because the trigger reaches past web/: a Python edit to
+        # packages/dashboard/'s wire models, or a dependency bump touching uv.lock/pyproject.toml,
+        # is what stales the schema — `types: [python]` would exclude the .tsx edits that also
+        # need to fire this, and `types: [file]` (the default) is what actually covers both.
+        files: ^(web/|packages/dashboard/|uv\.lock$|pyproject\.toml$)
+        stages: [pre-commit]
 
   # The one remote hook worth the dependency, and the reason is specific rather than hygienic:
   # this repo is public, and `packages/execution` is the only thing here that holds a signing key

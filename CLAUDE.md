@@ -73,7 +73,7 @@ pnpm --dir web dev                     # localhost:5173, proxies /api to the Pyt
 pnpm --dir web typecheck
 pnpm --dir web build                   # writes web/dist
 ./scripts/gen-api-types.sh             # regenerate web/src/api/schema.d.ts from the live schema
-./scripts/gen-api-types.sh --check     # non-zero on drift; not yet wired into ./scripts/check.sh
+./scripts/gen-api-types.sh --check     # non-zero on drift; wired into ./scripts/check.sh via scripts/check-web.sh
 ```
 
 ## Agent skills

@@ -6,8 +6,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# Not $TMPDIR: it is normally unset on Linux and this runs under `set -u` on the droplet.
-TMP="$(mktemp -d)"
+# ${TMPDIR:-/tmp}, not bare mktemp -d: macOS mktemp ignores $TMPDIR and picks a path a sandbox
+# may not allow. The `:-/tmp` default covers Linux, where TMPDIR is normally unset and this runs
+# under `set -u` on the droplet.
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/gen-api-types.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 uv run dashboard --print-openapi > "$TMP/openapi.json"

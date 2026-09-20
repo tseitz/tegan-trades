@@ -1,12 +1,14 @@
 # **A backstop, not a gate.** Work here goes straight to `main` with no pull request, so nothing
 # Actions does can block anything — by the time this runs the commit has landed. It earns its
-# place on two things a local hook cannot check:
+# place on three things a local hook cannot check:
 #
 #   1. `uv sync --locked` fails if `uv.lock` has drifted from the seven `pyproject.toml` files.
 #      Locally `uv run` quietly re-resolves and carries on, so a stale lock is invisible at the
 #      terminal and only surfaces on a machine that has no `.venv` yet — which is to say, later,
 #      to someone else, or to me after a reinstall.
 #   2. It catches the commit that went in behind `--no-verify`.
+#   3. It catches a web-affecting commit made on a clone with no `web/node_modules`, where the
+#      pre-commit hook's `--skip-if-missing` let it through.
 #
 # Two exclusions, for the same reason and not the same cause: `integration` hits YouTube live and
 # needs residential proxy credentials; `needs_ore` reads the gitignored `data/` corpus, which no
@@ -29,7 +31,7 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# Read-only. This workflow only ever checks out and runs tests; it publishes nothing.
+# Read-only. This workflow only ever checks out and runs tests and type checks; it publishes nothing.
 permissions:
   contents: read
 
@@ -49,6 +51,28 @@ jobs:
       # `sync` would quietly fix one and report success.
       - run: uv sync --locked
 
+      # pnpm/action-setup before setup-node: `cache: pnpm` below needs `pnpm store path` to
+      # already resolve, which requires pnpm to be on PATH first. `package_json_file` points at
+      # web/package.json's `packageManager` field because this repo has no root package.json,
+      # which is what pnpm/action-setup reads by default.
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          package_json_file: web/package.json
+
+      # `pnpm/setup@v2` installs pnpm v11+ only, and this repo is on pnpm 9.15.2 — running a
+      # different major in CI than locally turns --frozen-lockfile into a lockfile-format
+      # tripwire instead of a lockfile check. Collapsing these two steps into one `pnpm/setup` is
+      # gated on bumping local pnpm and regenerating web/pnpm-lock.yaml first.
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - run: pnpm --dir web install --frozen-lockfile
+
       - run: uv run ruff check .
 
       - run: uv run pytest -q -m "not integration and not needs_ore"
+
+      - run: ./scripts/check-web.sh
