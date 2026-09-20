@@ -11,9 +11,11 @@ the one mistake a portfolio review must never make. **The notes below hold only 
 asking for a decision**, because a section that explains the HOLDs too is a section nobody
 finishes reading, and the one line that wanted an answer is the line they miss.
 
-Pure: strings in, one string out. Nothing here reads a file or a clock.
+Pure: strings and cells out, never a file or a clock read.
 """
 from __future__ import annotations
+
+from typing import NamedTuple
 
 from core.nearby import DAILY_ZONE, GAP, RANGE_EDGE, RESISTANCE, WEEKLY_ZONE
 from core.review import (
@@ -124,7 +126,7 @@ def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
         tail = f"\n\n  {history_line}" if history_line else ""
         return f"{head}\n\n  no positions — nothing to review{tail}"
 
-    ranked = sorted(readings, key=_by_size) if by_size else sorted(readings, key=_rank)
+    ranked_readings = ranked(readings, by_size=by_size)
     lines = [head, ""]
     if history_line:
         # Same position as the STALE banner, and for the same reason: above the table, where
@@ -136,19 +138,13 @@ def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
         lines += [f"  STALE — these positions were written down {age_days} days ago. "
                   f"Anything traded since is missing, and every verdict below is computed "
                   f"against holdings that may no longer exist.", ""]
-    total = sum(r.market_value for r in ranked if r.market_value is not None)
+    t = totals(ranked_readings)
     lines += _mismatch_block(mismatched)
-    lines += _table(ranked, total)
+    lines += _table(ranked_readings, t.market_value)
 
-    unpriced = [r for r in ranked if r.price is None]
-    tail = f"  total {_money(total)}"
-    if unpriced:
-        # Named rather than netted out. A total quietly missing three holdings reads as your
-        # whole account, which is a worse error than a total that admits its own hole.
-        tail += f" (excludes {len(unpriced)} with no price)"
-    lines += ["", tail, *_pnl_tail(ranked)]
+    lines += ["", *(f"  {line}" for line in totals_lines(t))]
 
-    loud = [r for r in ranked if r.verdict in LOUD]
+    loud = [r for r in ranked_readings if r.verdict in LOUD]
     # 5 is the floor this column has always had — wide enough for WATCH, the longest of the
     # three original LOUD verdicts. A report with only TRIM/ADD rows and no WATCH must still
     # use 5, or AC 5 breaks the day a report happens not to have a WATCH in it. The width only
@@ -158,14 +154,14 @@ def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
     # Same order the table above them is ranked, so the two per-holding blocks never disagree
     # about which holding comes first — looked up by identity, not equality, since two distinct
     # readings can compare equal by value.
-    position_of = {id(r): i for i, r in enumerate(ranked)}
+    position_of = {id(r): i for i, r in enumerate(ranked_readings)}
     yield_lines = [
         _yield_line(note, width)
         for note in sorted(yield_notes, key=lambda n: position_of[id(n.reading)])
     ]
     if notes or yield_lines:
         if notes:
-            adds = sum(1 for r in ranked if r.verdict == ADD)
+            adds = sum(1 for r in ranked_readings if r.verdict == ADD)
             # Beside the decisions rather than only in the header, and reported rather than acted
             # on. What an ADD is worth is not something this file knows, so turning cash into a
             # gate would invent a position size nobody chose. Saying the number where the ADDs are
@@ -209,25 +205,6 @@ def _history_line(history, mandate) -> str:
     return ""
 
 
-def _pnl_tail(readings) -> list[str]:
-    """The account's profit and loss under the value total, or nothing at all.
-
-    A separate line rather than more words on the total: they answer different questions, and
-    a row that could be valued cannot always be graded — a wallet knows what a coin is worth
-    and never what it cost, so on a synced crypto account this line is correctly absent while
-    the total above it is complete.
-    """
-    graded = [r for r in readings if r.pnl is not None]
-    if not graded:
-        return []
-    gain = sum(r.pnl for r in graded)
-    basis = sum(abs(r.holding.cost * r.holding.shares) for r in graded)
-    share = f" ({_pct(gain / basis)})" if basis else ""
-    ungraded = len(readings) - len(graded)
-    missing = f" (excludes {ungraded} with no cost basis)" if ungraded else ""
-    return [f"  P&L   {_signed(gain)}{share}{missing}"]
-
-
 def _mismatch_block(mismatched) -> list[str]:
     """The broker disagreeing with our own price for the same holding.
 
@@ -260,20 +237,96 @@ def _by_size(reading: Reading) -> float:
     return -(reading.market_value or 0.0)
 
 
+def ranked(readings, *, by_size: bool = False) -> list:
+    """The row order `render()` has always used, public so a second Surface (the dashboard)
+    sorts identically rather than growing its own copy of `_rank`/`_by_size`."""
+    return sorted(readings, key=_by_size) if by_size else sorted(readings, key=_rank)
+
+
+class Cell(NamedTuple):
+    """One grid cell: the exact text the terminal prints, and the number behind it when the
+    column is numeric. Public alongside `row_cells` so the dashboard renders the same grid
+    the terminal does rather than growing a second spelling of these five formatters.
+    """
+    text: str
+    value: float | None = None
+
+
+def row_cells(reading: Reading, *, total: float) -> tuple[Cell, ...]:
+    """One row, in `HEADERS` order. `total` is the value the WT column weighs against — see
+    `_weight`."""
+    weight = None if reading.market_value is None or not total else reading.market_value / total
+    return (
+        Cell(reading.holding.ticker),
+        Cell(_num(reading.holding.shares), reading.holding.shares),
+        Cell(_money(reading.price), reading.price),
+        Cell(_money(reading.market_value), reading.market_value),
+        Cell(_weight(reading.market_value, total), weight),
+        Cell(_signed(reading.pnl), reading.pnl),
+        Cell(_pct(reading.pnl_pct), reading.pnl_pct),
+        Cell(roster_text(reading)),
+        Cell(where_text(reading)),
+        Cell(trend_text(reading)),
+        Cell(reading.verdict),
+    )
+
+
+class GridTotals(NamedTuple):
+    """The account-level numbers under the table. Public alongside `totals`/`totals_lines` so
+    the dashboard sums the same way the terminal's tail does, rather than a second sum that
+    can drift from it.
+    """
+    market_value: float
+    unpriced: int
+    pnl: float | None
+    pnl_pct: float | None
+    ungraded: int
+    count: int
+
+
+def totals(readings) -> GridTotals:
+    """`pnl`/`pnl_pct` are `None` when nothing is graded — never `0.0` — so `totals_lines` can
+    tell "the account broke even" from "nothing here has a cost basis" apart."""
+    market_value = sum(r.market_value for r in readings if r.market_value is not None)
+    unpriced = sum(1 for r in readings if r.price is None)
+    graded = [r for r in readings if r.pnl is not None]
+    pnl: float | None = None
+    pnl_pct: float | None = None
+    if graded:
+        pnl = sum(r.pnl for r in graded)
+        basis = sum(abs(r.holding.cost * r.holding.shares) for r in graded)
+        if basis:
+            pnl_pct = pnl / basis
+    return GridTotals(market_value=market_value, unpriced=unpriced, pnl=pnl, pnl_pct=pnl_pct,
+                       ungraded=len(readings) - len(graded), count=len(readings))
+
+
+def totals_lines(t: GridTotals) -> list[str]:
+    """The terminal's own tail, unindented — `render()` re-adds its two-space indent, and the
+    dashboard prints these verbatim. `[]` for an empty book, matching `_table`'s own "nothing
+    to show" case.
+    """
+    if t.count == 0:
+        return []
+    line = f"total {_money(t.market_value)}"
+    if t.unpriced:
+        # Named rather than netted out. A total quietly missing three holdings reads as your
+        # whole account, which is a worse error than a total that admits its own hole.
+        line += f" (excludes {t.unpriced} with no price)"
+    lines = [line]
+    if t.pnl is not None:
+        # A row that could be valued cannot always be graded — a wallet knows what a coin is
+        # worth and never what it cost, so on a synced crypto account this line is correctly
+        # absent while the total above it is complete. `is not None`, not truthy: a book that
+        # nets to exactly 0.00 is still graded and still earns the line.
+        share = f" ({_pct(t.pnl_pct)})" if t.pnl_pct is not None else ""
+        missing = f" (excludes {t.ungraded} with no cost basis)" if t.ungraded else ""
+        lines.append(f"P&L   {_signed(t.pnl)}{share}{missing}")
+    return lines
+
+
 def _table(readings, total: float) -> list[str]:
-    rows = [[
-        r.holding.ticker,
-        _num(r.holding.shares),
-        _money(r.price),
-        _money(r.market_value),
-        _weight(r.market_value, total),
-        _signed(r.pnl),
-        _pct(r.pnl_pct),
-        roster_text(r),
-        where_text(r),
-        trend_text(r),
-        r.verdict,
-    ] for r in readings]
+    rows = [[c.text for c in row_cells(r, total=total)] for r in readings]
 
     widths = [max(len(str(cell)) for cell in column)
               for column in zip(HEADERS, *rows, strict=True)]

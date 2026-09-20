@@ -4,11 +4,16 @@ ADR-0011: the API never serializes ``ReviewResult`` or ``Portfolio`` directly. T
 where that translation lives, so a View's internal shape stays free to change (ADR-0005)
 without becoming a browser contract. `core.review.Reading` in particular exposes `market_value`,
 `pnl` and `pnl_pct` as computed properties, not fields — a reflexive `.model_validate(book)`
-would silently drop exactly the three numbers a review screen is largely made of.
+would silently drop exactly the three numbers a review screen is largely made of. `ReviewCell`
+carries both a cell's text and its number for the same reason: `render.Cell` is a `NamedTuple`
+from the View, and it is translated field by field rather than handed to the browser directly.
 """
 from __future__ import annotations
 
+from datetime import date
+
 from pydantic import BaseModel
+from review import render
 
 
 class MandateSummary(BaseModel):
@@ -26,3 +31,69 @@ def summarise(book) -> MandateSummary:
     `oracle.portfolios.Portfolio` here is exactly the import `test_boundaries.py` forbids.
     """
     return MandateSummary(name=book.name)
+
+
+class ReviewCell(BaseModel):
+    """One grid cell. `value` is `null` for the four text columns and for a number the
+    Reading could not compute — never `0`, which would read as a real answer."""
+    text: str
+    value: float | None = None
+
+
+class ReviewRow(BaseModel):
+    # Carried beside `cells[0]` — React needs a key, and a key read out of a positional cell
+    # breaks silently the day a column moves.
+    ticker: str
+    cells: list[ReviewCell]
+
+
+class ReviewTotals(BaseModel):
+    market_value: float
+    unpriced: int
+    # The terminal's own tail, unindented, so the browser prints the total and the P&L line
+    # without owning their wording. No `pnl`/`pnl_pct`/`ungraded`: nothing in #87–#92 reads
+    # them, and an unread field in a generated browser contract is a thing to keep true for
+    # nobody.
+    lines: list[str]
+
+
+class ReviewGrid(BaseModel):
+    columns: list[str]
+    rows: list[ReviewRow]
+    totals: ReviewTotals
+
+
+class ReviewDocument(BaseModel):
+    mandate: str
+    as_of: date
+    grid: ReviewGrid
+
+
+def review_document(result, *, as_of: date) -> ReviewDocument:
+    """`ReviewResult` (untyped, exactly as `summarise` takes a `book`) -> the browser's grid.
+
+    Ranks first and totals over the ranked list, then passes that total as every row's `total`
+    — the same order `render()` uses, so the WT denominator and the printed totals are
+    bit-for-bit the terminal's.
+
+    ``result.book.name``, never a caller-supplied name: the path a request came in on is
+    untrusted input, and under a test's dependency override it is not what produced the
+    result.
+    """
+    readings = render.ranked(result.readings)
+    t = render.totals(readings)
+    rows = [
+        ReviewRow(
+            ticker=reading.holding.ticker,
+            cells=[ReviewCell(text=c.text, value=c.value)
+                   for c in render.row_cells(reading, total=t.market_value)],
+        )
+        for reading in readings
+    ]
+    grid = ReviewGrid(
+        columns=list(render.HEADERS),
+        rows=rows,
+        totals=ReviewTotals(market_value=t.market_value, unpriced=t.unpriced,
+                            lines=render.totals_lines(t)),
+    )
+    return ReviewDocument(mandate=result.book.name, as_of=as_of, grid=grid)

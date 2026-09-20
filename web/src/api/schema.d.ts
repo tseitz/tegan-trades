@@ -21,6 +21,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mandates/{name}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Mandate Review */
+        get: operations["get_mandate_review_api_mandates__name__review_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/{path}": {
         parameters: {
             query?: never;
@@ -56,6 +73,52 @@ export interface components {
         MandateSummary: {
             /** Name */
             name: string;
+        };
+        /**
+         * ReviewCell
+         * @description One grid cell. `value` is `null` for the four text columns and for a number the
+         *     Reading could not compute — never `0`, which would read as a real answer.
+         */
+        ReviewCell: {
+            /** Text */
+            text: string;
+            /** Value */
+            value?: number | null;
+        };
+        /** ReviewDocument */
+        ReviewDocument: {
+            /** Mandate */
+            mandate: string;
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            grid: components["schemas"]["ReviewGrid"];
+        };
+        /** ReviewGrid */
+        ReviewGrid: {
+            /** Columns */
+            columns: string[];
+            /** Rows */
+            rows: components["schemas"]["ReviewRow"][];
+            totals: components["schemas"]["ReviewTotals"];
+        };
+        /** ReviewRow */
+        ReviewRow: {
+            /** Ticker */
+            ticker: string;
+            /** Cells */
+            cells: components["schemas"]["ReviewCell"][];
+        };
+        /** ReviewTotals */
+        ReviewTotals: {
+            /** Market Value */
+            market_value: number;
+            /** Unpriced */
+            unpriced: number;
+            /** Lines */
+            lines: string[];
         };
         /** ValidationError */
         ValidationError: {
@@ -95,6 +158,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MandateList"];
+                };
+            };
+        };
+    };
+    get_mandate_review_api_mandates__name__review_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewDocument"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

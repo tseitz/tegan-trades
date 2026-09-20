@@ -25,7 +25,17 @@ from core.review import (
 )
 from core.transactions import TransactionSpan
 from oracle.portfolios import Benchmark, Mandate
-from review.render import ORDER, render, roster_text
+from review.render import (
+    HEADERS,
+    ORDER,
+    Cell,
+    ranked,
+    render,
+    roster_text,
+    row_cells,
+    totals,
+    totals_lines,
+)
 from review.yield_note import YieldNote
 
 AS_OF = date(2025, 1, 10)
@@ -276,6 +286,29 @@ def test_totals_line_sums_what_it_can_price():
         portfolio="p", as_of=AS_OF,
     )
     assert "230" in out            # 200 + 30
+
+
+def test_totals_line_names_the_price_it_could_not_get():
+    """Today's coverage is a substring match on a number — nothing pins the `total ` prefix or
+    the `(excludes N with no price)` clause."""
+    out = render(
+        [_reading("A", price=100.0, shares=2.0, cost=50.0),
+         _reading("B", price=None, shares=1.0, cost=None)],
+        portfolio="p", as_of=AS_OF,
+    )
+    tail = next(line for line in out.splitlines() if line.strip().startswith("total"))
+    assert tail.strip() == "total 200.00 (excludes 1 with no price)"
+
+
+def test_the_pnl_line_survives_a_book_that_nets_to_exactly_zero():
+    """`if t.pnl:` where `if t.pnl is None:` is meant would drop this line for a break-even
+    book with every other test still green."""
+    out = render(
+        [_reading("A", price=100.0, shares=1.0, cost=50.0),
+         _reading("B", price=50.0, shares=1.0, cost=100.0)],
+        portfolio="p", as_of=AS_OF,
+    )
+    assert any(line.strip().startswith("P&L") for line in out.splitlines())
 
 
 def _row(out: str, ticker: str) -> str:
@@ -614,3 +647,67 @@ def test_no_yield_notes_leaves_output_unchanged():
     with_empty = render([reading], portfolio="p", as_of=AS_OF, yield_notes=())
     without_arg = render([reading], portfolio="p", as_of=AS_OF)
     assert with_empty == without_arg
+
+
+# ── the newly public symbols (#87) — what `render()` cannot observe ────────
+
+
+def test_row_cells_line_up_with_headers_and_no_cell_is_empty():
+    reading = _reading("BTC", price=100.0, shares=2.0, cost=50.0)
+    total = reading.market_value
+    cells = row_cells(reading, total=total)
+    assert len(cells) == len(HEADERS)
+    assert cells[3] == Cell("200.00", reading.market_value)          # VALUE
+    assert cells[4].value == reading.market_value / total             # WT — the fraction
+    assert cells[4].text == "100.0%"                                  # WT — the percent
+    assert all(c.text != "" for c in cells)
+
+
+def test_row_cells_carries_none_where_the_reading_has_none():
+    reading = Reading(
+        holding=Holding(ticker="WEIRD", shares=1.0, cost=None),
+        roster=_lean(SILENT, bears=0, people=0, age_days=None, voices=()),
+        location=Location(where=UNREADABLE, basis="none"),
+        verdict=NO_VIEW, price=None, weekly_trend=None,
+    )
+    cells = row_cells(reading, total=0.0)
+    assert cells[2].value is None and cells[2].text == "—"            # PRICE
+    assert cells[3].value is None and cells[3].text == "—"            # VALUE
+    assert cells[4].value is None and cells[4].text == "—"            # WT
+    assert cells[5].value is None and cells[5].text == "—"            # P&L
+    assert cells[6].value is None and cells[6].text == "—"            # P&L %
+
+
+def test_ranked_puts_a_trim_above_a_hold():
+    quiet = _reading("QUIET", verdict=HOLD)
+    loud = _reading("LOUD", verdict=TRIM)
+    assert ranked([quiet, loud]) == [loud, quiet]
+
+
+def test_ranked_by_size_orders_by_market_value_alone():
+    small = _reading("SMALL", verdict=TRIM, shares=1.0, price=10.0)
+    big = _reading("BIG", verdict=HOLD, shares=100.0, price=10.0)
+    assert ranked([small, big], by_size=True) == [big, small]
+
+
+def test_totals_counts_unpriced_and_ungraded_and_excludes_unpriced_from_market_value():
+    graded = _reading("A", price=100.0, shares=2.0, cost=50.0)
+    ungraded = _reading("B", price=10.0, shares=3.0, cost=None)
+    unpriced = _reading("C", price=None, shares=1.0, cost=None)
+    t = totals([graded, ungraded, unpriced])
+    assert t.unpriced == 1
+    # `unpriced` has no `pnl` either, so it is `ungraded` too — the same ambiguity
+    # `_pnl_tail`'s "(excludes N with no cost basis)" wording already carried.
+    assert t.ungraded == 2
+    assert t.market_value == graded.market_value + ungraded.market_value
+
+
+def test_totals_lines_is_empty_for_no_readings():
+    assert totals_lines(totals([])) == []
+
+
+def test_totals_lines_prints_the_total_alone_for_a_synced_wallet_with_no_cost_basis():
+    """The shape `render.py`'s `_pnl_tail` docstring describes: a wallet that can be valued
+    and never graded."""
+    reading = _reading("BTC", price=100.0, shares=2.0, cost=None)
+    assert totals_lines(totals([reading])) == ["total 200.00"]
