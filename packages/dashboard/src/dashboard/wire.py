@@ -12,8 +12,10 @@ from __future__ import annotations
 
 from datetime import date
 
+from core.review import LEVELS_LED
 from pydantic import BaseModel
 from review import render
+from review.levels import SHOWN, cap
 
 
 class MandateSummary(BaseModel):
@@ -74,11 +76,28 @@ class ReviewGrid(BaseModel):
     totals: ReviewTotals
 
 
+class LevelGroup(BaseModel):
+    label: str              # render.LEVEL_GROUPS
+    rows: list[list[str]]    # render.level_row, in render.LEVEL_HEADERS order
+
+
+class LevelsSection(BaseModel):
+    headline: str            # render.levels_headline over the UNCAPPED, post-fold groups
+    columns: list[str]       # render.LEVEL_HEADERS
+    groups: list[LevelGroup]  # empty groups omitted, as render_levels omits them
+    shown: int               # review.levels.SHOWN — the per-group cap, not a TS literal
+    # review.levels.cap(...)[2] at that cap — the terminal's own `suppressed`, so the
+    # expander's count shares one definition with `--levels`' own tally instead of a second.
+    withheld: int
+    empty_note: str | None   # render.NOTHING_NEAR when both groups are empty, else None
+
+
 class ReviewDocument(BaseModel):
     mandate: str
     as_of: date
     grid: ReviewGrid
     header: ReviewHeader
+    levels: LevelsSection
 
 
 def review_document(result, *, as_of: date, freshness) -> ReviewDocument:
@@ -121,4 +140,39 @@ def review_document(result, *, as_of: date, freshness) -> ReviewDocument:
         prices=freshness.message,
         mismatches=render.mismatch_lines(result.mismatched),
     )
-    return ReviewDocument(mandate=book.name, as_of=as_of, grid=grid, header=header)
+    return ReviewDocument(mandate=book.name, as_of=as_of, grid=grid, header=header,
+                          levels=levels_section(result))
+
+
+def levels_section(result) -> LevelsSection:
+    """`ReviewResult.levels`'s uncapped triple -> the browser's Levels section.
+
+    The headline counts everything the browser can reach, not a capped list — the terminal
+    caps before rendering (`review.cli.main`), so its head undercounts on a Mandate the browser
+    can fully expand. Sending the capped head would need the server to know the browser's cap,
+    which inverts the rule that capping is the Surface's decision (`ReviewResult.levels`'s own
+    docstring).
+
+    The levels-led fold happens here, before anything is counted, and the expander does not
+    undo it: on a levels-led mandate the verdict grid already carries the standing group
+    (ADR-0002), so repeating it under an expander would be the same fact twice. `withheld` is
+    computed over these same post-fold groups with `review.levels.cap`, so it counts the
+    closing group's overflow only on a levels-led mandate — never the folded standing group.
+    """
+    standing, closing, _ = result.levels
+    if result.book.mandate.leads_with == LEVELS_LED:
+        standing = ()
+    _, _, withheld = cap(standing, closing, limit=SHOWN)
+    groups = [
+        LevelGroup(label=label, rows=[render.level_row(spot) for spot in group])
+        for label, group in zip(render.LEVEL_GROUPS, (standing, closing), strict=True)
+        if group
+    ]
+    return LevelsSection(
+        headline=render.levels_headline(standing, closing, kinds=result.book.level_kinds),
+        columns=list(render.LEVEL_HEADERS),
+        groups=groups,
+        shown=SHOWN,
+        withheld=withheld,
+        empty_note=render.NOTHING_NEAR if not groups else None,
+    )

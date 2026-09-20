@@ -100,6 +100,9 @@ KIND_LABEL = {
 
 LEVEL_HEADERS = ("TICKER", "PRICE", "SIDE", "LEVEL", "WHAT", "", "ROSTER", "")
 
+LEVEL_GROUPS = ("standing on it", "closing in")
+NOTHING_NEAR = "nothing near a level"
+
 
 def render(readings, *, portfolio: str, as_of, age_days: int | None = None,
            stale: bool = False, cash: float | None = None, cash_by=None,
@@ -524,15 +527,13 @@ def render_levels(standing, closing, suppressed: int, *, kinds=()) -> str:
     same fact twice. ``main()`` does that fold, not this function — see ``review.cli.main``.
     "Closing in" still prints on both paths, because an approaching level is not yet a verdict.
     """
-    counted = ", ".join(_kind_phrase(k) for k in kinds) or "nothing"
-    head = (f"LEVELS — {len(standing)} standing on one · {len(closing)} closing in "
-            f"· counting {counted}")
+    head = levels_headline(standing, closing, kinds=kinds)
     if not standing and not closing:
-        return f"{head}\n\n  nothing near a level"
+        return f"{head}\n\n  {NOTHING_NEAR}"
 
     # Widths come from the data rows alone. A group label in a cell would pad every side below
     # it to the width of a phrase that is not a side.
-    rows = [_level_row(spot) for spot in (*standing, *closing)]
+    rows = [level_row(spot) for spot in (*standing, *closing)]
     widths = [max(len(cell) for cell in column)
               for column in zip(LEVEL_HEADERS, *rows, strict=True)]
 
@@ -541,7 +542,7 @@ def render_levels(standing, closing, suppressed: int, *, kinds=()) -> str:
 
     out = [head, "", line(LEVEL_HEADERS)]
     cursor = 0
-    for label, group in (("standing on it", standing), ("closing in", closing)):
+    for label, group in zip(LEVEL_GROUPS, (standing, closing), strict=True):
         if not group:
             continue
         out.append(f"  {label}")
@@ -555,7 +556,20 @@ def render_levels(standing, closing, suppressed: int, *, kinds=()) -> str:
     return "\n".join(out)
 
 
-def _level_row(spot) -> list[str]:
+def levels_headline(standing, closing, *, kinds=()) -> str:
+    """The `LEVELS —` line, lifted out of `render_levels` so the dashboard prints the same
+    counts without capping first. Counts are the lists it is handed — a caller that caps
+    before calling gets the capped counts, which is `render_levels`'s own behaviour, not a
+    bug this function needs to correct."""
+    counted = ", ".join(_kind_phrase(k) for k in kinds) or "nothing"
+    return (f"LEVELS — {len(standing)} standing on one · {len(closing)} closing in "
+            f"· counting {counted}")
+
+
+def level_row(spot) -> list[str]:
+    """One `LEVEL_HEADERS`-ordered row: the exact cells `render_levels` prints for a
+    `Spotlight`. Public alongside `row_cells` so the dashboard prints the terminal's `_money`
+    and dies/distance rules rather than a second spelling of them."""
     level = spot.level
     band = (_money(level.bottom) if level.top == level.bottom
             else f"{_money(level.bottom)}–{_money(level.top)}")

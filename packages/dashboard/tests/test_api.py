@@ -9,6 +9,7 @@ import dashboard.api as api
 import dashboard.assets as assets
 import review.cli as review_cli
 import review.render as render_module
+from core.nearby import RESISTANCE, SUPPORT, WEEKLY_ZONE, Level
 from core.review import (
     HOLD,
     NO_VIEW,
@@ -19,12 +20,16 @@ from core.review import (
     Reading,
     RosterLean,
 )
+from core.setups import WEEKLY
 from fastapi.testclient import TestClient
 from oracle.portfolios import Benchmark, Mandate, Portfolio, Position
 from review.cli import ReviewResult
+from review.levels import SHOWN, Spotlight, cap
 
 MANDATE = Mandate(name="test", benchmarks=(Benchmark(type="held_flat"),),
                   horizon="position", risk_posture="moderate")
+LEVELS_LED_MANDATE = Mandate(name="test-levels-led", benchmarks=(Benchmark(type="held_flat"),),
+                             horizon="position", risk_posture="conservative")
 
 
 def _book(name, *, mandate=MANDATE, tickers=("VTI",), updated=None):
@@ -58,11 +63,25 @@ def _grid_readings():
     )
 
 
-def _grid_result(readings, *, book_name="retirement"):
+def _grid_result(readings, *, book_name="retirement", mandate=MANDATE, levels=((), (), 0)):
     return ReviewResult(
-        book=_book(book_name), readings=list(readings), contexts=(), mismatched=(),
-        levels=((), (), 0), chains=(), macro=(),
+        book=_book(book_name, mandate=mandate), readings=list(readings), contexts=(),
+        mismatched=(), levels=levels, chains=(), macro=(),
     )
+
+
+def _level(kind=WEEKLY_ZONE, *, timeframe=WEEKLY, side=SUPPORT, top=99.0, bottom=95.0,
+           distance=0.0, invalidation=None):
+    return Level(kind=kind, timeframe=timeframe, side=side, top=top, bottom=bottom,
+                distance=distance, invalidation=invalidation)
+
+
+def _spot(ticker="DE", *, others=1, invalidation=95.0, **level_kw):
+    """`others=1` and `invalidation` set by default so no cell in `render.level_row`'s output
+    is blank — `re.split(r"\\s{2,}")` drops any empty cell, not just a trailing one, so the
+    fidelity test below needs every column of every fixture row to hold text."""
+    return Spotlight(reading=_reading(ticker, verdict=HOLD, price=100.0),
+                     level=_level(invalidation=invalidation, **level_kw), others=others)
 
 
 def _fake_freshness(message="prices: fetched 1 hours ago"):
@@ -404,3 +423,90 @@ def test_404_for_an_unknown_mandate(monkeypatch, tmp_path):
     response = client.get("/api/mandates/nope/review")
 
     assert response.status_code == 404
+
+
+# ── the Levels section (#91) ────────────────────────────────────────────────
+
+
+def test_levels_rows_are_cell_by_cell_identical_to_the_terminal(monkeypatch, tmp_path):
+    """AC1. `render_levels` interleaves a `LEVEL_GROUPS` label line between the two row
+    blocks, so this walks the terminal's lines filtering those labels out rather than slicing
+    a fixed window the way #87's grid test does."""
+    standing = (_spot("AAA"), _spot("BBB", side=RESISTANCE))
+    closing = (_spot("CCC", distance=0.02, side=RESISTANCE),)
+    book = _book("retirement")
+    result = ReviewResult(book=book, readings=[s.reading for s in (*standing, *closing)],
+                          contexts=(), mismatched=(), levels=(standing, closing, 0),
+                          chains=(), macro=())
+    body = _review_response(monkeypatch, tmp_path, result).json()
+
+    terminal = render_module.render_levels(standing, closing, 0, kinds=book.level_kinds)
+    labels = set(render_module.LEVEL_GROUPS)
+    row_lines = [line for line in terminal.splitlines()[3:] if line.strip() not in labels]
+
+    wire_rows = [row for group in body["levels"]["groups"] for row in group["rows"]]
+    for row_line, row in zip(row_lines, wire_rows, strict=True):
+        assert re.split(r"\s{2,}", row_line.strip()) == row
+
+
+def test_levels_columns_match_render_LEVEL_HEADERS(monkeypatch, tmp_path):
+    body = _review_response(monkeypatch, tmp_path, _grid_result([])).json()
+    assert body["levels"]["columns"] == list(render_module.LEVEL_HEADERS)
+
+
+def test_a_30_deep_standing_group_arrives_uncapped_with_the_display_cap_and_withheld_count(
+    monkeypatch, tmp_path,
+):
+    """AC2/AC3: the wire carries every row, not the terminal's cap; `shown`/`withheld` tell the
+    browser what to slice. `withheld` matches `review.levels.cap` over the same groups, which
+    is the assertion AC4's numeric half rests on."""
+    standing = tuple(_spot(f"T{i}") for i in range(30))
+    body = _review_response(
+        monkeypatch, tmp_path, _grid_result([], levels=(standing, (), 0)),
+    ).json()
+
+    assert len(body["levels"]["groups"][0]["rows"]) == 30
+    assert body["levels"]["shown"] == SHOWN
+    assert body["levels"]["withheld"] == 18
+    assert body["levels"]["withheld"] == cap(standing, (), limit=SHOWN)[2]
+
+
+def test_a_levels_led_mandate_folds_the_standing_group_and_withheld_counts_only_the_closing_overflow(
+    monkeypatch, tmp_path,
+):
+    """AC4: on a levels-led mandate the verdict grid already carries the standing group
+    (ADR-0002), so it is folded out here and `withheld` counts only what the closing group is
+    still hiding."""
+    standing = tuple(_spot(f"T{i}") for i in range(5))
+    closing = tuple(_spot(f"C{i}", distance=0.02, side=RESISTANCE) for i in range(20))
+
+    sentiment = _review_response(
+        monkeypatch, tmp_path, _grid_result([], levels=(standing, closing, 0), mandate=MANDATE),
+    ).json()
+    assert [g["label"] for g in sentiment["levels"]["groups"]] == list(render_module.LEVEL_GROUPS)
+
+    levels_led = _review_response(
+        monkeypatch, tmp_path,
+        _grid_result([], levels=(standing, closing, 0), mandate=LEVELS_LED_MANDATE,
+                    book_name="levels-led"),
+    ).json()
+    assert [g["label"] for g in levels_led["levels"]["groups"]] == ["closing in"]
+    assert levels_led["levels"]["withheld"] == cap((), closing, limit=SHOWN)[2]
+
+
+def test_an_empty_scan_carries_empty_note_and_no_groups(monkeypatch, tmp_path):
+    body = _review_response(monkeypatch, tmp_path, _grid_result([])).json()
+    assert body["levels"]["groups"] == []
+    assert body["levels"]["empty_note"] == render_module.NOTHING_NEAR
+
+
+def test_the_headline_is_levels_headline_over_the_full_post_fold_groups(monkeypatch, tmp_path):
+    standing = (_spot("AAA"),)
+    closing = (_spot("BBB", distance=0.02, side=RESISTANCE),)
+    book = _book("retirement")
+    result = ReviewResult(book=book, readings=[], contexts=(), mismatched=(),
+                          levels=(standing, closing, 0), chains=(), macro=())
+    body = _review_response(monkeypatch, tmp_path, result).json()
+
+    assert body["levels"]["headline"] == render_module.levels_headline(
+        standing, closing, kinds=book.level_kinds)
