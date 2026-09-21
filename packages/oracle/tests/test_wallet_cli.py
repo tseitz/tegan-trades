@@ -7,7 +7,7 @@ half-answered — the one case where being wrong silently changes a position siz
 from __future__ import annotations
 
 import pytest
-from oracle import portfolios, stake_solana, wallet, wallet_cli
+from oracle import portfolios, stake_solana, wallet, wallet_cli, zerion
 
 
 @pytest.fixture(autouse=True)
@@ -66,7 +66,7 @@ def test_a_flaky_chain_is_retried_and_its_partial_rows_are_not_counted_twice(
         )
 
     monkeypatch.setattr(wallet, "read", fake_read)
-    rows, _, _, failed, _ = wallet_cli._one("w", wallet_cli._wallets("w"), 1.0)
+    rows, _, _, failed, _ = wallet_cli._one("w", wallet_cli._wallets("w"), 1.0, "alchemy")
 
     assert calls[-1] == ("matic-mainnet",)  # the flaky chain was asked again, alone
     assert failed == ()  # and it answered, so the read is complete
@@ -92,9 +92,9 @@ def test_a_chain_that_fails_twice_blocks_the_write(monkeypatch, _root):
         ),
     )
 
-    _, _, _, failed, _ = wallet_cli._one("w", wallet_cli._wallets("w"), 1.0)
+    _, _, _, failed, _ = wallet_cli._one("w", wallet_cli._wallets("w"), 1.0, "alchemy")
     assert failed == (("matic-mainnet", "still down"),)
-    assert wallet_cli.sync(["w"]) == 1
+    assert wallet_cli.sync(["--source", "alchemy", "w"]) == 1
 
 
 def test_a_bare_address_string_is_accepted_and_gets_the_chains_its_shape_implies(_root):
@@ -200,7 +200,7 @@ def test_stake_totals_accumulate_across_two_addresses_into_one_row(monkeypatch, 
         ),
     )
 
-    rows, _, _, failed, _ = wallet_cli._one("w", wallet_cli._wallets("w"), 0.0)
+    rows, _, _, failed, _ = wallet_cli._one("w", wallet_cli._wallets("w"), 0.0, "alchemy")
     assert failed == ()
     assert [r.ticker for r in rows] == ["SOL"]
     assert rows[0].staked == pytest.approx(3.0)
@@ -229,9 +229,9 @@ def test_a_raising_stake_read_aborts_the_account_and_writes_nothing(monkeypatch,
 
     monkeypatch.setattr(stake_solana, "read", _boom)
 
-    rows, _, _, _, _ = wallet_cli._one("w", wallet_cli._wallets("w"), 0.0)
+    rows, _, _, _, _ = wallet_cli._one("w", wallet_cli._wallets("w"), 0.0, "alchemy")
     assert rows is None
-    assert wallet_cli.sync(["w"]) == 1
+    assert wallet_cli.sync(["--source", "alchemy", "w"]) == 1
 
 
 def test_an_unpriced_stake_blocks_the_write(monkeypatch, _root):
@@ -256,9 +256,130 @@ def test_an_unpriced_stake_blocks_the_write(monkeypatch, _root):
         ),
     )
 
-    _, _, _, failed, _ = wallet_cli._one("w", wallet_cli._wallets("w"), 0.0)
+    _, _, _, failed, _ = wallet_cli._one("w", wallet_cli._wallets("w"), 0.0, "alchemy")
     assert any("staked" in why for _, why in failed)
+    assert wallet_cli.sync(["--source", "alchemy", "w"]) == 1
+
+
+# ── source selection: which reader owns an account's sync ──
+
+
+def test_source_defaults_to_zerion(_root):
+    _file(
+        _root,
+        "w",
+        f"account: w\nwallets:\n  - '{EVM}'\npositions:\n  - {{ticker: E, shares: 1}}\n",
+    )
+    assert wallet_cli._source("w") == "zerion"
+
+
+def test_source_reads_the_alchemy_override_from_the_file(_root):
+    _file(
+        _root,
+        "w",
+        f"account: w\nsource: alchemy\nwallets:\n  - '{EVM}'\n"
+        "positions:\n  - {ticker: E, shares: 1}\n",
+    )
+    assert wallet_cli._source("w") == "alchemy"
+
+
+def test_an_unrecognized_source_refuses_the_account_rather_than_guessing(_root):
+    """The same reasoning as every other refusal in this module: a typo'd `source: alchmey`
+    silently syncing from Zerion instead would look identical to a correctly configured file."""
+    _file(
+        _root,
+        "w",
+        f"account: w\nsource: alchmey\nwallets:\n  - '{EVM}'\n"
+        "positions:\n  - {ticker: E, shares: 1}\n",
+    )
+    assert wallet_cli._source("w") is None
     assert wallet_cli.sync(["w"]) == 1
+
+
+def test_one_dispatches_to_zerion_by_default(monkeypatch, _root):
+    _file(
+        _root,
+        "w",
+        f"account: w\ndomain: crypto\nwallets:\n  - address: '{EVM}'\n"
+        "positions:\n  - {ticker: E, shares: 1}\n",
+    )
+    monkeypatch.setattr(
+        zerion, "read", lambda address: zerion.Read(positions=(), chains=("ethereum",))
+    )
+    rows, _, _, failed, counted = wallet_cli._one(
+        "w", wallet_cli._wallets("w"), 25.0, "zerion"
+    )
+    assert rows == ()
+    assert failed == ()
+    assert counted == ("ethereum",)
+
+
+def _zerion_native(symbol, chain, value, price, quantity, *, position_type="wallet"):
+    return {
+        "id": f"{chain}-{symbol}",
+        "attributes": {
+            "position_type": position_type,
+            "value": value,
+            "price": price,
+            "quantity": {"float": quantity},
+            "fungible_info": {"symbol": symbol, "implementations": []},
+        },
+        "relationships": {"chain": {"data": {"id": chain}}},
+    }
+
+
+def test_zerion_source_never_calls_stake_solana(monkeypatch, _root):
+    """The double-count `wallet.py` + `stake_solana` would create if both ran for one address:
+    Zerion already returns a delegated stake account as `locked` on the same call."""
+    _file(
+        _root,
+        "w",
+        f"account: w\ndomain: crypto\nwallets:\n  - address: '{SOL_A}'\n"
+        "positions:\n  - {ticker: SOL, shares: 1}\n",
+    )
+
+    def boom(address):
+        raise AssertionError("stake_solana.read must not run under source=zerion")
+
+    monkeypatch.setattr(stake_solana, "read", boom)
+    monkeypatch.setattr(
+        zerion,
+        "read",
+        lambda address: zerion.Read(
+            positions=(
+                _zerion_native("SOL", "solana", 50.0, 100.0, 0.5),
+                _zerion_native(
+                    "SOL", "solana", 50.0, 100.0, 0.5, position_type="locked"
+                ),
+            ),
+            chains=("solana",),
+        ),
+    )
+
+    rows, _, _, _, _ = wallet_cli._one("w", wallet_cli._wallets("w"), 0.0, "zerion")
+    assert [r.ticker for r in rows] == ["SOL"]
+    assert rows[0].staked == pytest.approx(0.5)
+
+
+def test_the_file_banner_names_the_source_that_actually_wrote_it(monkeypatch, _root):
+    """`write_positions` is called from `sync`, not `_one` — a stale hardcoded `wallet.SOURCE`
+    there would stamp a Zerion-synced file `# Synced from Alchemy`."""
+    _file(
+        _root,
+        "w",
+        f"account: w\ndomain: crypto\nwallets:\n  - address: '{EVM}'\n"
+        "positions:\n  - {ticker: E, shares: 1}\n",
+    )
+    monkeypatch.setattr(
+        zerion,
+        "read",
+        lambda address: zerion.Read(
+            positions=(_zerion_native("AAA", "ethereum", 100.0, 10.0, 10.0),)
+        ),
+    )
+    assert wallet_cli.sync(["w"]) == 0
+    text = (_root / "w.yaml").read_text(encoding="utf-8")
+    assert "# Synced from Zerion" in text
 
 
 def test_a_portfolio_with_no_wallets_block_is_not_a_wallet_account(_root):

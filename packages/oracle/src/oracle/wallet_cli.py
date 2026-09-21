@@ -7,6 +7,12 @@ into ``data/portfolios/<name>.yaml`` once.
 The file is the configuration. A ``wallets:`` block names the addresses; everything else in
 the document means what it always meant, and ``portfolios.load`` ignores the block entirely —
 which is why no reader had to change to make chain data reviewable.
+
+**Two readers, one CLI.** ``oracle.zerion`` indexes protocols and sees DeFi positions Alchemy
+cannot; ``oracle.wallet`` stays as the fallback (``source: alchemy`` in the file, or
+``--source alchemy``) — three probes and ``stake_solana``'s HTTP plumbing still import it.
+Default is Zerion. ``_one`` below holds one branch per source; everything else — the
+refuse-on-partial-read guard, ``prefer:``, ``_report``, ``_dropped`` — stays source-agnostic.
 """
 
 from __future__ import annotations
@@ -17,7 +23,9 @@ from datetime import UTC, datetime
 
 import yaml
 
-from oracle import portfolios, stake_solana, wallet
+from oracle import portfolios, stake_solana, wallet, zerion
+
+SOURCES = {"zerion": zerion.SOURCE, "alchemy": wallet.SOURCE}
 
 EXAMPLE = """\
 account: {name}
@@ -61,8 +69,8 @@ def sync(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--dropped",
         action="store_true",
-        help="name every dropped token, not just the ones that cost you a "
-        "position (several hundred per chain)",
+        help="name every dropped token, not just the ones that cost you a position "
+        "(several hundred per chain on Alchemy; Zerion pre-filters most of it)",
     )
     parser.add_argument(
         "--min-value",
@@ -70,6 +78,12 @@ def sync(argv: list[str] | None = None) -> int:
         default=None,
         help=f"drop positions worth less than this many dollars "
         f"(default {wallet.MIN_VALUE_USD:g}, or `min_value:` in the file)",
+    )
+    parser.add_argument(
+        "--source",
+        choices=("zerion", "alchemy"),
+        default=None,
+        help="which chain reader to use (default: `source:` in the file, or zerion)",
     )
     args = parser.parse_args(argv)
 
@@ -96,13 +110,24 @@ def sync(argv: list[str] | None = None) -> int:
             continue
 
         floor = args.min_value if args.min_value is not None else _min_value(name)
-        rows, skipped, cash, failed, counted = _one(name, addresses, floor)
+        source_name = args.source or _source(name)
+        if source_name is None:
+            print(
+                f"{name}: unknown `source:` — must be one of {', '.join(SOURCES)}",
+                file=sys.stderr,
+            )
+            failures += 1
+            continue
+        rows, skipped, cash, failed, counted = _one(name, addresses, floor, source_name)
         if rows is None:
             failures += 1
             continue
 
         # A chain that errored looks exactly like a chain you sold out of, so writing on a
         # partial read would delete live positions and report it as movement. Refuse instead.
+        # Zerion has no per-chain analogue to `failed` — one call answers for every chain, so
+        # there is nothing partial to detect; see `zerion.py`'s docstring on why that residual
+        # risk is accepted rather than worked around.
         if failed:
             for network, why in failed:
                 print(f"{name}: {network} did not answer: {why}", file=sys.stderr)
@@ -125,7 +150,7 @@ def sync(argv: list[str] | None = None) -> int:
         before = _tickers(name)
         verb = "would write" if args.dry_run else "wrote"
         if not args.dry_run:
-            portfolios.write_positions(path, rows, source=wallet.SOURCE, cash=cash)
+            portfolios.write_positions(path, rows, source=SOURCES[source_name], cash=cash)
         money = "" if cash is None else f", {cash:,.2f} in stablecoins"
         staked_note = "".join(
             f", {r.staked:g} {r.ticker} staked" for r in rows if r.staked
@@ -146,12 +171,41 @@ def sync(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _one(name: str, addresses, floor: float):
+def _one(name: str, addresses, floor: float, source: str):
     """Read every address on one account and fold them into a single book.
 
     Several addresses become one file on purpose: two wallets holding ETH are one exposure to
     one chart, exactly as two brokerage accounts holding the same fund are in ``plaid``.
     """
+    if source == "zerion":
+        return _one_zerion(name, addresses, floor)
+    return _one_alchemy(name, addresses, floor)
+
+
+def _one_zerion(name: str, addresses, floor: float):
+    positions: list[dict] = []
+    chains: dict[str, None] = {}
+    for entry in addresses:
+        try:
+            found = zerion.read(entry["address"])
+        except wallet.WalletError as exc:
+            print(f"{name}: {exc}", file=sys.stderr)
+            return None, (), None, (), ()
+        positions.extend(found.positions)
+        for chain in found.chains:
+            chains.setdefault(chain, None)
+
+    rows, skipped, cash = zerion.rows_from(
+        zerion.Read(positions=tuple(positions)),
+        min_value=floor,
+        prefer=_prefer(name),
+    )
+    # No partial-read concept for Zerion — see `zerion.py`'s docstring — so `failed` is
+    # always empty; kept in the return shape only so `_one` can hold one branch per source.
+    return rows, skipped, cash, (), tuple(chains)
+
+
+def _one_alchemy(name: str, addresses, floor: float):
     tokens: list[dict] = []
     failed: list[tuple[str, str]] = []
     counted: dict[str, None] = {}
@@ -209,6 +263,16 @@ def _one(name: str, addresses, floor: float):
         for ticker in unpriced
     )
     return rows, skipped, cash, tuple(failed), tuple(counted)
+
+
+def _source(name: str) -> str | None:
+    """``source:`` from the portfolio file — which reader owns this account's sync. Zerion by
+    default, per the start-wide rule; ``alchemy`` is the fallback three probes and
+    ``stake_solana`` still depend on (see the module docstring). ``None`` means the file named
+    something neither reader recognizes — refuse rather than guess which one was meant, the
+    same reasoning as every other refusal in this module."""
+    raw = str(_doc(name).get("source") or "zerion").strip().lower()
+    return raw if raw in SOURCES else None
 
 
 def _prefer(name: str) -> dict[str, str]:
@@ -293,11 +357,13 @@ def _tickers(name: str) -> set[str]:
     return {p.holding.ticker for p in book.positions} if book else set()
 
 
-# Which drops are printed one by one, and which are only counted. A collision or a `prefer:`
-# pin costs you a position you actually hold, so it is always named. The rest are airdropped
-# junk arriving several hundred per chain, and a report nobody reads to the end has failed the
-# same way as one that said nothing. `--dropped` prints all of it.
-LOUD = ("collision", "pinned")
+# Which drops are printed one by one, and which are only counted. A collision, a `prefer:`
+# pin, an unconfigured native chain, or a Zerion receipt-token duplicate (see `zerion.py`'s
+# docstring) is a judgement call that changed a position, so those are always named. The rest
+# are airdropped junk (several hundred per chain on Alchemy; Zerion filters most of it
+# server-side), and a report nobody reads to the end has failed the same way as one that said
+# nothing. `--dropped` prints all of it.
+LOUD = ("collision", "pinned", "unconfigured", "duplicate")
 
 _SAID = {
     "unquoted": "unquoted by anyone — airdropped tokens",

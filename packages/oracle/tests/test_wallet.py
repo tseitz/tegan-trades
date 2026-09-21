@@ -8,6 +8,8 @@ would do.
 
 from __future__ import annotations
 
+from http.client import IncompleteRead
+
 import pytest
 from oracle import wallet
 
@@ -80,6 +82,25 @@ def test_a_native_coin_on_an_unmapped_chain_is_named_not_guessed():
     rows, skipped, _, _ = _rows(native)
     assert rows == ()
     assert "somechain-mainnet native" in skipped[0].what
+    assert skipped[0].kind == "unconfigured"
+    assert "somechain-mainnet" in skipped[0].why
+
+
+def test_an_unconfigured_native_coin_is_reported_even_at_low_decimals():
+    """The gate on whether to report the skip used to assume 18 decimals, which is exactly
+    the fact this branch does not have. A real balance on a lower-decimal native coin would
+    round to zero under that guess and skip silently — the one outcome this fix exists to
+    prevent."""
+    native = {
+        "network": "somechain-mainnet",
+        "tokenAddress": None,
+        "tokenBalance": "5",  # nonzero at any plausible decimals, ~0 if misread as 18
+        "tokenMetadata": {},
+        "tokenPrices": [{"currency": "usd", "value": "1"}],
+    }
+    rows, skipped, _, _ = _rows(native)
+    assert rows == ()
+    assert skipped[0].kind == "unconfigured"
 
 
 def test_solana_native_uses_nine_decimals_not_eighteen():
@@ -344,3 +365,51 @@ def test_a_hex_address_is_never_asked_about_solana():
     assert wallet.networks_for("5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9") == (
         "solana-mainnet",
     )
+
+
+# ── `post` retries a truncated body, and only that — it is not a general 5xx retry ──
+
+
+class _FakeResponse:
+    def __init__(self, body: bytes):
+        self._body = body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_post_retries_a_truncated_chunked_body_then_succeeds(monkeypatch):
+    """The probe measured 6/6 consecutive `IncompleteRead`s on a busy address. The fix has to
+    retry inside `post` itself — `wallet_cli._one`'s per-network retry is keyed off
+    `Read.failed`, which a raised exception never populates, so it would never fire."""
+    monkeypatch.setattr(wallet, "api_key", lambda: "key")
+    monkeypatch.setattr(wallet.time, "sleep", lambda _: None)
+    calls = {"n": 0}
+
+    def fake_urlopen(request, timeout=None):
+        calls["n"] += 1
+        if calls["n"] < wallet.POST_ATTEMPTS:
+            raise IncompleteRead(b"")
+        return _FakeResponse(b'{"ok": true}')
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    assert wallet.post("/x", {"a": 1}) == {"ok": True}
+    assert calls["n"] == wallet.POST_ATTEMPTS
+
+
+def test_post_raises_wallet_error_once_retries_are_exhausted(monkeypatch):
+    monkeypatch.setattr(wallet, "api_key", lambda: "key")
+    monkeypatch.setattr(wallet.time, "sleep", lambda _: None)
+
+    def always_truncated(request, timeout=None):
+        raise IncompleteRead(b"")
+
+    monkeypatch.setattr("urllib.request.urlopen", always_truncated)
+    with pytest.raises(wallet.WalletError, match="failed after"):
+        wallet.post("/x", {"a": 1})

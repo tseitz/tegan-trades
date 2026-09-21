@@ -127,6 +127,14 @@ assets:
   # The other half of the SPX collision: this one really *is* the memecoin.
   SPX6900:  {source: coinbase, symbol: "SPX-USD"}
 
+  # Same class of collision as SPX/GOLD above. Zerion's `LIT` (from a Robinhood Chain wallet
+  # position) is Lighter, a DEX; Kraken lists a same-symbol `LITUSD` that is Litentry, and
+  # `route.py`'s crypto fallback checks Coinbase then Kraken by bare symbol — so once `LIT` is
+  # a wallet holding it has domain consensus and would auto-route to the wrong asset without
+  # this entry. Coinbase carries Lighter as `LIGHTER-USD`, verified 2026-09-20 against
+  # data/prices/coinbase/LIGHTER-USD.json.
+  LIT:      {source: coinbase, symbol: "LIGHTER-USD"}
+
   # ── dominance / index metrics: TradingView-only concepts, no price feed ──
   BTC.D:    {unpriceable: dominance_metric}
   USDT.D:   {unpriceable: dominance_metric}

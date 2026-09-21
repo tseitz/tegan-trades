@@ -31,9 +31,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 import urllib.request
 from dataclasses import dataclass, replace
-from urllib.error import HTTPError
+from http.client import IncompleteRead
+from urllib.error import HTTPError, URLError
 
 from core.env import load_env
 
@@ -125,6 +127,14 @@ MAX_PAGES = 100
 
 _EVM_ADDRESS = re.compile(r"^0x[0-9a-fA-F]{40}$")
 
+# `scripts/probe_zerion_wallet.py` measured 6/6 consecutive `IncompleteRead`s on a busy
+# address — Alchemy truncates the chunked body under load, not rarely. That is transient in
+# the same sense a 5xx is, so it gets the same treatment: retry here, inside the read, rather
+# than reclassifying it as a `WalletError` and hoping a caller retries. Nothing does — Alchemy
+# never reports a truncated body as a `partialErrors` entry, so `wallet_cli._one`'s per-network
+# retry (keyed off exactly that) would never see it.
+POST_ATTEMPTS = 4
+
 
 class WalletError(Exception):
     """A wallet read that failed, or a wallet configuration that cannot be trusted."""
@@ -176,20 +186,25 @@ def post(path: str, payload: dict, *, timeout: int = 60, host: str = HOST) -> di
     """``host`` overrides the holdings API. Alchemy serves prices from a sibling host that takes
     the same key in the same place, and `scripts/probe_peg_drift.py` is its only caller."""
     body = json.dumps(payload).encode()
-    request = urllib.request.Request(
-        f"{host}/{api_key()}{path}",
-        data=body,
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return json.loads(response.read())
-    except HTTPError as exc:
-        # `path or host`: a caller that overrides `host` with an RPC base and passes `path=""`
-        # (there is no sub-path to add) would otherwise print `" failed (401)"`, naming nothing.
-        raise WalletError(
-            f"{path or host} failed ({exc.code}): {exc.read().decode()[:600]}"
-        ) from exc
+    url = f"{host}/{api_key()}{path}"
+    last: Exception | None = None
+    for attempt in range(POST_ATTEMPTS):
+        request = urllib.request.Request(
+            url, data=body, headers={"Content-Type": "application/json"}
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return json.loads(response.read())
+        except HTTPError as exc:
+            # `path or host`: a caller that overrides `host` with an RPC base and passes `path=""`
+            # (there is no sub-path to add) would otherwise print `" failed (401)"`, naming nothing.
+            raise WalletError(
+                f"{path or host} failed ({exc.code}): {exc.read().decode()[:600]}"
+            ) from exc
+        except (IncompleteRead, URLError, ConnectionError) as exc:
+            last = exc
+            time.sleep(2 * (attempt + 1))
+    raise WalletError(f"{path or host} failed after {POST_ATTEMPTS} attempts: {last}") from last
 
 
 def read(address: str, networks) -> Read:
@@ -433,15 +448,31 @@ def rows_from(
         symbol, decimals = _describe(token)
         if symbol is None or decimals is None:
             # Only ever reported for something that actually holds a balance: a wallet carries
-            # hundreds of nameless zero rows, and naming them all would bury the one that matters.
-            if _units(token.get("tokenBalance"), 18):
-                skipped.append(
-                    Skipped(
-                        what=where,
-                        why="no symbol or decimals to read it by",
-                        kind="unreadable",
+            # hundreds of nameless zero rows, and naming them all would bury the one that
+            # matters. Gated on the raw balance being nonzero at ANY scale (decimals=0) rather
+            # than assuming 18 — the real decimals are exactly what's unknown here, and a
+            # native coin on a 9-decimal chain would round to zero under that guess and skip
+            # silently even after this fix.
+            if _units(token.get("tokenBalance"), 0):
+                if token.get("tokenAddress") is None:
+                    # The NATIVE gap: this chain's own coin has no metadata to read (trap 1)
+                    # and no entry here to fall back on, distinct from a genuinely unreadable
+                    # ERC-20 below — naming the network is what makes this actionable.
+                    skipped.append(
+                        Skipped(
+                            what=where,
+                            why=f"no `NATIVE` row for `{network}` — add one to wallet.py",
+                            kind="unconfigured",
+                        )
                     )
-                )
+                else:
+                    skipped.append(
+                        Skipped(
+                            what=where,
+                            why="no symbol or decimals to read it by",
+                            kind="unreadable",
+                        )
+                    )
             continue
 
         units = _units(token.get("tokenBalance"), decimals)
