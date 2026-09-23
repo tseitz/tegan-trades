@@ -7,6 +7,8 @@ import { numericColumns, signedColumns, signTone, verdictTone } from "./grid/ton
 import { LevelsTable } from "./levels/LevelsTable";
 import { useRefresh } from "./refresh/RefreshProvider";
 
+const MONEY = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+
 interface ReviewHeaderBlockProps {
   header: ReviewHeader;
   unpriced: number;
@@ -35,8 +37,15 @@ function ReviewHeaderBlock({ header, unpriced }: ReviewHeaderBlockProps) {
   );
 }
 
-function Title({ children }: { children: string }) {
-  return <h1 className="mb-3 font-mono text-lg font-semibold tracking-tight">{children}</h1>;
+function Title({ children, total }: { children: string; total?: number }) {
+  return (
+    <h1 className="mb-3 flex items-baseline gap-3 font-mono text-lg font-semibold tracking-tight">
+      {children}
+      {total !== undefined && (
+        <span className="font-normal text-muted tabular-nums">{MONEY.format(total)}</span>
+      )}
+    </h1>
+  );
 }
 
 export function MandatePage() {
@@ -101,7 +110,7 @@ export function MandatePage() {
   return (
     <div className="flex flex-col gap-8">
       <section>
-        <Title>{review.mandate}</Title>
+        <Title total={review.grid.totals.market_value}>{review.mandate}</Title>
         {/* A transient failed refetch renders above the grid rather than replacing it — a good
             screen must survive a bad poll. */}
         {error && <p className="mb-3 text-down">Failed to refresh: {error}</p>}
