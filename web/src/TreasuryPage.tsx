@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { fetchTreasury, type TreasuryResponse } from "./api/client";
+import { useDocumentTitle } from "./documentTitle";
 import { useRefresh } from "./refresh/RefreshProvider";
 
 const MONEY = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
 export function TreasuryPage() {
+  useDocumentTitle("Treasury");
   const { completedAt } = useRefresh();
   const [data, setData] = useState<TreasuryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);

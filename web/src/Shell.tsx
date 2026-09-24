@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { fetchMandates, type MandateList } from "./api/client";
+import { capitalize } from "./documentTitle";
 import { useRefresh } from "./refresh/RefreshProvider";
 
 export function Shell() {
@@ -35,7 +36,7 @@ export function Shell() {
                 }`
               }
             >
-              {mandate.name}
+              {capitalize(mandate.name)}
             </NavLink>
           ))}
           {listError && <span className="text-xs text-down">Mandates failed to load: {listError}</span>}

@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { fetchReview, type ReviewDocument, type ReviewHeader } from "./api/client";
 import { AltSignalSection } from "./altsignal/AltSignalSection";
+import { capitalize, useDocumentTitle } from "./documentTitle";
 import { nextSort, sortRows, type GridSort } from "./grid/sort";
 import { numericColumns, signedColumns, signTone, verdictTone } from "./grid/tone";
 import { LevelsTable } from "./levels/LevelsTable";
@@ -56,6 +57,8 @@ export function MandatePage() {
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<GridSort | null>(null);
   const [expanded, setExpanded] = useState(false);
+
+  useDocumentTitle(name ? capitalize(name) : "Mandates");
 
   // Its own effect, keyed on [name] alone — the fetch effect below also depends on
   // completedAt, and resetting these on every refresh would throw away the column the reader
