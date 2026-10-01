@@ -61,6 +61,21 @@ def _source_from_sidecar(sidecar: dict) -> Source:
     )
 
 
+def _published_at(path: Path) -> str:
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("published_at") or ""
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
+def backlog(*, transcripts_root: Path | None = None, exists=None) -> int:
+    """Transcripts with no stance file yet."""
+    transcripts_root = transcripts_root or TRANSCRIPTS_ROOT
+    exists = exists or (lambda platform, vid: store_mod.exists(platform, vid))
+    return sum(1 for p in transcripts_root.glob("*/*.json")
+               if not exists(p.parent.name, p.stem))
+
+
 def _extract_one(sidecar_path: Path, *, force, model, extracted_at, extract, exists,
                  save_stances, abort=None):
     """Runs in a worker thread. Returns (person, vid, bucket, reason, dropped_errors) —
@@ -124,19 +139,22 @@ def extract_all(
     if limit is not None:
         # **The limit counts work to DO, not files to walk**, so it is applied after
         # dropping what is already extracted. Slicing the raw path list instead would pick
-        # the same first N transcripts every run: the nightly cycle passes `--limit 12` to
-        # drain a backlog a few a night, and the first night would extract those 12 while
-        # every night after skipped all 12, did nothing, and reported success — the backlog
+        # the same first N transcripts every run: the nightly cycle passes `--limit` to
+        # drain a backlog a few a night, and the first night would extract those N while
+        # every night after skipped all N, did nothing, and reported success — the backlog
         # never draining and new transcripts never reached.
         #
-        # Determinism is unchanged for the sampling case `--limit` was written for: the
-        # candidate list is still sorted, so the same un-extracted set yields the same N.
+        # Newest first, so a fresh video is never queued behind the backlog. The digest's
+        # roster view reads publication dates, and a night that mixes old and new reads as a
+        # backfill. A missing or unreadable `published_at` sorts oldest. Sidecars are read
+        # only for the filtered candidates, never the whole corpus.
         # `force` re-extracts regardless, so nothing is filtered out under it.
         if not force:
             sidecar_paths = [
                 p for p in sidecar_paths if not exists(p.parent.name, p.stem)
             ]
-        sidecar_paths = sidecar_paths[:limit]
+        # reverse=True keeps equal keys in input order, so ties stay path-ascending.
+        sidecar_paths = sorted(sidecar_paths, key=_published_at, reverse=True)[:limit]
 
     # Each transcript is an independent unit of work — concurrency is safe: distinct
     # files, no shared mutable state touched inside a worker. Results are only
@@ -174,7 +192,7 @@ def extract_all(
     return list(by_person.values())
 
 
-def format_summary(results: list[ExtractResult]) -> str:
+def format_summary(results: list[ExtractResult], remaining: int | None = None) -> str:
     lines: list[str] = []
     for r in results:
         lines.append(
@@ -199,6 +217,8 @@ def format_summary(results: list[ExtractResult]) -> str:
         f"{totals['skipped']} skipped, {totals['failed']} failed, "
         f"{totals['aborted']} aborted, {totals['dropped']} dropped"
     )
+    if remaining is not None:
+        lines.append(f"BACKLOG: {remaining} transcripts still un-extracted")
     if totals["aborted"]:
         lines.append(
             f"CIRCUIT BREAKER TRIPPED — {totals['aborted']} transcripts were never "

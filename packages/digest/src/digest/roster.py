@@ -16,7 +16,7 @@ needed here. This is why the section counts what moved and never prints a standi
 
 ## The abstention
 
-The nightly caps ``brain-extract`` at 12 transcripts (``BRAIN_EXTRACT_LIMIT`` in
+The nightly caps ``brain-extract`` at 20 transcripts, newest first (``BRAIN_EXTRACT_LIMIT`` in
 ``scripts/nightly.sh`` — the command itself has no cap), so on an ordinary night new
 extractions track new videos and a publication-dated delta is right. Run a backfill and that
 breaks: a batch of 2025 videos lands at once and reads as the roster turning overnight, when
@@ -57,9 +57,11 @@ MEMORY_DAYS = WINDOW_DAYS * 2
 
 # Publication span across one night's new extractions that means a backfill rather than a
 # night's videos. Two weeks is comfortably wider than any normal night and far narrower than a
-# real backfill, which reaches back months.
+# real backfill, which reaches back months. Newest-first extraction makes a mixed-age night
+# rarer (an old item is reached only once recent ones drain) but not impossible, and one is
+# still correctly withheld.
 #
-# Sized against the nightly's ``BRAIN_EXTRACT_LIMIT`` of 12, which lives in
+# Sized against the nightly's ``BRAIN_EXTRACT_LIMIT`` of 20, which lives in
 # ``scripts/nightly.sh`` and is overridable from the environment. Raise it there, or run
 # ``brain-extract`` by hand, and this number wants revisiting — nothing here can detect that.
 BACKFILL_SPAN_DAYS = 14

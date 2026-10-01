@@ -135,9 +135,10 @@ NIGHTLY_MIN_BATTERY="${NIGHTLY_MIN_BATTERY:-30}"
 # one uncapped night would be ~$159 of Max allowance (measured mean $0.3909/call over 431
 # real calls, data/brain-extract-overnight.log) and would almost certainly hit the usage cap,
 # at which point every remaining call fails instantly and `--max-consecutive-failures` aborts
-# the sweep. A normal day brings 4-8 new transcripts, so 12 keeps pace AND drains the backlog
-# by a few a night, at roughly $4.70 of allowance. Raise it deliberately, not by default.
-BRAIN_EXTRACT_LIMIT="${BRAIN_EXTRACT_LIMIT:-12}"
+# the sweep. A normal day brings ~14 new transcripts (43 in 3 days, 2026-09-27..30), so 20
+# keeps pace AND drains the backlog by a few a night, at roughly $7.80 of allowance
+# (~$0.39/call). `--limit` takes the newest first. Raise it deliberately, not by default.
+BRAIN_EXTRACT_LIMIT="${BRAIN_EXTRACT_LIMIT:-20}"
 
 # ── whether the nightly pulls X at all ───────────────────────────────────────────
 #

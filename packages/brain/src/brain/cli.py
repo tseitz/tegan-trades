@@ -9,6 +9,7 @@ from brain.extract import DEFAULT_MODEL
 from brain.sweep import (
     DEFAULT_MAX_CONSECUTIVE_FAILURES,
     DEFAULT_MAX_WORKERS,
+    backlog,
     extract_all,
     format_summary,
 )
@@ -38,5 +39,5 @@ def extract_main(argv: list[str] | None = None) -> int:
     results = extract_all(extracted_at=_now(), model=args.model, force=args.force,
                           max_workers=args.concurrency, limit=args.limit,
                           max_consecutive_failures=args.max_consecutive_failures)
-    print(format_summary(results))
+    print(format_summary(results, remaining=backlog()))
     return 0

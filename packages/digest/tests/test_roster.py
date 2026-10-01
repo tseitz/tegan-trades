@@ -110,7 +110,7 @@ def test_a_new_horizon_from_an_existing_voice_is_reported_but_is_not_a_flip():
 # ── the abstention ────────────────────────────────────────────────────────────
 
 def test_a_backfill_withholds_the_section_rather_than_reporting_a_turn():
-    """``brain-extract`` is capped at 12 a night, so on a normal night new extractions track
+    """``brain-extract`` is capped at 20 a night, newest first, so on a normal night new extractions track
     new videos. Run a backfill and a batch of 2025 videos lands at once — which reads as the
     roster turning bearish overnight when nothing moved at all. Withholding is the only safe
     answer; a wrong story about sentiment is worse than none because it reads as a signal."""

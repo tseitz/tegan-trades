@@ -2,18 +2,18 @@ import json
 import time
 
 from brain.extract import StanceResult
-from brain.sweep import ExtractResult, extract_all, format_summary
+from brain.sweep import ExtractResult, backlog, extract_all, format_summary
 from core.stance import DroppedStance, Provenance, Stance
 from core.thesis import Source
 
 
-def _write_transcript(root, vid, person, text="body"):
+def _write_transcript(root, vid, person, text="body", published_at="2025-02-28"):
     d = root / "transcripts" / "youtube"
     d.mkdir(parents=True, exist_ok=True)
     (d / f"{vid}.txt").write_text(text, encoding="utf-8")
     (d / f"{vid}.json").write_text(json.dumps({
         "url": f"https://www.youtube.com/watch?v={vid}", "title": "T",
-        "published_at": "2025-02-28", "person": person,
+        "published_at": published_at, "person": person,
         "platform": "youtube", "source_id": vid,
     }), encoding="utf-8")
 
@@ -217,7 +217,7 @@ def test_limit_counts_work_to_do_not_files_walked(tmp_path):
     The backlog never drains and newly ingested transcripts are never reached.
     """
     for i in range(6):
-        _write_transcript(tmp_path, f"vid0000000{i}", "Cowen")
+        _write_transcript(tmp_path, f"vid0000000{i}", "Cowen", published_at=f"2025-03-0{i + 1}")
     already = {"youtube/vid00000000", "youtube/vid00000001", "youtube/vid00000002"}
     calls = []
 
@@ -232,7 +232,7 @@ def test_limit_counts_work_to_do_not_files_walked(tmp_path):
 
     assert len(calls) == 2
     assert not already & set(calls), "spent the budget re-walking finished transcripts"
-    assert set(calls) == {"youtube/vid00000003", "youtube/vid00000004"}
+    assert set(calls) == {"youtube/vid00000004", "youtube/vid00000005"}
 
 
 def test_limit_still_deterministic_across_runs_when_nothing_completes(tmp_path):
@@ -254,3 +254,30 @@ def test_limit_still_deterministic_across_runs_when_nothing_completes(tmp_path):
                 exists=lambda platform, vid: False)
 
     assert first == sorted(calls) == ["youtube/vid00000000", "youtube/vid00000001"]
+
+
+def test_limit_takes_newest_first_and_missing_date_sorts_oldest(tmp_path):
+    _write_transcript(tmp_path, "vid00000000", "Cowen", published_at="2025-01-01")
+    _write_transcript(tmp_path, "vid00000001", "Cowen", published_at="2025-06-01")
+    _write_transcript(tmp_path, "vid00000002", "Cowen", published_at="")
+    _write_transcript(tmp_path, "vid00000003", "Cowen", published_at="2025-06-01")
+    (tmp_path / "transcripts" / "youtube" / "vid00000004.json").write_text("{bad", encoding="utf-8")
+    calls = []
+
+    def fake_extract(text, source, **kw):
+        calls.append(source.transcript_ref)
+        return _empty(source)
+
+    extract_all(root=tmp_path, extract=fake_extract, extracted_at="t", limit=3,
+                exists=lambda platform, vid: vid == "vid00000099")
+    # ties on date break by path; the undated and unreadable sidecars never outrank a dated one
+    assert sorted(calls) == ["youtube/vid00000000", "youtube/vid00000001", "youtube/vid00000003"]
+
+
+def test_backlog_counts_unextracted_and_summary_reports_it(tmp_path):
+    for i in range(3):
+        _write_transcript(tmp_path, f"vid0000000{i}", "Cowen")
+    assert backlog(transcripts_root=tmp_path / "transcripts",
+                   exists=lambda platform, vid: vid == "vid00000000") == 2
+    out = format_summary([ExtractResult(person="Cowen")], remaining=2)
+    assert "BACKLOG: 2 transcripts still un-extracted" in out
