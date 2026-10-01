@@ -3,6 +3,18 @@
     "filesystem": {
       "allowWrite": ["cfg", "data"]
     },
-    "excludedCommands": ["uv *"]
+    "excludedCommands": ["uv *", "./scripts/nightly.sh*", "ssh tegan-droplet*"],
+    "network": {
+      "allowedDomains": [
+        "api.zerion.io",
+        "api.exchange.coinbase.com",
+        "query1.finance.yahoo.com",
+        "api.kraken.com",
+        "api.hyperliquid.xyz",
+        "mainnet.zklighter.elliot.ai",
+        "fapi.asterdex.com",
+        "api.digitalocean.com"
+      ]
+    }
   }
 }

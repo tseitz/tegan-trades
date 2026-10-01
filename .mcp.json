@@ -5,8 +5,6 @@
       "command": "uv",
       "args": [
         "run",
-        "--directory",
-        "${CLAUDE_PROJECT_DIR}",
         "brain-mcp"
       ],
       "env": {}
