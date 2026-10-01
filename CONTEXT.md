@@ -8,7 +8,7 @@ This file is the glossary. Decisions live in `docs/adr/`; work lives in GitHub i
 
 **Mandate**:
 What a pot of money is for: what it must beat and how much risk it may take, independent of the asset classes it holds. Retirement, savings, robinhood, crypto and Treasury are today's five mandates, one per file — "not five accounts" because the mandate is the purpose, not the login. A Mandate's benchmarks measure the **whole pot**; none is scoped to a subset of it.
-_Avoid_: Account, portfolio, bucket, strategy.
+_Avoid_: Account, portfolio, bucket, strategy. `data/portfolios/` and `review`'s positional argument are older spellings that predate this entry; don't copy them into anything new.
 
 **Domain**:
 An asset class — `crypto` or `stock`. It selects a price source. It is **not** a statement of purpose; that is the Mandate.
@@ -82,3 +82,19 @@ _Avoid_: Staked, earning, yielding — those describe the mechanism, and the lin
 **Idle cash**:
 Dry powder sitting in a Mandate, waiting to be spent on that Mandate's kind of thing. It stays where it is and is counted there. Treasury **reads** it to advise on it, and never owns it.
 _Avoid_: Uninvested, spare. Do not call it Treasury's — it is not.
+
+## Layers
+
+Three layers, named by [ADR-0004](adr/0004-sensor-view-surface-layering.md) and enforced only by import direction. A package is exactly one of them.
+
+**Sensor**:
+Code that reads from outside the repo — prices, broker connections, wallets. A Sensor never imports another Sensor.
+_Avoid_: Fetcher, client, adapter, integration.
+
+**View**:
+Code that reads Sensors and answers one interpretive question, such as whether a Holding is still right or where Idle cash should sit. A View never imports another View; logic two Views both need moves down into `core` instead.
+_Avoid_: Service, module, domain. Do not use it for a screen — a screen belongs to a Surface.
+
+**Surface**:
+Somewhere a View's answer is presented. A Surface reads Views only, never a Sensor, and computes nothing of its own. The nightly email and terminal output are today's Surfaces. One named exception exists, for a domain that has no View at all ([ADR-0005](adr/0005-per-view-result-objects.md)) — it is not a general escape hatch.
+_Avoid_: Renderer, frontend, UI layer, report.
