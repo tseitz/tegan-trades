@@ -128,6 +128,12 @@ def test_people_ordered_by_newest_video_then_name():
     assert [v.person for v in fold([], sidecars)] == ["Yan", "Abe", "Zed"]
 
 
+def test_collapsed_channels_sort_last_even_when_newest():
+    sidecars = [sidecar("youtube/a", "2026-09-30", "tasty"), sidecar("youtube/b", "2026-09-28", "Abe")]
+    order = [v.person for v in fold([], sidecars, collapsed=frozenset({"tasty"}))]
+    assert order == ["Abe", "tasty"]
+
+
 def test_watching_dedupe_cap_and_truncate():
     ref = "youtube/ZH5ivfBD-KQ"
     long = "word " * 60

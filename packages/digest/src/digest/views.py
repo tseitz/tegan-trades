@@ -72,7 +72,7 @@ def fold(stances: list[Stance], sidecars: list[dict], *, today: date,
 
     views = [PersonView(person=name, collapsed=name in collapsed, videos=_newest_first(vids))
              for name, vids in people.items()]
-    return sorted(views, key=lambda v: (_negdate(v.videos[0].published_at), v.person))
+    return sorted(views, key=lambda v: (v.collapsed, _negdate(v.videos[0].published_at), v.person))
 
 
 def _from_sidecar(sc, by_ref, distilled, cutoff) -> tuple[str, Video] | None:
