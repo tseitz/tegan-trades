@@ -104,7 +104,12 @@ def _ticker(line: str):
     line that linked each of "COIN 178.64 weekly support ... 4 bull/3 bear" would be a row of
     blue with no column to anchor on.
     """
+    if _BULLET.match(line):
+        return None
     for match in _TICKER.finditer(line):
+        # Inside a quoted video title, a capitalised word is English, not a symbol.
+        if line.count('"', 0, match.start()) % 2:
+            continue
         if match.group() not in _VOCABULARY:
             return match
     return None
@@ -148,13 +153,41 @@ def _paint(line: str) -> str:
     return "".join(out)
 
 
-def wrap(body: str) -> str:
-    """The rendered digest as one monospace block.
+# A wrapped line hangs under the text that follows a label padded with two or more spaces —
+# "Bullish     BTC", "BE       LONG", "aave-v3   11.27%" — or under a bullet's text. Anything else
+# hangs two characters in from its own indent.
+_LABEL_GAP = re.compile(r"^( *)(\S{1,14}(?: \S{1,14})? {2,})")
+_BULLET = re.compile(r"^( *)• ")
 
-    ``white-space: pre`` rather than ``pre-wrap``. Wrapping is what destroys the alignment this
-    whole module exists to keep, and a wrapped line also drops a number into the left margin
-    where it reads as a new row. Without a viewport tag a phone zooms the block out to fit,
-    which keeps the columns true at the cost of small text — the right trade for a table.
+# Approximate width of one character of ``MONO`` in em. Used rather than ``ch``, which some mail
+# clients drop; a small error only nudges where continuation lines start.
+_CHAR_EM = 0.6
+
+
+def _hang(line: str) -> int:
+    if match := _BULLET.match(line):
+        return match.end()
+    if match := _LABEL_GAP.match(line):
+        return match.end()
+    return len(line) - len(line.lstrip(" ")) + 2
+
+
+def _row(line: str) -> str:
+    if not line.strip():
+        return '<div style="white-space:pre-wrap">&nbsp;</div>'
+    indent = _hang(line) * _CHAR_EM
+    return (f'<div style="white-space:pre-wrap;overflow-wrap:anywhere;'
+            f'padding-left:{indent:.1f}em;text-indent:-{indent:.1f}em">{_paint(line)}</div>')
+
+
+def wrap(body: str) -> str:
+    """The rendered digest, one block per line, each wrapping to the screen.
+
+    Wrapping rather than ``white-space: pre``: the digest is mostly reading now, and a phone
+    shrank the whole message to fit its widest line, which made all of it unreadable to keep a
+    few table columns aligned. A wrapped line hangs under its label (see ``_hang``), so a
+    continuation never lands in the left margin where it would read as a new row. On a screen
+    wide enough nothing wraps and the columns are exactly as rendered.
 
     Colours are set on every element rather than inherited from a stylesheet. Mail clients strip
     ``<style>`` blocks, and an unstyled fallback here is a white-on-white section.
@@ -163,15 +196,11 @@ def wrap(body: str) -> str:
     trusts the document over the header decodes every "·" as "Â·" — which is most of the
     punctuation in a digest. Seen in a browser the first time this block was rendered.
     """
-    painted = "\n".join(_paint(line) for line in body.splitlines())
+    rows = "".join(_row(line) for line in body.splitlines())
     return (
-        '<!DOCTYPE html><html><head><meta charset="utf-8"></head>'
+        '<!DOCTYPE html><html><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1"></head>'
         '<body style="margin:0;padding:0;background:#ffffff">'
-        # A client that force-wraps a wide `<pre>` instead of zooming it out breaks the
-        # column alignment the whole module exists to protect. This gives those clients a
-        # horizontal scrollbar instead — the columns stay true either way.
-        '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">'
-        f'<pre style="font-family:{MONO};font-size:13px;line-height:1.55;color:{INK};'
-        'background:#ffffff;margin:0;padding:16px;white-space:pre">'
-        f"{painted}</pre></div></body></html>"
+        f'<div style="font-family:{MONO};font-size:13px;line-height:1.55;color:{INK};'
+        f'background:#ffffff;padding:16px">{rows}</div></body></html>'
     )

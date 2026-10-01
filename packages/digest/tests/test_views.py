@@ -71,10 +71,10 @@ def test_buckets_lean_and_conviction():
     out = views.lines(fold(ss, [YT_SIDECAR]))
     text = "\n".join(out)
     assert 'Benjamin Cowen · Sep 29 · "Gold: Dubious Speculation"' in text
-    assert "Bullish     BTC (high), SOL, ETH" in text
-    assert "Bearish     GOLD (high)" in text
-    assert "Unsure      CRCL, XPL" in text
-    assert "Punts       ANOM, PEPE" in text
+    assert "Bullish  BTC (high), SOL, ETH" in text
+    assert "Bearish  GOLD (high)" in text
+    assert "Unsure   CRCL, XPL" in text
+    assert "Punts    ANOM, PEPE" in text
     assert text.count("BTC") == 1
 
 
@@ -148,14 +148,14 @@ def test_watching_dedupe_cap_and_truncate():
     assert "low one" not in "\n".join(out)
 
 
-def test_every_line_wrapped_to_width():
+def test_lines_are_never_hard_wrapped():
     ref = "youtube/ZH5ivfBD-KQ"
     ss = [stance(ref, f"TOKEN{i}", "bullish") for i in range(40)]
     ss.append(stance(ref, "BTC", "bearish", watching="long " * 80))
     sc = dict(YT_SIDECAR, title="A very long title " * 10)
     out = views.lines(fold(ss, [sc]), big_picture={"Benjamin Cowen": "overall posture " * 20})
-    assert out and all(len(ln) <= views.WIDTH for ln in out)
-    assert any(ln.lstrip().startswith("Big picture") for ln in out)
+    assert len([ln for ln in out if "TOKEN" in ln]) == 1
+    assert any(ln.lstrip().startswith("overall posture") for ln in out)
 
 
 def test_collapsed_format_and_tail():

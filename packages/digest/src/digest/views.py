@@ -4,13 +4,12 @@ Folds stances and transcript sidecars into per-person blocks and renders them as
 Windowed on ``source.published_at``, never ``extracted_at``: extraction lags publication by
 days and a backfill would otherwise read as fresh views (see ``roster``).
 
-Every line is hard-wrapped at ``WIDTH``. ``htmlmail.wrap`` renders ``<pre>`` with
-``white-space: pre`` and no wrapping, so a long line scrolls sideways on a phone.
+Lines are never hard-wrapped: the reader wraps them. ``htmlmail`` hangs a wrapped line under the
+text after a two-space label gap, so labels stay padded with at least two spaces.
 """
 
 from __future__ import annotations
 
-import textwrap
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -20,10 +19,9 @@ from core.stance import Stance
 WINDOW_DAYS = 3
 WATCHING_MAX = 3
 WATCHING_CHARS = 240
-WIDTH = 92
 
 UNTITLED = "(untitled)"
-_LABEL = 12
+_LABEL = 9
 _CONVICTION_RANK = {"high": 0, "med": 1, None: 2, "low": 3}
 
 
@@ -166,22 +164,21 @@ def _truncate(text: str) -> str:
     return cut + "…"
 
 
-def _wrap(text: str, indent: int, hang: int | None = None) -> list[str]:
-    hang = indent if hang is None else hang
-    return textwrap.wrap(text, WIDTH, initial_indent=" " * indent, subsequent_indent=" " * hang,
-                         break_on_hyphens=False) or [""]
+def _line(text: str, indent: int) -> list[str]:
+    return [" " * indent + text]
 
 
 def _fields(video: Video, indent: int, big_picture: str | None) -> list[str]:
     out: list[str] = []
     if big_picture:
-        out += _wrap(f"{'Big picture':<{_LABEL}}{big_picture}", indent, indent + _LABEL)
-    hang = indent + _LABEL
+        out += _line(big_picture, indent)
     for name, assets in _buckets(video.stances).items():
-        out += _wrap(f"{name:<{_LABEL}}{', '.join(assets)}", indent, hang)
-    for i, text in enumerate(_watching(video.stances)):
-        label = "Watching" if i == 0 else ""
-        out += _wrap(f"{label:<{_LABEL}}• {text}", indent, hang + 2)
+        out += _line(f"{name:<{_LABEL}}{', '.join(assets)}", indent)
+    watching = _watching(video.stances)
+    if watching:
+        out += _line("Watching", indent)
+    for text in watching:
+        out += _line(f"• {text}", indent + 2)
     return out
 
 
@@ -208,28 +205,28 @@ def _full_lines(view: PersonView, big_picture: str | None) -> list[str]:
     shown = [v for v in videos if v.distilled]
     if shown and _has_views(shown[0]):
         head = shown[0]
-        out += _wrap(f"{view.person} · {_day(head.published_at)} · {_label(head)}", 2, 4)
+        out += _line(f"{view.person} · {_day(head.published_at)} · {_label(head)}", 2)
         out += _fields(head, 4, big_picture)
         rest = shown[1:]
     else:
-        out += _wrap(view.person, 2, 4)
+        out += _line(view.person, 2)
         if big_picture:
-            out += _wrap(f"{'Big picture':<{_LABEL}}{big_picture}", 4, 4 + _LABEL)
+            out += _line(big_picture, 4)
         rest = shown
     for video in rest:
         if _has_views(video):
-            out += _wrap(f"{_day(video.published_at)} · {_label(video)}", 4, 6)
+            out += _line(f"{_day(video.published_at)} · {_label(video)}", 4)
             out += _fields(video, 6, None)
         else:
-            out += _wrap(f"{_day(video.published_at)} · {_label(video)} — no market views", 4, 6)
+            out += _line(f"{_day(video.published_at)} · {_label(video)} — no market views", 4)
     if undistilled:
-        out += _wrap(f"{undistilled} video{'' if undistilled == 1 else 's'} not yet distilled", 4)
+        out += _line(f"{undistilled} video{'' if undistilled == 1 else 's'} not yet distilled", 4)
     return out
 
 
 def _collapsed_lines(view: PersonView) -> list[str]:
     n = len(view.videos)
-    out = _wrap(f"{view.person} · {n} video{'' if n == 1 else 's'}", 2, 4)
+    out = _line(f"{view.person} · {n} video{'' if n == 1 else 's'}", 2)
     quiet = 0
     for video in view.videos:
         buckets = _buckets(video.stances)
@@ -238,7 +235,7 @@ def _collapsed_lines(view: PersonView) -> list[str]:
         if not parts:
             quiet += 1
             continue
-        out += _wrap(f"{_day(video.published_at)} · {_label(video)} — {' · '.join(parts)}", 4, 6)
+        out += _line(f"{_day(video.published_at)} · {_label(video)} — {' · '.join(parts)}", 4)
     if quiet:
-        out += _wrap(f"+{quiet} with no views or not yet distilled", 4)
+        out += _line(f"+{quiet} with no views or not yet distilled", 4)
     return out

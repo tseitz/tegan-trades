@@ -11,13 +11,14 @@ from digest import htmlmail
 
 TRIGGER = ("VIEWS — last 3 days\n"
            "  TraderMayne · Sep 30 · a video\n"
-           "    Bullish   BTC (high), ETH\n")
+           "    Bullish  BTC (high), ETH\n")
 
 
 def _text(html: str) -> str:
     """The painted block with every tag stripped, which is what a reader ends up seeing."""
-    inner = html.split("<pre", 1)[1].split(">", 1)[1].rsplit("</pre>", 1)[0]
-    return re.sub(r"<[^>]+>", "", inner)
+    inner = html.split("<body", 1)[1].split(">", 1)[1].rsplit("</body>", 1)[0]
+    rows = re.findall(r"<div style=\"white-space:pre-wrap[^>]*>(.*?)</div>", inner)
+    return "\n".join(re.sub(r"<[^>]+>", "", row) for row in rows).replace("&nbsp;", "")
 
 
 def test_every_character_of_the_digest_survives_the_paint():
@@ -38,17 +39,36 @@ def test_the_block_is_monospace():
     assert "monospace" in htmlmail.wrap(TRIGGER)
 
 
-def test_a_long_line_scrolls_sideways_instead_of_wrapping():
-    """Some phone mail apps do not zoom a wide `<pre>` block out to fit — they force-wrap it,
-    which breaks the column alignment `white-space:pre` exists to protect. A horizontally
-    scrollable wrapper gives those clients a way out that does not touch the columns."""
-    assert "overflow-x:auto" in htmlmail.wrap(TRIGGER)
+def test_lines_wrap_to_the_screen():
+    """A phone shrank a non-wrapping block to fit its widest line, which made all of it tiny."""
+    html = htmlmail.wrap(TRIGGER)
+    assert "pre-wrap" in html
+    assert 'name="viewport"' in html
 
 
-def test_alignment_is_not_allowed_to_wrap():
-    """A wrapped row drops its tail into the left margin, where it reads as a new row."""
-    assert "white-space:pre" in htmlmail.wrap(TRIGGER)
-    assert "pre-wrap" not in htmlmail.wrap(TRIGGER)
+def _hang_em(html: str, needle: str) -> str:
+    row = next(r for r in html.split("<div") if needle in r)
+    return re.search(r"padding-left:([\d.]+)em", row).group(1)
+
+
+def test_a_wrapped_line_hangs_under_the_text_after_its_label():
+    """A continuation in the left margin reads as a new row."""
+    html = htmlmail.wrap("    Bullish      BTC, ETH\n  BE       LONG   21 @ 221.68\n")
+    assert _hang_em(html, "Bullish") == f"{17 * htmlmail._CHAR_EM:.1f}"
+    assert _hang_em(html, "LONG") == f"{11 * htmlmail._CHAR_EM:.1f}"
+
+
+def test_bullets_and_quoted_titles_carry_no_link():
+    """A bullet opening "A wipeout…" or a title saying "IPO" is English, not a symbol."""
+    html = htmlmail.wrap('      • A wipeout below\n  TraderMayne · Sep 30 · "The IPO top" · BTC\n')
+    assert "symbol=A\"" not in html and "symbol=IPO" not in html
+    assert "symbol=BTC" in html
+
+
+def test_a_bullet_hangs_under_its_text_and_prose_two_in():
+    html = htmlmail.wrap("                 • yields topping\n  BTC: TraderMayne flipped\n")
+    assert _hang_em(html, "yields") == f"{19 * htmlmail._CHAR_EM:.1f}"
+    assert _hang_em(html, "flipped") == f"{4 * htmlmail._CHAR_EM:.1f}"
 
 
 def test_a_section_heading_is_marked_out_from_its_rows():
