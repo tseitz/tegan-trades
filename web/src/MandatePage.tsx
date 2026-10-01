@@ -2,11 +2,13 @@ import { Fragment, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { fetchReview, type ReviewDocument, type ReviewHeader } from "./api/client";
 import { AltSignalSection } from "./altsignal/AltSignalSection";
+import { kyberSwapUrl } from "./crypto/kyberswap";
 import { capitalize, useDocumentTitle } from "./documentTitle";
 import { nextSort, sortRows, type GridSort } from "./grid/sort";
 import { numericColumns, signedColumns, signTone, verdictTone } from "./grid/tone";
 import { LevelsTable } from "./levels/LevelsTable";
 import { useRefresh } from "./refresh/RefreshProvider";
+import { tradingViewUrl } from "./tradingview";
 
 const MONEY = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
@@ -157,9 +159,33 @@ export function MandatePage() {
                         : i === verdictColumn
                           ? verdictTone(cell.text)
                           : undefined;
+                    const tradeable =
+                      review.mandate === "crypto" &&
+                      i === verdictColumn &&
+                      (cell.text === "TRIM" || cell.text === "ADD");
                     return (
                       <td key={i} className={[isNumber ? "num" : "", tone ?? ""].join(" ").trim()}>
-                        {cell.text}
+                        {tradeable ? (
+                          <a
+                            href={kyberSwapUrl(row.ticker, cell.text as "TRIM" | "ADD")}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline decoration-dotted"
+                          >
+                            {cell.text}
+                          </a>
+                        ) : i === 0 ? (
+                          <a
+                            href={tradingViewUrl(row.ticker)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline decoration-dotted"
+                          >
+                            {cell.text}
+                          </a>
+                        ) : (
+                          cell.text
+                        )}
                       </td>
                     );
                   })}
