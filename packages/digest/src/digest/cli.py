@@ -303,6 +303,15 @@ def _collapsed(warn) -> frozenset[str]:
         return frozenset()
 
 
+def _canonical(stances, warn):
+    try:
+        registry = load_registry(CONFIG_DIR)
+    except _CONFIG_ERRORS as exc:
+        warn(f"warning: could not read the asset registry, so VIEWS shows raw asset names: {exc}")
+        return stances
+    return [s.model_copy(update={"asset": resolve_asset(s.asset, registry)[0]}) for s in stances]
+
+
 def _views_section(*, with_llm: bool, warn) -> tuple[str | None, str | None]:
     """``(views_text, views_note)`` — at most one is set.
 
@@ -318,6 +327,7 @@ def _views_section(*, with_llm: bool, warn) -> tuple[str | None, str | None]:
         warn(f"warning: could not read the corpus for VIEWS: {exc}")
         return None, "  unavailable — the transcript or stance corpus could not be read"
 
+    stances = _canonical(stances, warn)
     distilled = frozenset(
         f"{sc['platform']}/{sc['source_id']}" for sc in sidecars
         if sc.get("platform") and sc.get("source_id")

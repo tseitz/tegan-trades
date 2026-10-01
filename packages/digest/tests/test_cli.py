@@ -636,6 +636,20 @@ def test_views_render_a_person_from_a_sidecar_and_warn_on_a_broken_one(tmp_path,
     assert "unreadable transcript sidecar" in body
 
 
+def test_views_show_the_canonical_asset_not_the_misheard_one(tmp_path, today, monkeypatch):
+    _views_corpus(tmp_path, monkeypatch)
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (cfg / "assets.yaml").write_text("GOLD: [XAU]\n", encoding="utf-8")
+    (cfg / "tickers.json").write_text("{}", encoding="utf-8")
+    (cfg / "watchlist.yaml").write_text("people: []\n", encoding="utf-8")
+    monkeypatch.setattr(cli, "CONFIG_DIR", cfg)
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
+    _, body = build(snaps, tmp_path)
+    views = body.split("QUEUE", 1)[0]
+    assert "GOLD" in views and "XAU" not in views
+
+
 def test_views_with_llm_render_the_big_picture_line(tmp_path, today, monkeypatch):
     _views_corpus(tmp_path, monkeypatch)
     monkeypatch.setattr(cli.bigpicture, "summarize",

@@ -17,6 +17,8 @@ XPL: ["Plasma (XPL)"]
 MON: ["Monad (MON)", MONAD]
 MNT: ["Mantle (MNT)", Mantle]
 SOL: ["Solana (SOL)"]
+# Auto-captions hear "Ansem" as "Anom"/"Ansom" (TraderMayne, 2026-09-30).
+ANSEM: [ANOM, Ansom]
 
 # ── crypto pairs / ratios (kept as the pair; not a single asset) ──
 ETH/BTC: [ETHBTC]
