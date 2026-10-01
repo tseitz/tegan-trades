@@ -22,6 +22,7 @@ members = [
     "review",
     "tegan-trades",
     "treasury",
+    "yields",
 ]
 
 [[package]]
@@ -2122,6 +2123,7 @@ dependencies = [
     { name = "oracle" },
     { name = "review" },
     { name = "treasury" },
+    { name = "yields" },
 ]
 
 [package.dev-dependencies]
@@ -2144,6 +2146,7 @@ requires-dist = [
     { name = "oracle", editable = "packages/oracle" },
     { name = "review", editable = "packages/review" },
     { name = "treasury", editable = "packages/treasury" },
+    { name = "yields", editable = "packages/yields" },
 ]
 
 [package.metadata.requires-dev]
@@ -2285,6 +2288,31 @@ sdist = { url = "https://files.pythonhosted.org/packages/b3/8f/705086c9d734d3b66
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e1/07/c6fe3ad3e685340704d314d765b7912993bcb8dc198f0e7a89382d37974b/win32_setctime-1.2.0-py3-none-any.whl", hash = "sha256:95d644c4e708aba81dc3704a116d8cbc974d70b3bdb8be1d150e36be6e9d1390", size = 4083, upload-time = "2024-12-07T15:28:26.465Z" },
 ]
+
+[[package]]
+name = "yields"
+version = "0.1.0"
+source = { editable = "packages/yields" }
+dependencies = [
+    { name = "core" },
+    { name = "oracle" },
+    { name = "pyyaml" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "core", editable = "packages/core" },
+    { name = "oracle", editable = "packages/oracle" },
+    { name = "pyyaml", specifier = ">=6" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.1.1" }]
 
 [[package]]
 name = "youtube-transcript-api"

@@ -27,6 +27,7 @@ dependencies = [
     "oracle",
     "review",
     "treasury",
+    "yields",
 ]
 
 [dependency-groups]
@@ -55,6 +56,7 @@ llm = { workspace = true }
 oracle = { workspace = true }
 review = { workspace = true }
 treasury = { workspace = true }
+yields = { workspace = true }
 
 [tool.ruff]
 # One config at the root, like the lockfile: members inherit it, so a rule cannot mean one thing
