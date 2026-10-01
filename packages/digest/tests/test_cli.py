@@ -17,7 +17,7 @@ import pytest
 from core import safety
 from core.review import Holding, Location, Reading, RosterLean
 from core.trigger import ARMED, NO_ZONE_TAG
-from digest import cli
+from digest import bigpicture, cli
 from oracle.portfolios import Mandate, Portfolio, Position
 from review.cli import ReviewResult
 from treasury.book import IdleCash, ReadingsAsOf, TreasuryResult
@@ -71,6 +71,13 @@ def quiet(monkeypatch, tmp_path):
     # `load_result` reaches `data/treasury.yaml`, every portfolio and `data/altsignal/` — kept
     # off all three by default. A test that wants the TREASURY section overrides this.
     monkeypatch.setattr(cli, "load_result", lambda **kwargs: None)
+    empty = tmp_path / "no-transcripts"
+    empty.mkdir()
+    monkeypatch.setattr(cli, "TRANSCRIPTS", empty)
+    monkeypatch.setattr(cli, "stance_exists", lambda *a, **k: False)
+    monkeypatch.setattr(cli, "load_watchlist", lambda *a, **k: {"people": []})
+
+    monkeypatch.setattr(cli.bigpicture, "summarize", lambda payload, **k: {})
 
 
 # ── the stale-snapshot guard ──────────────────────────────────────────────────
@@ -304,7 +311,7 @@ def test_the_same_movement_is_not_reported_two_nights_running(tmp_path, today, m
     cli.state.save(path, memory)
 
     _, second, _ = _roster_night(tmp_path, monkeypatch, stances, path)
-    assert "Benjamin Cowen" not in second
+    assert "Benjamin Cowen" not in second.split("ROSTER MOVED", 1)[1]
     # Not "no movement" — the roster did move, it was simply said last night, and those are
     # different facts about the night.
     assert "nothing new" in second and "earlier digest" in second
@@ -595,3 +602,62 @@ def test_subject_only_does_not_compute_net_worth(tmp_path, today, monkeypatch):
     assert "NET WORTH" not in subject
     assert "NET WORTH" not in body
     assert memory is None
+
+
+# ── VIEWS ─────────────────────────────────────────────────────────────────────
+
+def _views_corpus(tmp_path, monkeypatch):
+    from core.stance import ExtractedStance, build_stance
+    from core.thesis import Source
+
+    root = tmp_path / "transcripts"
+    (root / "youtube").mkdir(parents=True)
+    (root / "youtube" / "_abc123XYZ-.json").write_text(json.dumps({
+        "title": "Gold: Dubious Speculation", "published_at": "2026-08-20",
+        "person": "Benjamin Cowen", "url": "https://youtu.be/x", "platform": "youtube",
+        "source_id": "_abc123XYZ-"}), encoding="utf-8")
+    (root / "youtube" / "broken.json").write_text("{nope", encoding="utf-8")
+    monkeypatch.setattr(cli, "TRANSCRIPTS", root)
+    src = Source(person="Benjamin Cowen", platform="youtube", url="https://youtu.be/x",
+                 published_at="2026-08-20", transcript_ref="youtube/_abc123XYZ-")
+    stance = build_stance(
+        ExtractedStance.model_validate({"asset": "XAU", "lean": "bearish", "conviction": "high",
+                                        "watching": None, "rationale": "Gold looks stretched"}),
+        source=src, model="m", extracted_at="2026-08-21T00:00:00+00:00")
+    monkeypatch.setattr(cli, "load_all_stances", lambda *a, **k: [stance])
+
+
+def test_views_render_a_person_from_a_sidecar_and_warn_on_a_broken_one(tmp_path, today,
+                                                                      monkeypatch):
+    _views_corpus(tmp_path, monkeypatch)
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
+    _, body = build(snaps, tmp_path)
+    assert "VIEWS" in body and "Benjamin Cowen" in body and "Gold: Dubious Speculation" in body
+    assert "unreadable transcript sidecar" in body
+
+
+def test_views_with_llm_render_the_big_picture_line(tmp_path, today, monkeypatch):
+    _views_corpus(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli.bigpicture, "summarize",
+                        lambda payload, **k: {"Benjamin Cowen": "Leans defensive on metals."})
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
+    _, body = build(snaps, tmp_path, with_llm=True)
+    assert "Leans defensive on metals." in body
+
+
+def test_a_failed_big_picture_still_renders_the_lists_and_says_so(tmp_path, today, monkeypatch):
+    _views_corpus(tmp_path, monkeypatch)
+
+    def boom(payload, **k):
+        raise bigpicture.BigPictureFailed("timed out")
+    monkeypatch.setattr(cli.bigpicture, "summarize", boom)
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
+    _, body = build(snaps, tmp_path, with_llm=True)
+    assert "Benjamin Cowen" in body
+    assert "PROBLEMS" in body and "big picture failed" in body
+
+
+def test_an_empty_window_says_nobody_published(tmp_path, today):
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
+    _, body = build(snaps, tmp_path)
+    assert "no videos in the last 3 days" in body

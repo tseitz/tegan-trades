@@ -18,8 +18,6 @@ client, which means one renderer and nothing to drift.
 
 from __future__ import annotations
 
-from core.rank import parse_date
-from core.trigger import ARMED, FIRED, NO_TRIGGER, NO_ZONE_TAG, UNREADABLE
 from review.render import roster_text, where_text
 from treasury import render as treasury_render
 
@@ -43,46 +41,34 @@ SPEND_LOUD_AT = 0.90
 # printed seventeen arrivals — the largest block in the digest and the least urgent thing in it.
 ARRIVALS_SHOWN = 5
 
-# Trigger states in words a person reads at 06:30. These are internal enum values and
-# ``no_zone_tag`` reached the inbox unchanged for weeks — it is the *most common* previous state
-# in the arrivals section, so the one line that carries entry and stop levels was also the one
-# leaking a variable name.
-#
-# A state missing from this map prints as its raw value rather than as nothing. Ugly is
-# recoverable; silence would hide that the map went stale behind ``core.trigger``.
-#
-# Each entry names a STATE, so it can be read after the word "was". Written as a sentence,
-# ``no_zone_tag`` printed as "price reached the zone (price had not reached the zone)" — the two
-# halves are now and before, and with nothing saying so the line reads as a contradiction.
-_TRIGGER_WORDS = {
-    NO_ZONE_TAG: "not at the zone",
-    NO_TRIGGER: "no break yet",
-    ARMED: "armed",
-    FIRED: "fired",
-    UNREADABLE: "too thin to read",
-}
+VIEWS_HEADING = "VIEWS — last 3 days"
 
 
-def _in_words(state: str | None) -> str:
-    return _TRIGGER_WORDS.get(state, state) if state else "unknown"
+def _queue_counts(delta: diff.QueueDelta) -> list[str]:
+    """The queue's movement as count fragments, shared by the subject and the QUEUE line so the
+    two cannot disagree about what moved or in what order."""
+    parts = []
+    if delta.arrived:
+        # Capitalised, alone among the counts. Every other fragment reports something that
+        # happened; this one is the only one asking for a decision today, and set in the same
+        # case as the rest it was read at the same weight as "1 rezoned". The marker in
+        # ``subject`` does the same job for a subject list seen at a glance.
+        parts.append(f"{len(delta.arrived)} AT TRIGGER")
+    if delta.entered:
+        parts.append(f"{len(delta.entered)} new")
+    if delta.departed:
+        parts.append(f"{len(delta.departed)} out")
+    if delta.rolled:
+        parts.append(f"{len(delta.rolled)} rezoned")
+    return parts
 
 
-def _view_age(row: dict, as_of: str | None) -> str:
-    """How old the newest thesis behind a row is, as `` · newest Nd``. Empty when unknown.
-
-    ``agreement`` is a bare count: three people who last spoke in March render exactly like
-    three who spoke yesterday. On 2026-08-26 RKLB showed ``agreement 3`` and all three views
-    were months old. Printed unconditionally rather than past a threshold — a threshold is a
-    decision that a row was not worth mentioning, and 40% of the voices behind that night's
-    queue were stale by ``brain.report``'s own horizon-aware rule.
-
-    Measured against the snapshot's own ``as_of``, never a clock. This module is pure, and a
-    stale snapshot re-rendered tomorrow must not report different ages than it did today.
-    """
-    newest, taken = parse_date(row.get("newest_at")), parse_date(as_of)
-    if newest is None or taken is None:
-        return ""
-    return f" · newest {(taken - newest).days}d"
+def _queue_line(delta: diff.QueueDelta) -> str:
+    if delta.bootstrap:
+        head = f"first run · {delta.qualified} qualified"
+    else:
+        head = " · ".join(_queue_counts(delta)) or f"quiet · {delta.qualified} qualified"
+    return f"QUEUE  {head} → uv run setups"
 
 
 def subject(delta: diff.QueueDelta, book=None, *, stale_as_of: str | None = None,
@@ -103,19 +89,7 @@ def subject(delta: diff.QueueDelta, book=None, *, stale_as_of: str | None = None
     if delta.bootstrap:
         parts = [f"first run · {delta.qualified} qualified · nothing to diff yet"]
     else:
-        parts = []
-        if delta.arrived:
-            # Capitalised, alone among the counts. Every other fragment on this line reports
-            # something that happened; this one is the only one asking for a decision today,
-            # and set in the same case as the rest it was read at the same weight as "1
-            # rezoned". The marker below does the same job for a subject list seen at a glance.
-            parts.append(f"{len(delta.arrived)} AT TRIGGER")
-        if delta.entered:
-            parts.append(f"{len(delta.entered)} new")
-        if delta.departed:
-            parts.append(f"{len(delta.departed)} out")
-        if delta.rolled:
-            parts.append(f"{len(delta.rolled)} rezoned")
+        parts = _queue_counts(delta)
         parts.extend(_book_subject(book))
         parts.extend(holdings_subject(holdings_deltas))
         if not parts:
@@ -150,7 +124,8 @@ def markdown(delta: diff.QueueDelta, *, run=None, book=None, roster: str | None 
              holding=(), resting: int = 0, holdings_deltas=(),
              treasury_delta: treasury.TreasuryDelta | None = None,
              net_worth: networth.NetWorth | None = None,
-             stale_as_of: str | None = None, problems=()) -> str:
+             stale_as_of: str | None = None, problems=(),
+             views: str | None = None, views_note: str | None = None) -> str:
     """The digest body.
 
     ``roster`` is the one narrated section, passed in already written so this module keeps its
@@ -161,30 +136,29 @@ def markdown(delta: diff.QueueDelta, *, run=None, book=None, roster: str | None 
     ``problems`` are the warnings collected while building. They print in the body because
     stderr goes to a rotated log the design assumes nobody opens, which made every warning in
     this package inert in production.
+
+    ``views`` is the VIEWS block pre-rendered without its heading; ``views_note`` is the words
+    for a night with no block ("nobody published", "corpus unreadable"). Like ``roster``, both
+    arrive already written.
     """
     out: list[str] = []
 
-    # First, above everything, because it decides whether any of the rest can be believed.
+    if views:
+        out.extend([VIEWS_HEADING, views.rstrip("\n"), ""])
+    elif views_note:
+        out.extend([VIEWS_HEADING, f"  {views_note}", ""])
+
+    # Below VIEWS and scoped to the queue line: VIEWS does not read the snapshot, so a banner
+    # claiming everything below is stale would be false over it.
     if stale_as_of:
-        out.append(f"STALE — no queue snapshot was recorded today. Everything below describes "
-                   f"{stale_as_of}, not this morning. `setups` did not run, or could not write "
-                   f"its snapshot.")
+        out.append(f"STALE — no queue snapshot was recorded today; the queue line below "
+                   f"describes {stale_as_of}, not this morning. `setups` did not run, or could "
+                   f"not write its snapshot.")
         out.append("")
 
-    if delta.bootstrap:
-        out.append(f"First run — {delta.qualified} candidates qualified. "
-                   f"Nothing to compare against yet; tomorrow's digest has a diff.")
-    else:
+    if not delta.bootstrap:
         out.extend(_caveats(delta))
-        out.extend(_trigger_section(delta))
-        out.extend(_entered_section(delta))
-        # Above the departures: a rolled zone is the reason an asset can look like it left, and
-        # a caveat under the rows it explains arrives after the reader has taken them as fact.
-        out.extend(_rolled_section(delta))
-        out.extend(_departed_section(delta))
-        if delta.is_quiet:
-            out.append(f"Quiet night — {delta.qualified} qualified, "
-                       f"nothing entered, left, or reached its zone.")
+    out.append(_queue_line(delta))
 
     if roster_withheld:
         out.append("")
@@ -216,51 +190,17 @@ def markdown(delta: diff.QueueDelta, *, run=None, book=None, roster: str | None 
 
 # ── sections ──────────────────────────────────────────────────────────────────
 
-def _trigger_section(delta: diff.QueueDelta) -> list[str]:
-    """Price arriving at a zone is the most time-sensitive thing the pipeline knows, so it goes
-    first and carries the levels — a reader deciding at 06:30 should not have to open a terminal
-    to see where the entry is."""
-    if not delta.arrived:
-        return []
-    out = ["AT THE TRIGGER"]
-    # Armed and fired before merely tagged: both are real, one is actionable today.
-    for move in sorted(delta.arrived, key=lambda m: (m.kind != diff.TRIGGERED, m.asset)):
-        row = move.row
-        what = "armed" if move.kind == diff.TRIGGERED else "price reached the zone"
-        origin = "new tonight" if move.new_tonight else f"was {_in_words(move.was)}"
-        out.append(f"  {row['asset']:<8} {row['direction'].upper():<6} "
-                   f"{row.get('zone_timeframe', '?')} · entry {num(row.get('entry'))} · "
-                   f"stop {num(row.get('stop'))} · target {num(row.get('target'))}")
-        out.append(f"           {what} ({origin}) · R:R {row.get('reward_risk', 0):.2f} · "
-                   f"agreement {row.get('agreement', 0)}{_view_age(row, delta.as_of)}")
-    out.append("")
-    return out
-
-
-def _entered_section(delta: diff.QueueDelta) -> list[str]:
-    if not delta.entered:
-        return []
-    out = ["NEW IN QUEUE"]
-    for row in sorted(delta.entered, key=lambda r: -r.get("score", 0)):
-        out.append(f"  {row['asset']:<8} {row['direction'].upper():<6} "
-                   f"score {row.get('score', 0):.2f} · R:R {row.get('reward_risk', 0):.2f} · "
-                   f"agreement {row.get('agreement', 0)}{_view_age(row, delta.as_of)}")
-    out.append("")
-    return out
-
-
 def _caveats(delta: diff.QueueDelta) -> list[str]:
     """Whole-night warnings, printed above everything they qualify.
 
-    **Not folded into the departures section**, which is where they started. A moved
-    ``score_version`` changes the scale of every score in the digest whether or not anything
-    departed, so gating the warning on there being departures hid it on exactly the nights a
-    reader would compare a score against yesterday's and be quietly wrong.
+    **Not gated on anything departing.** A moved ``score_version`` changes the scale of every
+    score whether or not anything left, so gating the warning on departures hid it on exactly
+    the nights a reader would compare a score against yesterday's and be quietly wrong.
     """
     out: list[str] = []
     for name, (was, now) in sorted(delta.filters_changed.items()):
-        out.append(f"NOTE — {name} moved {was} → {now}; anything that fell out below may be "
-                   f"the filter moving, not the setups")
+        out.append(f"NOTE — {name} moved {was} → {now}; an \"out\" count on the queue line may "
+                   f"be the filter moving, not the setups")
     if delta.score_version_changed:
         was, now = delta.score_version_changed
         out.append(f"NOTE — score_version moved {was} → {now}; scores are on a different scale "
@@ -268,58 +208,6 @@ def _caveats(delta: diff.QueueDelta) -> list[str]:
     if out:
         out.append("")
     return out
-
-
-def _rolled_section(delta: diff.QueueDelta) -> list[str]:
-    """One setup drawn against a different block. Its own section on purpose.
-
-    Printed as an arrival plus a departure this was the same asset, same direction, in NEW IN
-    QUEUE and FELL OUT of one email — which reads as the pipeline contradicting itself. Both
-    entries are shown because the whole point is that the levels moved.
-    """
-    if not delta.rolled:
-        return []
-    out = ["ZONE MOVED — same thesis, different block"]
-    for roll in sorted(delta.rolled, key=lambda r: r.asset):
-        # Entry and R:R only. The stop moved too, but it is derived from the block and adds a
-        # fourth and fifth number to a line whose job is "this got better or worse" — and under
-        # $1 ``num`` renders it to six significant figures, which is noise nobody acts on.
-        # Whether the trade improved is exactly what R:R says.
-        out.append(f"  {roll.asset:<8} {roll.direction.upper():<6} "
-                   f"entry {num(roll.was.get('entry'))} → {num(roll.now.get('entry'))} · "
-                   f"R:R {roll.was.get('reward_risk', 0):.2f} → "
-                   f"{roll.now.get('reward_risk', 0):.2f}")
-    out.append("")
-    return out
-
-
-def _departed_section(delta: diff.QueueDelta) -> list[str]:
-    if not delta.departed:
-        return []
-    out: list[str] = ["FELL OUT"]
-    for gone in sorted(delta.departed, key=lambda d: d.row["asset"]):
-        out.append(f"  {gone.row['asset']:<8} {gone.row['direction'].upper():<6} "
-                   f"{gone.explanation}{_last_state(gone)}")
-    out.append("")
-    return out
-
-
-def _last_state(gone: diff.Departure) -> str:
-    """What the row last recorded, for a departure with no knowable cause.
-
-    **Not a cause, and it must not be read as one.** Nothing here explains why the setup left;
-    ``queue_snapshot`` records the qualified population and never a per-row reason, and the
-    corpus-wide rejection counter cannot be attributed to a row. These are simply the numbers
-    the row carried the last time it qualified, and they answer the question the bare line
-    could not: whether losing this one mattered.
-
-    Withheld where a real cause exists. "You marked it approved" is the point of that line, and
-    padding it with score and R:R buries the one word worth reading.
-    """
-    if gone.reason != diff.UNKNOWN:
-        return ""
-    return (f" (was score {gone.row.get('score', 0):.2f} · "
-            f"R:R {gone.row.get('reward_risk', 0):.2f})")
 
 
 def _holding_section(holding, resting: int) -> list[str]:

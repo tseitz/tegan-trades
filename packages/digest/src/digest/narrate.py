@@ -92,6 +92,40 @@ def _tool_input(message):
     raise NarrationFailed("model returned no tool_use block")
 
 
+def call_tool(client, *, model: str, max_tokens: int, system: str, user: str, tool_name: str,
+              description: str, schema: dict, extract, retries: int):
+    """Forced tool call with retry and backoff. ``extract`` maps the tool input to the result
+    and raises ``NarrationFailed`` for an unusable reply. Raises ``NarrationFailed`` when
+    attempts run out. Shared with ``bigpicture``."""
+    last: Exception | None = None
+    for attempt in range(retries):
+        try:
+            message = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                system=system,
+                tools=[{"name": tool_name, "description": description, "input_schema": schema}],
+                tool_choice={"type": "tool", "name": tool_name},
+                messages=[{"role": "user", "content": user}],
+            )
+            return extract(_tool_input(message))
+        except _RETRYABLE as exc:
+            last = exc
+            # Backoff, because two immediate attempts is the worst possible shape against a
+            # rate limit — the second lands inside the same window as the first.
+            if attempt + 1 < retries:
+                time.sleep(_BACKOFF_SECONDS * (2 ** attempt))
+    raise NarrationFailed(str(last)) from last
+
+
+def _extract_summary(tool_input) -> str:
+    lines = (tool_input or {}).get("summary") or []
+    cleaned = [str(line).strip() for line in lines if str(line).strip()]
+    if not cleaned:
+        raise NarrationFailed("model returned no lines")
+    return "\n".join(f"  {line}" for line in cleaned)
+
+
 def narrate(payload: list[dict], *, client=None, model: str = MODEL, retries: int = 2) -> str:
     """Turn the movement payload into a few plain lines. Raises ``NarrationFailed``.
 
@@ -106,28 +140,8 @@ def narrate(payload: list[dict], *, client=None, model: str = MODEL, retries: in
         client = ClaudeCodeClient(json_schema=SCHEMA)
 
     system, user = build_prompt(payload)
-    last: Exception | None = None
-    for attempt in range(retries):
-        try:
-            message = client.messages.create(
-                model=model,
-                max_tokens=MAX_TOKENS,
-                system=system,
-                tools=[{"name": _TOOL_NAME,
-                        "description": "Return one plain-text line per asset that moved.",
-                        "input_schema": SCHEMA}],
-                tool_choice={"type": "tool", "name": _TOOL_NAME},
-                messages=[{"role": "user", "content": user}],
-            )
-            lines = (_tool_input(message) or {}).get("summary") or []
-            cleaned = [str(line).strip() for line in lines if str(line).strip()]
-            if not cleaned:
-                raise NarrationFailed("model returned no lines")
-            return "\n".join(f"  {line}" for line in cleaned)
-        except _RETRYABLE as exc:
-            last = exc
-            # Backoff, because two immediate attempts is the worst possible shape against a
-            # rate limit — the second lands inside the same window as the first.
-            if attempt + 1 < retries:
-                time.sleep(_BACKOFF_SECONDS * (2 ** attempt))
-    raise NarrationFailed(str(last)) from last
+    return call_tool(
+        client, model=model, max_tokens=MAX_TOKENS, system=system, user=user,
+        tool_name=_TOOL_NAME, description="Return one plain-text line per asset that moved.",
+        schema=SCHEMA, extract=_extract_summary, retries=retries,
+    )

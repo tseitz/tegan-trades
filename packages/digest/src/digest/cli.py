@@ -29,15 +29,18 @@ import argparse
 import json
 import os
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import yaml
+from brain.stance_store import exists as stance_exists
 from brain.stance_store import load_all_stances
 from core.canon import load_registry, resolve_asset
 from core.env import load_env
+from core.rank import parse_date
 from execution import store
 from ingestion import spend
+from ingestion.roster import load_watchlist
 from oracle import exclusions, queue_snapshot
 from oracle.assemble import load_daily
 from oracle.decisions import load_decisions
@@ -45,8 +48,20 @@ from oracle.route import Priceable, route, the_routing_table
 from review.cli import load_books, review_for
 from treasury.cli import load_result
 
+from digest import (
+    bigpicture,
+    diff,
+    holdings,
+    mail,
+    narrate,
+    networth,
+    render,
+    roster,
+    state,
+    vault,
+    views,
+)
 from digest import book as book_mod
-from digest import diff, holdings, mail, narrate, networth, render, roster, state, vault
 from digest import treasury as treasury_mod
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -54,6 +69,7 @@ CONFIG_DIR = REPO_ROOT / "cfg"
 DECISIONS = REPO_ROOT / "data" / "setups" / "decisions.jsonl"
 HISTORY = REPO_ROOT / "data" / "logs" / "nightly" / "history.jsonl"
 STATE = REPO_ROOT / "data" / "digest" / "state.json"
+TRANSCRIPTS = REPO_ROOT / "data" / "transcripts"
 
 # Most book events one digest will print. A normal night produces a handful, so this only ever
 # binds on the first run, where there is no previous run to bound the window and ``since``
@@ -255,6 +271,78 @@ def _roster_section(current: dict, orders, open_keys, *, previous, with_llm: boo
                 None, ())
 
 
+def _sidecars(warn) -> list[dict]:
+    """Transcript sidecars published inside the VIEWS window.
+
+    ``_``-prefixed names are kept: YouTube ids can start with ``_``. One unreadable file costs
+    one warning, not the section.
+    """
+    cutoff = datetime.now(UTC).date() - timedelta(days=views.WINDOW_DAYS - 1)
+    found, bad = [], []
+    for path in sorted(TRANSCRIPTS.glob("*/*.json")):
+        try:
+            sidecar = json.loads(path.read_text(encoding="utf-8"))
+            when = parse_date(sidecar.get("published_at"))
+        except (OSError, ValueError, AttributeError):
+            bad.append(path.name)
+            continue
+        if when is not None and when >= cutoff:
+            found.append(sidecar)
+    if bad:
+        warn(f"warning: {len(bad)} unreadable transcript sidecar(s) skipped for VIEWS, "
+             f"first: {bad[0]}")
+    return found
+
+
+def _collapsed(warn) -> frozenset[str]:
+    try:
+        rows = load_watchlist()["people"]
+        return frozenset(r["name"] for r in rows if r.get("digest") == "collapse")
+    except (*_CONFIG_ERRORS, KeyError, TypeError) as exc:
+        warn(f"warning: could not read the watchlist, so no VIEWS person is collapsed: {exc}")
+        return frozenset()
+
+
+def _views_section(*, with_llm: bool, warn) -> tuple[str | None, str | None]:
+    """``(views_text, views_note)`` — at most one is set.
+
+    Every outcome gets its own words, as in ``_roster_section``: nobody published, corpus
+    unreadable, and a broken big-picture call must not look alike. A failed big picture still
+    renders the lists, because they come from stances alone.
+    """
+    today = datetime.now(UTC).date()
+    try:
+        stances = load_all_stances()
+        sidecars = _sidecars(warn)
+    except _CONFIG_ERRORS as exc:
+        warn(f"warning: could not read the corpus for VIEWS: {exc}")
+        return None, "  unavailable — the transcript or stance corpus could not be read"
+
+    distilled = frozenset(
+        f"{sc['platform']}/{sc['source_id']}" for sc in sidecars
+        if sc.get("platform") and sc.get("source_id")
+        and stance_exists(sc["platform"], sc["source_id"]))
+    folded = views.fold(stances, sidecars, today=today, collapsed=_collapsed(warn),
+                        distilled=distilled)
+    if not folded:
+        return None, f"  no videos in the last {views.WINDOW_DAYS} days"
+
+    big_picture = None
+    if with_llm:
+        by_person = {v.person: [s for video in v.videos for s in video.stances]
+                     for v in folded if not v.collapsed}
+        payload = bigpicture.payload(by_person)
+        try:
+            lines = bigpicture.summarize(payload)
+        except bigpicture.BigPictureFailed as exc:
+            warn(f"warning: big picture failed, VIEWS shows the lists only: {exc}")
+        else:
+            big_picture, dropped = bigpicture.grounded(lines, payload)
+            for message in dropped:
+                warn(f"warning: {message}")
+    return "\n".join(views.lines(folded, big_picture=big_picture)), None
+
+
 def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
           state_path=None, subject_only: bool = False) -> tuple[str, str, dict | None]:
     """The digest, as ``(subject, body, memory)``. Never raises on a missing or malformed input.
@@ -332,6 +420,9 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
             memory, books=books, as_of=as_of, warn=warn)
         net_worth, net_worth_memory = _networth(memory, results=results, parked=parked)
 
+    views_text, views_note = (None, None) if subject_only else _views_section(
+        with_llm=with_llm, warn=warn)
+
     xai_month = spend.total()
     body = render.markdown(delta, run=_run_row(today, warn), book=events, roster=narration,
                            roster_withheld=withheld, xai_month=xai_month,
@@ -341,6 +432,7 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
                            holdings_deltas=holdings_deltas,
                            treasury_delta=treasury_delta,
                            net_worth=net_worth,
+                           views=views_text, views_note=views_note,
                            stale_as_of=stale, problems=warn.items)
     subject = render.subject(delta, book=events, stale_as_of=stale, problems=len(warn.items),
                              repeat=state.is_repeat(memory, delta.previous_run),

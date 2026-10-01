@@ -47,39 +47,48 @@ def _quiet(**over) -> diff.QueueDelta:
 
 # ── sections appear only when they have something to say ──────────────────────
 
-def test_a_quiet_night_prints_no_empty_sections():
+def test_a_quiet_night_prints_no_removed_sections():
     body = render.markdown(_quiet())
-    for heading in ("AT THE TRIGGER", "NEW IN QUEUE", "FELL OUT"):
+    for heading in ("AT THE TRIGGER", "NEW IN QUEUE", "FELL OUT", "ZONE MOVED"):
         assert heading not in body, heading
 
 
 def test_a_quiet_night_still_says_what_the_population_is():
     """Silence has to be distinguishable from a broken run. The count is the proof of life."""
-    assert "1 qualified" in render.markdown(_quiet())
+    assert "QUEUE  quiet · 1 qualified → uv run setups" in render.markdown(_quiet())
 
 
-def test_the_trigger_section_names_the_asset_and_the_levels():
+def test_the_queue_line_counts_in_the_subjects_order():
+    arrived = diff.TriggerMove(row=_row(), was=NO_ZONE_TAG, now=ARMED, kind=diff.TRIGGERED)
+    delta = _quiet(arrived=(arrived,), entered=(_row("A"), _row("B"), _row("C")),
+                   departed=tuple(diff.Departure(row=_row(f"D{i}"), reason=diff.UNKNOWN)
+                                  for i in range(4)),
+                   rolled=(diff.ZoneRoll(was=_row(), now=_row()),))
+    expected = "QUEUE  1 AT TRIGGER · 3 new · 4 out · 1 rezoned → uv run setups"
+    assert expected in render.markdown(delta)
+    assert render.subject(delta).endswith("1 AT TRIGGER · 3 new · 4 out · 1 rezoned")
+
+
+def test_the_queue_line_does_not_name_assets_or_levels():
     delta = diff.compare(_snap("2026-08-19", [_entry("a", trigger_state=NO_ZONE_TAG)]),
-                         _snap("2026-08-20", [_entry("a", asset="HYPE",
-                                                     trigger_state=ARMED)]))
+                         _snap("2026-08-20", [_entry("a", asset="HYPE", trigger_state=ARMED)]))
     body = render.markdown(delta)
-    assert "AT THE TRIGGER" in body
-    assert "HYPE" in body and "110" in body
+    assert "QUEUE  1 AT TRIGGER" in body
+    assert "HYPE" not in body
 
 
-def test_an_unexplained_departure_does_not_invent_a_reason():
+def test_the_bootstrap_queue_line_says_first_run():
+    body = render.markdown(diff.compare(None, _snap("2026-08-20", [_entry("a")])))
+    assert "QUEUE  first run · 1 qualified → uv run setups" in body
+    assert "FELL OUT" not in body
+
+
+def test_the_queue_line_counts_departures_without_listing_them():
     delta = diff.compare(_snap("2026-08-19", [_entry("b", asset="AVAX")]),
                          _snap("2026-08-20", []))
     body = render.markdown(delta)
-    assert "AVAX" in body
-    assert "no longer qualifies" in body
-
-
-def test_a_decided_departure_says_what_you_did():
-    delta = diff.compare(
-        _snap("2026-08-19", [_entry("b", asset="GOOG")]), _snap("2026-08-20", []),
-        decided={"b": {"decision": "approved", "decided_at": "2026-08-19T20:00:00Z"}})
-    assert "you marked it approved" in render.markdown(delta)
+    assert "QUEUE  1 out" in body
+    assert "AVAX" not in body
 
 
 # ── warnings that make a whole section untrustworthy ──────────────────────────
@@ -92,19 +101,13 @@ def test_a_moved_filter_warns_above_the_departures_it_explains():
         _snap("2026-08-20", [], filters={"min_score": 0.4, "tiers": None}))
     body = render.markdown(delta)
     assert "min_score" in body
-    assert body.index("min_score") < body.index("FELL OUT")
+    assert body.index("min_score") < body.index("QUEUE  1 out")
 
 
 def test_a_score_version_bump_is_called_out():
     delta = diff.compare(_snap("2026-08-19", [_entry("a")], score_version=8),
                          _snap("2026-08-20", [_entry("a")], score_version=9))
     assert "score_version" in render.markdown(delta)
-
-
-def test_the_first_run_explains_itself_rather_than_printing_empty_sections():
-    body = render.markdown(diff.compare(None, _snap("2026-08-20", [_entry("a")])))
-    assert "first run" in body.lower()
-    assert "FELL OUT" not in body
 
 
 # ── the subject line is the digest for anyone who does not open it ────────────
@@ -181,6 +184,48 @@ def test_a_stale_snapshot_is_announced_above_everything():
     body = render.markdown(_quiet(), stale_as_of="2026-08-20")
     assert body.startswith("STALE")
     assert "2026-08-20" in body
+
+
+def test_the_stale_banner_does_not_claim_everything_below_is_stale():
+    body = render.markdown(_quiet(), stale_as_of="2026-08-20")
+    assert "Everything below" not in body
+    assert "the queue line below describes 2026-08-20" in body
+
+
+def test_views_sit_above_the_stale_banner_and_the_queue_line():
+    body = render.markdown(_quiet(), stale_as_of="2026-08-20",
+                           views="  TraderMayne · Sep 30 · \"a video\"")
+    assert body.startswith("VIEWS — last 3 days\n")
+    assert body.index("VIEWS") < body.index("STALE") < body.index("QUEUE")
+
+
+# ── the VIEWS slot ────────────────────────────────────────────────────────────
+
+def test_views_print_under_their_heading_above_the_queue():
+    body = render.markdown(_quiet(), views="  TraderMayne · Sep 30\n    Bullish   BTC\n")
+    assert body.startswith("VIEWS — last 3 days\n  TraderMayne")
+    assert body.index("Bullish") < body.index("QUEUE")
+
+
+def test_a_views_note_prints_under_the_heading_when_there_is_no_block():
+    body = render.markdown(_quiet(), views_note="no roster videos in the last 3 days")
+    assert "VIEWS — last 3 days\n  no roster videos in the last 3 days" in body
+
+
+def test_views_win_over_a_note():
+    body = render.markdown(_quiet(), views="  block", views_note="a note")
+    assert "block" in body and "a note" not in body
+
+
+def test_no_views_and_no_note_prints_no_heading():
+    assert "VIEWS" not in render.markdown(_quiet())
+
+
+def test_caveats_sit_directly_above_the_queue_line():
+    delta = diff.compare(_snap("2026-08-19", [_entry("a")], score_version=8),
+                         _snap("2026-08-20", [_entry("a")], score_version=9))
+    body = render.markdown(delta, views="  block")
+    assert body.index("block") < body.index("score_version") < body.index("QUEUE")
 
 
 def test_a_stale_subject_says_nothing_else():
@@ -296,65 +341,6 @@ def _row(asset="JTO", **over):
     return row
 
 
-def test_a_zone_that_moved_prints_both_sides():
-    """Reported as an arrival plus a departure this was the same asset in NEW IN QUEUE and in
-    FELL OUT of one email — a flat contradiction on the page."""
-    delta = _quiet(rolled=(diff.ZoneRoll(was=_row(entry=0.5971, reward_risk=3.93),
-                                         now=_row(entry=0.5165, reward_risk=6.05)),))
-    body = render.markdown(delta)
-    assert "ZONE MOVED" in body
-    assert "0.5971" in body and "0.5165" in body
-    assert "3.93" in body and "6.05" in body
-
-
-def test_a_zone_move_does_not_read_as_a_quiet_night():
-    body = render.markdown(_quiet(rolled=(diff.ZoneRoll(was=_row(), now=_row()),)))
-    assert "Quiet night" not in body
-
-
-def test_an_unexplained_departure_carries_what_it_last_was():
-    """"No longer qualifies" alone is the emptiest line in the digest. Nothing here claims a
-    cause — the numbers are what the row last recorded, which is the only honest thing
-    available and still tells you whether losing it mattered."""
-    delta = _quiet(departed=(diff.Departure(row=_row(asset="AI", score=0.44, reward_risk=2.66),
-                                            reason=diff.UNKNOWN),))
-    body = render.markdown(delta)
-    assert "no longer qualifies" in body
-    assert "0.44" in body and "2.66" in body
-
-
-def test_a_departure_with_a_real_cause_does_not_get_the_numbers():
-    """The cause is the point, and it is what you would act on. Padding it with score and R:R
-    buries the one word that matters."""
-    delta = _quiet(departed=(diff.Departure(row=_row(asset="QCOM"), reason=diff.DECIDED,
-                                            detail="you marked it approved"),))
-    body = render.markdown(delta)
-    assert "you marked it approved" in body
-    assert "0.54" not in body
-
-
-def test_a_trigger_state_is_printed_in_plain_words():
-    """`no_zone_tag` is an internal enum name. It reached the inbox unchanged."""
-    move = diff.TriggerMove(row=_row(), was=NO_ZONE_TAG, now=ARMED, kind=diff.TRIGGERED)
-    body = render.markdown(_quiet(arrived=(move,)))
-    assert "no_zone_tag" not in body
-    assert "armed (was not at the zone)" in body
-
-
-def test_the_previous_trigger_state_says_it_is_the_previous_one():
-    """Without "was" the line printed "price reached the zone (price had not reached the zone)",
-    which reads as the pipeline contradicting itself inside one pair of brackets."""
-    move = diff.TriggerMove(row=_row(), was=NO_ZONE_TAG, now=ARMED, kind=diff.TAGGED)
-    assert "price reached the zone (was not at the zone)" in render.markdown(_quiet(arrived=(move,)))
-
-
-def test_an_unknown_trigger_state_is_printed_as_itself_rather_than_dropped():
-    """A state this map has not been taught is still a fact about the night. Printing the raw
-    value is ugly; silently printing nothing would hide that the map went stale."""
-    move = diff.TriggerMove(row=_row(), was="something_new", now=ARMED, kind=diff.TRIGGERED)
-    assert "something_new" in render.markdown(_quiet(arrived=(move,)))
-
-
 def test_a_repeat_says_so_on_the_subject_line():
     """Two digests went out on 2026-08-25 with byte-identical subjects. Nothing in either said
     it was the second."""
@@ -449,48 +435,6 @@ def test_the_holding_header_carries_the_whole_book():
 def test_the_holding_header_admits_what_it_could_not_price():
     body = render.markdown(_quiet(), holding=(_held(mark=104.26), _held(asset="META")))
     assert "1 unpriced" in _holding_head(body)
-
-
-# ── how old the agreement is ─────────────────────────────────────────────────
-
-def _aged(newest_at, **over):
-    return diff.compare(
-        _snap("2026-08-19", []),
-        _snap("2026-08-20", [_entry("a", asset="RKLB", newest_at=newest_at, **over)]))
-
-
-def test_a_new_row_says_how_old_its_newest_view_is():
-    """`agreement 3` reads as three people agreeing. On 2026-08-26 RKLB showed agreement 3 and
-    every one of those views was months old."""
-    body = render.markdown(_aged("2026-06-06"))
-    assert "agreement 2" in body and "75d" in body
-
-
-def test_the_age_is_measured_against_the_snapshot_not_the_clock():
-    """`render` is pure and has no clock. Measuring against today would make a stale snapshot's
-    ages drift every time the digest re-ran over it."""
-    body = render.markdown(_aged("2026-08-18"))
-    assert "2d" in body
-
-
-def test_a_row_with_no_recorded_view_date_says_nothing():
-    """Snapshots written before this field existed. Absent is not zero."""
-    body = render.markdown(_aged(None))
-    assert "0d" not in body and "d ·" not in body
-
-
-def test_an_unparseable_view_date_says_nothing_rather_than_guessing():
-    assert "d" not in render.markdown(_aged("not-a-date")).split("agreement 2")[1].split("\n")[0]
-
-
-def test_the_trigger_section_carries_the_age_too():
-    """The one section with entry and stop levels on it is the one where a dead consensus costs
-    the most."""
-    delta = diff.compare(
-        _snap("2026-08-19", [_entry("a", trigger_state=NO_ZONE_TAG)]),
-        _snap("2026-08-20", [_entry("a", asset="RKLB", trigger_state=ARMED,
-                                    newest_at="2026-06-06")]))
-    assert "75d" in render.markdown(delta)
 
 
 # ── run health names the reason, not just the exit code ──────────────────────

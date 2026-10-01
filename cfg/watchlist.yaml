@@ -364,6 +364,8 @@ people:
     # so any agreement count including this row is counting a network as one opinion. Treat
     # consensus that leans on it as unproven.
     members: ["Tom Sosnoff", "Tim Knight", "Cem Karsan", "Shay Boloor"]
+    # One line per video in the digest's VIEWS section — ~7 videos a day would bury everyone else.
+    digest: collapse
     status: active
     domains: [stock, macro]
     why: "First options/equities-flow feed on the roster — vol, skew, and positioning around known catalysts (earnings, Fed). Complements the ICT structure read rather than repeating it."

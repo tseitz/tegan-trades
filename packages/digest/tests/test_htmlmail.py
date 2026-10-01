@@ -9,9 +9,9 @@ import re
 
 from digest import htmlmail
 
-TRIGGER = ("AT THE TRIGGER\n"
-           "  CWB      LONG   daily · entry 103.24 · stop 99.48\n"
-           "           price reached the zone (was not at the zone) · R:R 2.25\n")
+TRIGGER = ("VIEWS — last 3 days\n"
+           "  TraderMayne · Sep 30 · a video\n"
+           "    Bullish   BTC (high), ETH\n")
 
 
 def _text(html: str) -> str:
@@ -52,7 +52,7 @@ def test_alignment_is_not_allowed_to_wrap():
 
 
 def test_a_section_heading_is_marked_out_from_its_rows():
-    assert f'color:{htmlmail.HEADING};font-weight:700">AT THE TRIGGER' in htmlmail.wrap(TRIGGER)
+    assert f'color:{htmlmail.HEADING};font-weight:700">VIEWS — last 3 days' in htmlmail.wrap(TRIGGER)
 
 
 def test_prose_at_column_zero_is_not_mistaken_for_a_heading():
