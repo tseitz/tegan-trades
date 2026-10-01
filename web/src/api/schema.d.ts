@@ -79,7 +79,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Get Latest Refresh
+         * @description What a freshly loaded page asks to rehydrate — the most recent job this process
+         *     knows about, running or finished, or `None` before any `POST /api/refresh` has ever
+         *     landed here. A page reload otherwise has no job id of its own and goes blank even when
+         *     a refresh is still running or just failed.
+         */
+        get: operations["get_latest_refresh_api_refresh_get"];
         put?: never;
         /** Start Refresh */
         post: operations["start_refresh_api_refresh_post"];
@@ -534,6 +541,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["YieldsResponse"];
+                };
+            };
+        };
+    };
+    get_latest_refresh_api_refresh_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RefreshJobStatus"] | null;
                 };
             };
         };

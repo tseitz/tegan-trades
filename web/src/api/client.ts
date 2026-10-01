@@ -49,6 +49,14 @@ export async function startRefresh(): Promise<RefreshJobStatus> {
   return response.json() as Promise<RefreshJobStatus>;
 }
 
+export async function fetchLatestRefresh(): Promise<RefreshJobStatus | null> {
+  const response = await fetch("/api/refresh");
+  if (!response.ok) {
+    throw new Error(`GET /api/refresh failed: ${response.status}`);
+  }
+  return response.json() as Promise<RefreshJobStatus | null>;
+}
+
 export async function fetchRefreshStatus(id: string): Promise<RefreshJobStatus> {
   const response = await fetch(`/api/refresh/${id}`);
   if (!response.ok) {

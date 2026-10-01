@@ -230,6 +230,69 @@ def test_the_review_endpoint_still_answers_200_while_a_job_is_in_flight(monkeypa
     hold.set()
 
 
+# ── rehydrating a fresh page load ────────────────────────────────────────────
+
+
+def test_the_latest_endpoint_is_null_before_any_refresh_has_ever_run(monkeypatch, tmp_path):
+    client = _app_with_registry(monkeypatch, tmp_path, RefreshJobs(run=_succeed))
+
+    response = client.get("/api/refresh")
+
+    assert response.status_code == 200
+    assert response.json() is None
+
+
+def test_the_latest_endpoint_reports_a_running_job_without_its_id(monkeypatch, tmp_path):
+    hold = threading.Event()
+    release = threading.Event()
+
+    def _run(argv, *, cwd, capture_output, text, timeout):
+        release.set()
+        hold.wait(timeout=5)
+        return subprocess.CompletedProcess(argv, 0, stdout="ok\n", stderr="")
+
+    client = _app_with_registry(monkeypatch, tmp_path, RefreshJobs(run=_run))
+    job_id = client.post("/api/refresh").json()["id"]
+    assert release.wait(timeout=5), "job never started"
+
+    body = client.get("/api/refresh").json()
+
+    assert body["id"] == job_id
+    assert body["state"] == "running"
+    hold.set()
+    _poll_until_terminal(client, job_id)
+
+
+def test_the_latest_endpoint_still_reports_a_finished_jobs_outcome(monkeypatch, tmp_path):
+    """The gap this closes: `_running_id` resets to `None` the moment a job finishes
+    (`RefreshJobs._work`), so a page loaded after that point could otherwise see nothing at
+    all — not even that the last refresh failed."""
+    run = _run_with_outcomes({
+        "fetch-funding": lambda argv: subprocess.CompletedProcess(argv, 1, stdout="",
+                                                                   stderr="boom\n"),
+    })
+    client = _app_with_registry(monkeypatch, tmp_path, RefreshJobs(run=run))
+    job_id = client.post("/api/refresh").json()["id"]
+    _poll_until_terminal(client, job_id)
+
+    body = client.get("/api/refresh").json()
+
+    assert body["id"] == job_id
+    assert body["state"] == "failed"
+
+
+def test_the_latest_endpoint_tracks_a_second_job_after_the_first_finishes(monkeypatch, tmp_path):
+    client = _app_with_registry(monkeypatch, tmp_path, RefreshJobs(run=_succeed))
+    first_id = client.post("/api/refresh").json()["id"]
+    _poll_until_terminal(client, first_id)
+
+    second_id = client.post("/api/refresh").json()["id"]
+    _poll_until_terminal(client, second_id)
+
+    assert second_id != first_id
+    assert client.get("/api/refresh").json()["id"] == second_id
+
+
 def test_get_an_unknown_id_is_404(monkeypatch, tmp_path):
     monkeypatch.setattr(assets, "WEB_DIST", tmp_path / "no-dist")
     client = TestClient(api.create_app())

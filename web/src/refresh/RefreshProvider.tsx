@@ -7,7 +7,12 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { fetchRefreshStatus, startRefresh, type RefreshJobStatus } from "../api/client";
+import {
+  fetchLatestRefresh,
+  fetchRefreshStatus,
+  startRefresh,
+  type RefreshJobStatus,
+} from "../api/client";
 
 type RefreshState = "idle" | "running" | "succeeded" | "failed";
 
@@ -21,6 +26,11 @@ interface RefreshContextValue {
 const RefreshContext = createContext<RefreshContextValue | null>(null);
 
 const POLL_INTERVAL_MS = 2000;
+
+function failureMessage(steps: RefreshJobStatus["steps"]): string {
+  const failing = steps.find((step) => step.state === "failed");
+  return failing ? `${failing.name}: ${failing.detail ?? "failed"}` : "refresh failed";
+}
 
 export function RefreshProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<RefreshState>("idle");
@@ -51,9 +61,8 @@ export function RefreshProvider({ children }: { children: ReactNode }) {
         setError(null);
         return;
       }
-      const failing = status.steps.find((step) => step.state === "failed");
       setState("failed");
-      setError(failing ? `${failing.name}: ${failing.detail ?? "failed"}` : "refresh failed");
+      setError(failureMessage(status.steps));
     },
     [stopPolling],
   );
@@ -95,6 +104,32 @@ export function RefreshProvider({ children }: { children: ReactNode }) {
   // main.tsx renders StrictMode on React 19, so effects double-invoke in dev — the cleanup
   // here is what keeps that from leaving two pollers running.
   useEffect(() => stopPolling, [stopPolling]);
+
+  // Rehydrates the outcome of a job started in a tab that is no longer this one — a plain
+  // page reload otherwise has no job id of its own and always renders `idle`, even seconds
+  // after a refresh it triggered just failed. Runs once, not on every `poll`/`start` identity
+  // change — `poll` is referentially stable (built from a chain of stable `useCallback`s), so
+  // this never re-fires after mount.
+  useEffect(() => {
+    fetchLatestRefresh()
+      .then((status) => {
+        // `timerRef.current !== null` means a click already started its own poller before this
+        // resolved — that poller's own `applyStatus` owns the outcome now.
+        if (status === null || timerRef.current !== null) return;
+        if (status.state === "running") {
+          setState("running");
+          timerRef.current = setInterval(() => poll(status.id), POLL_INTERVAL_MS);
+          return;
+        }
+        // A finished job's outcome rehydrates `state`/`error` only, never `completedAt` — that
+        // would force every page to refetch on load for data that is already current.
+        setState(status.state);
+        setError(status.state === "failed" ? failureMessage(status.steps) : null);
+      })
+      .catch(() => {
+        // Best-effort — a failed rehydration must not block the page from rendering idle.
+      });
+  }, [poll]);
 
   return (
     <RefreshContext.Provider value={{ state, error, start, completedAt }}>

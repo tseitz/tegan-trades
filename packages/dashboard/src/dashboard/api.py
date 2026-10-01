@@ -189,6 +189,15 @@ def create_app() -> FastAPI:
         job_id = jobs.start()
         return refresh_job_status(jobs.get(job_id))
 
+    @app.get("/api/refresh")
+    def get_latest_refresh(jobs: RefreshJobs = _REFRESH_JOBS) -> RefreshJobStatus | None:
+        """What a freshly loaded page asks to rehydrate — the most recent job this process
+        knows about, running or finished, or `None` before any `POST /api/refresh` has ever
+        landed here. A page reload otherwise has no job id of its own and goes blank even when
+        a refresh is still running or just failed."""
+        record = jobs.latest()
+        return refresh_job_status(record) if record is not None else None
+
     @app.get("/api/refresh/{job_id}")
     def get_refresh(job_id: str, jobs: RefreshJobs = _REFRESH_JOBS) -> RefreshJobStatus:
         record = jobs.get(job_id)

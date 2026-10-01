@@ -103,6 +103,10 @@ class RefreshJobs:
         self._lock = threading.Lock()
         self._jobs: dict[str, JobRecord] = {}
         self._running_id: str | None = None
+        # Never cleared once set, unlike `_running_id` — a page load after a job finishes
+        # still needs to find it, and `_running_id` is reset to `None` the moment `_work`
+        # reaches a terminal state (see its own docstring).
+        self._latest_id: str | None = None
 
     def start(self) -> str:
         """Returns the started-or-joined job's id. A second call while one is in flight joins
@@ -122,6 +126,7 @@ class RefreshJobs:
                 started=datetime.now(UTC),
             )
             self._running_id = job_id
+            self._latest_id = job_id
 
         # Spawned after the lock is released — never hold the lock across a run() call. Holding
         # it around a blocking child process while a status poll waits on the same lock is a
@@ -133,6 +138,14 @@ class RefreshJobs:
     def get(self, job_id: str) -> JobRecord | None:
         with self._lock:
             return self._jobs.get(job_id)
+
+    def latest(self) -> JobRecord | None:
+        """The most recently started job, running or finished — `None` before this process's
+        first `start()`. What a freshly loaded page asks instead of `get(job_id)`: a page load
+        has no job id of its own, since a click that started one may have happened in a tab
+        that is no longer open."""
+        with self._lock:
+            return self._jobs.get(self._latest_id) if self._latest_id is not None else None
 
     def _work(self, job_id: str) -> None:
         """A failing step does not abort the run — same reasoning as `nightly.sh:23-25`. Every
