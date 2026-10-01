@@ -33,6 +33,9 @@ from review.cli import ReviewResult
 from review.levels import SHOWN, Spotlight, cap
 from treasury import render as treasury_render
 from treasury.book import NOT_FETCHED, IdleCash, TreasuryResult
+from yields import render as yields_render
+from yields.scan import NOT_FETCHED as YIELDS_NOT_FETCHED
+from yields.scan import AssetYield, ReadingsAsOf, YieldOption, YieldsResult
 
 MANDATE = Mandate(name="test", benchmarks=(Benchmark(type="held_flat"),),
                   horizon="position", risk_posture="moderate")
@@ -902,3 +905,116 @@ def test_default_treasury_dependency_reaches_treasury_cli_load_result(monkeypatc
     called_as_of, called_books = calls[0]
     assert called_as_of == datetime.now(UTC).date()
     assert called_books == books
+
+
+# ── the yields card (#100) ──────────────────────────────────────────────────
+
+
+def _yields_option(**overrides) -> YieldOption:
+    base = {
+        "wrapper": "STETH", "pool_id": "pool-steth",
+        "facts": VenueFacts(slug="lido", pool_id="pool-steth", apy=2.25),
+        "gate": GateResult(passed=True, reasons=(), required_age_days=274, lineage="standalone"),
+        "score": SafetyScore(incentive_share=None, apy_volatility=None, observations=None,
+                             incidents=0),
+        "held": None, "state": None,
+    }
+    base.update(overrides)
+    return YieldOption(**base)
+
+
+def _yields_result(**overrides) -> YieldsResult:
+    base = {
+        "assets": (), "as_of": date(2026, 9, 21),
+        "readings_as_of": ReadingsAsOf(None, None), "configured": 0, "matched": 0,
+    }
+    base.update(overrides)
+    return YieldsResult(**base)
+
+
+def _yields_response(monkeypatch, tmp_path, result):
+    monkeypatch.setattr(assets, "WEB_DIST", tmp_path / "no-dist")
+    app = api.create_app()
+    app.dependency_overrides[api.yields_result] = lambda: result
+    client = TestClient(app)
+    return client.get("/api/yields")
+
+
+def test_an_empty_result_still_reports_the_summary(monkeypatch, tmp_path):
+    body = _yields_response(monkeypatch, tmp_path, _yields_result(configured=3)).json()
+
+    assert body["yields"]["summary"] == "0/3 configured wrapper(s) matched a holding"
+    assert body["yields"]["assets"] == []
+
+
+def test_a_held_asset_lists_its_mandates_and_marks_the_held_option(monkeypatch, tmp_path):
+    option = _yields_option(held=1.0)
+    asset = AssetYield(asset="ETH", mandates=("crypto", "robinhood"),
+                       held_state_readable=True, options=(option,))
+    result = _yields_result(assets=(asset,), configured=1, matched=1)
+    body = _yields_response(monkeypatch, tmp_path, result).json()
+
+    [wire_asset] = body["yields"]["assets"]
+    assert wire_asset["mandates"] == ["crypto", "robinhood"]
+    assert wire_asset["held_state_note"] is None
+    assert wire_asset["options"] == [{
+        "wrapper": "STETH", "pool_id": "pool-steth",
+        "apy": yields_render.row_apy_text(2.25), "held": 1.0, "safety": "Safety OK",
+    }]
+
+
+def test_the_three_safety_states_reach_the_wire_distinctly(monkeypatch, tmp_path):
+    not_fetched = _yields_option(wrapper="A", pool_id="pool-a", facts=None, gate=None,
+                                 score=None, held=1.0, state=YIELDS_NOT_FETCHED)
+    failing = _yields_option(
+        wrapper="B", pool_id="pool-b",
+        gate=GateResult(passed=False, reasons=("no audit on record",), required_age_days=274,
+                       lineage="standalone"),
+        held=1.0,
+    )
+    passing = _yields_option(wrapper="C", pool_id="pool-c", held=None)
+    asset = AssetYield(asset="ETH", mandates=("crypto",), held_state_readable=True,
+                       options=(not_fetched, failing, passing))
+    result = _yields_result(assets=(asset,), configured=3, matched=3)
+    body = _yields_response(monkeypatch, tmp_path, result).json()
+
+    safety_by_wrapper = {o["wrapper"]: o["safety"] for o in body["yields"]["assets"][0]["options"]}
+    assert safety_by_wrapper["A"] == "Safety: not fetched yet"
+    assert "Safety FAILS" in safety_by_wrapper["B"]
+    assert safety_by_wrapper["C"] == "Safety OK"
+
+
+def test_an_unreadable_held_state_notes_it_on_the_asset(monkeypatch, tmp_path):
+    asset = AssetYield(asset="ETH", mandates=("crypto",), held_state_readable=False,
+                       options=(_yields_option(),))
+    result = _yields_result(assets=(asset,), configured=1, matched=1)
+    body = _yields_response(monkeypatch, tmp_path, result).json()
+
+    assert (body["yields"]["assets"][0]["held_state_note"]
+           == "held-state unknown — no readable figi")
+
+
+def test_default_yields_dependency_reaches_yields_scan_yields_for(monkeypatch, tmp_path):
+    """Drives the endpoint through the real dependency, with `yields.scan.yields_for` itself
+    stubbed — the only thing pinning "never a second reimplementation of the assembly", and the
+    only safe way to prove it: `data/portfolios/` must never be touched by the suite."""
+    monkeypatch.setattr(assets, "WEB_DIST", tmp_path / "no-dist")
+    calls = []
+
+    def fake_yields_for(books, *, altsignal_cfg, as_of):
+        calls.append((tuple(books), as_of))
+        return _yields_result(as_of=as_of)
+
+    monkeypatch.setattr(api, "yields_for", fake_yields_for)
+    app = api.create_app()
+    books = [_book("retirement")]
+    app.dependency_overrides[api.mandate_books] = lambda: books
+    client = TestClient(app)
+
+    response = client.get("/api/yields")
+
+    assert response.status_code == 200
+    assert calls, "yields.scan.yields_for (via dashboard.api.yields_for) was never called"
+    called_books, called_as_of = calls[0]
+    assert called_as_of == datetime.now(UTC).date()
+    assert called_books == tuple(books)

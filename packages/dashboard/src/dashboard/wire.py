@@ -19,6 +19,7 @@ from review import render
 from review.levels import SHOWN, cap
 from treasury import render as treasury_render
 from treasury.cli import no_treasury_note
+from yields import render as yields_render
 
 
 class MandateSummary(BaseModel):
@@ -370,6 +371,75 @@ def treasury_response(result) -> TreasuryResponse:
     if result is None:
         return TreasuryResponse(treasury=None, empty_note=no_treasury_note())
     return TreasuryResponse(treasury=treasury_card(result), empty_note=None)
+
+
+# ── the yields card (#100) ──────────────────────────────────────────────────
+
+
+class YieldOptionRow(BaseModel):
+    wrapper: str
+    pool_id: str | None
+    apy: str            # yields_render.row_apy_text
+    held: float | None
+    safety: str | None   # yields_render.safety_text
+
+
+class YieldAsset(BaseModel):
+    asset: str
+    mandates: list[str]
+    held_state_note: str | None   # yields_render.held_state_note; None when readable
+    options: list[YieldOptionRow]
+
+
+class YieldsCard(BaseModel):
+    """Unlike ``TreasuryCard``, never wrapped in a nullable envelope: ``yields_for`` always
+    returns a ``YieldsResult`` — even nothing configured or nothing held prints the
+    configured/matched summary rather than an absent card, so there is no ``None`` case for a
+    caller to branch on."""
+    summary: str                          # yields_render.summary_line
+    assets: list[YieldAsset]
+    readings_line: str | None              # yields_render.readings_line, indent stripped
+
+
+class YieldsResponse(BaseModel):
+    yields: YieldsCard
+
+
+def yields_card(result) -> YieldsCard:
+    """``YieldsResult`` (untyped, same reason ``review_document``'s ``result`` is) -> the
+    browser's yields card. Every piece of wording comes from ``yields.render``'s public
+    helpers, never re-decided here — the same split ``treasury_card`` already draws."""
+    assets = [
+        YieldAsset(
+            asset=asset.asset,
+            mandates=list(asset.mandates),
+            held_state_note=yields_render.held_state_note(asset),
+            options=[
+                YieldOptionRow(
+                    wrapper=option.wrapper,
+                    pool_id=option.pool_id,
+                    apy=yields_render.row_apy_text(
+                        option.facts.apy if option.facts is not None else None
+                    ),
+                    held=option.held,
+                    safety=yields_render.safety_text(option),
+                )
+                for option in asset.options
+            ],
+        )
+        for asset in result.assets
+    ]
+    return YieldsCard(
+        summary=yields_render.summary_line(result),
+        assets=assets,
+        readings_line=yields_render.readings_line(
+            result.readings_as_of.freshest, result.readings_as_of.oldest,
+        ).strip() or None,
+    )
+
+
+def yields_response(result) -> YieldsResponse:
+    return YieldsResponse(yields=yields_card(result))
 
 
 # ── refresh (#93) ────────────────────────────────────────────────────────────

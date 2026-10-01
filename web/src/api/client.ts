@@ -7,6 +7,7 @@ export type LevelsSection = components["schemas"]["LevelsSection"];
 export type AltSignalSection = components["schemas"]["AltSignalSection"];
 export type RefreshJobStatus = components["schemas"]["RefreshJobStatus"];
 export type TreasuryResponse = components["schemas"]["TreasuryResponse"];
+export type YieldsResponse = components["schemas"]["YieldsResponse"];
 
 export async function fetchMandates(): Promise<MandateList> {
   const response = await fetch("/api/mandates");
@@ -30,6 +31,14 @@ export async function fetchTreasury(): Promise<TreasuryResponse> {
     throw new Error(`GET /api/treasury failed: ${response.status}`);
   }
   return response.json() as Promise<TreasuryResponse>;
+}
+
+export async function fetchYields(): Promise<YieldsResponse> {
+  const response = await fetch("/api/yields");
+  if (!response.ok) {
+    throw new Error(`GET /api/yields failed: ${response.status}`);
+  }
+  return response.json() as Promise<YieldsResponse>;
 }
 
 export async function startRefresh(): Promise<RefreshJobStatus> {

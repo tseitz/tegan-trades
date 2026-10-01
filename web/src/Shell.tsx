@@ -44,7 +44,8 @@ export function Shell() {
 
         {/* Outside `mandates.map` and set off by its own border — Treasury sits beside the
             Mandate switcher, never inside it (`data/treasury.yaml` is not a `data/portfolios/*`
-            file, see #94's design note). */}
+            file, see #94's design note). Yields joins it for the same reason (#100): it spans
+            every book rather than belonging to one. */}
         <NavLink
           to="/treasury"
           className={({ isActive }) =>
@@ -54,6 +55,16 @@ export function Shell() {
           }
         >
           Treasury
+        </NavLink>
+        <NavLink
+          to="/yields"
+          className={({ isActive }) =>
+            `rounded-md px-2.5 py-1 font-mono text-xs ${
+              isActive ? "bg-raised text-ink" : "text-muted hover:bg-surface hover:text-ink"
+            }`
+          }
+        >
+          Yields
         </NavLink>
 
         {state === "failed" && error && (

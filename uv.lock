@@ -599,6 +599,7 @@ dependencies = [
     { name = "review" },
     { name = "treasury" },
     { name = "uvicorn" },
+    { name = "yields" },
 ]
 
 [package.dev-dependencies]
@@ -613,6 +614,7 @@ requires-dist = [
     { name = "review", editable = "packages/review" },
     { name = "treasury", editable = "packages/treasury" },
     { name = "uvicorn", specifier = ">=0.30" },
+    { name = "yields", editable = "packages/yields" },
 ]
 
 [package.metadata.requires-dev]

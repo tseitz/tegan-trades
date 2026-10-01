@@ -55,6 +55,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/yields": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Yields */
+        get: operations["get_yields_api_yields_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/refresh": {
         parameters: {
             query?: never;
@@ -378,6 +395,49 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
+        /** YieldAsset */
+        YieldAsset: {
+            /** Asset */
+            asset: string;
+            /** Mandates */
+            mandates: string[];
+            /** Held State Note */
+            held_state_note: string | null;
+            /** Options */
+            options: components["schemas"]["YieldOptionRow"][];
+        };
+        /** YieldOptionRow */
+        YieldOptionRow: {
+            /** Wrapper */
+            wrapper: string;
+            /** Pool Id */
+            pool_id: string | null;
+            /** Apy */
+            apy: string;
+            /** Held */
+            held: number | null;
+            /** Safety */
+            safety: string | null;
+        };
+        /**
+         * YieldsCard
+         * @description Unlike ``TreasuryCard``, never wrapped in a nullable envelope: ``yields_for`` always
+         *     returns a ``YieldsResult`` — even nothing configured or nothing held prints the
+         *     configured/matched summary rather than an absent card, so there is no ``None`` case for a
+         *     caller to branch on.
+         */
+        YieldsCard: {
+            /** Summary */
+            summary: string;
+            /** Assets */
+            assets: components["schemas"]["YieldAsset"][];
+            /** Readings Line */
+            readings_line: string | null;
+        };
+        /** YieldsResponse */
+        YieldsResponse: {
+            yields: components["schemas"]["YieldsCard"];
+        };
     };
     responses: never;
     parameters: never;
@@ -454,6 +514,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TreasuryResponse"];
+                };
+            };
+        };
+    };
+    get_yields_api_yields_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["YieldsResponse"];
                 };
             };
         };

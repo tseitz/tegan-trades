@@ -9,6 +9,7 @@ from datetime import UTC, date, datetime
 from fastapi import Depends, FastAPI, HTTPException, Request
 from review.cli import altsignal_settings, load_books, price_freshness, review_for
 from treasury.cli import load_result
+from yields.scan import yields_for
 
 from dashboard.refresh import RefreshJobs
 from dashboard.wire import (
@@ -16,10 +17,12 @@ from dashboard.wire import (
     RefreshJobStatus,
     ReviewDocument,
     TreasuryResponse,
+    YieldsResponse,
     refresh_job_status,
     review_document,
     summarise,
     treasury_response,
+    yields_response,
 )
 
 
@@ -120,6 +123,18 @@ def treasury_result(books: list = _MANDATE_BOOKS, as_of: date = _AS_OF_TODAY):
 _TREASURY_RESULT = Depends(treasury_result)
 
 
+def yields_result(books: list = _MANDATE_BOOKS, as_of: date = _AS_OF_TODAY, cfg=_ALTSIGNAL_CFG):
+    """The yields View's ``YieldsResult``, across every Mandate at once — a FastAPI dependency
+    mirroring ``treasury_result``. Unlike Treasury, ``yields_for`` never returns ``None``: an
+    unconfigured or fully-optimised book still reports the configured/matched summary, so there
+    is no absent-card case for `test_api` to drive through this dependency.
+    """
+    return yields_for(books, altsignal_cfg=cfg, as_of=as_of)
+
+
+_YIELDS_RESULT = Depends(yields_result)
+
+
 def refresh_jobs(request: Request) -> RefreshJobs:
     """The one registry per app instance, off `app.state` — mirrors `mandate_books` so
     `test_refresh.py` can override this one dependency with a stubbed registry instead of
@@ -163,6 +178,10 @@ def create_app() -> FastAPI:
     @app.get("/api/treasury")
     def get_treasury(result=_TREASURY_RESULT) -> TreasuryResponse:
         return treasury_response(result)
+
+    @app.get("/api/yields")
+    def get_yields(result=_YIELDS_RESULT) -> YieldsResponse:
+        return yields_response(result)
 
     @app.post("/api/refresh")
     def start_refresh(request: Request, jobs: RefreshJobs = _REFRESH_JOBS) -> RefreshJobStatus:
