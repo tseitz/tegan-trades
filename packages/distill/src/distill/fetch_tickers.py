@@ -1,12 +1,15 @@
 """One-time CoinGecko snapshot fetcher -> cfg/tickers.json. Run manually to refresh
-(hits api.coingecko.com); resolve-time never touches the network. Free API, no key."""
+(hits api.coingecko.com); resolve-time never touches the network. Free; sends the Demo key
+when `.env` has one (see `core.coingecko`)."""
 from __future__ import annotations
 
 import argparse
 import json
+import time
 from pathlib import Path
 
 import requests
+from core import coingecko
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_OUT = _REPO_ROOT / "cfg" / "tickers.json"
@@ -14,6 +17,9 @@ API = "https://api.coingecko.com/api/v3/coins/markets"
 DEFAULT_TOP_N = 1000
 PER_PAGE = 250
 TIMEOUT = 30.0
+RETRIES = 4
+# Keyless limits are per minute, so a retry inside the same minute just spends another 429.
+RETRY_WAIT_S = 20.0
 
 
 def build_snapshot(rows: list[dict]) -> dict:
@@ -27,19 +33,31 @@ def build_snapshot(rows: list[dict]) -> dict:
     return snapshot
 
 
-def fetch_rows(top_n: int = DEFAULT_TOP_N, *, session=None, per_page: int = PER_PAGE) -> list[dict]:
+def _retry_wait(resp, attempt: int) -> float:
+    retry_after = resp.headers.get("Retry-After", "")
+    return float(retry_after) if retry_after.isdigit() else RETRY_WAIT_S * (attempt + 1)
+
+
+def _get_page(session, params: dict, *, sleep) -> list[dict]:
+    for attempt in range(RETRIES):
+        resp = session.get(API, params=params, headers=coingecko.headers(), timeout=TIMEOUT)
+        if resp.status_code != 429 or attempt == RETRIES - 1:
+            resp.raise_for_status()
+            return resp.json()
+        sleep(_retry_wait(resp, attempt))
+    raise AssertionError("unreachable")
+
+
+def fetch_rows(
+    top_n: int = DEFAULT_TOP_N, *, session=None, per_page: int = PER_PAGE, sleep=time.sleep
+) -> list[dict]:
     session = session or requests.Session()
     rows: list[dict] = []
     pages = (top_n + per_page - 1) // per_page
     for page in range(1, pages + 1):
-        resp = session.get(
-            API,
-            params={"vs_currency": "usd", "order": "market_cap_desc",
-                    "per_page": per_page, "page": page},
-            timeout=TIMEOUT,
-        )
-        resp.raise_for_status()
-        rows.extend(resp.json())
+        params = {"vs_currency": "usd", "order": "market_cap_desc",
+                  "per_page": per_page, "page": page}
+        rows.extend(_get_page(session, params, sleep=sleep))
     return rows[:top_n]
 
 
@@ -61,7 +79,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     nothing suggested the argument was decorative.
     """
     parser = argparse.ArgumentParser(
-        description="Refresh cfg/tickers.json from CoinGecko (network; free, no key).")
+        description="Refresh cfg/tickers.json from CoinGecko (network; free).")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT,
                         help="where to write (default: %(default)s)")
     parser.add_argument("--dry-run", action="store_true",

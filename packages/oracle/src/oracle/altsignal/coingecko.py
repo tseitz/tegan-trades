@@ -19,13 +19,14 @@ derivatives-exchange id (`/derivatives/exchanges`) — Aster is coin ``aster-2``
 ``aster``. Both are stored, keyed by whichever id the reading actually came from.
 
 **Rate limits.** The fully-keyless path took a 429 on a cold ``/ping`` and succeeded ~8s later
-(§2) — keyless works at comparison-card volumes but is not a guarantee. Register a free
-CoinGecko Demo key before this goes anywhere near the nightly.
+(§2) — keyless works at comparison-card volumes but is not a guarantee. Both calls send the
+Demo key when `.env` has one (`core.coingecko`).
 """
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from core import coingecko
 from core.altsignal import AltSignalReading
 
 from oracle import http
@@ -62,7 +63,9 @@ def fetch_markets(ids: list[str], *, get_json=http.get_json) -> dict[str, dict]:
     `fetch_tokens`. Empty ``ids`` skips the call rather than asking CoinGecko for nothing."""
     if not ids:
         return {}
-    payload = get_json(MARKETS_BASE, {"vs_currency": "usd", "ids": ",".join(ids)}) or []
+    payload = get_json(
+        MARKETS_BASE, {"vs_currency": "usd", "ids": ",".join(ids)}, headers=coingecko.headers()
+    ) or []
     return {row["id"]: row for row in payload if row.get("id")}
 
 
@@ -80,7 +83,9 @@ def parse_derivatives_row(row: dict, *, btc_usd: float) -> tuple[float | None, f
 def fetch_derivatives(*, get_json=http.get_json) -> dict[str, dict]:
     """Raw ``/derivatives/exchanges`` rows keyed by exchange id — one call for every exchange
     CoinGecko lists."""
-    payload = get_json(DERIVATIVES_BASE, {"per_page": DERIVATIVES_PAGE_SIZE}) or []
+    payload = get_json(
+        DERIVATIVES_BASE, {"per_page": DERIVATIVES_PAGE_SIZE}, headers=coingecko.headers()
+    ) or []
     return {row["id"]: row for row in payload if row.get("id")}
 
 
