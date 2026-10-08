@@ -659,6 +659,28 @@ def test_views_with_llm_render_the_big_picture_line(tmp_path, today, monkeypatch
     assert "Leans defensive on metals." in body
 
 
+def test_a_collapsed_channel_gets_a_big_picture_from_its_firm_stances_only(tmp_path, today,
+                                                                             monkeypatch):
+    _views_corpus(tmp_path, monkeypatch)
+    [firm] = cli.load_all_stances()
+    punt = firm.model_copy(update={"id": "punt", "asset": "SILVER", "conviction": "low"})
+    monkeypatch.setattr(cli, "load_all_stances", lambda *a, **k: [firm, punt])
+    monkeypatch.setattr(cli, "load_watchlist", lambda *a, **k: {
+        "people": [{"name": "Benjamin Cowen", "digest": "collapse"}]})
+    seen = []
+
+    def summarize(payload, **k):
+        seen.extend(payload)
+        return {"Benjamin Cowen": "Leans defensive on metals."}
+    monkeypatch.setattr(cli.bigpicture, "summarize", summarize)
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
+    _, body = build(snaps, tmp_path, with_llm=True)
+    [entry] = seen
+    assert entry["high_volume"] is True
+    assert [s["conviction"] for s in entry["stances"]] == ["high"]
+    assert "Leans defensive on metals." in body
+
+
 def test_a_failed_big_picture_still_renders_the_lists_and_says_so(tmp_path, today, monkeypatch):
     _views_corpus(tmp_path, monkeypatch)
 

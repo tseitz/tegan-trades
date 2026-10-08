@@ -339,9 +339,11 @@ def _views_section(*, with_llm: bool, warn) -> tuple[str | None, str | None]:
 
     big_picture = None
     if with_llm:
-        by_person = {v.person: [s for video in v.videos for s in video.stances]
-                     for v in folded if not v.collapsed}
-        payload = bigpicture.payload(by_person)
+        by_person = {v.person: [s for video in v.videos for s in video.stances
+                                if not v.collapsed or s.conviction in ("high", "med")]
+                     for v in folded}
+        payload = bigpicture.payload(
+            by_person, high_volume=frozenset(v.person for v in folded if v.collapsed))
         try:
             lines = bigpicture.summarize(payload)
         except bigpicture.BigPictureFailed as exc:

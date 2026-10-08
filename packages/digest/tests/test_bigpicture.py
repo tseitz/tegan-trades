@@ -153,3 +153,9 @@ def test_a_number_from_another_persons_payload_does_not_ground():
 def test_lines_without_numbers_pass():
     kept, warnings = bigpicture.grounded({"Mayne": "Risk-on while yields ease."}, PAYLOAD)
     assert kept and warnings == []
+
+
+def test_payload_flags_only_high_volume_people():
+    out = bigpicture.payload({"tasty": [_stance(person="tasty")], "Mayne": [_stance()]},
+                             high_volume=frozenset({"tasty"}))
+    assert {e["person"]: e.get("high_volume") for e in out} == {"tasty": True, "Mayne": None}

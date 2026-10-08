@@ -128,6 +128,15 @@ def test_people_ordered_by_newest_video_then_name():
     assert [v.person for v in fold([], sidecars)] == ["Yan", "Abe", "Zed"]
 
 
+def test_same_day_orders_by_upload_time_and_untimed_sorts_after_timed():
+    early = dict(sidecar("youtube/a", "2026-09-30", "Early"), published_ts="2026-09-30T08:00:00+00:00")
+    late = dict(sidecar("youtube/b", "2026-09-30", "Late"), published_ts="2026-09-30T20:00:00+00:00")
+    untimed = sidecar("youtube/c", "2026-09-30", "Abe")
+    assert [v.person for v in fold([], [untimed, early, late])] == ["Late", "Early", "Abe"]
+    videos = fold([], [dict(early, person="P"), dict(late, person="P")])[0].videos
+    assert [v.ref for v in videos] == ["youtube/b", "youtube/a"]
+
+
 def test_collapsed_channels_sort_last_even_when_newest():
     sidecars = [sidecar("youtube/a", "2026-09-30", "tasty"), sidecar("youtube/b", "2026-09-28", "Abe")]
     order = [v.person for v in fold([], sidecars, collapsed=frozenset({"tasty"}))]
@@ -166,11 +175,29 @@ def test_collapsed_format_and_tail():
           stance("youtube/b", "VIX", "bearish", person="tasty", conviction="high")]
     out = views.lines(fold(ss, sidecars, collapsed=frozenset({"tasty"}),
                            distilled=frozenset({"youtube/c"})),
-                      big_picture={"tasty": "ignored"})
-    assert out[0] == "  tasty · 3 videos"
+                      big_picture={"tasty": "Leans long."})
+    assert out[:2] == ["  tasty · 3 videos", "    Leans long."]
     assert '    Sep 29 · "Jobs" — Bullish SPX · Bearish VIX' in out
     assert "    +2 with no views or not yet distilled" in out
-    assert "ignored" not in "\n".join(out)
+
+
+def test_collapsed_caps_each_side_and_drops_an_asset_on_both():
+    ref = "youtube/a"
+    ss = [stance(ref, a, "bullish", person="tasty") for a in ("AAA", "BBB", "CCC", "DDD")]
+    ss += [stance(ref, "EEE", "bullish", person="tasty", conviction="high"),
+           stance(ref, "SPX", "bullish", person="tasty"),
+           stance(ref, "SPX", "bearish", person="tasty"),
+           stance(ref, "VIX", "bearish", person="tasty")]
+    out = views.lines(fold(ss, [sidecar(ref, "2026-09-30", "tasty", "Busy")],
+                           collapsed=frozenset({"tasty"})))
+    assert '    Sep 30 · "Busy" — Bullish EEE, AAA, BBB +2 · Bearish VIX' in out
+
+
+def test_collapsed_video_with_only_contested_assets_counts_as_quiet():
+    ref = "youtube/a"
+    ss = [stance(ref, "SPX", "bullish", person="tasty"), stance(ref, "SPX", "bearish", person="tasty")]
+    out = views.lines(fold(ss, [sidecar(ref, "2026-09-30", "tasty")], collapsed=frozenset({"tasty"})))
+    assert "    +1 with no views or not yet distilled" in out
 
 
 def test_empty_input():

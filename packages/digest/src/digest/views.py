@@ -11,14 +11,17 @@ text after a two-space label gap, so labels stay padded with at least two spaces
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from core.rank import parse_date
 from core.stance import Stance
 
+from digest.fmt import UNDATED, instant
+
 WINDOW_DAYS = 3
 WATCHING_MAX = 3
 WATCHING_CHARS = 240
+COLLAPSED_PER_SIDE = 3
 
 UNTITLED = "(untitled)"
 _LABEL = 9
@@ -33,6 +36,7 @@ class Video:
     url: str | None
     distilled: bool
     stances: tuple[Stance, ...]
+    published_ts: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +74,7 @@ def fold(stances: list[Stance], sidecars: list[dict], *, today: date,
 
     views = [PersonView(person=name, collapsed=name in collapsed, videos=_newest_first(vids))
              for name, vids in people.items()]
-    return sorted(views, key=lambda v: (v.collapsed, _negdate(v.videos[0].published_at), v.person))
+    return sorted(views, key=lambda v: (v.collapsed, -_when(v.videos[0]), v.person))
 
 
 def _from_sidecar(sc, by_ref, distilled, cutoff) -> tuple[str, Video] | None:
@@ -93,7 +97,8 @@ def _from_sidecar(sc, by_ref, distilled, cutoff) -> tuple[str, Video] | None:
         title = UNTITLED
     person = sc.get("person") or (group[0].source.person if group else "(unknown)")
     return person, Video(ref=ref, title=title, published_at=str(published), url=sc.get("url"),
-                         distilled=bool(group) or ref in distilled, stances=group)
+                         distilled=bool(group) or ref in distilled, stances=group,
+                         published_ts=sc.get("published_ts"))
 
 
 def _from_stances(ref, group, cutoff) -> tuple[str, Video] | None:
@@ -106,13 +111,16 @@ def _from_stances(ref, group, cutoff) -> tuple[str, Video] | None:
         url=first.source.url, distilled=True, stances=tuple(group))
 
 
-def _negdate(published_at: str) -> int:
-    d = parse_date(published_at)
-    return -d.toordinal() if d else 0
+def _when(video: Video) -> float:
+    """Upload instant in epoch seconds. A date-only video counts as that day's midnight UTC."""
+    if (at := instant(video.published_ts)) is not None:
+        return at.timestamp()
+    d = parse_date(video.published_at)
+    return datetime(d.year, d.month, d.day, tzinfo=UTC).timestamp() if d else UNDATED.timestamp()
 
 
 def _newest_first(videos: list[Video]) -> tuple[Video, ...]:
-    return tuple(sorted(videos, key=lambda v: (_negdate(v.published_at), v.ref)))
+    return tuple(sorted(videos, key=lambda v: (-_when(v), v.ref)))
 
 
 def _day(published_at: str) -> str:
@@ -193,7 +201,7 @@ def lines(views: list[PersonView], *, big_picture: dict[str, str] | None = None)
     for view in views:
         if out:
             out.append("")
-        out += (_collapsed_lines(view) if view.collapsed
+        out += (_collapsed_lines(view, big_picture.get(view.person)) if view.collapsed
                 else _full_lines(view, big_picture.get(view.person)))
     return out
 
@@ -224,14 +232,14 @@ def _full_lines(view: PersonView, big_picture: str | None) -> list[str]:
     return out
 
 
-def _collapsed_lines(view: PersonView) -> list[str]:
+def _collapsed_lines(view: PersonView, big_picture: str | None) -> list[str]:
     n = len(view.videos)
     out = _line(f"{view.person} · {n} video{'' if n == 1 else 's'}", 2)
+    if big_picture:
+        out += _line(big_picture, 4)
     quiet = 0
     for video in view.videos:
-        buckets = _buckets(video.stances)
-        parts = [f"{name} {', '.join(a.removesuffix(' (high)') for a in buckets[name])}"
-                 for name in ("Bullish", "Bearish") if name in buckets]
+        parts = _collapsed_parts(video.stances)
         if not parts:
             quiet += 1
             continue
@@ -239,3 +247,20 @@ def _collapsed_lines(view: PersonView) -> list[str]:
     if quiet:
         out += _line(f"+{quiet} with no views or not yet distilled", 4)
     return out
+
+
+def _collapsed_parts(stances: tuple[Stance, ...]) -> list[str]:
+    """Bullish/Bearish, high conviction first, capped. An asset on both sides is dropped."""
+    buckets = _buckets(stances)
+    sides = {name: [a.removesuffix(" (high)") for a in buckets.get(name, [])]
+             for name in ("Bullish", "Bearish")}
+    both = {a.casefold() for a in sides["Bullish"]} & {a.casefold() for a in sides["Bearish"]}
+    parts = []
+    for name, assets in sides.items():
+        kept = [a for a in assets if a.casefold() not in both]
+        if not kept:
+            continue
+        more = len(kept) - COLLAPSED_PER_SIDE
+        parts.append(f"{name} {', '.join(kept[:COLLAPSED_PER_SIDE])}"
+                     + (f" +{more}" if more > 0 else ""))
+    return parts

@@ -48,6 +48,9 @@ Rules:
 - Use ONLY assets, levels and claims present in that person's entry. Never add a price, a
   level, a number or a reason that is not given.
 - Echo each person's name exactly as given.
+- An entry with "high_volume": true is a busy channel, often several hosts and guests, sent
+  only its high and medium conviction stances. Give where it leans on balance, and say so where
+  its voices split.
 - No markdown, no bullets, no preamble, no sign-off."""
 
 _NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
@@ -57,11 +60,13 @@ class BigPictureFailed(RuntimeError):
     """The call failed, timed out, or came back in the wrong shape."""
 
 
-def payload(by_person: dict[str, list[Stance]]) -> list[dict]:
+def payload(by_person: dict[str, list[Stance]], *,
+            high_volume: frozenset[str] = frozenset()) -> list[dict]:
     """Per-person model input. Persons with no stances are omitted."""
     return [
         {
             "person": person,
+            **({"high_volume": True} if person in high_volume else {}),
             "stances": [
                 {
                     "asset": s.asset, "lean": s.lean, "conviction": s.conviction,
