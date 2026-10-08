@@ -117,6 +117,7 @@ def test_ingest_channel_happy_path_saves_rich_metadata(tmp_path):
     assert text == "text-vid00000001"
     assert meta["person"] == "Alice"
     assert meta["published_at"] == "2026-07-01"
+    assert meta["published_ts"] is None
     assert meta["was_live"] is True
     assert meta["channel_id"] == "UCabc"
     assert meta["url"] == "https://www.youtube.com/watch?v=vid00000001"

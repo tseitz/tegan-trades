@@ -256,3 +256,15 @@ def test_ingest_channel_real_end_to_end(tmp_path):
     assert len(handled) >= 1
     for vid in result.ingested:
         assert len(load("youtube", vid, root=tmp_path)) > 0
+
+
+def test_hydrate_keeps_the_upload_instant_alongside_the_day():
+    info = {"title": "T", "upload_date": "20260701", "timestamp": 1782864000 + 3723}
+    meta = hydrate("vid00000004", _extract=lambda url: info)
+    assert meta.published_at == "2026-07-01"
+    assert meta.published_ts == "2026-07-01T01:02:03+00:00"
+
+
+def test_hydrate_published_ts_none_without_a_timestamp():
+    meta = hydrate("vid00000005", _extract=lambda url: {"title": "T", "upload_date": "20260701"})
+    assert meta.published_ts is None

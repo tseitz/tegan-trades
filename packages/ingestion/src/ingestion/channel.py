@@ -151,6 +151,7 @@ class VideoMeta:
     duration: int | None
     channel_id: str | None
     was_live: bool
+    published_ts: str | None = None   # ISO UTC instant, when yt-dlp has one
 
 
 def _published_at(info: dict) -> str | None:
@@ -170,6 +171,13 @@ def _published_at(info: dict) -> str | None:
     return None
 
 
+def _published_ts(info: dict) -> str | None:
+    ts = info.get("timestamp")
+    if ts is None:
+        ts = info.get("release_timestamp")
+    return None if ts is None else datetime.fromtimestamp(ts, tz=UTC).isoformat()
+
+
 def _full_extract(url: str) -> dict:
     with YoutubeDL(_ydl_opts(skip_download=True, quiet=True)) as ydl:
         return _with_retry(lambda: ydl.extract_info(url, download=False))
@@ -186,6 +194,7 @@ def hydrate(video_id: str, *, _extract=None) -> VideoMeta:
         duration=info.get("duration"),
         channel_id=info.get("channel_id"),
         was_live=bool(info.get("was_live")),
+        published_ts=_published_ts(info),
     )
 
 

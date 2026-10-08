@@ -215,6 +215,7 @@ def ingest(
             "url": url,
             "title": meta.title,
             "published_at": meta.published_at,
+            "published_ts": meta.published_ts,
             "duration": meta.duration,
             "channel_id": meta.channel_id,
             "person": person,
