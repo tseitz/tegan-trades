@@ -66,6 +66,14 @@ def test_the_contract_is_read_off_the_held_chain_not_the_first_implementation():
     assert rows[0].figi == "0xheld"
 
 
+def test_a_token_wearing_another_assets_ticker_is_renamed_by_contract():
+    rows, _, _ = _rows(
+        _position(symbol="SPX", contract="0x50DA645f148798f68ef2d7db7c1cb22a6819bb2c",
+                  value=1900.0, price=0.35)
+    )
+    assert rows[0].ticker == "SPX6900"
+
+
 def test_the_native_coins_implementation_has_no_address():
     rows, _, _ = _rows(
         _position(symbol="ETH", chain="ethereum", contract=None, value=100.0)

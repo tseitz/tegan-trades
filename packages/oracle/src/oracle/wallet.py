@@ -111,6 +111,18 @@ STABLES = frozenset(
 # whose whole value is that you read all of it.
 MIN_VALUE_USD = 25.0
 
+# Tokens whose own symbol is a different asset's ticker here, so the sync renames them before
+# anything prices them. Keyed by contract, lowercase: the symbol is the part that can't be
+# trusted. The new ticker needs a route in `cfg/oracle_map.yaml`.
+CONTRACT_TICKERS = {
+    # SPX6900, a memecoin. `SPX` is the S&P 500.
+    "0x50da645f148798f68ef2d7db7c1cb22a6819bb2c": "SPX6900",
+}
+
+
+def ticker_for(symbol: str, contract: str | None) -> str:
+    return CONTRACT_TICKERS.get((contract or "").lower(), symbol)
+
 # How far two quotes for one symbol may sit apart and still be believed to be one asset. Wide,
 # because it separates "the same coin, priced a moment apart on two chains" from "a scam token
 # wearing a real ticker" — and the second misses by orders of magnitude, never by 10%.
@@ -475,6 +487,7 @@ def rows_from(
                     )
             continue
 
+        symbol = ticker_for(symbol, contract)
         units = _units(token.get("tokenBalance"), decimals)
         if not units:
             continue  # trap 2: an emptied token is not news

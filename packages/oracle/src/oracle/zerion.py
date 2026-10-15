@@ -192,6 +192,7 @@ def _wallet_positions_by_chain(positions) -> dict[str, list[tuple[str, float]]]:
             continue
         chain = _chain(item) or ""
         symbol = str((attrs.get("fungible_info") or {}).get("symbol") or "").strip().upper()
+        symbol = wallet.ticker_for(symbol, _contract(item, _chain(item)))
         quantity = ((attrs.get("quantity") or {}).get("float")) or 0.0
         by_chain.setdefault(chain, []).append((symbol, quantity))
     return by_chain
@@ -250,6 +251,7 @@ def rows_from(
 
         chain = _chain(item)
         contract = _contract(item, chain)
+        symbol = wallet.ticker_for(symbol, contract)
         where = f"{chain or '?'} {contract}" if contract else f"{chain or '?'} native"
 
         value = attrs.get("value")
