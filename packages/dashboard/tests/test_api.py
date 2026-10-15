@@ -11,6 +11,7 @@ import pytest
 import review.cli as review_cli
 import review.render as render_module
 import treasury.cli as treasury_cli
+from core import networth
 from core.nearby import RESISTANCE, SUPPORT, WEEKLY_ZONE, Level
 from core.review import (
     HOLD,
@@ -1018,3 +1019,54 @@ def test_default_yields_dependency_reaches_yields_scan_yields_for(monkeypatch, t
     called_books, called_as_of = calls[0]
     assert called_as_of == datetime.now(UTC).date()
     assert called_books == tuple(books)
+
+
+def _nw_row(day, *, total, hour=12, unpriced=0):
+    return networth.Row(
+        date=date.fromisoformat(day), recorded_at=datetime(*map(int, day.split("-")), hour, tzinfo=UTC),
+        total=total, parked=0.0, by_book={"a": total}, unpriced=unpriced, mismatched=(),
+        prices_fetched_at=None, stale=False,
+    )
+
+
+def _networth_client(monkeypatch, tmp_path, rows, today="2026-10-15"):
+    monkeypatch.setattr(assets, "WEB_DIST", tmp_path / "no-dist")
+    app = api.create_app()
+    app.dependency_overrides[api.networth_rows] = lambda: rows
+    app.dependency_overrides[api.as_of_today] = lambda: date.fromisoformat(today)
+    return TestClient(app)
+
+
+def test_networth_empty_ledger(monkeypatch, tmp_path):
+    body = _networth_client(monkeypatch, tmp_path, []).get("/api/networth").json()
+
+    assert body == {"rows": [], "horizons": []}
+
+
+def test_networth_two_days_gives_one_day_horizon(monkeypatch, tmp_path):
+    rows = [_nw_row("2026-10-14", total=100.0), _nw_row("2026-10-15", total=110.0)]
+
+    body = _networth_client(monkeypatch, tmp_path, rows).get("/api/networth").json()
+
+    assert [r["date"] for r in body["rows"]] == ["2026-10-14", "2026-10-15"]
+    [h] = body["horizons"]
+    assert (h["days"], h["amount"], h["baseline_date"]) == (1, 10.0, "2026-10-14")
+    assert h["pct"] == pytest.approx(0.1)
+
+
+def test_networth_same_date_collapses_by_recorded_at(monkeypatch, tmp_path):
+    rows = [_nw_row("2026-10-15", total=120.0, hour=18), _nw_row("2026-10-15", total=100.0, hour=9)]
+
+    body = _networth_client(monkeypatch, tmp_path, rows).get("/api/networth").json()
+
+    assert [r["total"] for r in body["rows"]] == [120.0]
+
+
+def test_networth_shows_no_change_when_the_newest_row_is_not_today(monkeypatch, tmp_path):
+    rows = [_nw_row("2026-10-14", total=100.0), _nw_row("2026-10-15", total=110.0)]
+
+    body = _networth_client(monkeypatch, tmp_path, rows, today="2026-10-20").get(
+        "/api/networth").json()
+
+    assert len(body["rows"]) == 2
+    assert body["horizons"] == []

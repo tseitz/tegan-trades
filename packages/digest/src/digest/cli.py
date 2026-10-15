@@ -29,18 +29,21 @@ import argparse
 import json
 import os
 import sys
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import yaml
 from brain.stance_store import exists as stance_exists
 from brain.stance_store import load_all_stances
+from core import networth
 from core.canon import load_registry, resolve_asset
 from core.env import load_env
 from core.rank import parse_date
 from execution import store
 from ingestion import spend
 from ingestion.roster import load_watchlist
+from networth import ledger
 from oracle import exclusions, queue_snapshot
 from oracle.assemble import load_daily
 from oracle.decisions import load_decisions
@@ -54,7 +57,6 @@ from digest import (
     holdings,
     mail,
     narrate,
-    networth,
     render,
     roster,
     state,
@@ -68,6 +70,7 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 CONFIG_DIR = REPO_ROOT / "cfg"
 DECISIONS = REPO_ROOT / "data" / "setups" / "decisions.jsonl"
 HISTORY = REPO_ROOT / "data" / "logs" / "nightly" / "history.jsonl"
+NETWORTH_LEDGER = ledger.LEDGER
 STATE = REPO_ROOT / "data" / "digest" / "state.json"
 TRANSCRIPTS = REPO_ROOT / "data" / "transcripts"
 
@@ -426,11 +429,12 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
     # failed read rather than as a section nobody asked for.
     if subject_only:
         treasury_delta, parked, treasury_memory = None, None, state.treasury_opportunities_seen(memory)
-        net_worth, net_worth_memory = None, state.net_worth_seen(memory)
+        net_worth, net_worth_changes, net_worth_recorded = None, {}, True
     else:
         treasury_delta, parked, treasury_memory = _treasury(
             memory, books=books, as_of=as_of, warn=warn)
-        net_worth, net_worth_memory = _networth(memory, results=results, parked=parked)
+        net_worth, net_worth_changes, net_worth_recorded = _networth(
+            results=results, parked=parked, as_of=as_of, warn=warn)
 
     views_text, views_note = (None, None) if subject_only else _views_section(
         with_llm=with_llm, warn=warn)
@@ -444,7 +448,8 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
                            holding=holding, resting=len(resting_keys),
                            holdings_deltas=holdings_deltas,
                            treasury_delta=treasury_delta,
-                           net_worth=net_worth,
+                           net_worth=net_worth, net_worth_changes=net_worth_changes,
+                           net_worth_recorded=net_worth_recorded,
                            views=views_text, views_note=views_note,
                            stale_as_of=stale, problems=warn.items)
     subject = render.subject(delta, book=events, stale_as_of=stale, problems=len(warn.items),
@@ -453,7 +458,7 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
                              blocking=tuple((run or {}).get("blocking") or ()))
     return (subject, body,
             _next_memory(memory, reported, xai_month, delta.previous_run, *holdings_memories,
-                        treasury_memory, net_worth_memory)
+                        treasury_memory)
             if state_path else None)
 
 
@@ -590,27 +595,33 @@ def _treasury(memory: dict, *, books, as_of, warn):
         return None, None, previous
 
 
-def _networth(memory: dict, *, results, parked):
-    """``(net worth, what to remember)`` — the third sibling of ``_holdings``/``_treasury``.
+def _networth(*, results, parked, as_of, warn):
+    """``(net worth, changes by horizon, recorded)`` — tonight's figure against the ledger.
 
-    Returns the previous memory unchanged when ``networth.of`` finds nothing to record, so a
-    night the total could not be computed does not erase tomorrow's baseline for comparison.
+    The ledger is the droplet's record; a row dated today means tonight's total was already
+    written down and is used as is. Without one the total is computed here and ``recorded`` is
+    False, so the line says so. A missing or empty ledger still prints tonight's line.
     """
-    previous = state.net_worth_seen(memory)
     net = networth.of(results, parked=parked)
     if net is None:
-        return None, previous
-    net = networth.delta(net, previous)
-    return net, networth.remember(net)
+        return None, {}, True
+    rows = ledger.read(NETWORTH_LEDGER, warn=warn)
+    tonight = next((r for r in networth.latest_per_date(rows) if r.date == as_of), None)
+    if tonight is not None:
+        net = replace(net, total=tonight.total, unpriced=tonight.unpriced,
+                      mismatched=tonight.mismatched)
+    trusted = tonight.trusted if tonight is not None else not net.mismatched
+    changes = networth.horizons(net.total, net.unpriced, rows, today=as_of, trusted=trusted)
+    return net, changes, tonight is not None
 
 
 def _next_memory(memory: dict, reported, xai_month: float, window_start: str | None,
                  holdings_memory: dict, holdings_levels: dict,
-                 treasury_memory: dict, net_worth_memory: float | None) -> dict:
+                 treasury_memory: dict) -> dict:
     """Tonight's memory. Pruned every run, not only on runs that reported something, so a quiet
     week still clears keys that have aged out."""
     return {
-        **memory,
+        **{k: v for k, v in memory.items() if k != "net_worth"},
         state.ROSTER: roster.remember(state.roster_seen(memory), reported,
                                       on=datetime.now(UTC).date()),
         state.XAI: xai_month,
@@ -618,7 +629,6 @@ def _next_memory(memory: dict, reported, xai_month: float, window_start: str | N
         state.HOLDINGS: holdings_memory,
         state.HOLDINGS_LEVELS: holdings_levels,
         state.TREASURY_OPPORTUNITIES: treasury_memory,
-        state.NET_WORTH: net_worth_memory,
     }
 
 

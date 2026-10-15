@@ -4,6 +4,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { App } from "./App";
 import "./index.css";
 import { MandatePage } from "./MandatePage";
+import { NetworthPage } from "./NetworthPage";
 import { RefreshProvider } from "./refresh/RefreshProvider";
 import { Shell } from "./Shell";
 import { TreasuryPage } from "./TreasuryPage";
@@ -19,6 +20,7 @@ createRoot(document.getElementById("root")!).render(
             <Route path="/mandate/:name" element={<MandatePage />} />
             <Route path="/treasury" element={<TreasuryPage />} />
             <Route path="/yields" element={<YieldsPage />} />
+            <Route path="/networth" element={<NetworthPage />} />
           </Route>
         </Routes>
       </RefreshProvider>

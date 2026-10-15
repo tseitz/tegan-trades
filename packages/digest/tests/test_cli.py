@@ -11,7 +11,7 @@ pieces that are covered.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from core import safety
@@ -68,6 +68,7 @@ def quiet(monkeypatch, tmp_path):
     monkeypatch.setattr(cli.store, "awaiting_exit_keys", lambda *a, **k: set())
     monkeypatch.setattr(cli, "DECISIONS", tmp_path / "no-decisions.jsonl")
     monkeypatch.setattr(cli, "HISTORY", tmp_path / "no-history.jsonl")
+    monkeypatch.setattr(cli, "NETWORTH_LEDGER", tmp_path / "no-networth.jsonl")
     # `load_result` reaches `data/treasury.yaml`, every portfolio and `data/altsignal/` — kept
     # off all three by default. A test that wants the TREASURY section overrides this.
     monkeypatch.setattr(cli, "load_result", lambda **kwargs: None)
@@ -543,6 +544,58 @@ def test_the_net_worth_line_carries_the_exact_total(tmp_path, today, monkeypatch
     _, body, _ = build_with_memory(snaps, tmp_path)
     assert "NET WORTH" in body
     assert "$350.00" in body  # (200 + 100 cash) + (50 + 0 cash)
+
+
+def _ledger_row(on, total, *, recorded_at=None) -> dict:
+    return {"date": on.isoformat(), "recorded_at": (recorded_at or f"{on}T11:00:00+00:00"),
+            "total": total, "parked": 0.0, "by_book": {}, "unpriced": 0, "mismatched": [],
+            "prices_fetched_at": None, "stale": False}
+
+
+def _one_book(monkeypatch):
+    books = [_networth_book("retirement", cash=100.0)]
+    results = [_networth_result(books[0], price=200.0)]
+    monkeypatch.setattr(cli, "load_books", lambda **kwargs: books)
+    monkeypatch.setattr(cli, "review_for", lambda books, *, as_of, registry: results)
+
+
+def test_a_missing_ledger_still_prints_tonights_line_marked_not_recorded(
+        tmp_path, today, monkeypatch):
+    _one_book(monkeypatch)
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
+
+    _, body, _ = build_with_memory(snaps, tmp_path)
+    assert "$300.00" in body
+    assert "(not recorded)" in body
+    assert "first look" in body
+
+
+def test_a_ledger_row_dated_today_supplies_the_total_and_the_horizons(
+        tmp_path, today, monkeypatch):
+    _one_book(monkeypatch)
+    now = date.fromisoformat(today)
+    ledger = tmp_path / "networth.jsonl"
+    ledger.write_text("\n".join(json.dumps(r) for r in [
+        _ledger_row(now - timedelta(days=1), 250.0),
+        _ledger_row(now, 275.0),
+    ]) + "\n", encoding="utf-8")
+    monkeypatch.setattr(cli, "NETWORTH_LEDGER", ledger)
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
+
+    _, body, _ = build_with_memory(snaps, tmp_path)
+    assert "$275.00" in body
+    assert "+10.0% 1d" in body
+    assert "(not recorded)" not in body
+
+
+def test_the_old_net_worth_memory_key_is_dropped(tmp_path, today, monkeypatch):
+    _one_book(monkeypatch)
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps({"net_worth": 1.0}), encoding="utf-8")
+
+    _, _, memory = build_with_memory(snaps, tmp_path, state_path=state_path)
+    assert "net_worth" not in memory
 
 
 def test_the_net_worth_line_is_absent_when_no_book_loads(tmp_path, today, monkeypatch):

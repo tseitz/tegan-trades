@@ -55,6 +55,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/networth": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Networth */
+        get: operations["get_networth_api_networth_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/yields": {
         parameters: {
             query?: never;
@@ -213,6 +230,51 @@ export interface components {
         MandateSummary: {
             /** Name */
             name: string;
+        };
+        /** NetworthHorizon */
+        NetworthHorizon: {
+            /** Days */
+            days: number;
+            /** Amount */
+            amount: number;
+            /** Pct */
+            pct: number | null;
+            /** Uneven */
+            uneven: boolean;
+            /**
+             * Baseline Date
+             * Format: date
+             */
+            baseline_date: string;
+        };
+        /** NetworthResponse */
+        NetworthResponse: {
+            /** Rows */
+            rows: components["schemas"]["NetworthRow"][];
+            /** Horizons */
+            horizons: components["schemas"]["NetworthHorizon"][];
+        };
+        /** NetworthRow */
+        NetworthRow: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Total */
+            total: number;
+            /** Parked */
+            parked: number;
+            /** By Book */
+            by_book: {
+                [key: string]: number;
+            };
+            /** Unpriced */
+            unpriced: number;
+            /** Mismatched */
+            mismatched: string[];
+            /** Stale */
+            stale: boolean;
         };
         /** RefreshJobStatus */
         RefreshJobStatus: {
@@ -521,6 +583,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TreasuryResponse"];
+                };
+            };
+        };
+    };
+    get_networth_api_networth_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NetworthResponse"];
                 };
             };
         };

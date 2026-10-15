@@ -66,6 +66,16 @@ export function Shell() {
         >
           Yields
         </NavLink>
+        <NavLink
+          to="/networth"
+          className={({ isActive }) =>
+            `rounded-md px-2.5 py-1 font-mono text-xs ${
+              isActive ? "bg-raised text-ink" : "text-muted hover:bg-surface hover:text-ink"
+            }`
+          }
+        >
+          Net worth
+        </NavLink>
 
         {state === "failed" && error && (
           <span className="text-xs text-down">Refresh failed: {error}</span>

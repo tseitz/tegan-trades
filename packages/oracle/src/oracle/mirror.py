@@ -7,7 +7,7 @@ wholesale**. For ore that is correct — a price file refetched anywhere is the 
 For a file two machines *append* to it is a silent loss: whoever copies second wins, and the
 other machine's rows are gone with nothing reporting it.
 
-Three files are in that position, and one of them had already diverged when this was written:
+Four files are in that position, and one of them had already diverged when this was written:
 
 * ``setups/decisions.jsonl`` — hand-entered judgement. ``oracle.decisions`` explains why nothing
   can reconstruct it.
@@ -15,6 +15,8 @@ Three files are in that position, and one of them had already diverged when this
   The venue can replay the order but not the ``candidate_key`` join, which is the whole point.
 * ``setups/queue.jsonl`` — one row per run. The droplet writes ~11:00 UTC from cron, the laptop
   writes interactively, so the two never collide on a timestamp and never share a suffix either.
+* ``networth.jsonl`` — one row per night from the droplet. A night lost here cannot be rebuilt,
+  and a laptop that recorded one by hand would otherwise upload a short copy over the history.
 
 **``reconcile`` is one primitive doing both directions**, which is what makes it impossible to
 clobber: fetch the remote copy, merge it into the local file, and upload the result only if the
@@ -48,6 +50,7 @@ SYNCED = (
     "setups/decisions.jsonl",
     "execution/orders.jsonl",
     "setups/queue.jsonl",
+    "networth.jsonl",
 )
 
 #: ``data-pull.sh`` writes this after a successful pull and ``setups`` reads it. It must never

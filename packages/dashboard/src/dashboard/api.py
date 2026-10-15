@@ -7,6 +7,7 @@ import sys
 from datetime import UTC, date, datetime
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from networth import ledger
 from review.cli import altsignal_settings, load_books, price_freshness, review_for
 from treasury.cli import load_result
 from yields.scan import yields_for
@@ -14,10 +15,12 @@ from yields.scan import yields_for
 from dashboard.refresh import RefreshJobs
 from dashboard.wire import (
     MandateList,
+    NetworthResponse,
     RefreshJobStatus,
     ReviewDocument,
     TreasuryResponse,
     YieldsResponse,
+    networth_response,
     refresh_job_status,
     review_document,
     summarise,
@@ -123,6 +126,14 @@ def treasury_result(books: list = _MANDATE_BOOKS, as_of: date = _AS_OF_TODAY):
 _TREASURY_RESULT = Depends(treasury_result)
 
 
+def networth_rows() -> list:
+    """The ledger's rows, as written. Reads only; tonight's total is never recomputed here."""
+    return ledger.read(warn=lambda m: print(m, file=sys.stderr))
+
+
+_NETWORTH_ROWS = Depends(networth_rows)
+
+
 def yields_result(books: list = _MANDATE_BOOKS, as_of: date = _AS_OF_TODAY, cfg=_ALTSIGNAL_CFG):
     """The yields View's ``YieldsResult``, across every Mandate at once — a FastAPI dependency
     mirroring ``treasury_result``. Unlike Treasury, ``yields_for`` never returns ``None``: an
@@ -178,6 +189,10 @@ def create_app() -> FastAPI:
     @app.get("/api/treasury")
     def get_treasury(result=_TREASURY_RESULT) -> TreasuryResponse:
         return treasury_response(result)
+
+    @app.get("/api/networth")
+    def get_networth(rows=_NETWORTH_ROWS, as_of=_AS_OF_TODAY) -> NetworthResponse:
+        return networth_response(rows, today=as_of)
 
     @app.get("/api/yields")
     def get_yields(result=_YIELDS_RESULT) -> YieldsResponse:

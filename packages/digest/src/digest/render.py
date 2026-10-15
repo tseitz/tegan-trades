@@ -18,10 +18,11 @@ client, which means one renderer and nothing to drift.
 
 from __future__ import annotations
 
+from core import networth
 from review.render import roster_text, where_text
 from treasury import render as treasury_render
 
-from digest import book, diff, holdings, networth, treasury
+from digest import book, diff, holdings, treasury
 from digest.fmt import money, num, pct
 
 # How close to the monthly xAI cap before spend is worth a reader's attention. Below this the
@@ -137,6 +138,8 @@ def markdown(delta: diff.QueueDelta, *, run=None, book=None, roster: str | None 
              holding=(), resting: int = 0, holdings_deltas=(),
              treasury_delta: treasury.TreasuryDelta | None = None,
              net_worth: networth.NetWorth | None = None,
+             net_worth_changes: dict[int, networth.Change] | None = None,
+             net_worth_recorded: bool = True,
              stale_as_of: str | None = None, problems=(),
              views: str | None = None, views_note: str | None = None) -> str:
     """The digest body.
@@ -193,7 +196,8 @@ def markdown(delta: diff.QueueDelta, *, run=None, book=None, roster: str | None 
     out.extend(_treasury_section(treasury_delta))
     # After PORTFOLIO and TREASURY, which are the pots it sums — it reads as their total
     # rather than as a seventh sibling section.
-    out.extend(_networth_section(net_worth))
+    out.extend(_networth_section(net_worth, net_worth_changes or {},
+                                       recorded=net_worth_recorded))
     out.extend(_run_section(run, xai_month=xai_month, xai_cap=xai_cap,
                             xai_changed=xai_changed))
     out.extend(_problems_section(problems))
@@ -424,24 +428,22 @@ def _treasury_section(delta: treasury.TreasuryDelta | None) -> list[str]:
     return out
 
 
-def _networth_section(net: networth.NetWorth | None) -> list[str]:
+def _networth_section(net: networth.NetWorth | None, changes: dict[int, networth.Change],
+                      *, recorded: bool = True) -> list[str]:
     """Every portfolio's priced holdings plus its cash, plus Treasury's parked pot, summed —
-    see `digest.networth` for why this is the one place that crosses a mandate boundary.
+    see `core.networth` for why this is the one place that crosses a mandate boundary.
 
     Silent whenever `net is None`: the module's own contract is that a total it cannot stand
     behind prints no line at all, rather than a number that reads as the whole picture.
+    `*` marks a change whose baseline left out a different number of rows than tonight did.
     """
     if net is None:
         return []
 
-    if net.bootstrap:
-        change = " · first look, nothing to compare against yet"
-    elif net.change_pct is not None:
-        change = f" · {pct(net.change_pct)} vs last night"
-    elif net.change is not None:
-        change = f" · {money(net.change)} vs last night"
-    else:
-        change = ""
+    parts = [f"{_change(c)} {days}d{'*' if c.uneven else ''}" for days, c in sorted(changes.items())]
+    change = " · " + " · ".join(parts) if parts else " · first look, nothing to compare against yet"
+    if not recorded:
+        change += " (not recorded)"
 
     unpriced = f", excludes {net.unpriced} unpriced" if net.unpriced else ""
     out = ["", f"NET WORTH — {treasury_render.money(net.total)} across {net.pots} "
@@ -450,6 +452,10 @@ def _networth_section(net: networth.NetWorth | None) -> list[str]:
         out.append(f"  left out {', '.join(net.mismatched)} — our price and the file's own mark "
                    f"disagree, so the ticker may mean another asset (`uv run review`)")
     return out
+
+
+def _change(c: networth.Change) -> str:
+    return pct(c.pct) if c.pct is not None else money(c.amount)
 
 
 def _book_section(book) -> list[str]:

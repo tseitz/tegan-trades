@@ -18,6 +18,7 @@ members = [
     "execution",
     "ingestion",
     "llm",
+    "networth",
     "oracle",
     "review",
     "tegan-trades",
@@ -596,6 +597,7 @@ source = { editable = "packages/dashboard" }
 dependencies = [
     { name = "core" },
     { name = "fastapi" },
+    { name = "networth" },
     { name = "review" },
     { name = "treasury" },
     { name = "uvicorn" },
@@ -611,6 +613,7 @@ dev = [
 requires-dist = [
     { name = "core", editable = "packages/core" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "networth", editable = "packages/networth" },
     { name = "review", editable = "packages/review" },
     { name = "treasury", editable = "packages/treasury" },
     { name = "uvicorn", specifier = ">=0.30" },
@@ -639,6 +642,7 @@ dependencies = [
     { name = "execution" },
     { name = "ingestion" },
     { name = "llm" },
+    { name = "networth" },
     { name = "oracle" },
     { name = "pyyaml" },
     { name = "requests" },
@@ -658,6 +662,7 @@ requires-dist = [
     { name = "execution", editable = "packages/execution" },
     { name = "ingestion", editable = "packages/ingestion" },
     { name = "llm", editable = "packages/llm" },
+    { name = "networth", editable = "packages/networth" },
     { name = "oracle", editable = "packages/oracle" },
     { name = "pyyaml", specifier = ">=6" },
     { name = "requests" },
@@ -1275,6 +1280,31 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/13/0a/e608956488a2af014cfe6e3d665e090b8ee42aa14b07f8f95b8880d66b09/msgpack-1.2.1-cp314-cp314t-win_amd64.whl", hash = "sha256:f12038a35fabd52e56a3547bab42401af49a45caa6dd00b34c44de235bc93ee2", size = 77999, upload-time = "2026-06-18T16:13:50.467Z" },
     { url = "https://files.pythonhosted.org/packages/d2/8a/27e2e57055176e366a46b85d02d68e7a5bcfbdd8474c9706375d965f24d3/msgpack-1.2.1-cp314-cp314t-win_arm64.whl", hash = "sha256:0adcf06ffde0777c0e1a9b771a2b1c4226ba1bbf748c8efcc02fcdeca3299107", size = 71160, upload-time = "2026-06-18T16:13:51.498Z" },
 ]
+
+[[package]]
+name = "networth"
+version = "0.1.0"
+source = { editable = "packages/networth" }
+dependencies = [
+    { name = "core" },
+    { name = "review" },
+    { name = "treasury" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "core", editable = "packages/core" },
+    { name = "review", editable = "packages/review" },
+    { name = "treasury", editable = "packages/treasury" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.1.1" }]
 
 [[package]]
 name = "numpy"
@@ -2122,6 +2152,7 @@ dependencies = [
     { name = "execution" },
     { name = "ingestion" },
     { name = "llm" },
+    { name = "networth" },
     { name = "oracle" },
     { name = "review" },
     { name = "treasury" },
@@ -2145,6 +2176,7 @@ requires-dist = [
     { name = "execution", editable = "packages/execution" },
     { name = "ingestion", editable = "packages/ingestion" },
     { name = "llm", editable = "packages/llm" },
+    { name = "networth", editable = "packages/networth" },
     { name = "oracle", editable = "packages/oracle" },
     { name = "review", editable = "packages/review" },
     { name = "treasury", editable = "packages/treasury" },

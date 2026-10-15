@@ -5,13 +5,12 @@ list of states, not a long list of arithmetic.
 """
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 
 import pytest
+from core import networth
 from core.review import Holding, Location, Reading, RosterLean
-from digest import networth
-from oracle.portfolios import Mandate, Portfolio, Position
-from review.cli import ReviewResult
 
 
 def _reading(ticker, price, shares=1.0) -> Reading:
@@ -25,7 +24,7 @@ def _reading(ticker, price, shares=1.0) -> Reading:
 
 
 def _result(*, readings=(), cash=None, cash_by_account=None, mismatched=()):
-    book = SimpleNamespace(cash=cash, cash_by_account=cash_by_account or {})
+    book = SimpleNamespace(name="book", cash=cash, cash_by_account=cash_by_account or {})
     return SimpleNamespace(readings=list(readings), book=book, mismatched=mismatched)
 
 
@@ -110,51 +109,82 @@ def test_money_moved_from_a_pots_cash_into_treasury_leaves_the_total_unchanged()
     assert before.total == after.total
 
 
-# ── `delta()` ─────────────────────────────────────────────────────────────────
+# ── the ledger row ────────────────────────────────────────────────────────────
 
-def test_bootstrap_is_the_first_night_this_memory_has_ever_been_written():
-    net = networth.of([_result(readings=[_reading("SPY", 100.0)], cash=0.0)], parked=0.0)
-    d = networth.delta(net, None)
-    assert d.bootstrap is True
-    assert d.change is None
-    assert d.change_pct is None
+TODAY = date(2026, 10, 20)
 
 
-def test_a_previous_total_of_zero_has_no_percent_change():
-    net = networth.of([_result(readings=[_reading("SPY", 100.0)], cash=0.0)], parked=0.0)
-    d = networth.delta(net, 0.0)
-    assert d.bootstrap is False
-    assert d.change == 100.0
-    assert d.change_pct is None
+def _row(on, total, *, at=None, unpriced=0, mismatched=(), stale=False) -> networth.Row:
+    return networth.Row(
+        date=on, recorded_at=at or datetime(on.year, on.month, on.day, 11, tzinfo=UTC),
+        total=total, parked=0.0, by_book={"a": total}, unpriced=unpriced,
+        mismatched=tuple(mismatched), prices_fetched_at=None, stale=stale)
 
 
-def test_change_and_change_pct_against_a_real_previous_total():
-    net = networth.of([_result(readings=[_reading("SPY", 110.0)], cash=0.0)], parked=0.0)
-    d = networth.delta(net, 100.0)
-    assert d.change == pytest.approx(10.0)
-    assert d.change_pct == pytest.approx(0.1)
+def test_by_book_and_parked_add_up_to_the_total():
+    results = [_result(readings=[_reading("SPY", 100.0)], cash=5.0),
+               _result(readings=[_reading("BTC", 50.0)])]
+    results[1].book.name = "other"
+    net = networth.of(results, parked=20.0)
+    assert sum(net.by_book.values()) + net.parked == net.total == 175.0
 
 
-def test_remember_returns_the_total():
-    net = networth.of([_result(readings=[_reading("SPY", 100.0)], cash=0.0)], parked=0.0)
-    assert networth.remember(net) == 100.0
+def test_a_row_survives_its_own_json():
+    r = _row(TODAY, 100.0, mismatched=("SPX",))
+    assert networth.parse(r.to_json()) == r
 
 
-# ── a real `ReviewResult` and `Portfolio`, not the duck-typed stand-in above ──
+@pytest.mark.parametrize("missing", ["date", "total", "by_book", "stale", "prices_fetched_at"])
+def test_a_row_missing_a_field_is_refused_not_defaulted(missing):
+    raw = _row(TODAY, 100.0).to_json()
+    del raw[missing]
+    with pytest.raises(networth.RowError, match=missing):
+        networth.parse(raw)
 
-def test_against_a_real_review_result_and_portfolio():
-    """`of()` reaches two attributes deep into types it never imports
-    (`.readings[*].market_value` and `.book.cash`/`.book.cash_by_account`), which a table of
-    `SimpleNamespace`s cannot catch drifting."""
-    mandate = Mandate(name="retirement", benchmarks=(), horizon="macro",
-                      risk_posture="conservative")
-    position = Position(holding=Holding(ticker="SPY", shares=2.0, cost=90.0), domain="stock")
-    book = Portfolio(name="retirement", mandate=mandate, positions=(position,), cash=25.0)
-    result = ReviewResult(book=book, readings=[_reading("SPY", 100.0, shares=2.0)],
-                          contexts=(None,), mismatched=(), levels=((), (), 0), chains=(),
-                          macro=())
 
-    net = networth.of([result], parked=0.0)
-    assert net.total == 225.0
-    assert net.pots == 1
-    assert net.unpriced == 0
+def test_a_same_day_rerun_wins_by_recorded_at_not_file_position():
+    early = _row(TODAY, 100.0, at=datetime(2026, 10, 20, 11, tzinfo=UTC))
+    late = _row(TODAY, 120.0, at=datetime(2026, 10, 20, 21, tzinfo=UTC))
+    assert networth.latest_per_date([late, early]) == [late]
+
+
+@pytest.mark.parametrize(("days", "on", "found"), [
+    (1, date(2026, 10, 19), True),
+    (1, date(2026, 10, 18), False),     # a missed night is not "1d"
+    (7, date(2026, 10, 12), True),      # one day of slack
+    (7, date(2026, 10, 11), False),
+    (30, date(2026, 9, 17), True),
+    (365, date(2025, 10, 6), True),
+])
+def test_a_baseline_must_fall_inside_its_horizons_window(days, on, found):
+    assert (networth.baseline([_row(on, 100.0)], today=TODAY, days=days) is not None) == found
+
+
+def test_tonights_own_row_is_never_its_baseline():
+    assert networth.baseline([_row(TODAY, 100.0)], today=TODAY, days=1) is None
+
+
+@pytest.mark.parametrize("bad", [{"stale": True}, {"mismatched": ("SPX",)}])
+def test_an_untrusted_night_is_skipped_as_a_baseline(bad):
+    rows = [_row(date(2026, 10, 19), 100.0, **bad)]
+    assert networth.baseline(rows, today=TODAY, days=1) is None
+
+
+def test_horizons_answer_only_what_the_ledger_can():
+    rows = [_row(date(2026, 10, 19), 100.0), _row(date(2026, 10, 13), 80.0, unpriced=1)]
+    changes = networth.horizons(110.0, 0, rows, today=TODAY)
+    assert set(changes) == {1, 7}
+    assert changes[1].pct == pytest.approx(0.10) and not changes[1].uneven
+    assert changes[7].amount == 30.0 and changes[7].uneven
+
+
+def test_an_untrusted_tonight_marks_every_change_uneven():
+    rows = [_row(date(2026, 10, 19), 100.0)]
+    assert networth.horizons(110.0, 0, rows, today=TODAY, trusted=False)[1].uneven
+
+
+def test_a_naive_recorded_at_is_refused():
+    raw = _row(TODAY, 100.0).to_json()
+    raw["recorded_at"] = "2026-10-20T11:00:00"
+    with pytest.raises(networth.RowError, match="timezone"):
+        networth.parse(raw)

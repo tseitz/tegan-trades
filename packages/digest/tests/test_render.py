@@ -7,10 +7,10 @@ buried under them.
 """
 from __future__ import annotations
 
-from core import safety
+from core import networth, safety
 from core.trigger import ARMED, NO_TRIGGER, NO_ZONE_TAG
 from digest import book as diff_book
-from digest import diff, networth, render
+from digest import diff, render
 from digest import treasury as treasury_mod
 
 
@@ -586,8 +586,12 @@ def test_the_net_worth_line_carries_the_total_and_pot_count():
     assert "NET WORTH — $134,515.93 across 4 mandates" in body
 
 
-def test_bootstrap_says_theres_nothing_to_compare_against_yet():
-    body = render.markdown(_quiet(), net_worth=_net_worth(bootstrap=True))
+def _change(days, amount, pct, *, uneven=False) -> networth.Change:
+    return networth.Change(days=days, baseline=None, amount=amount, pct=pct, uneven=uneven)
+
+
+def test_no_horizons_says_theres_nothing_to_compare_against_yet():
+    body = render.markdown(_quiet(), net_worth=_net_worth())
     assert "first look, nothing to compare against yet" in body
 
 
@@ -596,16 +600,21 @@ def test_the_unpriced_caveat_is_named_not_netted_out():
     assert "excludes 1 unpriced" in body
 
 
-def test_a_real_previous_total_prints_a_signed_percent_change():
-    net = networth.delta(_net_worth(total=1100.0), 1000.0)
-    body = render.markdown(_quiet(), net_worth=net)
-    assert "+10.0% vs last night" in body
+def test_available_horizons_print_signed_and_absent_ones_are_omitted():
+    changes = {1: _change(1, 4.0, 0.004), 7: _change(7, 21.0, 0.021, uneven=True)}
+    body = render.markdown(_quiet(), net_worth=_net_worth(), net_worth_changes=changes)
+    assert "· +0.4% 1d · +2.1% 7d*" in body
+    assert "30d" not in body
+    assert "first look" not in body
 
 
-def test_a_zero_previous_total_falls_back_to_a_dollar_change():
-    """`change_pct` refuses to divide by a previous total of zero — the line still says
-    something rather than going silent about a real change."""
-    net = networth.delta(_net_worth(total=100.0), 0.0)
-    body = render.markdown(_quiet(), net_worth=net)
-    assert net.bootstrap is False
-    assert "+100.00 vs last night" in body
+def test_a_zero_baseline_falls_back_to_a_dollar_change():
+    body = render.markdown(_quiet(), net_worth=_net_worth(),
+                           net_worth_changes={1: _change(1, 100.0, None)})
+    assert "+100.00 1d" in body
+
+
+def test_an_unrecorded_night_is_marked():
+    body = render.markdown(_quiet(), net_worth=_net_worth(), net_worth_recorded=False)
+    assert "(not recorded)" in body
+    assert "(not recorded)" not in render.markdown(_quiet(), net_worth=_net_worth())

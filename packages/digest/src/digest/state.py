@@ -40,9 +40,6 @@ WINDOW = "last_window_start"
 #: standing state, not an event — without last night's copy every pool would read as new every
 #: morning, which is the exact repeat this key exists to prevent.
 TREASURY_OPPORTUNITIES = "treasury_opportunities"
-#: Last night's net-worth total, as one float — never a per-mandate breakdown (ADR-0007 §
-#: Memory). Without it every run reads as the first night this figure has ever been computed.
-NET_WORTH = "net_worth"
 
 
 def load(path: Path, *, warn=None) -> dict:
@@ -135,9 +132,3 @@ def treasury_opportunities_seen(state: dict) -> dict:
     seen = state.get(TREASURY_OPPORTUNITIES)
     return seen if isinstance(seen, dict) else {}
 
-
-def net_worth_seen(state: dict) -> float | None:
-    """Last night's total, or ``None``. A non-number degrades to an empty memory like every
-    other reader here — the cost is one night with no change figure, never a wrong one."""
-    seen = state.get(NET_WORTH)
-    return seen if isinstance(seen, (int, float)) and not isinstance(seen, bool) else None

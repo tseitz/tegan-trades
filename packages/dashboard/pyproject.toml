@@ -13,6 +13,7 @@ dependencies = [
     # pins that make the declaration mean something: an AST scan of this package's own imports,
     # and a `sys.modules` check that `execution` never arrives transitively (ADR-0010).
     "core",
+    "networth",
     "review",
     "treasury",
     "yields",
@@ -27,6 +28,7 @@ build-backend = "uv_build"
 
 [tool.uv.sources]
 core = { workspace = true }
+networth = { workspace = true }
 review = { workspace = true }
 treasury = { workspace = true }
 yields = { workspace = true }

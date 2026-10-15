@@ -24,6 +24,7 @@ dependencies = [
     "execution",
     "ingestion",
     "llm",
+    "networth",
     "oracle",
     "review",
     "treasury",
@@ -53,6 +54,7 @@ distill = { workspace = true }
 execution = { workspace = true }
 ingestion = { workspace = true }
 llm = { workspace = true }
+networth = { workspace = true }
 oracle = { workspace = true }
 review = { workspace = true }
 treasury = { workspace = true }

@@ -2,9 +2,8 @@
 
 ``data/`` is gitignored and lives on the laptop, the droplet, and an rclone mirror between them.
 ``rclone copy`` replaces the destination wholesale, so any file both machines append to loses
-whichever side pushed second. Three files are in that position — ``data/setups/decisions.jsonl``,
-``data/execution/orders.jsonl`` and ``data/setups/queue.jsonl``. This is what ``data-pull.sh``
-calls instead of letting the bulk copy touch them.
+whichever side pushed second. ``oracle.mirror.SYNCED`` lists the files in that position. This is
+what ``data-pull.sh`` calls instead of letting the bulk copy touch them.
 
 **The local side is never reordered, and that is the whole design.**
 ``oracle.decisions.sync_mirror`` reconciles the decisions sidecar against its vault mirror by

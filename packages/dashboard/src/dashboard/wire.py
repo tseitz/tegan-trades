@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Literal
 
+from core import networth
 from core.review import LEVELS_LED
 from pydantic import BaseModel
 from review import render
@@ -473,4 +474,47 @@ def refresh_job_status(record) -> RefreshJobStatus:
               for s in record.steps],
         started=record.started,
         finished=record.finished,
+    )
+
+
+class NetworthRow(BaseModel):
+    date: date
+    total: float
+    parked: float
+    by_book: dict[str, float]
+    unpriced: int
+    mismatched: list[str]
+    stale: bool
+
+
+class NetworthHorizon(BaseModel):
+    days: int
+    amount: float
+    pct: float | None
+    uneven: bool
+    baseline_date: date
+
+
+class NetworthResponse(BaseModel):
+    rows: list[NetworthRow]
+    horizons: list[NetworthHorizon]
+
+
+def networth_response(rows, *, today) -> NetworthResponse:
+    kept = networth.latest_per_date(rows)
+    if not kept:
+        return NetworthResponse(rows=[], horizons=[])
+    newest = kept[-1]
+    # Only tonight's row is "now". An older newest row means the nightly stopped, and a "1d"
+    # measured from it would hide the gap.
+    changes = (networth.horizons(newest.total, newest.unpriced, kept, today=today,
+                                 trusted=newest.trusted)
+               if newest.date == today else {})
+    return NetworthResponse(
+        rows=[NetworthRow(date=r.date, total=r.total, parked=r.parked, by_book=dict(r.by_book),
+                          unpriced=r.unpriced, mismatched=list(r.mismatched), stale=r.stale)
+              for r in kept],
+        horizons=[NetworthHorizon(days=c.days, amount=c.amount, pct=c.pct, uneven=c.uneven,
+                                  baseline_date=c.baseline.date)
+                  for c in changes.values()],
     )
