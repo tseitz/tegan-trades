@@ -21,6 +21,8 @@ from __future__ import annotations
 import json
 import time
 
+from llm.claude_code import ClaudeCodeCallFailed
+
 MODEL = "claude-sonnet-5"
 MAX_TOKENS = 1024
 _TOOL_NAME = "roster_movement"
@@ -109,6 +111,10 @@ def call_tool(client, *, model: str, max_tokens: int, system: str, user: str, to
                 messages=[{"role": "user", "content": user}],
             )
             return extract(_tool_input(message))
+        except ClaudeCodeCallFailed as exc:
+            # Converted because callers only survive ``NarrationFailed``; anything else kills the
+            # email. Not retried: an expired login fails identically on attempt two.
+            raise NarrationFailed(str(exc)) from exc
         except _RETRYABLE as exc:
             last = exc
             # Backoff, because two immediate attempts is the worst possible shape against a

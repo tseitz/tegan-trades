@@ -385,6 +385,8 @@ declare -a STEP_RECORDS
 # Keep it parallel to STATUS_LINES: the log gets the pretty line, this survives into
 # history.jsonl and therefore into the mail.
 declare -a REASONS
+# The subset of REASONS no unattended night will clear. The digest puts these in the subject.
+declare -a BLOCKING
 
 # Raise the run to at least WARN and say why, in both places.
 flag() {
@@ -392,6 +394,12 @@ flag() {
   REASONS+=("$1")
   [ $WORST -lt 1 ] && WORST=1
   return 0
+}
+
+# `flag`, for a reason that recurs every night until someone acts.
+block() {
+  flag "$1"
+  BLOCKING+=("$1")
 }
 
 # Stop the run, but do not leave the script — see HALTED above.
@@ -709,7 +717,13 @@ done
 # `claude /login` at a keyboard, which no amount of unattended retrying will accomplish. A night
 # that hits this has not fallen behind, it has stopped.
 if grep -q 'OAuth session expired' "$LOG"; then
-  flag "claude auth expired — run \`claude /login\`, then re-run the LLM steps"
+  block "claude auth expired — run \`claude /login\`, then re-run the LLM steps"
+fi
+
+# Same shape for YouTube: a proxy account out of credits answers every request with 402 until it
+# is topped up.
+if grep -qE '^\[(resolve_recent|ingest_channel)\].*402 Payment Required' "$LOG"; then
+  block "webshare proxy out of credits — top it up, then re-run ingest-roster"
 fi
 
 CANDIDATES=$(grep -oE '^[0-9]+ candidates' "$LOG" | tail -1 | cut -d' ' -f1)
@@ -784,12 +798,16 @@ REASONS_BLOB=""
 if [ "${#REASONS[@]}" -gt 0 ]; then
   REASONS_BLOB=$(printf '%s\n' "${REASONS[@]}")
 fi
+BLOCKING_BLOB=""
+if [ "${#BLOCKING[@]}" -gt 0 ]; then
+  BLOCKING_BLOB=$(printf '%s\n' "${BLOCKING[@]}")
+fi
 
 uv run python - "$LOG_DIR/history.jsonl" "$WORST" "$RUN_STARTED" "$XAI_COST" "$CLAUDE_COST" \
   "$CLAUDE_CALLS" "$CANDIDATES" "$FUNDING" "$BRAIN_EXTRACTED" "$BRAIN_INDEXED" "$REASONS_BLOB" \
-  "${STEP_RECORDS[@]}" <<'PY' 2>/dev/null || true
+  "$BLOCKING_BLOB" "${STEP_RECORDS[@]}" <<'PY' 2>/dev/null || true
 import json, sys, time
-path, worst, started, xai, claude, calls, cands, funding, bx, bi, reasons, *steps = sys.argv[1:]
+path, worst, started, xai, claude, calls, cands, funding, bx, bi, reasons, blocking, *steps = sys.argv[1:]
 
 def num(v, cast=float, default=0):
     try:
@@ -810,6 +828,7 @@ row = {
     # Why the run is not clean, when no step's own status can say — see `flag` above. Omitted
     # entirely when empty so a clean row keeps its old shape.
     **({"reasons": [r for r in reasons.split("\n") if r.strip()]} if reasons.strip() else {}),
+    **({"blocking": [r for r in blocking.split("\n") if r.strip()]} if blocking.strip() else {}),
     "cost": {"xai": num(xai), "claude": num(claude), "claude_calls": num(calls, int)},
     "output": {
         "candidates": num(cands, int),

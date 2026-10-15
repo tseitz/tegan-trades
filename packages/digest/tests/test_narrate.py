@@ -9,6 +9,7 @@ import json
 
 import pytest
 from digest import narrate
+from llm.claude_code import ClaudeCodeCallFailed
 
 
 class _Block:
@@ -111,6 +112,15 @@ def test_a_bug_in_our_own_code_is_not_retried():
     as a quiet roster, every night, forever."""
     client = _Client(error=AttributeError("'Message' object has no attribute 'content'"))
     with pytest.raises(AttributeError):
+        narrate.narrate(PAYLOAD, client=client, retries=3)
+    assert len(client.calls) == 1
+
+
+def test_a_failed_claude_call_drops_the_section_without_a_retry():
+    """An expired login took the whole email down for six nights, hiding the outage it was
+    the only thing positioned to report."""
+    client = _Client(error=ClaudeCodeCallFailed("OAuth session expired"))
+    with pytest.raises(narrate.NarrationFailed, match="OAuth"):
         narrate.narrate(PAYLOAD, client=client, retries=3)
     assert len(client.calls) == 1
 

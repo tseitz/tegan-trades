@@ -26,6 +26,9 @@ class NetWorth:
     unpriced: int
     previous: float | None = None
     bootstrap: bool = False
+    # Left out of `total`, and counted in `unpriced`: `ReviewResult.mismatched` says our price
+    # and the file's own mark are too far apart to be one asset.
+    mismatched: tuple[str, ...] = ()
 
     @property
     def change(self) -> float | None:
@@ -41,22 +44,24 @@ class NetWorth:
         return (self.total - self.previous) / self.previous
 
 
-def _pot(result) -> tuple[float, int]:
+def _pot(result) -> tuple[float, int, list[str]]:
     """One portfolio's contribution: priced holdings plus cash, by the same precedence
     `treasury.book._idle_rows` already uses — `cash_by_account` when present, else `cash`.
     `result` is duck-typed like `holdings.Change.reading`, so this module stays pure: it reads
-    `.readings[*].market_value` and `.book.cash`/`.book.cash_by_account`, nothing else."""
+    `.readings[*].market_value`, `.mismatched` and `.book.cash`/`.book.cash_by_account`,
+    nothing else."""
+    mismatched = [ticker for ticker, _, _ in result.mismatched]
     market = 0.0
     unpriced = 0
     for reading in result.readings:
-        if reading.market_value is None:
+        if reading.market_value is None or reading.holding.ticker in mismatched:
             unpriced += 1
         else:
             market += reading.market_value
 
     book = result.book
     cash = sum(book.cash_by_account.values()) if book.cash_by_account else (book.cash or 0.0)
-    return market + cash, unpriced
+    return market + cash, unpriced, mismatched
 
 
 def of(results, *, parked: float | None) -> NetWorth | None:
@@ -77,16 +82,18 @@ def of(results, *, parked: float | None) -> NetWorth | None:
 
     total = float(parked)
     unpriced = 0
+    mismatched: list[str] = []
     for result in results:
-        value, pot_unpriced = _pot(result)
+        value, pot_unpriced, pot_mismatched = _pot(result)
         total += value
         unpriced += pot_unpriced
+        mismatched += pot_mismatched
 
     # Treasury earns a pot only when it actually holds money — `parked == 0.0` cannot be told
     # apart from "no file", so counting it unconditionally would claim a fifth mandate that
     # isn't there.
     pots = len(results) + (1 if parked else 0)
-    return NetWorth(total=total, pots=pots, unpriced=unpriced)
+    return NetWorth(total=total, pots=pots, unpriced=unpriced, mismatched=tuple(dict.fromkeys(mismatched)))
 
 
 def delta(net: NetWorth, remembered: float | None) -> NetWorth:

@@ -436,7 +436,8 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
         with_llm=with_llm, warn=warn)
 
     xai_month = spend.total()
-    body = render.markdown(delta, run=_run_row(today, warn), book=events, roster=narration,
+    run = _run_row(today, warn)
+    body = render.markdown(delta, run=run, book=events, roster=narration,
                            roster_withheld=withheld, xai_month=xai_month,
                            xai_cap=_xai_cap(),
                            xai_changed=state.xai_changed(memory, xai_month),
@@ -448,7 +449,8 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
                            stale_as_of=stale, problems=warn.items)
     subject = render.subject(delta, book=events, stale_as_of=stale, problems=len(warn.items),
                              repeat=state.is_repeat(memory, delta.previous_run),
-                             holdings_deltas=holdings_deltas)
+                             holdings_deltas=holdings_deltas,
+                             blocking=tuple((run or {}).get("blocking") or ()))
     return (subject, body,
             _next_memory(memory, reported, xai_month, delta.previous_run, *holdings_memories,
                         treasury_memory, net_worth_memory)

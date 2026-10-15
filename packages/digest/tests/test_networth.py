@@ -24,9 +24,9 @@ def _reading(ticker, price, shares=1.0) -> Reading:
     )
 
 
-def _result(*, readings=(), cash=None, cash_by_account=None):
+def _result(*, readings=(), cash=None, cash_by_account=None, mismatched=()):
     book = SimpleNamespace(cash=cash, cash_by_account=cash_by_account or {})
-    return SimpleNamespace(readings=list(readings), book=book)
+    return SimpleNamespace(readings=list(readings), book=book, mismatched=mismatched)
 
 
 # ── `of()` ────────────────────────────────────────────────────────────────────
@@ -37,6 +37,18 @@ def test_a_pot_with_cash_by_account_sums_every_account():
     net = networth.of([result], parked=0.0)
     assert net.total == 175.0
     assert net.pots == 1
+
+
+def test_a_price_far_from_the_files_own_mark_is_left_out_and_named():
+    """2026-10-15: SPX6900 tokens priced as the S&P 500 put net worth at $41.8M."""
+    spx = (("SPX", 7718.94, 0.35),)
+    one = _result(readings=[_reading("SPX", 7718.94, shares=5400.0), _reading("ETH", 2000.0)],
+                  mismatched=spx)
+    two = _result(readings=[_reading("SPX", 7718.94, shares=10.0)], mismatched=spx)
+    net = networth.of([one, two], parked=0.0)
+    assert net.total == 2000.0
+    assert net.mismatched == ("SPX",)
+    assert net.unpriced == 2
 
 
 def test_a_pot_with_bare_cash_counts_it():

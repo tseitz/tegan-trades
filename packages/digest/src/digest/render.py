@@ -72,7 +72,20 @@ def _queue_line(delta: diff.QueueDelta) -> str:
 
 
 def subject(delta: diff.QueueDelta, book=None, *, stale_as_of: str | None = None,
-            problems: int = 0, repeat: bool = False, holdings_deltas=()) -> str:
+            problems: int = 0, repeat: bool = False, holdings_deltas=(),
+            blocking=()) -> str:
+    line = _subject(delta, book, stale_as_of=stale_as_of, problems=problems, repeat=repeat,
+                    holdings_deltas=holdings_deltas)
+    if not blocking:
+        return line
+    # Ahead of `!!`: these stop the pipeline until a person acts. The fix after " — " stays in
+    # the body.
+    names = " · ".join(reason.split(" — ")[0] for reason in blocking)
+    return f"⚠ {names} · {line}"
+
+
+def _subject(delta: diff.QueueDelta, book=None, *, stale_as_of: str | None = None,
+             problems: int = 0, repeat: bool = False, holdings_deltas=()) -> str:
     """The one line that has to work for someone who never opens the mail.
 
     Never empty. A blank or absent subject is indistinguishable from a job that did not run,
@@ -431,8 +444,12 @@ def _networth_section(net: networth.NetWorth | None) -> list[str]:
         change = ""
 
     unpriced = f", excludes {net.unpriced} unpriced" if net.unpriced else ""
-    return ["", f"NET WORTH — {treasury_render.money(net.total)} across {net.pots} "
+    out = ["", f"NET WORTH — {treasury_render.money(net.total)} across {net.pots} "
                f"mandate{'' if net.pots == 1 else 's'}{change}{unpriced}"]
+    if net.mismatched:
+        out.append(f"  left out {', '.join(net.mismatched)} — our price and the file's own mark "
+                   f"disagree, so the ticker may mean another asset (`uv run review`)")
+    return out
 
 
 def _book_section(book) -> list[str]:
@@ -551,6 +568,8 @@ def _run_section(run, *, xai_month: float | None, xai_cap: float | None,
     # alone cannot say. Empty on rows written before the field existed, which is why the
     # can't-say wording below still has to exist.
     reasons = [r for r in (run.get("reasons") or []) if r]
+    blocking = set(run.get("blocking") or ())
+    reasons.sort(key=lambda r: r not in blocking)
     if bad:
         line = f"RUN  exit {code} · {len(bad)} step(s) not ok: {', '.join(bad)}"
     elif code and reasons:

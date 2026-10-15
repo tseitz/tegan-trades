@@ -341,6 +341,14 @@ def _row(asset="JTO", **over):
     return row
 
 
+def test_a_blocking_reason_leads_the_subject_by_name():
+    subject = render.subject(
+        _quiet(), problems=1,
+        blocking=("claude auth expired — run `claude /login`, then re-run the LLM steps",))
+    assert subject.startswith("⚠ claude auth expired · !! ")
+    assert "/login" not in subject
+
+
 def test_a_repeat_says_so_on_the_subject_line():
     """Two digests went out on 2026-08-25 with byte-identical subjects. Nothing in either said
     it was the second."""
@@ -499,6 +507,13 @@ def test_reasons_are_printed_alongside_a_flagged_step():
                          reasons=["claude auth expired — run `claude /login`"]))
     assert "verify-roster" in lines[0]
     assert any("claude auth expired" in ln for ln in lines[1:])
+
+
+def test_a_blocking_reason_is_listed_before_the_routine_ones():
+    row = _run(1, reasons=["distill-roster — 50 item(s) failed, see log",
+                           "claude auth expired — run `claude /login`"])
+    row["blocking"] = ["claude auth expired — run `claude /login`"]
+    assert _health(row)[1].strip().startswith("claude auth expired")
 
 
 def test_an_exit_without_reasons_still_admits_it_does_not_know():
