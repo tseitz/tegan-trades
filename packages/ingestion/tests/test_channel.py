@@ -2,6 +2,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from ingestion.channel import (
+    ListingFailed,
     VideoMeta,
     VideoStub,
     _published_at,
@@ -107,17 +108,38 @@ def test_resolve_recent_tolerates_missing_streams_tab():
     assert [s.video_id for s in stubs] == ["vid00000001"]
 
 
-def test_resolve_recent_returns_empty_and_surfaces_failure_when_both_tabs_error(capsys):
+def test_resolve_recent_raises_when_both_tabs_error(capsys):
     def entries(url, limit):
         raise RuntimeError("boom")
 
-    stubs = resolve_recent("@x", max_videos=10, _list_entries=entries)
+    with pytest.raises(ListingFailed) as caught:
+        resolve_recent("@x", max_videos=10, _list_entries=entries)
 
-    assert stubs == []
+    assert caught.value.stubs == []
+    assert caught.value.errors == ["videos: boom", "streams: boom"]
     err = capsys.readouterr().err
-    assert "@x/videos" in err
-    assert "@x/streams" in err
-    assert "boom" in err
+    assert "@x/videos" in err and "@x/streams" in err
+
+
+def test_a_failed_tab_keeps_what_the_other_tab_returned():
+    def entries(url, limit):
+        if url.endswith("/videos"):
+            return [{"id": "vid00000001", "title": "V1"}]
+        raise RuntimeError("Tunnel connection failed: 402 Payment Required")
+
+    with pytest.raises(ListingFailed) as caught:
+        resolve_recent("@x", max_videos=10, _list_entries=entries)
+
+    assert [s.video_id for s in caught.value.stubs] == ["vid00000001"]
+
+
+def test_yt_dlps_own_missing_tab_wording_is_not_a_failure():
+    def entries(url, limit):
+        if url.endswith("/videos"):
+            return []
+        raise RuntimeError("ERROR: [youtube:tab] @x: This channel does not have a streams tab")
+
+    assert resolve_recent("@x", max_videos=10, _list_entries=entries) == []
 
 
 def test_with_retry_recovers_from_a_blocked_proxy_ip(monkeypatch):

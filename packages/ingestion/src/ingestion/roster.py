@@ -254,7 +254,13 @@ def ingest_channel(
         registry = deadletters.record(vid, reason, registry=registry, today=today)
         result.dead.append(vid)
 
-    for stub in resolve(target.channel, target.max_videos, tabs=target.tabs):
+    try:
+        listed = resolve(target.channel, target.max_videos, tabs=target.tabs)
+    except channel_mod.ListingFailed as exc:
+        listed = exc.stubs
+        for error in exc.errors:
+            result.failed.append((target.channel, f"listing {error}"))
+    for stub in listed:
         vid = stub.video_id
         if exists("youtube", vid):
             result.skipped.append(vid)

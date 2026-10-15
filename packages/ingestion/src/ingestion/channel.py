@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -107,6 +108,21 @@ def list_tab(channel: str, tab: str, limit: int, *, _entries=None) -> list[Video
     return stubs
 
 
+# yt-dlp's wording for a tab the channel never had. Most channels have no /streams; that is an
+# empty tab, not a failed read.
+_MISSING_TAB = re.compile(r"\b(?:does not have a|has no) \w+ tab\b")
+
+
+class ListingFailed(Exception):
+    """A tab could not be read for a reason other than not existing. Carries whatever the other
+    tabs did return, so one bad tab costs that tab and nothing more."""
+
+    def __init__(self, stubs: list[VideoStub], errors: list[str]):
+        super().__init__("; ".join(errors))
+        self.stubs = stubs
+        self.errors = errors
+
+
 def resolve_recent(
     channel: str,
     max_videos: int,
@@ -122,24 +138,28 @@ def resolve_recent(
     runs a daily all-day livestream gets its whole trading day pulled in beside the clips, and
     one of those transcripts is ~119k tokens against a ~9k corpus median. Narrow ``tabs`` when
     the second feed is not the one you want.
+
+    Raises ``ListingFailed`` when a tab fails for any reason but not existing.
     """
     seen: set[str] = set()
     out: list[VideoStub] = []
+    errors: list[str] = []
     for tab in tabs:
         try:
             stubs = list_tab(channel, tab, max_videos, _entries=_list_entries)
-        except Exception as exc:  # noqa: BLE001 - a missing tab and a network fault look
-            # alike here and both mean "no stubs from this tab"; narrowing would have to
-            # enumerate yt-dlp's error surface to gain nothing. Reported, not swallowed.
-            # tab may not exist (e.g. no /streams) — but could also be a real
-            # config/network error, so surface it rather than failing silently.
+        except Exception as exc:  # noqa: BLE001 - yt-dlp's error surface is too wide to
+            # enumerate; the message is what separates a missing tab from a failed read.
             print(f"[resolve_recent] {channel}/{tab} failed: {exc!r}", file=sys.stderr)
+            if not _MISSING_TAB.search(str(exc)):
+                errors.append(f"{tab}: {exc}")
             stubs = []
         for stub in stubs:
             if stub.video_id in seen:
                 continue
             seen.add(stub.video_id)
             out.append(stub)
+    if errors:
+        raise ListingFailed(out, errors)
     return out
 
 

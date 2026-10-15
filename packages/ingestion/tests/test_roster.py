@@ -3,7 +3,7 @@ from datetime import date
 
 import pytest
 from ingestion import deadletters
-from ingestion.channel import VideoMeta, VideoStub
+from ingestion.channel import ListingFailed, VideoMeta, VideoStub
 from ingestion.roster import (
     ChannelResult,
     ChannelTarget,
@@ -122,6 +122,25 @@ def test_ingest_channel_happy_path_saves_rich_metadata(tmp_path):
     assert meta["channel_id"] == "UCabc"
     assert meta["url"] == "https://www.youtube.com/watch?v=vid00000001"
     assert meta["title"] == "title-vid00000001"
+
+
+def test_a_failed_listing_counts_as_failed_and_keeps_the_other_tab(tmp_path):
+    def resolve(ch, n, tabs=None):
+        raise ListingFailed([_stub("vid00000001")], ["streams: 402 Payment Required"])
+
+    result = ingest_channel(
+        ChannelTarget("Alice", "@alice", 50, 730),
+        today=date(2026, 7, 22),
+        resolve=resolve,
+        hydrate=lambda vid: _meta(vid, "2026-07-01"),
+        fetch_transcript=lambda vid: "text",
+        exists=lambda platform, vid: False,
+        save_video=lambda vid, meta, text: None,
+    )
+
+    assert result.ingested == ["vid00000001"]
+    assert result.failed == [("@alice", "listing streams: 402 Payment Required")]
+    assert format_summary([result]).endswith("1 failed")
 
 
 def test_ingest_channel_skips_already_stored(tmp_path):
