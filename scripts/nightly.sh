@@ -19,6 +19,7 @@
 #                              `review`'s chain rows and `compare`'s protocol comparison card
 #  12. reconcile       free    settle what the venue did with yesterday's orders
 #  13. setups --list   free    the queue you actually read
+#  14. networth        free    append tonight's net worth to the ledger; exits 1 on a partial night
 #
 # **A failing step does not abort the run.** A YouTube outage should not cost you the price
 # refresh, and a bad roster marker should not cost you the whole night. Every step's status is
@@ -186,7 +187,7 @@ declare -a ORIGINAL_ARGS=("$@")
 ALL_STEPS="code-update preflight data-pull verify-roster ingest-roster ingest-x distill-roster brain-extract brain-index \
 plaid-sync wallet-sync fetch-prices fetch-funding perp-fundamentals fetch-altsignal reconcile reconcile-perps setups \
 fetch-tickers \
-canon-drift backup digest"
+canon-drift networth backup digest"
 
 usage() {
   cat <<'USAGE'
@@ -620,6 +621,8 @@ step fetch-tickers  uv run fetch-tickers
 # thinks to run the command by hand. It found 25 unmapped labels the first time it was run
 # unprompted, several of them ordinary tickers the roster discusses weekly.
 step canon-drift    uv run distill-canon
+
+step networth       uv run networth --record
 
 # Off-machine copy. There is no Time Machine destination on this laptop and data/ is gitignored,
 # so before this existed the corpus lived on exactly one disk. See scripts/backup.sh for what is

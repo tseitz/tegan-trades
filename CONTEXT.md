@@ -15,7 +15,7 @@ An asset class — `crypto` or `stock`. It selects a price source. It is **not**
 _Avoid_: Using it to mean what the money is for.
 
 **Net worth**:
-Everything you have, summed across every Mandate: each Mandate's holdings plus its own cash. Settled 2026-09-15 ([ADR-0007](adr/0007-net-worth-reader.md)) as the one deliberate, narrow crossing of the Mandate boundary — a percentage inside a Mandate still never crosses it; this is the sole reader that sums across all of them. Each dollar lands in exactly one Mandate, which is what the Deployed/Idle line exists to guarantee.
+Everything you have, summed across every Mandate: each Mandate's holdings plus its own cash. Settled 2026-09-15 ([ADR-0007](adr/0007-net-worth-reader.md)) as the one deliberate, narrow crossing of the Mandate boundary — a percentage inside a Mandate still never crosses it; this is the sole reader that sums across all of them. Each dollar lands in exactly one Mandate, which is what the Deployed/Idle line exists to guarantee. Recorded nightly to `data/networth.jsonl` ([ADR-0013](adr/0013-net-worth-history.md)).
 _Avoid_: Whole, total, book — this repo does not have a standing word for "everything inside one Mandate merged across its accounts"; describe that in plain words where it's needed instead of reaching for a proper noun.
 
 **Benchmark**:

@@ -37,11 +37,11 @@ of available commands, and `docs/ARCHITECTURE.md` groups them in pipeline order 
 ## The nightly job
 
 `scripts/nightly.sh` runs the whole cycle — refresh the corpus, re-price, settle yesterday's
-orders, rebuild the queue. Awake, it takes 8–16 minutes. Fourteen steps, roughly:
+orders, rebuild the queue. Awake, it takes 8–16 minutes. Fifteen steps, roughly:
 
 `data-pull` → `verify-roster` → `ingest-roster` → `ingest-x` *(off by default)* → `distill-roster` → `brain-extract` →
 `brain-index` → `fetch-prices` → `fetch-funding` → `reconcile` (both venues) →
-`setups --list` → `fetch-tickers` → `canon-drift` → `backup`
+`setups --list` → `fetch-tickers` → `canon-drift` → `networth` → `backup`
 
 It opens with `data-pull` and closes with `backup` on purpose: pull → work → push, so a second
 machine cannot build tonight's queue on a stale corpus and then mirror that over the good copy.

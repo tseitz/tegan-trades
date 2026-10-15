@@ -1,5 +1,7 @@
 # The Net Worth Reader
 
+_Superseded in part by [ADR-0013](0013-net-worth-history.md): *Where it lives* and *Memory* no longer hold._
+
 Ticket #60 was the last open branch on the rescope map (#46): a single cross-mandate number — "how much do I have, all in" — that no existing view can answer, because every existing view deliberately stays inside one Mandate's boundary.
 
 ## What counts

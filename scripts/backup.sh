@@ -128,6 +128,11 @@ trap 'rm -f "$MANIFEST"' EXIT
   echo "stances:     $(find data/stances -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
   echo "funding:     $(find data/funding -type f 2>/dev/null | wc -l | tr -d ' ')"
   echo "decisions:   $(wc -l < data/setups/decisions.jsonl 2>/dev/null | tr -d ' ') rows"
+  if remote_ledger=$(rclone cat "$DEST/data/networth.jsonl" 2>/dev/null); then
+    echo "networth:    $(printf '%s' "$remote_ledger" | grep -c .) rows (remote)"
+  else
+    echo "networth:    UNREADABLE on the remote"
+  fi
   echo "remote:      $(rclone size "$DEST/data" 2>/dev/null | tr '\n' ' ')"
 } > "$MANIFEST"
 

@@ -34,6 +34,7 @@ Workspace members under `packages/`, in pipeline order. **Each module's docstrin
 - `compare/` — put one protocol beside another, the #66 comparison card. `compare`, free, reads `data/altsignal/` only, places nothing.
 - `treasury/` — what money is parked for its yield, and what it earns — the #72 Treasury mandate, plus the #73 Safety gate on it and on idle cash. `treasury`, free, reads the hand-kept `data/treasury.yaml`, every `data/portfolios/*.yaml` (idle cash), and `data/altsignal/` (Safety facts) — no fetch of its own, places nothing.
 - `yields/` — for every token held anywhere, what it could be earning — the #95 View, across every book rather than one Mandate. `yields`, free, reads every `data/portfolios/*.yaml` and `data/altsignal/` (Safety facts) — no fetch of its own, places nothing.
+- `networth/` — records tonight's net worth to `data/networth.jsonl` nightly and reads the history back for `digest` and `dashboard`. `networth`, free, reads `review` + `treasury`, places nothing.
 - `core/` — pure logic and shared schema. Zero I/O, no network, no LLM. Imported by everything, imports nothing local.
 - `llm/` — the **only** LLM boundary (`claude -p`, subscription auth). Four call sites depend on it.
 - `dashboard/` — the #84/#85 browser Surface over `review`. `dashboard`, free, reads Mandates only through `review.cli.load_books` (never `oracle.portfolios` directly). Binds `127.0.0.1` with no flag to widen it and imports neither `execution` nor `llm` (ADR-0010) — it cannot spend and cannot sign.
