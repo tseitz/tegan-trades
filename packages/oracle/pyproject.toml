@@ -20,6 +20,7 @@ setups = "oracle.setups_cli:main"
 plaid-link = "oracle.plaid_cli:link"
 plaid-sync = "oracle.plaid_cli:sync"
 wallet-sync = "oracle.wallet_cli:sync"
+kraken-sync = "oracle.kraken_cli:sync"
 
 [build-system]
 requires = ["uv_build>=0.10.4,<0.11.0"]

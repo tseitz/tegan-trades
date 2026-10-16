@@ -12,6 +12,7 @@
 #   5. brain-extract   Max     LLM stance extraction — capped per night, see below
 #   6. brain-index     free    local embeddings; MUST follow brain-extract
 #   7. wallet-sync     free    what your public wallet addresses hold, straight off chain
+#      kraken-sync     free    what Kraken holds, via a Query-Funds-only key
 #   8. fetch-prices    free
 #   9. fetch-funding   free    what holding a position costs — must precede setups
 #  10. perp-fundamentals free free three-venue open-interest/volume report — was hand-run only
@@ -185,7 +186,7 @@ ONLY_STEPS=""
 declare -a ORIGINAL_ARGS=("$@")
 
 ALL_STEPS="code-update preflight data-pull verify-roster ingest-roster ingest-x distill-roster brain-extract brain-index \
-plaid-sync wallet-sync fetch-prices fetch-funding perp-fundamentals fetch-altsignal reconcile reconcile-perps setups \
+plaid-sync wallet-sync kraken-sync fetch-prices fetch-funding perp-fundamentals fetch-altsignal reconcile reconcile-perps setups \
 fetch-tickers \
 canon-drift networth backup digest"
 
@@ -540,6 +541,10 @@ step plaid-sync     uv run plaid-sync
 # address costs nothing. Only touches files carrying a `wallets:` block, so a Plaid-filled or
 # hand-kept account is left exactly alone.
 step wallet-sync    uv run wallet-sync
+
+# Same again for an exchange account, free because Kraken's API is not metered. Opt-in by the
+# book file: with no data/portfolios/kraken.yaml it prints an example and exits 0.
+step kraken-sync    uv run kraken-sync
 
 # `--all-portfolios` rather than a list of names: this script cannot know about an account
 # added to data/portfolios/ after it was written, and a hardcoded name would quietly stop

@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+# `.env` is committed as git-crypt ciphertext (.gitattributes), but the pre-commit scan reads the
+# decrypted diff. `filter.git-crypt.required` makes `git add` refuse when git-crypt is missing;
+# remove this entry if `.env` ever leaves .gitattributes.
+[[allowlists]]
+description = "git-crypt encrypted .env"
+paths = ['''^\.env$''']
