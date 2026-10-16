@@ -70,7 +70,7 @@ def parse_date(value: str | None) -> date | None:
     Returns None for missing/malformed input: ``published_at`` is genuinely optional
     upstream (``channel.hydrate`` types it ``str | None`` — yt-dlp doesn't always supply
     an upload date), so an undated thesis must degrade, never raise."""
-    if not value:
+    if not value or not isinstance(value, str):
         return None
     try:
         return date.fromisoformat(value[:10])

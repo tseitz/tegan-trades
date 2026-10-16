@@ -43,6 +43,7 @@ SPEND_LOUD_AT = 0.90
 ARRIVALS_SHOWN = 5
 
 VIEWS_HEADING = "VIEWS — last 3 days"
+VIEWS_HEADING_SINCE = "VIEWS — since the last digest"
 
 
 def _queue_counts(delta: diff.QueueDelta) -> list[str]:
@@ -141,7 +142,8 @@ def markdown(delta: diff.QueueDelta, *, run=None, book=None, roster: str | None 
              net_worth_changes: dict[int, networth.Change] | None = None,
              net_worth_recorded: bool = True,
              stale_as_of: str | None = None, problems=(),
-             views: str | None = None, views_note: str | None = None) -> str:
+             views: str | None = None, views_note: str | None = None,
+             views_heading: str = VIEWS_HEADING) -> str:
     """The digest body.
 
     ``roster`` is the one narrated section, passed in already written so this module keeps its
@@ -160,9 +162,9 @@ def markdown(delta: diff.QueueDelta, *, run=None, book=None, roster: str | None 
     out: list[str] = []
 
     if views:
-        out.extend([VIEWS_HEADING, views.rstrip("\n"), ""])
+        out.extend([views_heading, views.rstrip("\n"), ""])
     elif views_note:
-        out.extend([VIEWS_HEADING, f"  {views_note}", ""])
+        out.extend([views_heading, f"  {views_note}", ""])
 
     # Below VIEWS and scoped to the queue line: VIEWS does not read the snapshot, so a banner
     # claiming everything below is stale would be false over it.

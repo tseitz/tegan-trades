@@ -10,6 +10,7 @@ from core.rank import (
     confidence_signal,
     conviction_signal,
     corpus_span,
+    parse_date,
     recency_signal,
     score,
 )
@@ -179,3 +180,8 @@ def test_score_is_deterministic():
 def test_default_weights_sum_to_one():
     w = DEFAULT_WEIGHTS
     assert (w.conviction + w.confidence + w.recency + w.agreement + w.asset_rank) == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("value", [20261009, ["2026-10-09"], {"d": 1}])
+def test_parse_date_degrades_on_a_non_string(value):
+    assert parse_date(value) is None

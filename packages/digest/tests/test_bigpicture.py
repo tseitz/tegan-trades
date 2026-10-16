@@ -65,6 +65,32 @@ def test_payload_carries_stance_fields_and_nothing_else():
         "asset", "lean", "conviction", "horizon", "rationale", "watching", "published_at"}
 
 
+def test_payload_adds_was_only_where_a_prior_exists():
+    a, b = _stance(), _stance(asset="ETH")
+    prior = {"lean": "bearish", "published_at": "2026-10-09"}
+    stances = bigpicture.payload(
+        {"Mayne": [a, b]}, priors={a.id: prior, b.id: None})[0]["stances"]
+    assert stances[0]["was"] == prior
+    assert "was" not in stances[1]
+
+
+def test_prompt_leads_with_change_and_never_cites_a_date():
+    system, _ = bigpicture.build_prompt(PAYLOAD)
+    assert "since the last digest" in system
+    assert "Lead with what changed" in system and "holding" in system
+    assert "Never cite a date" in system
+
+
+def test_a_date_never_grounds_a_number():
+    s = _stance()
+    p = bigpicture.payload(
+        {"Mayne": [s]}, priors={s.id: {"lean": "bearish", "published_at": "2026-10-05"}})
+    kept, _ = bigpicture.grounded({"Mayne": "Flipped from bearish on Oct 5."}, p)
+    assert kept == {}
+    kept, _ = bigpicture.grounded({"Mayne": "Sees a 10x from here."}, p)
+    assert kept == {}
+
+
 def test_payload_omits_persons_without_stances():
     assert bigpicture.payload({"Mayne": [], "Cowen": [_stance()]}) == bigpicture.payload(
         {"Cowen": [_stance()]})

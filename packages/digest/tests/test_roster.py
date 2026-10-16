@@ -94,7 +94,7 @@ def test_asset_aliases_resolve_before_matching():
 
 def test_a_new_horizon_from_an_existing_voice_is_reported_but_is_not_a_flip():
     """Cowen has held BTC.D bullish on swing and bearish on macro in one video, so folding
-    horizons together would invent a flip — ``_fold_key`` keeps horizon in the key for exactly
+    horizons together would invent a flip — ``fold_key`` keeps horizon in the key for exactly
     that reason. But the statement is still real: someone who held only a swing view turning
     bearish on macro is worth reading, and it is neither a flip nor a new voice. It gets its
     own category rather than vanishing between the two."""

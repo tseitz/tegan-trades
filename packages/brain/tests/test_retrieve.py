@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from brain.retrieve import fold_stances, retrieve, summarize_split
+from brain.retrieve import fold_key, fold_stances, priors, retrieve, summarize_split
 from core.canon import Registry
 from core.stance import ExtractedStance, build_stance
 from core.thesis import Source
@@ -283,3 +283,74 @@ def test_retrieve_is_pure_and_does_not_mutate_the_input_corpus():
     before = [s.model_copy(deep=True) for s in CORPUS]
     retrieve(stances=CORPUS, registry=REGISTRY, asset="ETH", search_fn=_search_fn([]))
     assert before == CORPUS
+
+
+# ── priors: the previous view, for "what did they say before this video" ────
+
+def _ref(s):
+    return s.source.transcript_ref
+
+
+def test_priors_flip_held_and_first_view():
+    a = stance("Benjamin Cowen", "ETH", "bullish", "2026-01-01")
+    b = stance("Benjamin Cowen", "ETH", "bearish", "2026-02-01")
+    c = stance("Benjamin Cowen", "ETH", "bearish", "2026-03-01")
+    out = priors([a, b, c], REGISTRY, {_ref(a), _ref(b), _ref(c)})
+    assert out[a.id] is None
+    assert out[b.id] == {"lean": "bullish", "published_at": "2026-01-01"}
+    assert out[c.id] == {"lean": "bearish", "published_at": "2026-02-01"}
+
+
+def test_priors_never_use_the_same_video_or_a_same_day_sibling():
+    a = stance("Benjamin Cowen", "ETH", "bullish", "2026-01-01")
+    sibling = stance("Benjamin Cowen", "ETH", "bearish", "2026-01-01", horizon="swing",
+                     rationale="second look")
+    other_horizon = stance("Benjamin Cowen", "ETH", "bearish", "2026-01-01", horizon="macro")
+    out = priors([a, sibling, other_horizon], REGISTRY, {_ref(a)})
+    assert out[a.id] is None
+    assert out[sibling.id] is None
+
+
+def test_priors_horizon_separates_keys():
+    old = stance("Benjamin Cowen", "ETH", "bullish", "2026-01-01", horizon="macro")
+    new = stance("Benjamin Cowen", "ETH", "bearish", "2026-02-01", horizon="swing")
+    assert priors([old, new], REGISTRY, {_ref(new)})[new.id] is None
+
+
+def test_priors_merge_person_and_asset_aliases():
+    old = stance("The DeFi Report", "Ethereum", "bullish", "2026-01-01")
+    new = stance("The DeFi Report (Michael Nadeau)", "ETH", "bearish", "2026-02-01")
+    assert priors([old, new], REGISTRY, {_ref(new)})[new.id] == {
+        "lean": "bullish", "published_at": "2026-01-01"}
+
+
+def test_priors_give_a_members_feed_none():
+    feed = "Technical Roundup (CryptoCred + DonAlt)"
+    old = stance(feed, "ETH", "bullish", "2026-01-01")
+    new = stance(feed, "ETH", "bearish", "2026-02-01")
+    assert priors([old, new], REGISTRY, {_ref(new)})[new.id] is None
+
+
+def test_priors_give_an_undated_stance_none():
+    old = stance("Benjamin Cowen", "ETH", "bullish", "2026-01-01")
+    undated = stance("Benjamin Cowen", "ETH", "bearish", "")
+    assert priors([old, undated], REGISTRY, {_ref(undated)})[undated.id] is None
+
+
+def test_priors_give_none_when_the_prior_date_has_conflicting_leans():
+    a = stance("Benjamin Cowen", "ETH", "bullish", "2026-01-01")
+    b = stance("Benjamin Cowen", "ETH", "bearish", "2026-01-01", rationale="other")
+    new = stance("Benjamin Cowen", "ETH", "bearish", "2026-02-01")
+    assert priors([a, b, new], REGISTRY, {_ref(new)})[new.id] is None
+
+
+def test_priors_only_cover_stances_in_refs():
+    old = stance("Benjamin Cowen", "ETH", "bullish", "2026-01-01")
+    new = stance("Benjamin Cowen", "ETH", "bearish", "2026-02-01")
+    out = priors([old, new], REGISTRY, {_ref(new)})
+    assert set(out) == {new.id}
+
+
+def test_fold_key_is_public_and_keeps_horizon_not_lean():
+    s = stance("Benjamin Cowen", "ETH", "bullish", "2026-01-01", horizon="macro")
+    assert fold_key("P", "ETH", s) == ("P", "ETH", "macro")

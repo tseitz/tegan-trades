@@ -212,6 +212,11 @@ def test_a_views_note_prints_under_the_heading_when_there_is_no_block():
     assert "VIEWS — last 3 days\n  no roster videos in the last 3 days" in body
 
 
+def test_the_views_heading_is_the_callers():
+    body = render.markdown(_quiet(), views="  block", views_heading=render.VIEWS_HEADING_SINCE)
+    assert body.startswith("VIEWS — since the last digest\n  block")
+
+
 def test_views_win_over_a_note():
     body = render.markdown(_quiet(), views="  block", views_note="a note")
     assert "block" in body and "a note" not in body

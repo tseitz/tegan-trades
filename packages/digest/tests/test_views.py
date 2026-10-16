@@ -178,7 +178,7 @@ def test_collapsed_format_and_tail():
                       big_picture={"tasty": "Leans long."})
     assert out[:2] == ["  tasty · 3 videos", "    Leans long."]
     assert '    Sep 29 · "Jobs" — Bullish SPX · Bearish VIX' in out
-    assert "    +2 with no views or not yet distilled" in out
+    assert "    +2 with nothing new or not yet distilled" in out
 
 
 def test_collapsed_caps_each_side_and_drops_an_asset_on_both():
@@ -197,9 +197,128 @@ def test_collapsed_video_with_only_contested_assets_counts_as_quiet():
     ref = "youtube/a"
     ss = [stance(ref, "SPX", "bullish", person="tasty"), stance(ref, "SPX", "bearish", person="tasty")]
     out = views.lines(fold(ss, [sidecar(ref, "2026-09-30", "tasty")], collapsed=frozenset({"tasty"})))
-    assert "    +1 with no views or not yet distilled" in out
+    assert "    +1 with nothing new or not yet distilled" in out
 
 
 def test_empty_input():
     assert fold([], []) == []
     assert views.lines([]) == []
+
+
+REF = "youtube/ZH5ivfBD-KQ"
+
+
+def prior(lean, day="2026-09-20"):
+    return {"lean": lean, "published_at": day}
+
+
+def with_priors(ss, **by_asset):
+    """priors keyed by stance id; ``by_asset`` maps asset to its prior (or None)."""
+    return {s.id: by_asset[s.asset] for s in ss if s.asset in by_asset}
+
+
+def rendered(ss, priors, **kw):
+    return views.lines(fold(ss, [YT_SIDECAR], priors=priors, **kw))
+
+
+def test_reported_drops_distilled_videos_but_keeps_undistilled():
+    sidecars = [sidecar("youtube/a", "2026-09-29", "P", "Done"),
+                sidecar("youtube/b", "2026-09-29", "P", "Pending"),
+                sidecar("youtube/c", "2026-09-29", "Q", "Empty")]
+    ss = [stance("youtube/a", "BTC", "bullish", person="P")]
+    result = fold(ss, sidecars, distilled=frozenset({"youtube/c"}),
+                  reported=frozenset({"youtube/a", "youtube/b", "youtube/c"}))
+    assert [v.person for v in result] == ["P"]
+    assert [(v.ref, v.distilled) for v in result[0].videos] == [("youtube/b", False)]
+    assert "1 video not yet distilled" in "\n".join(views.lines(result))
+
+
+def test_window_days_is_the_callers_not_inferred_from_reported():
+    old = sidecar("youtube/old", "2026-09-20", "A")
+    assert fold([], [old], reported=frozenset({"youtube/zzz"})) == []
+    assert fold([], [old], window_days=views.SCAN_DAYS, reported=frozenset({"youtube/zzz"}))
+
+
+def test_flip_suffix_with_and_without_high_conviction():
+    ss = [stance(REF, "BTC", "bullish", conviction="high"), stance(REF, "ETH", "bearish")]
+    out = rendered(ss, with_priors(ss, BTC=prior("bearish", "2026-09-09"),
+                                   ETH=prior("bullish", "2026-09-20")))
+    assert "    Bullish  BTC (high · was bearish Sep 9)" in out
+    assert "    Bearish  ETH (was bullish Sep 20)" in out
+
+
+def test_flip_suffix_adds_the_year_when_the_prior_is_from_another_year():
+    ss = [stance(REF, "BTC", "bullish")]
+    out = rendered(ss, with_priors(ss, BTC=prior("bearish", "2025-11-20")))
+    assert "    Bullish  BTC (was bearish Nov 20 2025)" in out
+
+
+def test_held_line_comes_after_the_buckets_and_keeps_the_label_gap():
+    ss = [stance(REF, "SOL", "bullish"), stance(REF, "BTC", "bullish", conviction="high"),
+          stance(REF, "ETH", "bearish"), stance(REF, "XRP", "bullish")]
+    out = rendered(ss, with_priors(ss, BTC=prior("bullish"), ETH=prior("bearish"),
+                                   XRP=prior("bearish")))
+    text = "\n".join(out)
+    assert "    Held     BTC bullish, ETH bearish" in out
+    assert "Bullish" in text and "BTC (high" not in text
+    assert out.index("    Held     BTC bullish, ETH bearish") > next(
+        i for i, ln in enumerate(out) if ln.lstrip().startswith("Bullish"))
+    assert len("Held") <= views._LABEL - 2
+
+
+def test_one_status_per_asset_per_video_flip_beats_new_beats_held():
+    ss = [stance(REF, "BTC", "bullish"), stance(REF, "BTC", "bearish"),
+          stance(REF, "ETH", "bullish"), stance(REF, "ETH", "bullish", conviction="med"),
+          stance(REF, "SOL", "bullish")]
+    by_id = {ss[0].id: prior("bearish"), ss[1].id: prior("bearish"),
+             ss[2].id: prior("bullish"), ss[3].id: None, ss[4].id: prior("bullish")}
+    out = rendered(ss, by_id)
+    assert "    Bullish  BTC (was bearish Sep 20), ETH" in out
+    assert "    Held     SOL bullish" in out
+    text = "\n".join(out)
+    assert "BTC bearish" not in text and "ETH bullish" not in text
+    assert text.count("BTC") == 1 and text.count("ETH") == 1
+
+
+def test_held_only_video_keeps_its_watching_lines():
+    ss = [stance(REF, "BTC", "bullish", watching="weekly close")]
+    out = rendered(ss, with_priors(ss, BTC=prior("bullish")))
+    assert out[1:] == ["    Held     BTC bullish", "    Watching", "      • weekly close"]
+
+
+def test_missing_and_none_priors_render_as_first_views():
+    ss = [stance(REF, "BTC", "bullish"), stance(REF, "ETH", "bearish")]
+    assert rendered(ss, {ss[0].id: None}) == rendered(ss, None)
+    assert rendered(ss, {}) == rendered(ss, None)
+
+
+def test_priors_none_output_is_unchanged_by_the_new_machinery():
+    ss = [stance(REF, "BTC", "bullish", conviction="high"), stance(REF, "SPX", "bullish"),
+          stance(REF, "SPX", "bearish")]
+    out = rendered(ss, None)
+    assert out[1:] == ["    Bullish  BTC (high), SPX", "    Bearish  SPX"]
+
+
+def test_collapsed_leaves_out_held_and_shows_flips_without_a_date():
+    sidecars = [sidecar("youtube/a", "2026-09-30", "tasty", "Flippy"),
+                sidecar("youtube/b", "2026-09-29", "tasty", "Steady")]
+    ss = [stance("youtube/a", "BTC", "bullish", person="tasty", conviction="high"),
+          stance("youtube/a", "ETH", "bearish", person="tasty"),
+          stance("youtube/b", "SOL", "bullish", person="tasty")]
+    priors = with_priors(ss, BTC=prior("bearish"), ETH=prior("bearish"), SOL=prior("bullish"))
+    out = views.lines(fold(ss, sidecars, collapsed=frozenset({"tasty"}), priors=priors))
+    assert '    Sep 30 · "Flippy" — Bullish BTC (was bearish)' in out
+    assert not any("Steady" in ln or "SOL" in ln or "ETH" in ln for ln in out)
+    assert "    +1 with nothing new or not yet distilled" in out
+
+
+def test_collapsed_both_sides_drop_still_works_with_a_flip_present():
+    ref = "youtube/a"
+    ss = [stance(ref, "BTC", "bullish", person="tasty"),
+          stance(ref, "SPX", "bullish", person="tasty"),
+          stance(ref, "SPX", "bearish", person="tasty")]
+    by_id = {ss[0].id: prior("bearish"), ss[1].id: prior("bearish"), ss[2].id: prior("bullish")}
+    out = views.lines(fold(ss, [sidecar(ref, "2026-09-30", "tasty", "Busy")],
+                           collapsed=frozenset({"tasty"}), priors=by_id))
+    assert '    Sep 30 · "Busy" — Bullish BTC (was bearish)' in out
+    assert not any("SPX" in ln for ln in out)

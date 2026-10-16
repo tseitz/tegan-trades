@@ -38,6 +38,7 @@ def test_what_is_written_is_what_comes_back(tmp_path):
     path = tmp_path / "sub" / "state.json"
     assert state.save(path, {state.ROSTER: {"ETH|voice|Pierre": "2026-08-21"}})
     assert state.roster_seen(state.load(path)) == {"ETH|voice|Pierre": "2026-08-21"}
+    assert [p.name for p in path.parent.iterdir()] == ["state.json"]
 
 
 def test_an_unwritable_path_warns_rather_than_raising(tmp_path):
@@ -45,7 +46,7 @@ def test_an_unwritable_path_warns_rather_than_raising(tmp_path):
     blocker.write_text("i am a file", encoding="utf-8")
     said = []
     assert state.save(blocker / "state.json", {}, warn=said.append) is False
-    assert said and "reported again tomorrow" in said[0]
+    assert said and "will repeat tomorrow" in said[0]
 
 
 def test_a_payload_json_cannot_serialise_warns_rather_than_raising(tmp_path):
@@ -125,3 +126,18 @@ def test_treasury_opportunities_round_trip(tmp_path):
 def test_treasury_opportunities_of_the_wrong_shape_is_an_empty_memory():
     assert state.treasury_opportunities_seen(
         {state.TREASURY_OPPORTUNITIES: ["not", "a", "map"]}) == {}
+
+
+def test_views_memory_round_trips(tmp_path):
+    path = tmp_path / "state.json"
+    assert state.save(path, {state.VIEWS: {"yt:abc": "2026-08-21"}})
+    assert state.views_seen(state.load(path)) == {"yt:abc": "2026-08-21"}
+
+
+def test_missing_views_memory_is_none_so_it_bootstraps():
+    assert state.views_seen({}) is None
+
+
+@pytest.mark.parametrize("bad", [["a"], "x", 3, None, {}])
+def test_empty_or_wrong_shape_views_memory_bootstraps(bad):
+    assert state.views_seen({state.VIEWS: bad}) is None

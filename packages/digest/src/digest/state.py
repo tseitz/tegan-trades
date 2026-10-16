@@ -3,10 +3,12 @@
 Everything else here is a diff between two things the pipeline wrote. This holds the third
 input a *daily* diff needs and neither snapshot carries: **what was in yesterday's email.**
 
-Two sections use it, for the same reason:
+These sections use it, for the same reason:
 
 - ``roster_reported`` — the roster window is seven days wide, so one video produces a move for
   seven nights. See ``roster.unreported``.
+- ``views_reported`` — the views window is several days wide, so one video printed on three
+  nights running. See ``views_seen``.
 - ``holdings_verdicts`` — a portfolio verdict is a standing answer, not an event. Without last
   night's copy there is nothing to subtract and all 77 would report as new every morning.
 - ``xai_reported`` — the monthly spend total only moves when ``ingest-x`` runs, and that is off
@@ -14,7 +16,8 @@ Two sections use it, for the same reason:
   to skip the run-health line it sits under.
 
 **Never raises, and a lost file only ever costs a repeat.** Every failure here degrades to an
-empty memory, which makes the digest say something twice. The opposite bias — treating an
+empty memory — or, for ``views_reported``, to the short bootstrap window — which makes the
+digest say something twice. The opposite bias — treating an
 unreadable file as "already reported" — would drop real movement silently, and silence is the
 one failure this package has no way to surface.
 """
@@ -22,6 +25,7 @@ one failure this package has no way to surface.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 #: Sections, so a caller cannot typo a key into a silently empty memory.
@@ -35,6 +39,7 @@ HOLDINGS = "holdings_verdicts"
 #: weekly block while the roster says nothing new for a month.
 HOLDINGS_LEVELS = "holdings_levels"
 XAI = "xai_reported"
+VIEWS = "views_reported"
 WINDOW = "last_window_start"
 #: ``{pool_id: slug}`` for every Treasury opportunity reported so far. A gate-clearing pool is
 #: standing state, not an event — without last night's copy every pool would read as new every
@@ -68,11 +73,15 @@ def save(path: Path, state: dict, *, warn=None) -> bool:
     path = Path(path)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+        # Temp file then rename: a write killed halfway would otherwise leave a truncated file,
+        # and every section would repeat the next night.
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, path)
     except (OSError, TypeError, ValueError) as exc:
         if warn:
             warn(f"warning: could not write the digest memory to {path.name}, so tonight's "
-                 f"roster movement will be reported again tomorrow: {exc}")
+                 f"sections will repeat tomorrow: {exc}")
         return False
     return True
 
@@ -132,3 +141,14 @@ def treasury_opportunities_seen(state: dict) -> dict:
     seen = state.get(TREASURY_OPPORTUNITIES)
     return seen if isinstance(seen, dict) else {}
 
+
+def views_seen(state: dict) -> dict | None:
+    """``{ref: date first reported}``, or ``None`` when the value is missing, empty or the wrong
+    shape.
+
+    ``None``, not ``{}``, on purpose: ``None`` means bootstrap, which renders the short window.
+    An empty dict would read as "nothing reported yet" and dump 14 days of videos — and an empty
+    memory is reachable, from a bootstrap night with nothing distilled or a month of quiet pruning.
+    """
+    seen = state.get(VIEWS)
+    return seen if isinstance(seen, dict) and seen else None

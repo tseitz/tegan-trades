@@ -5,8 +5,9 @@ This had no tests, and three of the defects a review found lived here: a half-ap
 reachable by writing a bad file to a tmp path and asserting on the returned body, which is why
 ``build`` takes its paths as arguments.
 
-``main`` — argparse, printing, delivery — stays untested on purpose. It is orchestration over
-pieces that are covered.
+``main`` — argparse, printing — stays untested on purpose; it is orchestration over pieces that
+are covered. The one thing it owns that is not covered elsewhere is the delivery gate on the
+memory, which has its own tests at the end of the VIEWS section.
 """
 from __future__ import annotations
 
@@ -72,6 +73,7 @@ def quiet(monkeypatch, tmp_path):
     # `load_result` reaches `data/treasury.yaml`, every portfolio and `data/altsignal/` — kept
     # off all three by default. A test that wants the TREASURY section overrides this.
     monkeypatch.setattr(cli, "load_result", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "load_books", lambda **kwargs: [])
     empty = tmp_path / "no-transcripts"
     empty.mkdir()
     monkeypatch.setattr(cli, "TRANSCRIPTS", empty)
@@ -198,7 +200,8 @@ def test_tonights_run_health_is_reported(tmp_path, today, monkeypatch):
     monkeypatch.setattr(cli, "HISTORY", history)
     snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
     _, body = build(snaps, tmp_path)
-    assert "RUN  clean" in body
+    assert "RUN  clean" not in body
+    assert "1 steps clean" in body
 
 
 # ── the roster section says which kind of nothing it is ───────────────────────
@@ -397,8 +400,9 @@ def test_a_frozen_spend_total_stops_shouting(tmp_path, today, monkeypatch):
 
     _, second, _ = build_with_memory(snaps, tmp_path, state_path=path)
     assert "OVER the cap" not in second
-    # The run line itself is untouched — that is what the section is for.
-    assert "RUN  clean" in second
+    # A clean night is silent once the spend line has nothing to say; the footer still counts it.
+    assert "RUN  clean" not in second
+    assert "1 steps clean" in second
 
 
 def test_a_quiet_roster_and_an_already_told_one_do_not_read_alike(tmp_path, today, monkeypatch,
@@ -750,3 +754,206 @@ def test_an_empty_window_says_nobody_published(tmp_path, today):
     snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
     _, body = build(snaps, tmp_path)
     assert "no videos in the last 3 days" in body
+
+
+# ── VIEWS remembers what it sent ──────────────────────────────────────────────
+#
+# The clock is frozen at 2026-08-21, so the corpus video (2026-08-20) is D-1 and the one added
+# here is D-4: outside the three-day bootstrap window, inside the fourteen-day scan.
+
+SECOND = "https://youtu.be/second"
+
+
+def _add_video(monkeypatch, *, source_id="second", published="2026-08-17", distilled=True):
+    from core.stance import ExtractedStance, build_stance
+    from core.thesis import Source
+
+    (cli.TRANSCRIPTS / "youtube" / f"{source_id}.json").write_text(json.dumps({
+        "title": "Silver: Second Look", "published_at": published, "person": "Benjamin Cowen",
+        "url": SECOND, "platform": "youtube", "source_id": source_id}), encoding="utf-8")
+    if distilled:
+        stance = build_stance(
+            ExtractedStance.model_validate({"asset": "ETH", "lean": "bullish",
+                                            "rationale": "ETH looks fine"}),
+            source=Source(person="Benjamin Cowen", platform="youtube", url=SECOND,
+                          published_at=published, transcript_ref=f"youtube/{source_id}"),
+            model="m", extracted_at="2026-08-21T00:00:00+00:00")
+        before = cli.load_all_stances()
+        monkeypatch.setattr(cli, "load_all_stances", lambda *a, **k: [*before, stance])
+
+
+def _night(tmp_path, state_path, **kw):
+    """One build against the saved memory, which is then saved the way a delivered email would."""
+    from digest import state
+
+    snaps = tmp_path / "q.jsonl"
+    if not snaps.exists():
+        _write(snaps, _snap("2026-08-21", [_entry("a")]))
+    _, body, memory = build_with_memory(snaps, tmp_path, state_path=state_path, **kw)
+    state.save(state_path, memory)
+    return body, memory
+
+
+def test_bootstrap_shows_three_days_but_records_the_whole_scan(tmp_path, today, monkeypatch):
+    _views_corpus(tmp_path, monkeypatch)
+    _add_video(monkeypatch)
+    state_path = tmp_path / "state.json"
+
+    body, memory = _night(tmp_path, state_path)
+    assert "Gold: Dubious Speculation" in body and "Silver: Second Look" not in body
+    assert "VIEWS — last 3 days" in body
+    assert set(memory["views_reported"]) == {"youtube/_abc123XYZ-", "youtube/second"}
+
+    body, _ = _night(tmp_path, state_path)
+    assert ("VIEWS — since the last digest\n"
+            "    nothing new — 2 video(s) already in an earlier digest") in body
+    assert "Silver: Second Look" not in body
+
+
+def test_a_stance_file_appearing_between_runs_prints_that_video_once(tmp_path, today,
+                                                                      monkeypatch):
+    _views_corpus(tmp_path, monkeypatch)
+    [stance] = cli.load_all_stances()
+    monkeypatch.setattr(cli, "load_all_stances", lambda *a, **k: [])
+    state_path = tmp_path / "state.json"
+
+    body, memory = _night(tmp_path, state_path)
+    assert "Gold: Dubious Speculation" not in body and "not yet distilled" in body
+    assert memory["views_reported"] == {}
+
+    monkeypatch.setattr(cli, "load_all_stances", lambda *a, **k: [stance])
+    body, memory = _night(tmp_path, state_path)
+    assert "Gold: Dubious Speculation" in body
+    assert list(memory["views_reported"]) == ["youtube/_abc123XYZ-"]
+
+    body, _ = _night(tmp_path, state_path)
+    assert "Gold: Dubious Speculation" not in body
+    assert "nothing new — 1 video(s) already in an earlier digest" in body
+
+
+def test_an_unreadable_corpus_leaves_the_memory_as_it_was(tmp_path, today, monkeypatch):
+    from digest import state
+
+    _views_corpus(tmp_path, monkeypatch)
+    state_path = tmp_path / "state.json"
+    _, first = _night(tmp_path, state_path)
+    good = monkeypatch.setattr
+
+    def unreadable(*a, **k):
+        raise OSError("disk gone")
+    good(cli, "load_all_stances", unreadable)
+
+    body, memory = _night(tmp_path, state_path)
+    assert "unavailable" in body
+    assert memory[state.VIEWS] == first[state.VIEWS]
+
+    state.save(state_path, {})
+    _, memory = _night(tmp_path, state_path)
+    assert state.VIEWS not in memory
+
+
+def test_a_wrong_shaped_memory_falls_back_to_bootstrap(tmp_path, today, monkeypatch):
+    _views_corpus(tmp_path, monkeypatch)
+    _add_video(monkeypatch)
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps({"views_reported": ["youtube/second"]}), encoding="utf-8")
+
+    body, memory = _night(tmp_path, state_path)
+    assert "Gold: Dubious Speculation" in body and "Silver: Second Look" not in body
+    assert set(memory["views_reported"]) == {"youtube/_abc123XYZ-", "youtube/second"}
+
+
+def test_an_empty_scan_in_memory_mode_says_fourteen_days(tmp_path, today):
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps({"views_reported": {"youtube/old": "2026-08-10"}}),
+                          encoding="utf-8")
+    body, memory = _night(tmp_path, state_path)
+    assert "no videos in the last 14 days" in body
+    assert memory["views_reported"] == {"youtube/old": "2026-08-10"}
+
+
+def test_an_empty_memory_falls_back_to_bootstrap_rather_than_dumping_the_scan(tmp_path, today):
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps({"views_reported": {}}), encoding="utf-8")
+    body, _ = _night(tmp_path, state_path)
+    assert "VIEWS — last 3 days\n    no videos in the last 3 days" in body
+
+
+def test_a_failed_big_picture_still_records_what_it_showed(tmp_path, today, monkeypatch):
+    _views_corpus(tmp_path, monkeypatch)
+
+    def boom(payload, **k):
+        raise bigpicture.BigPictureFailed("timed out")
+    monkeypatch.setattr(cli.bigpicture, "summarize", boom)
+
+    body, memory = _night(tmp_path, tmp_path / "state.json", with_llm=True)
+    assert "big picture failed" in body
+    assert list(memory["views_reported"]) == ["youtube/_abc123XYZ-"]
+
+
+def test_views_prior_reaches_the_flip_marker(tmp_path, today, monkeypatch):
+    _views_corpus(tmp_path, monkeypatch)
+    [now] = cli.load_all_stances()
+    earlier = now.model_copy(update={
+        "id": "earlier", "lean": "bullish",
+        "source": now.source.model_copy(update={"published_at": "2026-08-10",
+                                                "transcript_ref": "youtube/old"})})
+    monkeypatch.setattr(cli, "load_all_stances", lambda *a, **k: [earlier, now])
+    body, _ = _night(tmp_path, tmp_path / "state.json")
+    assert "(high · was bullish Aug 10)" in body
+
+
+# ── the delivery gate on the memory ───────────────────────────────────────────
+
+class _Config:
+    to = ("me@example.com",)
+
+
+@pytest.fixture
+def delivery(tmp_path, today, monkeypatch):
+    """``main`` pointed at tmp files, with the mailer faked. Returns the memory path."""
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
+    orders = tmp_path / "orders.jsonl"
+    orders.write_text("", encoding="utf-8")
+    state_path = tmp_path / "state.json"
+    monkeypatch.setattr(cli, "STATE", state_path)
+    monkeypatch.setattr(cli, "load_env", lambda: None)
+    monkeypatch.setattr(cli.mail, "configure", lambda env: _Config())
+
+    def run(*flags):
+        return cli.main(["--snapshots", str(snaps), "--orders", str(orders), "--no-llm", *flags])
+    return run, state_path
+
+
+def test_a_preview_without_email_does_not_save_the_memory(delivery, capsys):
+    run, state_path = delivery
+    assert run() == 0
+    assert not state_path.exists()
+    assert "digest memory not saved: --email was not given" in capsys.readouterr().err
+
+
+def test_a_failed_send_does_not_save_the_memory(delivery, monkeypatch, capsys):
+    run, state_path = delivery
+    monkeypatch.setattr(cli.mail, "send", lambda *a, **k: False)
+    assert run("--email") == 0
+    assert not state_path.exists()
+    assert "digest memory not saved: the email send failed" in capsys.readouterr().err
+
+
+def test_an_unconfigured_mailer_does_not_save_the_memory(delivery, monkeypatch, capsys):
+    run, state_path = delivery
+
+    def unconfigured(env):
+        raise cli.mail.NotConfigured("no SMTP settings")
+    monkeypatch.setattr(cli.mail, "configure", unconfigured)
+    assert run("--email") == 0
+    assert not state_path.exists()
+    assert "digest memory not saved: email is not configured" in capsys.readouterr().err
+
+
+def test_a_delivered_email_saves_the_memory(delivery, monkeypatch, capsys):
+    run, state_path = delivery
+    monkeypatch.setattr(cli.mail, "send", lambda *a, **k: True)
+    assert run("--email") == 0
+    assert "views_reported" in json.loads(state_path.read_text(encoding="utf-8"))
+    assert "digest memory not saved" not in capsys.readouterr().err

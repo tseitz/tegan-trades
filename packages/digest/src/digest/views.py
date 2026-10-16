@@ -4,13 +4,19 @@ Folds stances and transcript sidecars into per-person blocks and renders them as
 Windowed on ``source.published_at``, never ``extracted_at``: extraction lags publication by
 days and a backfill would otherwise read as fresh views (see ``roster``).
 
+The window is "since the last digest", from memory: the caller scans ``SCAN_DAYS`` back and passes
+the refs already sent as ``reported``, which drop distilled videos only. ``WINDOW_DAYS`` is the
+bootstrap, when there is no memory yet. Stances carry an optional prior (the same person's
+previous lean on the asset), and each asset shows one status per video: flip, then new, then held.
+
 Lines are never hard-wrapped: the reader wraps them. ``htmlmail`` hangs a wrapped line under the
 text after a two-space label gap, so labels stay padded with at least two spaces.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 
 from core.rank import parse_date
@@ -19,6 +25,8 @@ from core.stance import Stance
 from digest.fmt import UNDATED, instant
 
 WINDOW_DAYS = 3
+SCAN_DAYS = 14
+MEMORY_DAYS = 28
 WATCHING_MAX = 3
 WATCHING_CHARS = 240
 COLLAPSED_PER_SIDE = 3
@@ -26,6 +34,8 @@ COLLAPSED_PER_SIDE = 3
 UNTITLED = "(untitled)"
 _LABEL = 9
 _CONVICTION_RANK = {"high": 0, "med": 1, None: 2, "low": 3}
+_FLIP, _NEW, _HELD = "flip", "new", "held"
+_STATUS_RANK = {_FLIP: 0, _NEW: 1, _HELD: 2}
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +47,14 @@ class Video:
     distilled: bool
     stances: tuple[Stance, ...]
     published_ts: str | None = None
+    priors: dict[str, dict] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class _Entry:
+    asset: str
+    high: bool
+    prior: dict | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,11 +66,15 @@ class PersonView:
 
 def fold(stances: list[Stance], sidecars: list[dict], *, today: date,
          collapsed: frozenset[str], window_days: int = WINDOW_DAYS,
-         distilled: frozenset[str] = frozenset()) -> list[PersonView]:
+         distilled: frozenset[str] = frozenset(), reported: frozenset[str] = frozenset(),
+         priors: Mapping[str, dict | None] | None = None) -> list[PersonView]:
     """Per-person video blocks inside the window, newest first.
 
     ``distilled`` is the set of refs that have a stance file. A ref with stances counts as
     distilled regardless, so the set only matters for files holding zero stances.
+
+    ``reported`` drops distilled videos only; an undistilled one stays until it is extracted.
+    ``priors`` maps ``Stance.id`` to the person's previous view, or ``None`` for a first view.
     """
     cutoff = today - timedelta(days=window_days - 1)
     by_ref: dict[str, list[Stance]] = {}
@@ -70,6 +92,11 @@ def fold(stances: list[Stance], sidecars: list[dict], *, today: date,
 
     people: dict[str, list[Video]] = {}
     for person, video in found.values():
+        if video.distilled and video.ref in reported:
+            continue
+        if priors:
+            video = replace(video, priors={s.id: p for s in video.stances
+                                           if (p := priors.get(s.id))})
         people.setdefault(person, []).append(video)
 
     views = [PersonView(person=name, collapsed=name in collapsed, videos=_newest_first(vids))
@@ -134,23 +161,75 @@ def _label(video: Video) -> str:
     return f'"{video.title}"'
 
 
-def _buckets(stances: tuple[Stance, ...]) -> dict[str, list[str]]:
-    """Assets per bucket, high conviction first, deduped within each. Empty buckets omitted."""
-    ordered = sorted(stances, key=lambda s: s.conviction != "high")
-    out: dict[str, list[str]] = {"Bullish": [], "Bearish": [], "Unsure": [], "Punts": []}
+def _key(asset: str) -> str:
+    return asset.strip().casefold()
+
+
+def _status(stance: Stance, priors: Mapping[str, dict]) -> str:
+    prior = priors.get(stance.id)
+    if not prior:
+        return _NEW
+    return _HELD if prior.get("lean") == stance.lean else _FLIP
+
+
+def _graded(video: Video) -> list[tuple[Stance, str]]:
+    """Each stance with its status, keeping only its asset's strongest one (flip > new > held)."""
+    graded = [(s, _status(s, video.priors)) for s in video.stances]
+    best: dict[str, int] = {}
+    for s, status in graded:
+        k = _key(s.asset)
+        best[k] = min(best.get(k, 99), _STATUS_RANK[status])
+    return [(s, status) for s, status in graded if _STATUS_RANK[status] == best[_key(s.asset)]]
+
+
+def _buckets(video: Video) -> dict[str, list[_Entry]]:
+    """Flip and new assets per bucket, high conviction first, deduped within each. Empty omitted."""
+    ordered = sorted((g for g in _graded(video) if g[1] != _HELD),
+                     key=lambda g: g[0].conviction != "high")
+    out: dict[str, list[_Entry]] = {"Bullish": [], "Bearish": [], "Unsure": [], "Punts": []}
     seen: dict[str, set[str]] = {k: set() for k in out}
-    for s in ordered:
+    for s, status in ordered:
         if s.lean in ("bullish", "bearish"):
             name = "Punts" if s.conviction == "low" else s.lean.capitalize()
         else:
             name = "Unsure"
-        key = s.asset.strip().casefold()
+        key = _key(s.asset)
         if not key or key in seen[name]:
             continue
         seen[name].add(key)
-        out[name].append(f"{s.asset.strip()} (high)" if s.conviction == "high"
-                         and name in ("Bullish", "Bearish") else s.asset.strip())
+        out[name].append(_Entry(
+            asset=s.asset.strip(),
+            high=s.conviction == "high" and name in ("Bullish", "Bearish"),
+            prior=video.priors.get(s.id) if status == _FLIP else None))
     return {k: v for k, v in out.items() if v}
+
+
+def _held(video: Video) -> list[str]:
+    """``BTC bullish`` per asset whose lean matches the previous view, high conviction first."""
+    ordered = sorted((g for g in _graded(video) if g[1] == _HELD),
+                     key=lambda g: g[0].conviction != "high")
+    out: list[str] = []
+    for s, _ in ordered:
+        text = f"{s.asset.strip()} {s.lean}"
+        if _key(s.asset) and text not in out:
+            out.append(text)
+    return out
+
+
+def _year(published_at: str) -> int | None:
+    d = parse_date(published_at)
+    return d.year if d else None
+
+
+def _entry_text(entry: _Entry, video_year: int | None) -> str:
+    notes = ["high"] if entry.high else []
+    if entry.prior:
+        when = _day(entry.prior["published_at"])
+        year = _year(entry.prior["published_at"])
+        if year is not None and year != video_year:
+            when += f" {year}"
+        notes.append(f"was {entry.prior['lean']} {when}")
+    return f"{entry.asset} ({' · '.join(notes)})" if notes else entry.asset
 
 
 def _watching(stances: tuple[Stance, ...]) -> list[str]:
@@ -180,8 +259,12 @@ def _fields(video: Video, indent: int, big_picture: str | None) -> list[str]:
     out: list[str] = []
     if big_picture:
         out += _line(big_picture, indent)
-    for name, assets in _buckets(video.stances).items():
-        out += _line(f"{name:<{_LABEL}}{', '.join(assets)}", indent)
+    year = _year(video.published_at)
+    for name, entries in _buckets(video).items():
+        text = ", ".join(_entry_text(e, year) for e in entries)
+        out += _line(f"{name:<{_LABEL}}{text}", indent)
+    if held := _held(video):
+        out += _line(f"{'Held':<{_LABEL}}{', '.join(held)}", indent)
     watching = _watching(video.stances)
     if watching:
         out += _line("Watching", indent)
@@ -239,28 +322,29 @@ def _collapsed_lines(view: PersonView, big_picture: str | None) -> list[str]:
         out += _line(big_picture, 4)
     quiet = 0
     for video in view.videos:
-        parts = _collapsed_parts(video.stances)
+        parts = _collapsed_parts(video)
         if not parts:
             quiet += 1
             continue
         out += _line(f"{_day(video.published_at)} · {_label(video)} — {' · '.join(parts)}", 4)
     if quiet:
-        out += _line(f"+{quiet} with no views or not yet distilled", 4)
+        out += _line(f"+{quiet} with nothing new or not yet distilled", 4)
     return out
 
 
-def _collapsed_parts(stances: tuple[Stance, ...]) -> list[str]:
+def _collapsed_parts(video: Video) -> list[str]:
     """Bullish/Bearish, high conviction first, capped. An asset on both sides is dropped."""
-    buckets = _buckets(stances)
-    sides = {name: [a.removesuffix(" (high)") for a in buckets.get(name, [])]
-             for name in ("Bullish", "Bearish")}
-    both = {a.casefold() for a in sides["Bullish"]} & {a.casefold() for a in sides["Bearish"]}
+    buckets = _buckets(video)
+    sides = {name: buckets.get(name, []) for name in ("Bullish", "Bearish")}
+    both = ({e.asset.casefold() for e in sides["Bullish"]}
+            & {e.asset.casefold() for e in sides["Bearish"]})
     parts = []
-    for name, assets in sides.items():
-        kept = [a for a in assets if a.casefold() not in both]
+    for name, entries in sides.items():
+        kept = [e for e in entries if e.asset.casefold() not in both]
         if not kept:
             continue
         more = len(kept) - COLLAPSED_PER_SIDE
-        parts.append(f"{name} {', '.join(kept[:COLLAPSED_PER_SIDE])}"
-                     + (f" +{more}" if more > 0 else ""))
+        texts = [f"{e.asset} (was {e.prior['lean']})" if e.prior else e.asset
+                 for e in kept[:COLLAPSED_PER_SIDE]]
+        parts.append(f"{name} {', '.join(texts)}" + (f" +{more}" if more > 0 else ""))
     return parts

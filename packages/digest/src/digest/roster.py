@@ -86,7 +86,7 @@ class NewView:
     """A view on a horizon this person had not spoken on before.
 
     Its own category rather than folded into either of the others, because it is neither. It
-    is not a flip — nothing was contradicted, and ``_fold_key`` keeps horizons apart precisely
+    is not a flip — nothing was contradicted, and ``fold_key`` keeps horizons apart precisely
     so a swing view and a macro view are never compared. It is not a new voice either, since
     the person was already on the record about this asset. Dropping it was the first behaviour
     here and it silently lost a real event: someone who held only a swing view turning bearish

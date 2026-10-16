@@ -34,6 +34,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import yaml
+from brain.retrieve import priors as stance_priors
 from brain.stance_store import exists as stance_exists
 from brain.stance_store import load_all_stances
 from core import networth
@@ -274,13 +275,13 @@ def _roster_section(current: dict, orders, open_keys, *, previous, with_llm: boo
                 None, ())
 
 
-def _sidecars(warn) -> list[dict]:
-    """Transcript sidecars published inside the VIEWS window.
+def _sidecars(warn, window_days: int) -> list[dict]:
+    """Transcript sidecars published inside the last ``window_days`` days.
 
     ``_``-prefixed names are kept: YouTube ids can start with ``_``. One unreadable file costs
     one warning, not the section.
     """
-    cutoff = datetime.now(UTC).date() - timedelta(days=views.WINDOW_DAYS - 1)
+    cutoff = datetime.now(UTC).date() - timedelta(days=window_days - 1)
     found, bad = [], []
     for path in sorted(TRANSCRIPTS.glob("*/*.json")):
         try:
@@ -306,39 +307,71 @@ def _collapsed(warn) -> frozenset[str]:
         return frozenset()
 
 
-def _canonical(stances, warn):
+def _registry(warn):
     try:
-        registry = load_registry(CONFIG_DIR)
+        return load_registry(CONFIG_DIR)
     except _CONFIG_ERRORS as exc:
-        warn(f"warning: could not read the asset registry, so VIEWS shows raw asset names: {exc}")
+        warn(f"warning: could not read the asset registry, so VIEWS shows raw asset names and "
+             f"no previous views: {exc}")
+        return None
+
+
+def _canonical(stances, registry):
+    if registry is None:
         return stances
     return [s.model_copy(update={"asset": resolve_asset(s.asset, registry)[0]}) for s in stances]
 
 
-def _views_section(*, with_llm: bool, warn) -> tuple[str | None, str | None]:
-    """``(views_text, views_note)`` — at most one is set.
+def _views_section(*, with_llm: bool, warn, seen: dict | None
+                   ) -> tuple[str | None, str | None, set[str] | None]:
+    """``(views_text, views_note, refs)`` — at most one of the first two is set.
 
-    Every outcome gets its own words, as in ``_roster_section``: nobody published, corpus
-    unreadable, and a broken big-picture call must not look alike. A failed big picture still
-    renders the lists, because they come from stances alone.
+    Every outcome gets its own words, as in ``_roster_section``: nobody published, everything
+    was already sent, corpus unreadable, and a broken big-picture call must not look alike. A
+    failed big picture still renders the lists, because they come from stances alone.
+
+    ``seen`` is ``state.views_seen``; ``None`` is bootstrap, which renders the short window.
+    ``refs`` is what to record: **``None`` only when the section did not run**, so the caller
+    carries the old memory over rather than writing an empty one. Bootstrap records every
+    distilled video in the scan range, not only the ones shown — the old digest already sent the
+    older ones, and recording only the shown would print days 4 to 14 as new on night two.
     """
     today = datetime.now(UTC).date()
     try:
         stances = load_all_stances()
-        sidecars = _sidecars(warn)
+        sidecars = _sidecars(warn, views.SCAN_DAYS)
     except _CONFIG_ERRORS as exc:
         warn(f"warning: could not read the corpus for VIEWS: {exc}")
-        return None, "  unavailable — the transcript or stance corpus could not be read"
+        return None, "  unavailable — the transcript or stance corpus could not be read", None
 
-    stances = _canonical(stances, warn)
+    registry = _registry(warn)
+    stances = _canonical(stances, registry)
     distilled = frozenset(
         f"{sc['platform']}/{sc['source_id']}" for sc in sidecars
         if sc.get("platform") and sc.get("source_id")
         and stance_exists(sc["platform"], sc["source_id"]))
-    folded = views.fold(stances, sidecars, today=today, collapsed=_collapsed(warn),
-                        distilled=distilled)
+    collapsed = _collapsed(warn)
+    scan = views.fold(stances, sidecars, today=today, collapsed=collapsed,
+                      window_days=views.SCAN_DAYS, distilled=distilled)
+    scan_videos = [v for view in scan for v in view.videos]
+    scan_distilled = {v.ref for v in scan_videos if v.distilled}
+    priors = (stance_priors(stances, registry, {v.ref for v in scan_videos})
+              if registry is not None else None)
+
+    bootstrap = seen is None
+    window_days = views.WINDOW_DAYS if bootstrap else views.SCAN_DAYS
+    folded = views.fold(stances, sidecars, today=today, collapsed=collapsed,
+                        window_days=window_days, distilled=distilled,
+                        reported=frozenset(seen or ()), priors=priors)
+    refs = scan_distilled if bootstrap else {
+        v.ref for view in folded for v in view.videos if v.distilled}
     if not folded:
-        return None, f"  no videos in the last {views.WINDOW_DAYS} days"
+        if bootstrap:
+            return None, f"  no videos in the last {views.WINDOW_DAYS} days", refs
+        if not scan_videos:
+            return None, f"  no videos in the last {views.SCAN_DAYS} days", refs
+        return (None, f"  nothing new — {len(scan_distilled & set(seen))} video(s) already in "
+                      f"an earlier digest", refs)
 
     big_picture = None
     if with_llm:
@@ -346,7 +379,8 @@ def _views_section(*, with_llm: bool, warn) -> tuple[str | None, str | None]:
                                 if not v.collapsed or s.conviction in ("high", "med")]
                      for v in folded}
         payload = bigpicture.payload(
-            by_person, high_volume=frozenset(v.person for v in folded if v.collapsed))
+            by_person, high_volume=frozenset(v.person for v in folded if v.collapsed),
+            priors=priors)
         try:
             lines = bigpicture.summarize(payload)
         except bigpicture.BigPictureFailed as exc:
@@ -355,7 +389,7 @@ def _views_section(*, with_llm: bool, warn) -> tuple[str | None, str | None]:
             big_picture, dropped = bigpicture.grounded(lines, payload)
             for message in dropped:
                 warn(f"warning: {message}")
-    return "\n".join(views.lines(folded, big_picture=big_picture)), None
+    return "\n".join(views.lines(folded, big_picture=big_picture)), None, refs
 
 
 def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
@@ -436,8 +470,9 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
         net_worth, net_worth_changes, net_worth_recorded = _networth(
             results=results, parked=parked, as_of=as_of, warn=warn)
 
-    views_text, views_note = (None, None) if subject_only else _views_section(
-        with_llm=with_llm, warn=warn)
+    views_seen = state.views_seen(memory)
+    views_text, views_note, views_refs = (None, None, None) if subject_only else _views_section(
+        with_llm=with_llm, warn=warn, seen=views_seen)
 
     xai_month = spend.total()
     run = _run_row(today, warn)
@@ -451,6 +486,8 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
                            net_worth=net_worth, net_worth_changes=net_worth_changes,
                            net_worth_recorded=net_worth_recorded,
                            views=views_text, views_note=views_note,
+                           views_heading=(render.VIEWS_HEADING if views_seen is None
+                                          else render.VIEWS_HEADING_SINCE),
                            stale_as_of=stale, problems=warn.items)
     subject = render.subject(delta, book=events, stale_as_of=stale, problems=len(warn.items),
                              repeat=state.is_repeat(memory, delta.previous_run),
@@ -458,7 +495,7 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
                              blocking=tuple((run or {}).get("blocking") or ()))
     return (subject, body,
             _next_memory(memory, reported, xai_month, delta.previous_run, *holdings_memories,
-                        treasury_memory)
+                        treasury_memory, views_refs)
             if state_path else None)
 
 
@@ -617,11 +654,20 @@ def _networth(*, results, parked, as_of, warn):
 
 def _next_memory(memory: dict, reported, xai_month: float, window_start: str | None,
                  holdings_memory: dict, holdings_levels: dict,
-                 treasury_memory: dict) -> dict:
+                 treasury_memory: dict, views_refs: set[str] | None) -> dict:
     """Tonight's memory. Pruned every run, not only on runs that reported something, so a quiet
-    week still clears keys that have aged out."""
+    week still clears keys that have aged out.
+
+    ``views_refs`` of ``None`` means VIEWS did not run, so ``views_reported`` is carried over
+    exactly as it was, absence included. Writing an empty one would read as "nothing sent yet".
+    """
+    views_memory = {} if views_refs is None else {
+        state.VIEWS: roster.remember(state.views_seen(memory) or {}, views_refs,
+                                     on=datetime.now(UTC).date(),
+                                     memory_days=views.MEMORY_DAYS)}
     return {
         **{k: v for k, v in memory.items() if k != "net_worth"},
+        **views_memory,
         state.ROSTER: roster.remember(state.roster_seen(memory), reported,
                                       on=datetime.now(UTC).date()),
         state.XAI: xai_month,
@@ -689,6 +735,7 @@ def main(argv: list[str] | None = None) -> int:
         if filed is not None:
             print(f"\nfiled to {filed}")
 
+    delivered, skipped = False, "--email was not given"
     if args.email:
         try:
             config = mail.configure(os.environ)
@@ -696,15 +743,23 @@ def main(argv: list[str] | None = None) -> int:
             # A warning, not a failure: the digest was still printed and still filed, and the
             # nightly should not go red over a missing optional setting.
             print(f"warning: {exc}", file=sys.stderr)
+            skipped = "email is not configured"
         else:
             if mail.send(config, subject, body, warn=lambda m: print(m, file=sys.stderr)):
                 print(f"emailed to {', '.join(config.to)}")
+                delivered = True
+            else:
+                skipped = "the email send failed"
 
-    # Last, once the digest has actually reached its surfaces. Recording earlier would mark
-    # tonight's roster movement as told even on a night the delivery failed, and this section
-    # never repeats itself — so that movement would be lost rather than delayed.
+    # Last, and only after a delivered email. Recording on a preview, an unconfigured mailer or
+    # a failed send would mark tonight's events as told when no inbox saw them, and these
+    # sections never repeat themselves — so those events would be lost rather than delayed.
     if memory is not None:
-        state.save(STATE, memory, warn=lambda m: print(m, file=sys.stderr))
+        if delivered:
+            state.save(STATE, memory, warn=lambda m: print(m, file=sys.stderr))
+        else:
+            print(f"digest memory not saved: {skipped}, so tonight's sections will repeat "
+                  f"tomorrow", file=sys.stderr)
     return 0
 
 

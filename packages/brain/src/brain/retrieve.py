@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import date
 
 from core.canon import Registry, resolve_asset, resolve_person
 from core.rank import parse_date
@@ -60,7 +61,7 @@ class RosterView:
     multi_author: dict[str, list[str]] = field(default_factory=dict)
 
 
-def _fold_key(person_canonical: str, asset_canonical: str, stance: Stance) -> tuple:
+def fold_key(person_canonical: str, asset_canonical: str, stance: Stance) -> tuple:
     """`(person, asset, horizon)` — deliberately WITHOUT `lean`.
 
     This is the decisive divergence from `distill.triage_cli.collapse_restatements`,
@@ -98,7 +99,7 @@ def fold_stances(stances: list[Stance], registry: Registry) -> list[FoldedStance
                 person_canonical=person_c, asset_canonical=asset_c,
             ))
             continue
-        groups.setdefault(_fold_key(person_c, asset_c, s), []).append((person_c, asset_c, s))
+        groups.setdefault(fold_key(person_c, asset_c, s), []).append((person_c, asset_c, s))
 
     folded: list[FoldedStance] = []
     for members in groups.values():
@@ -115,6 +116,54 @@ def fold_stances(stances: list[Stance], registry: Registry) -> list[FoldedStance
             asset_canonical=asset_c,
         ))
     return folded + singles
+
+
+def priors(
+    stances: list[Stance], registry: Registry, refs: set[str] | frozenset[str],
+) -> dict[str, dict | None]:
+    """For each stance whose `transcript_ref` is in `refs`: the same person's previous
+    view on that asset and horizon, as `{"lean", "published_at"}`, else `None`.
+
+    Keyed by `Stance.id`. Shares `fold_key` with `fold_stances` so the person/asset
+    resolution exists once. Plain dicts so callers need not import from `brain`.
+
+    The prior is the newest stance with a strictly *earlier date*. Stance dates are
+    date-only, so within one day there is no order: the same video, and same-day
+    siblings, are never a prior. If that earlier date holds conflicting leans there is
+    no clean prior (the `id` tie-break is a hash), so it is `None` too. `None` therefore means
+    "no clean prior", not always "first view".
+
+    `members` feeds get none: one name covers many speakers, so a lean change between
+    two guests is not a flip. Undated stances get none for the same no-order reason.
+    """
+    by_key: dict[tuple, list[tuple]] = {}
+    keyed: dict[str, tuple[tuple, date | None, str]] = {}
+    for s in stances:
+        person_c, _ = resolve_person(s.source.person, registry)
+        asset_c, _, _ = resolve_asset(s.asset, registry)
+        day = parse_date(s.source.published_at)
+        key = fold_key(person_c, asset_c, s)
+        if day is not None:
+            by_key.setdefault(key, []).append((day, s))
+        if s.source.transcript_ref in refs:
+            keyed[s.id] = (key, day, person_c)
+
+    out: dict[str, dict | None] = {}
+    for sid, (key, day, person_c) in keyed.items():
+        if day is None or person_c in registry.members:
+            out[sid] = None
+            continue
+        earlier = [(d, s) for d, s in by_key.get(key, []) if d < day]
+        if not earlier:
+            out[sid] = None
+            continue
+        newest = max(d for d, _ in earlier)
+        on_day = [s for d, s in earlier if d == newest]
+        if len({s.lean for s in on_day}) > 1:
+            out[sid] = None
+            continue
+        out[sid] = {"lean": on_day[0].lean, "published_at": on_day[0].source.published_at}
+    return out
 
 
 def summarize_split(folded: list[FoldedStance]) -> Split:

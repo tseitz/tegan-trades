@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 
 from core.stance import Stance
 
@@ -37,12 +38,16 @@ SCHEMA = {
 _SYSTEM = """You write one "big picture" line per person for a personal trading digest that is
 read in under a minute.
 
-You are given a JSON array. Each entry is one commentator and their stances from the last few
-days: asset, lean, conviction, horizon, rationale, watching, published_at.
+You are given a JSON array. Each entry is one commentator and their stances since the last digest:
+asset, lean, conviction, horizon, rationale, watching, published_at. A stance may carry "was":
+their previous lean on that asset and when. No "was" means a first view.
 
 Rules:
 - ONE line per person, under 25 words: their overall posture and WHY, and the one or two
   things they are watching.
+- Lead with what changed: a reversal ("was" differs from lean) or a first view outranks a
+  restatement. If nothing changed, say they are holding.
+- Never cite a date, including the one in "was".
 - Do not list their assets. The per-asset lists print directly under your line, so naming
   more than one or two assets only repeats them.
 - Use ONLY assets, levels and claims present in that person's entry. Never add a price, a
@@ -61,8 +66,13 @@ class BigPictureFailed(RuntimeError):
 
 
 def payload(by_person: dict[str, list[Stance]], *,
-            high_volume: frozenset[str] = frozenset()) -> list[dict]:
-    """Per-person model input. Persons with no stances are omitted."""
+            high_volume: frozenset[str] = frozenset(),
+            priors: Mapping[str, dict | None] | None = None) -> list[dict]:
+    """Per-person model input. Persons with no stances are omitted.
+
+    ``priors`` is keyed by ``Stance.id``; ``was`` is added only where a prior exists.
+    """
+    priors = priors or {}
     return [
         {
             "person": person,
@@ -72,6 +82,7 @@ def payload(by_person: dict[str, list[Stance]], *,
                     "asset": s.asset, "lean": s.lean, "conviction": s.conviction,
                     "horizon": s.horizon, "rationale": s.rationale, "watching": s.watching,
                     "published_at": s.source.published_at,
+                    **({"was": priors[s.id]} if priors.get(s.id) else {}),
                 }
                 for s in stances
             ],
@@ -89,10 +100,16 @@ def _numbers(text: str) -> set[str]:
     return {m.replace(",", "").rstrip(".") for m in _NUMBER.findall(text)}
 
 
+def _claims(stance: dict) -> dict:
+    """A stance without its dates. The prompt forbids citing a date, so a date's digits must not
+    ground a number either — a ``was`` dated the 5th would otherwise let an invented "5x" through."""
+    return {k: v for k, v in stance.items() if k not in ("published_at", "was")}
+
+
 def grounded(lines: dict[str, str], payload_: list[dict]) -> tuple[dict[str, str], list[str]]:
     """Keep lines whose numbers all appear in that person's payload; warn for the rest."""
     sources = {
-        e["person"]: _numbers(json.dumps(e["stances"], ensure_ascii=False))
+        e["person"]: _numbers(json.dumps([_claims(s) for s in e["stances"]], ensure_ascii=False))
         for e in payload_
     }
     kept: dict[str, str] = {}
