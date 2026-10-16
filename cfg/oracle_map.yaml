@@ -215,8 +215,14 @@ assets:
 # price story is the named asset, and the roster never discusses the wrapper on its own terms.
 #
 # `METH` (a staked-ETH wrapper, held in the crypto book) is deliberately absent. It qualifies by
-# the same logic as `ETHB`, but issue #61 named only `HODL` and `ETHB` — adding it is a curation
-# judgement for a human, not something this ticket decided.
+# the same logic as `ETHB`, but adding it is a curation judgement for a human that nobody has
+# made yet.
+#
+# `PURR` is deliberately absent: it is Hyperliquid Strategies Inc, a HYPE-treasury company, not
+# a fund, and the roster discusses it on its own terms. A `wraps:` entry would replace those
+# theses with HYPE's.
 wraps:
   HODL: BTC   # Bitwise Bitcoin ETF
   ETHB: ETH   # Bitwise Ethereum ETF
+  BSOL: SOL   # Bitwise Solana Staking ETF
+  ZCSH: ZEC   # Grayscale Zcash
