@@ -318,15 +318,31 @@ def cash_from(payload: dict, *, accounts: tuple[str, ...] = ()
     right — the same ticker in both is one exposure. Their *cash* does not combine that way:
     you cannot buy in the Roth with Traditional money. The total is still a true number, but
     only the split says which of it you can actually spend where.
+
+    **A cash holding beats ``available`` when the account sends one.** SoFi's ``available``
+    ran $7.8k above both its own ``CUR:USD`` holding and the app's buying power; where the two
+    agree (Robinhood) nothing changes, and M1 sends no cash holding, so it keeps ``available``.
     """
-    seen = [a for a in payload.get("accounts") or ()
-            if (a.get("type") or "") == INVESTMENT
-            and (not accounts or a.get("account_id") in accounts)
-            and isinstance((a.get("balances") or {}).get("available"), int | float)]
-    if not seen:
+    securities = {s["security_id"]: s for s in payload.get("securities") or ()}
+    held_cash: dict[str, float] = {}
+    for held in payload.get("holdings") or ():
+        value = held.get("institution_value")
+        if _is_cash(securities.get(held.get("security_id")) or {}) and isinstance(
+                value, int | float):
+            held_cash[held["account_id"]] = held_cash.get(held["account_id"], 0.0) + value
+
+    by: dict[str, float] = {}
+    for a in payload.get("accounts") or ():
+        if (a.get("type") or "") != INVESTMENT or (accounts and a.get("account_id") not in accounts):
+            continue
+        available = (a.get("balances") or {}).get("available")
+        cash = held_cash.get(a["account_id"])
+        if cash is None and isinstance(available, int | float):
+            cash = available
+        if cash is not None:
+            by[str(a.get("name") or a["account_id"])] = float(cash)
+    if not by:
         return None, {}
-    by = {str(a.get("name") or a["account_id"]): float(a["balances"]["available"])
-          for a in seen}
     return float(sum(by.values())), by
 
 

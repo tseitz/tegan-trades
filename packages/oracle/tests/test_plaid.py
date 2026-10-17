@@ -173,6 +173,28 @@ def test_a_savings_account_reached_by_the_same_login_is_not_buying_power():
     assert total == 6979.55
 
 
+def test_a_cash_holding_beats_available_when_the_broker_sends_one():
+    """SoFi, 2026-10-17: `available` 10,789.04, a `CUR:USD` holding of 3,005.74, and the app's
+    buying power 3,005.74. Robinhood's two agree; M1 sends no cash holding at all."""
+    cash = dict(_holding("c", 3005.74, account="brokerage"), institution_value=3005.74)
+    total, by = plaid.cash_from(_payload(
+        cash, securities=[_security("c", "CUR:USD", kind="cash")],
+        accounts=[_account("brokerage", available=10789.04, name="SoFi Self-directed"),
+                  _account("roth", available=28.47, name="Roth IRA")],
+    ))
+    assert by == {"SoFi Self-directed": 3005.74, "Roth IRA": 28.47}
+    assert total == pytest.approx(3034.21)
+
+
+def test_a_cash_holding_alone_still_counts_without_a_balance():
+    cash = dict(_holding("c", 50.0, account="a"), institution_value=50.0)
+    total, _ = plaid.cash_from(_payload(
+        cash, securities=[_security("c", "USD", kind="cash")],
+        accounts=[{"account_id": "a", "type": "investment", "name": "x", "balances": {}}],
+    ))
+    assert total == 50.0
+
+
 def test_naming_accounts_narrows_the_cash_too():
     total, _ = plaid.cash_from(_payload(accounts=[
         _account("roth", available=3379.57), _account("taxable", available=1000.0),
