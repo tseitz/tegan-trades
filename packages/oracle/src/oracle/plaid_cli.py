@@ -19,7 +19,7 @@ from pathlib import Path
 from core.env import REPO_ROOT
 from core.transactions import InvestmentTransaction
 
-from oracle import plaid, portfolios, transaction_store
+from oracle import balance_store, plaid, portfolios, transaction_store
 
 # ADR-0003's Plaid ceiling: /investments/transactions/get reaches at most 2 years back from
 # when an Item was linked.
@@ -148,6 +148,8 @@ def sync(argv: list[str] | None = None) -> int:
         _report(before, now)
         for miss in skipped:
             print(f"    dropped {miss.what}: {miss.why}")
+        if not _sync_balances(name, payload, dry_run=args.dry_run):
+            failures += 1
 
         if _wants_history(name):
             _sync_transactions(name, token, narrowed=narrowed, dry_run=args.dry_run)
@@ -157,6 +159,33 @@ def sync(argv: list[str] | None = None) -> int:
     print(f"\nsynced {datetime.now(UTC).date().isoformat()}. "
           f"Prices: uv run fetch-prices --all-portfolios")
     return 0
+
+
+def _sync_balances(name: str, payload: dict, *, dry_run: bool) -> bool:
+    """Snapshot the depository balances. Ignores ``_narrow``: ``plaid_accounts`` narrows
+    positions, and applying it here would drop the savings account. False on failure."""
+    try:
+        balances = plaid.balances_from(payload)
+        if not balances:
+            return True
+        carried: tuple[str, ...] = ()
+        if not dry_run:
+            carried = balance_store.merge_write(
+                name, balances, fetched_at=datetime.now(UTC), root=balance_store.DATA_ROOT)
+    except (plaid.PlaidError, balance_store.BalanceStoreError) as exc:
+        print(f"{name}: balances not saved — {exc}", file=sys.stderr)
+        return False
+    shown = ", ".join(
+        f"{n} {_money(b['current'] if b['current'] is not None else b['available'])} "
+        f"(available {_money(b['available'])})" for n, b in balances.items())
+    print(f"    balances: {shown}")
+    for gone in carried:
+        print(f"    {gone} not in tonight's payload", file=sys.stderr)
+    return True
+
+
+def _money(value) -> str:
+    return "n/a" if value is None else f"{value:,.2f}"
 
 
 def _wants_history(name: str) -> bool:

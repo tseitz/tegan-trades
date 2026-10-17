@@ -295,3 +295,30 @@ def test_an_explicit_null_amount_does_not_crash_and_becomes_zero():
     assert rows[0].amount == 0.0
 
 
+
+
+def _depository(name, *, kind="depository", available=10.0, current=11.0):
+    return {"account_id": name, "type": kind, "subtype": "savings", "name": name,
+            "balances": {"available": available, "current": current}}
+
+
+def test_balances_cover_depository_accounts_only_keyed_by_name():
+    found = plaid.balances_from(_payload(accounts=[
+        _depository("SoFi Savings"),
+        _depository("Card", kind="credit"),
+        _account("brokerage"),
+    ]))
+    assert found == {"SoFi Savings": {"subtype": "savings", "available": 10.0, "current": 11.0}}
+
+
+def test_two_depository_accounts_with_one_name_raise():
+    with pytest.raises(plaid.PlaidError, match="Savings"):
+        plaid.balances_from(_payload(accounts=[_depository("Savings"), _depository("Savings")]))
+
+
+def test_a_non_numeric_balance_is_stored_as_unknown():
+    found = plaid.balances_from(_payload(accounts=[
+        {"account_id": "s", "type": "depository", "name": "Savings",
+         "balances": {"available": "lots", "current": float("nan")}}]))
+    assert found["Savings"]["available"] is None
+    assert found["Savings"]["current"] is None

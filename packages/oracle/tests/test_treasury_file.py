@@ -170,3 +170,38 @@ def test_a_missing_updated_falls_back_to_mtime(tmp_path):
     )
     book = load(path=path)
     assert book.updated == datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).date()
+
+
+SYNCED = GOOD.split("parked:")[0] + """parked:
+  - what: USD
+    venue: sofi
+    balance: {plaid: sofi, account: "SoFi Savings"}
+"""
+
+
+def test_a_balance_row_loads_unresolved_without_reading_any_snapshot(tmp_path, monkeypatch):
+    """Preflight calls `load`; a missing snapshot there would halt the sync that repairs it."""
+    from oracle import balance_store
+
+    def explode(*args, **kwargs):
+        raise AssertionError("load must not read a balance snapshot")
+
+    monkeypatch.setattr(balance_store, "read", explode)
+    monkeypatch.setattr(balance_store, "DATA_ROOT", tmp_path / "no-such-dir")
+    book = load(path=_write(tmp_path, SYNCED))
+    assert book.rows[0].amount is None
+    assert book.rows[0].source == ("sofi", "SoFi Savings")
+
+
+@pytest.mark.parametrize("row", [
+    "    amount: 10\n    balance: {plaid: sofi, account: x}\n",
+    "",
+    "    balance: {plaid: sofi}\n",
+    "    balance: {plaid: sofi, account: x, extra: y}\n",
+    "    balance: {plaid: 1, account: x}\n",
+    "    balance: sofi\n",
+])
+def test_a_row_needs_exactly_one_well_formed_source(tmp_path, row):
+    body = GOOD.split("parked:")[0] + "parked:\n  - what: USD\n    venue: sofi\n" + row
+    with pytest.raises(TreasuryError):
+        load(path=_write(tmp_path, body))

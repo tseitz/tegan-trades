@@ -2,7 +2,9 @@
 
 Reads only. No fetch, no network, places nothing — same policy as ``review`` and ``compare``
 for the same reason: a report that fetches makes "run it again" an unpredictable wait. The
-treasury file and every portfolio file are hand-kept; the Safety-gate readings this prints are
+treasury file is hand-kept, and a row that names a Plaid account takes its number from the
+snapshot `plaid-sync` last wrote to `data/balances/`; every portfolio file is synced or
+hand-kept, and the Safety-gate readings this prints are
 whatever `fetch-altsignal` last wrote to `data/altsignal/`, read through `oracle.altsignal_store`
 the same way `compare`/`review` already do.
 
@@ -11,12 +13,14 @@ the same way `compare`/`review` already do.
 from __future__ import annotations
 
 import argparse
+import dataclasses
+import math
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from oracle import altsignal_config, altsignal_store, portfolios
+from oracle import altsignal_config, altsignal_store, balance_store, portfolios
 from oracle.benchmarks import ANCHOR_ROOT
-from oracle.treasury_file import TREASURY_PATH, load
+from oracle.treasury_file import TREASURY_PATH, ParkedRow, TreasuryBook, load
 
 from treasury.book import TreasuryResult, treasury_for
 from treasury.render import render
@@ -38,11 +42,57 @@ def _load_books(*, root: Path, warn) -> tuple:
     return tuple(books)
 
 
+def _resolve(book: TreasuryBook, *, root: Path, warn) -> TreasuryBook:
+    """Price every ``balance:`` row from its snapshot. A miss warns (naming the sync that
+    repairs it) and drops the row, so no caller ever sees ``amount=None``. ``updated`` becomes
+    the oldest "as of": the file's date for hand rows, the fetch date for synced ones."""
+    rows: list[ParkedRow] = []
+    dates: list[date] = []
+    snapshots: dict[str, dict | None] = {}
+    for row in book.rows:
+        if row.source is None:
+            rows.append(row)
+            dates.append(book.updated)
+            continue
+        portfolio, account = row.source
+        fix = f"run `uv run plaid-sync {portfolio}`"
+        if portfolio not in snapshots:
+            try:
+                snapshots[portfolio] = balance_store.read(portfolio, root=root)
+            except balance_store.BalanceStoreError as exc:
+                warn(f"{row.what} at {row.venue} was left out — {exc}; {fix}")
+                snapshots[portfolio] = None
+            else:
+                if snapshots[portfolio] is None:
+                    warn(f"{row.what} at {row.venue} was left out — no balance snapshot "
+                         f"for {portfolio!r}; {fix}")
+        snapshot = snapshots[portfolio]
+        if snapshot is None:
+            continue
+        entry = snapshot["accounts"].get(account)
+        if entry is None:
+            warn(f"{row.what} at {row.venue} was left out — {account!r} is not in the "
+                 f"{portfolio!r} snapshot; {fix}")
+            continue
+        value = entry.get("current")
+        if value is None:
+            value = entry.get("available")
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value)):
+            warn(f"{row.what} at {row.venue} was left out — {account!r} has no balance "
+                 f"in the {portfolio!r} snapshot; {fix}")
+            continue
+        fetched = datetime.fromisoformat(entry["fetched_at"]).date()
+        rows.append(dataclasses.replace(row, amount=float(value), as_of=fetched))
+        dates.append(fetched)
+    return dataclasses.replace(book, rows=tuple(rows), updated=min(dates, default=book.updated))
+
+
 def load_result(
     *, file: Path = TREASURY_PATH, portfolios_root: Path = portfolios.DATA_ROOT,
     altsignal_root: Path = altsignal_store.DATA_ROOT, cfg_dir: Path = CONFIG_DIR,
     anchor_root: Path = ANCHOR_ROOT, as_of: date | None = None, warn,
-    books: tuple | None = None,
+    balances_root: Path | None = None, books: tuple | None = None,
 ) -> TreasuryResult | None:
     """The whole card for one loaded treasury book, or ``None`` when there is nothing parked.
 
@@ -60,6 +110,7 @@ def load_result(
     book = load(path=file)
     if book is None:
         return None
+    book = _resolve(book, root=balances_root or balance_store.DATA_ROOT, warn=warn)
 
     resolved_books = _load_books(root=portfolios_root, warn=warn) if books is None else books
     venues = altsignal_config.load(cfg_dir).venues

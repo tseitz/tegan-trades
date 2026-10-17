@@ -9,7 +9,10 @@
 # NOTHING WRITES THIS FILE. Every portfolio sync (`plaid-sync`, `wallet-sync`) replaces only
 # the `positions:` block of the file it touches, and this file has no such block — it is
 # hand-kept, always. Deploying money into a yield venue is rare and deliberate, so typing the
-# row here is not a burden.
+# row here is not a burden. The one lookup: a row may carry `balance: {plaid: <portfolio>,
+# account: "<Plaid account name>"}` instead of `amount:`, and its number is then read from the
+# snapshot `plaid-sync` writes to `data/balances/` (a missing one is warned about and the row
+# left out until the next sync).
 #
 # Required, and validated exactly like a portfolio's `mandate:` block — but with one extra
 # rule: `benchmarks` here must be `flat_rate` only. Treasury is judged against a flat cash
@@ -32,7 +35,7 @@ mandate:
 # numbers went stale, and a forgotten `updated:` would silently produce no staleness signal.
 updated: 2026-09-16
 
-# One row per parked amount. `amount` is USD, hand-typed — never `shares × price`. An
+# One row per parked amount. `amount` (exactly one of `amount` or `balance`) is USD, hand-typed — never `shares × price`. An
 # off-chain T-bill has no ticker and no price series, and Treasury's whole premise is that
 # this principal holds its value, so nothing here is ever re-priced.
 #

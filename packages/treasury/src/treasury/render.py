@@ -162,12 +162,12 @@ def _idle_block(result: TreasuryResult) -> str:
 
 
 def written_text(age_days: int | None) -> str | None:
-    """The clause naming how old the book is, with no leading separator — `render()` composes
+    """The clause naming how old the book's oldest number is, with no leading separator — `render()` composes
     the ` · ` itself. Deliberately the same name and signature as `review.render.written_text`:
     it is the same sentence about a different file, and a second spelling would drift from it."""
     if age_days is None:
         return None
-    return f"written {'today' if age_days == 0 else f'{age_days} days ago'}"
+    return f"oldest figure {'today' if age_days == 0 else f'{age_days} days ago'}"
 
 
 def money(value: float) -> str:

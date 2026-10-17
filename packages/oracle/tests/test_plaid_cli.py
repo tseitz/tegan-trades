@@ -11,13 +11,14 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from core.transactions import InvestmentTransaction
-from oracle import plaid, plaid_cli, portfolios, transaction_store
+from oracle import balance_store, plaid, plaid_cli, portfolios, transaction_store
 
 
 @pytest.fixture(autouse=True)
 def _roots(tmp_path, monkeypatch):
     monkeypatch.setattr(portfolios, "DATA_ROOT", tmp_path / "portfolios")
     monkeypatch.setattr(transaction_store, "DATA_ROOT", tmp_path / "transactions")
+    monkeypatch.setattr(balance_store, "DATA_ROOT", tmp_path / "balances")
     (tmp_path / "portfolios").mkdir()
     (tmp_path / "transactions").mkdir()
     return tmp_path
@@ -207,3 +208,50 @@ def test_the_plaid_accounts_narrowing_reaches_the_transaction_call(monkeypatch, 
     monkeypatch.setattr(plaid, "transactions_from", fake_from)
     assert plaid_cli.sync(["retirement"]) == 0
     assert seen["accounts"] == ("a1",)
+
+
+def _with_savings(monkeypatch):
+    payload = _holdings_payload()
+    payload["accounts"].append({"account_id": "s1", "type": "depository", "subtype": "savings",
+                                "name": "SoFi Savings", "mask": "2222",
+                                "balances": {"available": 34045.6, "current": 34045.6}})
+    monkeypatch.setattr(plaid, "access_token", lambda name: "tok")
+    monkeypatch.setattr(plaid, "holdings", lambda token: payload)
+
+
+def test_a_sync_writes_the_snapshot_under_the_patched_root(monkeypatch, _roots, capsys):
+    _portfolio(_roots, "sofi", NO_HISTORY_MANDATE)
+    _with_savings(monkeypatch)
+    assert plaid_cli.sync(["sofi"]) == 0
+    doc = balance_store.read("sofi", root=_roots / "balances")
+    assert doc["accounts"]["SoFi Savings"]["current"] == 34045.6
+    assert "balances: SoFi Savings 34,045.60 (available 34,045.60)" in capsys.readouterr().out
+
+
+def test_dry_run_prints_balances_and_writes_nothing(monkeypatch, _roots, capsys):
+    _portfolio(_roots, "sofi", NO_HISTORY_MANDATE)
+    _with_savings(monkeypatch)
+    assert plaid_cli.sync(["sofi", "--dry-run"]) == 0
+    assert "balances: SoFi Savings" in capsys.readouterr().out
+    assert not (_roots / "balances").exists()
+
+
+def test_a_sync_with_no_usable_positions_writes_no_snapshot(monkeypatch, _roots):
+    _portfolio(_roots, "sofi", NO_HISTORY_MANDATE)
+    payload = {"holdings": [], "securities": [], "accounts": [
+        {"account_id": "s1", "type": "depository", "name": "SoFi Savings",
+         "balances": {"available": 1.0, "current": 1.0}}]}
+    monkeypatch.setattr(plaid, "access_token", lambda name: "tok")
+    monkeypatch.setattr(plaid, "holdings", lambda token: payload)
+    assert plaid_cli.sync(["sofi"]) == 1
+    assert not (_roots / "balances").exists()
+
+
+def test_a_malformed_snapshot_fails_the_step_and_is_left_alone(monkeypatch, _roots):
+    _portfolio(_roots, "sofi", NO_HISTORY_MANDATE)
+    _with_savings(monkeypatch)
+    (_roots / "balances").mkdir()
+    bad = _roots / "balances" / "sofi.json"
+    bad.write_text("{nope", encoding="utf-8")
+    assert plaid_cli.sync(["sofi"]) == 1
+    assert bad.read_text(encoding="utf-8") == "{nope"

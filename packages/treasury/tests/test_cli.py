@@ -118,3 +118,94 @@ def test_load_result_takes_pre_loaded_books_rather_than_reglobbing(tmp_path, mon
         anchor_root=tmp_path / "anchors.json", as_of=date(2026, 9, 16), books=(),
         warn=lambda m: None)
     assert result is not None
+
+
+# ── `balance:` rows resolve from the snapshot in `load_result` ──────────────
+
+SYNCED = FIXTURE.split("parked:")[0] + """parked:
+  - what: USD
+    venue: sofi
+    balance: {plaid: sofi, account: "SoFi Savings"}
+"""
+HAND_ROW = "  - what: USDC\n    amount: 1000.00\n    venue: aave-v3\n    apy: 4.21\n"
+
+
+def _snapshot(tmp_path, accounts):
+    import json
+    root = tmp_path / "balances"
+    root.mkdir(exist_ok=True)
+    (root / "sofi.json").write_text(json.dumps({"accounts": accounts}), encoding="utf-8")
+    return root
+
+
+def _entry(current, available, fetched_at="2026-09-14T11:00:00+00:00"):
+    return {"subtype": "savings", "current": current, "available": available,
+            "fetched_at": fetched_at}
+
+
+def _synced_result(tmp_path, body, balances_root, said):
+    fixture = tmp_path / "treasury.yaml"
+    fixture.write_text(body, encoding="utf-8")
+    return cli.load_result(
+        file=fixture, portfolios_root=tmp_path / "portfolios",
+        altsignal_root=tmp_path / "altsignal", cfg_dir=tmp_path / "cfg",
+        anchor_root=tmp_path / "anchors.json", as_of=date(2026, 9, 16),
+        balances_root=balances_root, warn=said.append)
+
+
+def test_a_synced_row_resolves_from_current_and_dates_the_book_by_its_fetch(tmp_path):
+    root = _snapshot(tmp_path, {"SoFi Savings": _entry(34045.60, 30000.0)})
+    said = []
+    result = _synced_result(tmp_path, SYNCED, root, said)
+    assert said == []
+    assert result.total == 34045.60
+    assert result.updated == date(2026, 9, 14)
+    assert result.age_days == 2
+
+
+def test_available_is_the_fallback_when_current_is_absent(tmp_path):
+    entry = _entry(None, 500.0)
+    del entry["current"]
+    root = _snapshot(tmp_path, {"SoFi Savings": entry})
+    assert _synced_result(tmp_path, SYNCED, root, []).total == 500.0
+
+
+def test_a_zero_balance_resolves_to_zero(tmp_path):
+    root = _snapshot(tmp_path, {"SoFi Savings": _entry(0.0, 0.0)})
+    said = []
+    result = _synced_result(tmp_path, SYNCED, root, said)
+    assert said == []
+    assert result.total == 0.0 and len(result.rows) == 1
+
+
+def test_a_missing_snapshot_warns_naming_the_sync_and_drops_the_row(tmp_path):
+    said = []
+    result = _synced_result(tmp_path, SYNCED + HAND_ROW, tmp_path / "balances", said)
+    assert len(said) == 1 and "uv run plaid-sync sofi" in said[0]
+    assert [r.what for r in result.rows] == ["USDC"]
+
+
+def test_a_missing_account_warns_and_drops_the_row(tmp_path):
+    root = _snapshot(tmp_path, {"Other": _entry(1.0, 1.0)})
+    said = []
+    result = _synced_result(tmp_path, SYNCED + HAND_ROW, root, said)
+    assert len(said) == 1 and "SoFi Savings" in said[0] and "plaid-sync sofi" in said[0]
+    assert all(r.amount is not None for r in result.rows)
+
+
+def test_a_malformed_snapshot_warns_rather_than_raising(tmp_path):
+    root = tmp_path / "balances"
+    root.mkdir()
+    (root / "sofi.json").write_text("{nope", encoding="utf-8")
+    said = []
+    result = _synced_result(tmp_path, SYNCED + HAND_ROW, root, said)
+    assert len(said) == 1 and "plaid-sync sofi" in said[0]
+    assert len(result.rows) == 1
+
+
+def test_a_mixed_file_takes_the_oldest_as_of(tmp_path):
+    root = _snapshot(tmp_path, {"SoFi Savings": _entry(10.0, 10.0, "2026-09-10T11:00:00+00:00")})
+    result = _synced_result(tmp_path, SYNCED + HAND_ROW, root, [])
+    assert result.updated == date(2026, 9, 1)
+    root = _snapshot(tmp_path, {"SoFi Savings": _entry(10.0, 10.0, "2026-08-20T11:00:00+00:00")})
+    assert _synced_result(tmp_path, SYNCED + HAND_ROW, root, []).updated == date(2026, 8, 20)

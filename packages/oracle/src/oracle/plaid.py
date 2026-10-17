@@ -27,6 +27,7 @@ re-linking that connection. It reaches 2 years back from link (``ADR-0003``'s Pl
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import time
@@ -62,6 +63,7 @@ class PlaidError(Exception):
 # arrives with Checking, Savings and Self-directed together — and only this one holds money you
 # could put into a position. Summing the others would report a savings balance as buying power.
 INVESTMENT = "investment"
+DEPOSITORY = "depository"
 
 
 # The row shapes and the file writer live in `portfolios`, beside the reader that parses them
@@ -344,6 +346,34 @@ def cash_from(payload: dict, *, accounts: tuple[str, ...] = ()
     if not by:
         return None, {}
     return float(sum(by.values())), by
+
+
+def _finite(value) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
+        return None
+    return float(value)
+
+
+def balances_from(payload: dict) -> dict[str, dict]:
+    """``{account name: {subtype, available, current}}`` for depository accounts only.
+
+    Credit accounts are left out: their ``available`` is available credit, not money. Raises on
+    two accounts sharing a name, since the name is the key a Treasury row looks up by.
+    """
+    found: dict[str, dict] = {}
+    for a in payload.get("accounts") or ():
+        if (a.get("type") or "") != DEPOSITORY:
+            continue
+        name = str(a.get("name") or a.get("account_id") or "")
+        if not name:
+            raise PlaidError("a depository account arrived with no name and no id")
+        if name in found:
+            raise PlaidError(f"two depository accounts are both named {name!r}")
+        balances = a.get("balances") or {}
+        found[name] = {"subtype": a.get("subtype"),
+                       "available": _finite(balances.get("available")),
+                       "current": _finite(balances.get("current"))}
+    return found
 
 
 def remember_token(portfolio: str, token: str, *, env: Path) -> str:

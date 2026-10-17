@@ -9,11 +9,15 @@ skip-list to maintain there, and the glob keeps meaning "pots you read on a char
 list is empty, so a cash-only file in that shape would not load at all. A row is also the right
 shape here: a parked amount carries a venue and an APY, which a single float cannot.
 
-**Hand-kept, never synced.** ``portfolios.write_positions`` replaces everything below the
-``positions:`` marker on every sync, so a synced file can never also hold a hand-typed row — an
-off-chain T-bill would be erased the next time a broker sync ran. Nothing in this repo writes
-``data/treasury.yaml``; deploying money is rare and deliberate, so typing the row by hand is not
-a burden. See ``cfg/treasury.example.yaml`` for the worked deployed-versus-idle example.
+**Hand-kept declaration; a row's number may be looked up.** ``portfolios.write_positions``
+replaces everything below the ``positions:`` marker on every sync, so a synced file can never
+also hold a hand-typed row — an off-chain T-bill would be erased the next time a broker sync ran.
+Nothing in this repo writes ``data/treasury.yaml``. A row carries either a typed ``amount`` or a
+``balance: {plaid, account}`` naming a depository account whose number ``plaid-sync`` stores in
+``data/balances/``. ``load`` only validates that declaration and never reads a snapshot: preflight
+calls it, and a preflight failure halts every nightly step, including the sync that would repair
+a missing snapshot. ``treasury.cli.load_result`` resolves the number. See
+``cfg/treasury.example.yaml`` for the worked deployed-versus-idle example.
 """
 from __future__ import annotations
 
@@ -40,7 +44,9 @@ class TreasuryError(Exception):
 class ParkedRow:
     """One parked amount, as written down.
 
-    ``amount`` is USD, hand-typed — never ``shares × price``. An off-chain T-bill has no
+    ``amount`` is USD — hand-typed, or None while a ``balance:`` row (``source`` =
+    ``(portfolio, account)``) awaits resolution; ``as_of`` is then the snapshot's fetch date.
+    Never ``shares × price``. An off-chain T-bill has no
     ticker, no ``oracle_map`` route and no price series, so a shares-and-price row cannot
     represent it, and Treasury's whole premise is that this principal holds its value rather
     than needing a nightly re-price. ``apy`` is likewise hand-typed: it is the receipt for the
@@ -49,10 +55,12 @@ class ParkedRow:
     """
 
     what: str
-    amount: float
+    amount: float | None
     venue: str
     apy: float | None = None
     since: date | None = None
+    source: tuple[str, str] | None = None
+    as_of: date | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,17 +151,38 @@ def _parked_row(row, *, index: int, path: Path) -> ParkedRow:
     if not isinstance(venue, str) or not venue.strip():
         raise TreasuryError(f"{where}: missing `venue`")
 
-    amount = _number(row.get("amount"), field="amount", where=where)
-    if amount is None or amount <= 0:
-        raise TreasuryError(f"{where}: `amount` must be a positive number, got {row.get('amount')!r}")
+    amount: float | None = None
+    source: tuple[str, str] | None = None
+    if (row.get("amount") is None) == (row.get("balance") is None):
+        raise TreasuryError(f"{where}: give exactly one of `amount` or `balance`")
+    if row.get("balance") is not None:
+        source = _balance_source(row["balance"], where=where)
+    else:
+        amount = _number(row.get("amount"), field="amount", where=where)
+        if amount is None or amount <= 0:
+            raise TreasuryError(
+                f"{where}: `amount` must be a positive number, got {row.get('amount')!r}")
 
     return ParkedRow(
         what=what.strip(),
         amount=amount,
+        source=source,
         venue=venue.strip(),
         apy=_number(row.get("apy"), field="apy", where=where),
         since=_date(row.get("since"), field="since", where=where),
     )
+
+
+def _balance_source(raw, *, where: str) -> tuple[str, str]:
+    if (not isinstance(raw, dict) or set(raw) != {"plaid", "account"}
+            or not all(isinstance(v, str) and v.strip() for v in raw.values())):
+        raise TreasuryError(
+            f"{where}: `balance` must be a mapping of exactly `plaid` and `account`, "
+            f"both non-empty strings, got {raw!r}")
+    portfolio = raw["plaid"].strip()
+    if Path(portfolio).name != portfolio or portfolio in (".", ".."):
+        raise TreasuryError(f"{where}: `balance.plaid` must be a portfolio name, got {portfolio!r}")
+    return portfolio, raw["account"].strip()
 
 
 def _updated(raw, *, path: Path) -> date:

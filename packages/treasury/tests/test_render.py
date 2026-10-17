@@ -34,7 +34,7 @@ def test_head_line_names_mandate_row_count_total_as_of_and_age():
     assert "1 row(s)" in out
     assert "$1,000.00" in out
     assert "as of 2026-09-16" in out
-    assert "written 15 days ago" in out
+    assert "oldest figure 15 days ago" in out
 
 
 def test_a_none_window_prints_as_a_dash_not_a_zero():
@@ -146,3 +146,9 @@ def test_no_idle_block_when_nothing_clears_the_gate():
         idle=(IdleCash(mandate="checking", account="checking", amount=2000.0),), advice=(),
     ))
     assert "IDLE CASH" not in out
+
+
+def test_written_text_says_as_of():
+    from treasury.render import written_text
+    assert written_text(0) == "oldest figure today"
+    assert written_text(3) == "oldest figure 3 days ago"
