@@ -3,7 +3,7 @@ import { fetchNetworth, type NetworthResponse, type NetworthRow } from "./api/cl
 import { useDocumentTitle } from "./documentTitle";
 import { useRefresh } from "./refresh/RefreshProvider";
 
-const MONEY = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+export const MONEY = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const COMPACT = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",

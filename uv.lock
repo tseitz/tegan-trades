@@ -1287,6 +1287,7 @@ version = "0.1.0"
 source = { editable = "packages/networth" }
 dependencies = [
     { name = "core" },
+    { name = "pyyaml" },
     { name = "review" },
     { name = "treasury" },
 ]
@@ -1299,6 +1300,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "core", editable = "packages/core" },
+    { name = "pyyaml", specifier = ">=6" },
     { name = "review", editable = "packages/review" },
     { name = "treasury", editable = "packages/treasury" },
 ]

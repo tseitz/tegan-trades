@@ -518,3 +518,47 @@ def networth_response(rows, *, today) -> NetworthResponse:
                                   baseline_date=c.baseline.date)
                   for c in changes.values()],
     )
+
+
+class ExposurePart(BaseModel):
+    book: str
+    ticker: str
+    value: float
+
+
+class ExposureSlice(BaseModel):
+    asset: str
+    value: float
+    pct: float | None
+    parts: list[ExposurePart]
+
+
+class ExposureExcluded(BaseModel):
+    book: str
+    ticker: str
+    reason: Literal["unpriced", "mismatched"]
+
+
+class ExposureResponse(BaseModel):
+    total: float | None
+    slices: list[ExposureSlice]
+    excluded: list[ExposureExcluded]
+    problems: list[str]
+    prices: str
+
+
+def exposure_response(exposure, problems, *, freshness) -> ExposureResponse:
+    if exposure is None:
+        return ExposureResponse(total=None, slices=[], excluded=[], problems=list(problems),
+                                prices=freshness.message)
+    return ExposureResponse(
+        total=exposure.total,
+        slices=[ExposureSlice(asset=s.asset, value=s.value, pct=s.pct,
+                              parts=[ExposurePart(book=p.book, ticker=p.ticker, value=p.value)
+                                     for p in s.parts])
+                for s in exposure.slices],
+        excluded=[ExposureExcluded(book=e.book, ticker=e.ticker, reason=e.reason)
+                  for e in exposure.excluded],
+        problems=list(problems),
+        prices=freshness.message,
+    )

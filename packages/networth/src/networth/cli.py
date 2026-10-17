@@ -17,6 +17,7 @@ from review.cli import load_books, price_freshness, review_for
 from treasury.cli import load_result
 from treasury.render import money
 
+from networth import exposure as exposure_view
 from networth import ledger
 
 
@@ -72,6 +73,29 @@ def _drift(previous: networth.Row, net: networth.NetWorth, *, books_changed: boo
     return reasons
 
 
+def by_asset(*, as_of: date) -> int:
+    """Live net worth regrouped by underlying asset. Records nothing, and renders on a partial
+    load with the problems on stderr."""
+    problems: list[str] = []
+    books = load_books(warn=problems.append)
+    result = exposure_view.assemble(books, as_of=as_of, warn=problems.append)
+    for problem in problems:
+        print(f"networth: {problem}", file=sys.stderr)
+    if result is None:
+        print("networth: nothing to sum", file=sys.stderr)
+        return 0
+    print(f"net worth {money(result.total)} (live)")
+    for s in result.slices:
+        pct = "n/a" if s.pct is None else f"{s.pct:.1%}"
+        print(f"{s.asset:<10} {money(s.value):>14} {pct:>7}")
+        for p in s.parts:
+            print(f"    {p.book:<14} {p.ticker:<10} {money(p.value):>14}")
+    if result.excluded:
+        print("excluded: " + ", ".join(f"{e.book}/{e.ticker} ({e.reason})"
+                                       for e in result.excluded))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--record", action="store_true",
@@ -81,12 +105,19 @@ def main(argv: list[str] | None = None) -> int:
                              "from the last row — after adding, removing or renaming one")
     parser.add_argument("--unpriced-ok", action="store_true",
                         help="record even though more holdings are unpriced than last time")
+    parser.add_argument("--by-asset", action="store_true",
+                        help="tonight's net worth regrouped by underlying asset, live; "
+                             "records nothing")
     parser.add_argument("--ledger", type=Path, default=ledger.LEDGER,
                         help=f"ledger file (default: {ledger.LEDGER})")
     args = parser.parse_args(argv)
+    if args.by_asset and args.record:
+        parser.error("--by-asset records nothing; drop --record")
 
     now = datetime.now(UTC)
     today = now.date()
+    if args.by_asset:
+        return by_asset(as_of=today)
     try:
         net = tonight(as_of=today)
     except Refused as exc:

@@ -5,6 +5,7 @@ description = "Record tonight's net worth, and read the history back"
 requires-python = ">=3.12"
 dependencies = [
     "core",
+    "pyyaml>=6",
     "review",
     "treasury",
 ]

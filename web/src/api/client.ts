@@ -10,6 +10,7 @@ export type TreasuryResponse = components["schemas"]["TreasuryResponse"];
 export type YieldsResponse = components["schemas"]["YieldsResponse"];
 export type NetworthResponse = components["schemas"]["NetworthResponse"];
 export type NetworthRow = components["schemas"]["NetworthRow"];
+export type ExposureResponse = components["schemas"]["ExposureResponse"];
 
 export async function fetchMandates(): Promise<MandateList> {
   const response = await fetch("/api/mandates");
@@ -49,6 +50,14 @@ export async function fetchNetworth(): Promise<NetworthResponse> {
     throw new Error(`GET /api/networth failed: ${response.status}`);
   }
   return response.json() as Promise<NetworthResponse>;
+}
+
+export async function fetchExposure(): Promise<ExposureResponse> {
+  const response = await fetch("/api/exposure");
+  if (!response.ok) {
+    throw new Error(`GET /api/exposure failed: ${response.status}`);
+  }
+  return response.json() as Promise<ExposureResponse>;
 }
 
 export async function startRefresh(): Promise<RefreshJobStatus> {

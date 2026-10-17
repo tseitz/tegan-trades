@@ -89,6 +89,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/exposure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Exposure */
+        get: operations["get_exposure_api_exposure_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/refresh": {
         parameters: {
             query?: never;
@@ -184,6 +201,51 @@ export interface components {
             label: string;
             /** Text */
             text: string;
+        };
+        /** ExposureExcluded */
+        ExposureExcluded: {
+            /** Book */
+            book: string;
+            /** Ticker */
+            ticker: string;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "unpriced" | "mismatched";
+        };
+        /** ExposurePart */
+        ExposurePart: {
+            /** Book */
+            book: string;
+            /** Ticker */
+            ticker: string;
+            /** Value */
+            value: number;
+        };
+        /** ExposureResponse */
+        ExposureResponse: {
+            /** Total */
+            total: number | null;
+            /** Slices */
+            slices: components["schemas"]["ExposureSlice"][];
+            /** Excluded */
+            excluded: components["schemas"]["ExposureExcluded"][];
+            /** Problems */
+            problems: string[];
+            /** Prices */
+            prices: string;
+        };
+        /** ExposureSlice */
+        ExposureSlice: {
+            /** Asset */
+            asset: string;
+            /** Value */
+            value: number;
+            /** Pct */
+            pct: number | null;
+            /** Parts */
+            parts: components["schemas"]["ExposurePart"][];
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -623,6 +685,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["YieldsResponse"];
+                };
+            };
+        };
+    };
+    get_exposure_api_exposure_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExposureResponse"];
                 };
             };
         };

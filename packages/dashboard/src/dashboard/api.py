@@ -8,18 +8,21 @@ from datetime import UTC, date, datetime
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from networth import ledger
+from networth.exposure import assemble
 from review.cli import altsignal_settings, load_books, price_freshness, review_for
 from treasury.cli import load_result
 from yields.scan import yields_for
 
 from dashboard.refresh import RefreshJobs
 from dashboard.wire import (
+    ExposureResponse,
     MandateList,
     NetworthResponse,
     RefreshJobStatus,
     ReviewDocument,
     TreasuryResponse,
     YieldsResponse,
+    exposure_response,
     networth_response,
     refresh_job_status,
     review_document,
@@ -29,12 +32,28 @@ from dashboard.wire import (
 )
 
 
-def mandate_books() -> list:
+def mandate_load() -> tuple[list, list[str]]:
+    """The books and every load warning. Warnings still print to stderr; `problems` is what
+    lets a page show them. FastAPI caches a dependency per request, so the files are read once.
+    """
+    problems: list[str] = []
+
+    def warn(message: str) -> None:
+        problems.append(message)
+        print(f"warning: {message}", file=sys.stderr)
+
+    return load_books(warn=warn), problems
+
+
+_MANDATE_LOAD = Depends(mandate_load)
+
+
+def mandate_books(load=_MANDATE_LOAD) -> list:
     """The only way Mandates enter this process. A FastAPI dependency rather than a direct
     call so `test_boundaries`-adjacent tests can override it, and so `test_api` can prove the
     switcher reaches `review.cli.load_books` rather than reading the directory itself.
     """
-    return load_books(warn=lambda m: print(f"warning: {m}", file=sys.stderr))
+    return load[0]
 
 
 _MANDATE_BOOKS = Depends(mandate_books)
@@ -146,6 +165,16 @@ def yields_result(books: list = _MANDATE_BOOKS, as_of: date = _AS_OF_TODAY, cfg=
 _YIELDS_RESULT = Depends(yields_result)
 
 
+def exposure_result(load=_MANDATE_LOAD, as_of: date = _AS_OF_TODAY):
+    """`(Exposure | None, problems)`: books' load warnings plus Treasury's."""
+    books, load_problems = load
+    problems = list(load_problems)
+    return assemble(books, as_of=as_of, warn=problems.append), problems
+
+
+_EXPOSURE_RESULT = Depends(exposure_result)
+
+
 def refresh_jobs(request: Request) -> RefreshJobs:
     """The one registry per app instance, off `app.state` — mirrors `mandate_books` so
     `test_refresh.py` can override this one dependency with a stubbed registry instead of
@@ -197,6 +226,10 @@ def create_app() -> FastAPI:
     @app.get("/api/yields")
     def get_yields(result=_YIELDS_RESULT) -> YieldsResponse:
         return yields_response(result)
+
+    @app.get("/api/exposure")
+    def get_exposure(result=_EXPOSURE_RESULT, freshness=_DATA_FRESHNESS) -> ExposureResponse:
+        return exposure_response(*result, freshness=freshness)
 
     @app.post("/api/refresh")
     def start_refresh(request: Request, jobs: RefreshJobs = _REFRESH_JOBS) -> RefreshJobStatus:

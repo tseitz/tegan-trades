@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from typing import Literal
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,24 +34,37 @@ class NetWorth:
     by_book: dict[str, float] = field(default_factory=dict)
 
 
-def _pot(result) -> tuple[float, int, list[str]]:
-    """One portfolio's contribution: priced holdings plus cash, by the same precedence
-    `treasury.book._idle_rows` already uses — `cash_by_account` when present, else `cash`.
-    `result` is duck-typed like `holdings.Change.reading`, so this module stays pure: it reads
+def _split(result):
+    """One portfolio's holdings split by the one exclusion rule: `(priced, left_out)`, where
+    `priced` is `(reading, value)` and `left_out` is `(reading, reason)`. `result` is
+    duck-typed like `holdings.Change.reading`, so this module stays pure: it reads
     `.readings[*].market_value`, `.mismatched` and `.book.cash`/`.book.cash_by_account`,
     nothing else."""
-    mismatched = [ticker for ticker, _, _ in result.mismatched]
-    market = 0.0
-    unpriced = 0
+    mismatched = {ticker for ticker, _, _ in result.mismatched}
+    priced = []
+    left_out = []
     for reading in result.readings:
-        if reading.market_value is None or reading.holding.ticker in mismatched:
-            unpriced += 1
+        if reading.market_value is None:
+            left_out.append((reading, "unpriced"))
+        elif reading.holding.ticker in mismatched:
+            left_out.append((reading, "mismatched"))
         else:
-            market += reading.market_value
+            priced.append((reading, reading.market_value))
+    return priced, left_out
 
-    book = result.book
-    cash = sum(book.cash_by_account.values()) if book.cash_by_account else (book.cash or 0.0)
-    return market + cash, unpriced, mismatched
+
+def _cash(book) -> float:
+    """`cash_by_account` when present, else `cash` — the precedence `treasury.book._idle_rows`
+    already uses."""
+    return sum(book.cash_by_account.values()) if book.cash_by_account else (book.cash or 0.0)
+
+
+def _pot(result) -> tuple[float, int, list[str]]:
+    """One portfolio's contribution: priced holdings plus cash."""
+    priced, left_out = _split(result)
+    market = sum(value for _, value in priced)
+    mismatched = [ticker for ticker, _, _ in result.mismatched]
+    return market + _cash(result.book), len(left_out), mismatched
 
 
 def of(results, *, parked: float | None) -> NetWorth | None:
@@ -87,6 +101,75 @@ def of(results, *, parked: float | None) -> NetWorth | None:
     return NetWorth(total=total, pots=pots, unpriced=unpriced,
                     mismatched=tuple(dict.fromkeys(mismatched)), parked=float(parked),
                     by_book=by_book)
+
+
+# ── exposure by underlying asset ─────────────────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class Part:
+    book: str
+    ticker: str
+    value: float
+
+
+@dataclass(frozen=True, slots=True)
+class Slice:
+    asset: str
+    value: float
+    pct: float | None
+    parts: tuple[Part, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Excluded:
+    book: str
+    ticker: str
+    reason: Literal["unpriced", "mismatched"]
+
+
+@dataclass(frozen=True, slots=True)
+class Exposure:
+    total: float
+    slices: tuple[Slice, ...]
+    excluded: tuple[Excluded, ...]
+
+
+def exposure(results, *, parked: float | None, group_of) -> Exposure | None:
+    """Net worth regrouped by underlying asset. `group_of(reading) -> str` is injected, so
+    this module knows nothing of aliases or wraps. `None` exactly when `of()` is `None`, and
+    `total` is `of()`'s own figure, so the two cannot disagree. Cash is one `"Cash"` slice."""
+    net = of(results, parked=parked)
+    if net is None:
+        return None
+
+    parts: dict[str, list[Part]] = {}
+    excluded: list[Excluded] = []
+    cash_parts: list[Part] = []
+    for result in results:
+        name = result.book.name
+        priced, left_out = _split(result)
+        for reading, value in priced:
+            parts.setdefault(group_of(reading), []).append(
+                Part(book=name, ticker=reading.holding.ticker, value=value))
+        excluded += [Excluded(book=name, ticker=r.holding.ticker, reason=reason)
+                     for r, reason in left_out]
+        cash = _cash(result.book)
+        if cash:
+            cash_parts.append(Part(book=name, ticker="cash", value=cash))
+    if parked:
+        cash_parts.append(Part(book="treasury", ticker="parked", value=float(parked)))
+    if cash_parts:
+        parts["Cash"] = cash_parts
+
+    def make(asset: str, group: list[Part]) -> Slice:
+        value = sum(p.value for p in group)
+        return Slice(asset=asset, value=value,
+                     pct=value / net.total if net.total else None, parts=tuple(group))
+
+    slices = sorted((make(asset, group) for asset, group in parts.items()),
+                    key=lambda s: s.value, reverse=True)
+    return Exposure(total=net.total, slices=tuple(slices), excluded=tuple(excluded))
 
 
 # ── the ledger row ───────────────────────────────────────────────────────────

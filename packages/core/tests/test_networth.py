@@ -23,8 +23,8 @@ def _reading(ticker, price, shares=1.0) -> Reading:
     )
 
 
-def _result(*, readings=(), cash=None, cash_by_account=None, mismatched=()):
-    book = SimpleNamespace(name="book", cash=cash, cash_by_account=cash_by_account or {})
+def _result(*, readings=(), cash=None, cash_by_account=None, mismatched=(), name="book"):
+    book = SimpleNamespace(name=name, cash=cash, cash_by_account=cash_by_account or {})
     return SimpleNamespace(readings=list(readings), book=book, mismatched=mismatched)
 
 
@@ -188,3 +188,95 @@ def test_a_naive_recorded_at_is_refused():
     raw["recorded_at"] = "2026-10-20T11:00:00"
     with pytest.raises(networth.RowError, match="timezone"):
         networth.parse(raw)
+
+
+# ── `exposure()` ──────────────────────────────────────────────────────────────
+
+_GROUPS = {"WETH": "ETH", "BMNR": "ETH"}
+
+
+def _group(reading):
+    return _GROUPS.get(reading.holding.ticker, reading.holding.ticker)
+
+
+def _slice(exp, asset):
+    return next(s for s in exp.slices if s.asset == asset)
+
+
+def test_exposure_groups_holdings_by_the_injected_rule():
+    a = _result(name="a", readings=[_reading("ETH", 2000.0), _reading("WETH", 2000.0, 0.5)])
+    b = _result(name="b", readings=[_reading("BMNR", 10.0, 10.0), _reading("SPY", 100.0)])
+    exp = networth.exposure([a, b], parked=0.0, group_of=_group)
+    eth = _slice(exp, "ETH")
+    assert eth.value == 3100.0
+    assert [(p.book, p.ticker) for p in eth.parts] == [
+        ("a", "ETH"), ("a", "WETH"), ("b", "BMNR")]
+    assert _slice(exp, "SPY").value == 100.0
+
+
+def test_the_same_ticker_in_two_books_merges_into_one_slice():
+    a = _result(name="a", readings=[_reading("GLD", 100.0)])
+    b = _result(name="b", readings=[_reading("GLD", 100.0, 2.0)])
+    exp = networth.exposure([a, b], parked=0.0, group_of=_group)
+    gld = _slice(exp, "GLD")
+    assert gld.value == 300.0
+    assert [p.book for p in gld.parts] == ["a", "b"]
+
+
+def test_slices_are_sorted_by_value_descending():
+    a = _result(readings=[_reading("SPY", 100.0), _reading("ETH", 500.0), _reading("BTC", 300.0)])
+    exp = networth.exposure([a], parked=0.0, group_of=_group)
+    assert [s.asset for s in exp.slices] == ["ETH", "BTC", "SPY"]
+
+
+def test_unpriced_and_mismatched_holdings_are_excluded_with_their_reason():
+    spx = (("SPX", 7718.94, 0.35),)
+    a = _result(name="a", readings=[_reading("SPY", 100.0), _reading("PURR", None),
+                                    _reading("SPX", 7718.94, 5400.0)], mismatched=spx)
+    exp = networth.exposure([a], parked=0.0, group_of=_group)
+    assert exp.excluded == (networth.Excluded("a", "PURR", "unpriced"),
+                            networth.Excluded("a", "SPX", "mismatched"))
+    assert [s.asset for s in exp.slices] == ["SPY"]
+
+
+def test_cash_is_one_slice_with_a_part_per_book_and_the_parked_pot():
+    a = _result(name="a", cash=40.0)
+    b = _result(name="b", cash=999.0, cash_by_account={"roth": 10.0, "trad": 5.0})
+    c = _result(name="c", readings=[_reading("SPY", 100.0)])
+    exp = networth.exposure([a, b, c], parked=200.0, group_of=_group)
+    cash = _slice(exp, "Cash")
+    assert cash.value == 255.0
+    assert cash.parts == (networth.Part("a", "cash", 40.0), networth.Part("b", "cash", 15.0),
+                          networth.Part("treasury", "parked", 200.0))
+
+
+def test_exposure_total_is_exactly_ofs_and_the_slices_sum_to_it():
+    a = _result(name="a", readings=[_reading("ETH", 0.1), _reading("WETH", 0.2, 3.0)], cash=0.3)
+    b = _result(name="b", readings=[_reading("BMNR", 0.7, 7.0)], cash_by_account={"x": 0.1})
+    exp = networth.exposure([a, b], parked=0.05, group_of=_group)
+    assert exp.total == networth.of([a, b], parked=0.05).total
+    assert sum(s.value for s in exp.slices) == pytest.approx(exp.total)
+    assert sum(s.pct for s in exp.slices) == pytest.approx(1.0)
+
+
+def test_exposure_is_none_exactly_when_of_is():
+    assert networth.exposure(None, parked=0.0, group_of=_group) is None
+    assert networth.exposure([], parked=None, group_of=_group) is None
+    assert networth.exposure([], parked=0.0, group_of=_group) is None
+
+
+def test_an_all_unpriced_night_with_no_cash_is_an_exposure_not_none():
+    a = _result(name="a", readings=[_reading("PURR", None)])
+    exp = networth.exposure([a], parked=0.0, group_of=_group)
+    assert exp is not None
+    assert exp.total == 0.0
+    assert exp.slices == ()
+    assert exp.excluded == (networth.Excluded("a", "PURR", "unpriced"),)
+
+
+def test_pct_is_none_when_the_total_is_zero():
+    a = _result(name="a", readings=[_reading("PURR", None)], cash=0.0)
+    b = _result(name="b", readings=[_reading("SPY", 0.0)])
+    exp = networth.exposure([a, b], parked=0.0, group_of=_group)
+    assert exp.total == 0.0
+    assert [s.pct for s in exp.slices] == [None]

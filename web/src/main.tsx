@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { App } from "./App";
 import "./index.css";
+import { ExposurePage } from "./ExposurePage";
 import { MandatePage } from "./MandatePage";
 import { NetworthPage } from "./NetworthPage";
 import { RefreshProvider } from "./refresh/RefreshProvider";
@@ -21,6 +22,7 @@ createRoot(document.getElementById("root")!).render(
             <Route path="/treasury" element={<TreasuryPage />} />
             <Route path="/yields" element={<YieldsPage />} />
             <Route path="/networth" element={<NetworthPage />} />
+            <Route path="/exposure" element={<ExposurePage />} />
           </Route>
         </Routes>
       </RefreshProvider>

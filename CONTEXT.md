@@ -15,8 +15,12 @@ An asset class — `crypto` or `stock`. It selects a price source. It is **not**
 _Avoid_: Using it to mean what the money is for.
 
 **Net worth**:
-Everything you have, summed across every Mandate: each Mandate's holdings plus its own cash. Settled 2026-09-15 ([ADR-0007](adr/0007-net-worth-reader.md)) as the one deliberate, narrow crossing of the Mandate boundary — a percentage inside a Mandate still never crosses it; this is the sole reader that sums across all of them. Each dollar lands in exactly one Mandate, which is what the Deployed/Idle line exists to guarantee. Recorded nightly to `data/networth.jsonl` ([ADR-0013](adr/0013-net-worth-history.md)).
+Everything you have, summed across every Mandate: each Mandate's holdings plus its own cash. Settled 2026-09-15 ([ADR-0007](adr/0007-net-worth-reader.md)) as the one deliberate, narrow crossing of the Mandate boundary — a percentage inside a Mandate still never crosses it; this and its Exposure breakdown ([ADR-0014](adr/0014-exposure-by-underlying-asset.md)) are the only readers that sum across all of them. Each dollar lands in exactly one Mandate, which is what the Deployed/Idle line exists to guarantee. Recorded nightly to `data/networth.jsonl` ([ADR-0013](adr/0013-net-worth-history.md)).
 _Avoid_: Whole, total, book — this repo does not have a standing word for "everything inside one Mandate merged across its accounts"; describe that in plain words where it's needed instead of reaching for a proper noun.
+
+**Exposure**:
+Net worth grouped by the asset each Holding actually moves with, not by its ticker or its Mandate. ETH in a wallet, an ETH ETF in retirement and an ETH-treasury stock are one ETH Exposure. Cash and Treasury's parked money form one Cash group, so the groups sum to net worth ([ADR-0014](adr/0014-exposure-by-underlying-asset.md)). Groups are curated in `cfg/exposure.yaml`, on top of `cfg/assets.yaml` aliases and `cfg/oracle_map.yaml` `wraps:`.
+_Avoid_: Using it for one Mandate's weights — that is still a percentage inside a Mandate.
 
 **Benchmark**:
 What "doing nothing instead" would have returned for a Mandate, so performance can be judged against the Mandate's own goal rather than a generic index. A Mandate carries one to three — a market index, a flat synthetic rate, or its own holdings left untraded — capped there so the comparison stays legible rather than open-ended.

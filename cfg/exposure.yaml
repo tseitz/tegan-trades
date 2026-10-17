@@ -1,0 +1,11 @@
+# Which underlying asset a holding is exposure to, for `networth --by-asset`. Three sources, each
+# fact stated once, applied in this order:
+#   1. assets.yaml alias   (WETH -> ETH)    the holding IS the asset and reprices as it
+#   2. oracle_map `wraps:` (ETHB -> ETH)    a fund priced on its own ticker
+#   3. this file                            only what the first two must not say
+# PURR and BMNR are companies that hold HYPE and ETH. An alias would reprice them as the coin;
+# a `wraps:` entry would replace their own roster fold. A key here that is also a `wraps:` key
+# is a test failure, so the order never decides a real case.
+underlying:
+  PURR: HYPE
+  BMNR: ETH
