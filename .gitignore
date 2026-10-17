@@ -35,3 +35,5 @@ web/*.tsbuildinfo
 .claude/plans/
 # Local log of sandbox denials, read by the sandbox-friction skill.
 .claude/sandbox-friction.jsonl
+
+.playwright-mcp/
