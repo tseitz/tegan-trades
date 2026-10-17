@@ -219,6 +219,14 @@ def _curated_unpriceable_reasons():
     return {a: s["unpriceable"] for a, s in routes.items() if isinstance(s, dict) and "unpriceable" in s}
 
 
+def test_every_curated_source_is_one_fetch_prices_can_fetch():
+    """A source misspelled in cfg/oracle_map.yaml routes fine and then fails every nightly
+    fetch as a per-symbol `error:KeyError` — never as a test failure."""
+    from oracle.fetch_cli import _SOURCES
+    sources = {s["source"] for s in _curated_routes().values()}
+    assert sources <= set(_SOURCES), f"no fetcher for: {sources - set(_SOURCES)}"
+
+
 def test_every_curated_unpriceable_reason_belongs_to_a_named_group():
     """A reason spelled in cfg/oracle_map.yaml that route.py cannot name is invisible to
     setups_cli's tally — it falls into the catch-all `ungrouped` bucket instead of `computable`,

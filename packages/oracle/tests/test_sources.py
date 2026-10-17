@@ -9,7 +9,7 @@ from itertools import pairwise
 from pathlib import Path
 
 import pytest
-from oracle.sources import coinbase, kraken, yahoo
+from oracle.sources import coinbase, geckoterminal, kraken, yahoo
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -265,3 +265,64 @@ def test_kraken_error_payload_returns_empty():
 
 def test_kraken_symbol_for_builds_usd_pair():
     assert kraken.symbol_for("XMR") == "XMRUSD"
+
+
+# ── GeckoTerminal ───────────────────────────────────────────────────────────
+
+ANSEM = "solana/9cRCn9rGT8V2imeM2BaKs13yhMEais3ruM3rPvTGpump"
+
+
+def test_geckoterminal_parses_newest_first_rows_into_ascending_bars():
+    bars = geckoterminal.parse_ohlcv(_fixture("geckoterminal_ansem_daily"))
+    assert [b.date for b in bars] == sorted(b.date for b in bars)
+    last = bars[-1]
+    assert last.date == date(2026, 10, 17)
+    assert last.open == pytest.approx(0.11910047)
+    assert last.close == pytest.approx(0.11509277)
+
+
+def test_geckoterminal_picks_the_deepest_pool_not_the_first_listed():
+    pools = _fixture("geckoterminal_ansem_pools")
+    assert pools["data"][0]["attributes"]["address"] != "FnzKY6x7entQ1eR3D225dQyT7ybfka4PskBMQhb8L3CC"
+    assert geckoterminal.deepest_pool(pools) == "FnzKY6x7entQ1eR3D225dQyT7ybfka4PskBMQhb8L3CC"
+
+
+def test_geckoterminal_prices_the_held_token_not_the_pools_other_side():
+    calls = []
+
+    def get_json(url, params=None):
+        calls.append((url, params))
+        return _fixture("geckoterminal_ansem_pools" if url.endswith("/pools")
+                        else "geckoterminal_ansem_daily")
+
+    bars = geckoterminal.fetch_daily(ANSEM, date(2026, 10, 15), date(2026, 10, 16),
+                                     get_json=get_json)
+    ohlcv_url, params = calls[1]
+    assert "/pools/FnzKY6x7entQ1eR3D225dQyT7ybfka4PskBMQhb8L3CC/ohlcv/day" in ohlcv_url
+    assert params["token"] == "9cRCn9rGT8V2imeM2BaKs13yhMEais3ruM3rPvTGpump"
+    assert params["currency"] == "usd"
+    assert [b.date for b in bars] == [date(2026, 10, 15), date(2026, 10, 16)]
+
+
+def test_geckoterminal_token_with_no_pools_returns_empty():
+    assert geckoterminal.fetch_daily(ANSEM, date(2026, 1, 1), date(2026, 2, 1),
+                                     get_json=lambda url, params=None: {"data": []}) == []
+
+
+def test_geckoterminal_rejects_a_symbol_without_a_network():
+    with pytest.raises(ValueError):
+        geckoterminal.split_symbol("9cRCn9rGT8V2imeM2BaKs13yhMEais3ruM3rPvTGpump")
+
+
+def test_geckoterminal_drops_rows_that_are_not_a_real_price():
+    payload = _fixture("geckoterminal_ansem_daily")
+    rows = payload["data"]["attributes"]["ohlcv_list"]
+    rows[0] = [rows[0][0], 0, 0, 0, 0, 0]
+    rows[1] = [rows[1][0], "nan", 1, 1, 1, 0]
+    assert len(geckoterminal.parse_ohlcv(payload)) == len(rows) - 2
+
+
+def test_geckoterminal_refuses_a_pool_address_that_could_rewrite_the_url():
+    pools = {"data": [{"attributes": {"address": "../../evil?x=", "reserve_in_usd": "1"}}]}
+    with pytest.raises(ValueError):
+        geckoterminal.deepest_pool(pools)

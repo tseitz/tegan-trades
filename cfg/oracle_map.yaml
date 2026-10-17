@@ -135,6 +135,10 @@ assets:
   # data/prices/coinbase/LIGHTER-USD.json.
   LIT:      {source: coinbase, symbol: "LIGHTER-USD"}
 
+  # On-chain only — no exchange lists it. Routed by mint address, which names one token, so the
+  # ticker can't collide. Close matched the wallet's Zerion mark on 2026-10-17.
+  ANSEM:    {source: geckoterminal, symbol: "solana/9cRCn9rGT8V2imeM2BaKs13yhMEais3ruM3rPvTGpump"}
+
   # ── dominance / index metrics: TradingView-only concepts, no price feed ──
   BTC.D:    {unpriceable: dominance_metric}
   USDT.D:   {unpriceable: dominance_metric}

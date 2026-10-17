@@ -21,12 +21,17 @@ from oracle import marks as marks_mod
 from oracle.plan import FetchJob, plan_fetches
 from oracle.route import load_routing_table
 from oracle.series import PriceSeries
-from oracle.sources import coinbase, kraken, yahoo
+from oracle.sources import coinbase, geckoterminal, kraken, yahoo
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 CONFIG_DIR = REPO_ROOT / "cfg"
 
-_SOURCES = {"coinbase": coinbase, "kraken": kraken, "yahoo": yahoo}
+_SOURCES = {
+    "coinbase": coinbase,
+    "geckoterminal": geckoterminal,
+    "kraken": kraken,
+    "yahoo": yahoo,
+}
 
 # Minimum daily history per series, back from today. Two years, chosen against the source
 # ceilings rather than against a structure requirement — Kraken hard-caps at 720 candles, so

@@ -1,0 +1,100 @@
+{
+ "data": [
+  {
+   "id": "solana_6e7V9eegCHw997T72MxgwwJipZ6GJyZF8NvjkzT1rvpN",
+   "type": "pool",
+   "attributes": {
+    "address": "6e7V9eegCHw997T72MxgwwJipZ6GJyZF8NvjkzT1rvpN",
+    "name": "ANSEM / SOL",
+    "reserve_in_usd": "628404.3792",
+    "base_token_price_usd": "0.1147448584"
+   },
+   "relationships": {
+    "base_token": {
+     "data": {
+      "id": "solana_9cRCn9rGT8V2imeM2BaKs13yhMEais3ruM3rPvTGpump",
+      "type": "token"
+     }
+    },
+    "quote_token": {
+     "data": {
+      "id": "solana_So11111111111111111111111111111111111111112",
+      "type": "token"
+     }
+    }
+   }
+  },
+  {
+   "id": "solana_FnzKY6x7entQ1eR3D225dQyT7ybfka4PskBMQhb8L3CC",
+   "type": "pool",
+   "attributes": {
+    "address": "FnzKY6x7entQ1eR3D225dQyT7ybfka4PskBMQhb8L3CC",
+    "name": "ANSEM / SOL",
+    "reserve_in_usd": "2054522.0986",
+    "base_token_price_usd": "0.1150927687"
+   },
+   "relationships": {
+    "base_token": {
+     "data": {
+      "id": "solana_9cRCn9rGT8V2imeM2BaKs13yhMEais3ruM3rPvTGpump",
+      "type": "token"
+     }
+    },
+    "quote_token": {
+     "data": {
+      "id": "solana_So11111111111111111111111111111111111111112",
+      "type": "token"
+     }
+    }
+   }
+  },
+  {
+   "id": "solana_BetLT47eFXDZnjM1cmZhQ4oNJkYaPZYH5yv6atfPfAri",
+   "type": "pool",
+   "attributes": {
+    "address": "BetLT47eFXDZnjM1cmZhQ4oNJkYaPZYH5yv6atfPfAri",
+    "name": "ANSEM / USDC",
+    "reserve_in_usd": "95595.1082",
+    "base_token_price_usd": "0.1150963725"
+   },
+   "relationships": {
+    "base_token": {
+     "data": {
+      "id": "solana_9cRCn9rGT8V2imeM2BaKs13yhMEais3ruM3rPvTGpump",
+      "type": "token"
+     }
+    },
+    "quote_token": {
+     "data": {
+      "id": "solana_EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "type": "token"
+     }
+    }
+   }
+  },
+  {
+   "id": "solana_AUvX4hEMi9t43aqovA5tEAA5AZ7yugcpHa8SkJVEoEKa",
+   "type": "pool",
+   "attributes": {
+    "address": "AUvX4hEMi9t43aqovA5tEAA5AZ7yugcpHa8SkJVEoEKa",
+    "name": "ANSEM / SOL",
+    "reserve_in_usd": "80262.4427",
+    "base_token_price_usd": "0.1168003259"
+   },
+   "relationships": {
+    "base_token": {
+     "data": {
+      "id": "solana_9cRCn9rGT8V2imeM2BaKs13yhMEais3ruM3rPvTGpump",
+      "type": "token"
+     }
+    },
+    "quote_token": {
+     "data": {
+      "id": "solana_So11111111111111111111111111111111111111112",
+      "type": "token"
+     }
+    }
+   }
+  }
+ ]
+}
