@@ -1398,6 +1398,7 @@ source = { editable = "packages/oracle" }
 dependencies = [
     { name = "core" },
     { name = "execution" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "pyyaml" },
     { name = "requests" },
 ]
@@ -1411,6 +1412,7 @@ dev = [
 requires-dist = [
     { name = "core", editable = "packages/core" },
     { name = "execution", editable = "packages/execution" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2" },
     { name = "pyyaml", specifier = ">=6" },
     { name = "requests", specifier = ">=2" },
 ]

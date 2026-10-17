@@ -54,6 +54,9 @@ class KrakenError(Exception):
     """A Kraken read that failed. Never answered with an empty book."""
 
 
+AccountError = KrakenError
+
+
 class MissingCredentials(KrakenError):
     """The key or secret is not in the environment or ``.env``."""
 
