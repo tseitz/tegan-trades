@@ -59,6 +59,8 @@ from core.exits import (
 from core.funding import FundingOutlook, carry_adjusted_rr
 from core.imbalance import Gap, atr, live_gaps
 from core.levels import read_target
+from core.liquidity import POOL_TOLERANCE_ATR, Pool
+from core.liquidity import pools as live_pools
 from core.rank import agreement_signal, parse_date
 from core.structure import (
     BEARISH,
@@ -471,6 +473,15 @@ class GapZone:
 
 
 @dataclass(frozen=True, slots=True)
+class PoolZone:
+    """A live liquidity pool, the series it was read from, and that series' own tolerance in
+    absolute price. Mirrors ``GapZone``; ``core.exits`` reads all three fields."""
+    pool: Pool
+    timeframe: str
+    tolerance: float
+
+
+@dataclass(frozen=True, slots=True)
 class Context:
     """Structure for one asset as of one date. Reusable across every thesis on that asset.
 
@@ -488,6 +499,9 @@ class Context:
     # than by the one consumer that reads them, because this is the module that owns "structure
     # for one asset as of one date" and a second place deriving it would be free to disagree.
     gaps: tuple[GapZone, ...] = ()
+    # Live liquidity pools from the same two series, defaulted like ``gaps`` so hand-built
+    # fixtures keep their meaning.
+    pools: tuple[PoolZone, ...] = ()
     # Daily ATR at ``as_of``, the yardstick for whether a stated target is plausible. None when
     # there is too little history to judge, in which case the check is skipped rather than
     # guessed at.
@@ -539,7 +553,7 @@ class Setup:
     stop: float
     invalidation: float   # the origin swing: where the zone itself dies
     target: float
-    # OPPOSING | EXTREME | RANGE_BOUND | STATED | NEAREST — see ``core.exits``. The first two
+    # OPPOSING | EXTREME | RANGE_BOUND | POOL | STATED | NEAREST — see ``core.exits``. The first two
     # structural kinds did not exist before targets were made to respect what stands in the
     # way, so a decision recorded with ``structural`` predates that and is not comparable.
     target_source: str
@@ -971,6 +985,10 @@ def build_context(setup, weekly, *, as_of: date,
             _gaps_from(weekly, timeframe=WEEKLY, as_of=as_of)
             + _gaps_from(setup, timeframe=setup_timeframe, as_of=as_of)
         ),
+        pools=(
+            _pools_from(weekly, timeframe=WEEKLY, as_of=as_of, width=width)
+            + _pools_from(setup, timeframe=setup_timeframe, as_of=as_of, width=width)
+        ),
         atr=atr(upto, len(upto) - 1),
     )
 
@@ -991,6 +1009,17 @@ def _gaps_from(bars, *, timeframe: str, as_of: date) -> tuple[GapZone, ...]:
     """Live voids from one bar series, tagged with the series they were read from."""
     return tuple(GapZone(gap=gap, timeframe=timeframe)
                  for gap in live_gaps(bars, as_of=as_of))
+
+
+def _pools_from(bars, *, timeframe: str, as_of: date, width: int) -> tuple[PoolZone, ...]:
+    """Live pools from one bar series, with a tolerance scaled by that series' own ATR."""
+    upto = tuple(bar for bar in bars if on_or_before(bar.date, as_of))
+    series_atr = atr(upto, len(upto) - 1) if upto else None
+    if series_atr is None:
+        return ()
+    tolerance = POOL_TOLERANCE_ATR * series_atr
+    return tuple(PoolZone(pool=pool, timeframe=timeframe, tolerance=tolerance)
+                 for pool in live_pools(bars, as_of=as_of, width=width, tolerance=tolerance))
 
 
 def _extreme_since(bars, block: OrderBlock) -> float | None:
@@ -1185,6 +1214,7 @@ def cross_reference(
         dealing_range=context.dealing_range,
         structural_target=zone.structural_target,
         authored=authored, authored_source=stated.source,
+        pools=context.pools,
     )
     if not levels:
         return refuse("no_target")

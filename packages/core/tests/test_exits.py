@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import date
 
 import pytest
@@ -8,6 +9,7 @@ from core.exits import (
     INTERNAL,
     MATERIAL_R,
     OPPOSING,
+    POOL,
     RANGE_BOUND,
     ExitLevel,
     entry_liquidity,
@@ -16,6 +18,7 @@ from core.exits import (
     select_target,
 )
 from core.levels import NEAREST, STATED
+from core.liquidity import Pool
 from core.setups import Zone
 from core.structure import (
     BEARISH,
@@ -326,3 +329,104 @@ def test_a_boundary_that_is_already_the_nearest_level_leaves_an_empty_ladder():
     target, ladder = select_target(levels, inside)
     assert target.price == 200.0
     assert ladder == ()
+
+
+# ── liquidity pools: partials inside the range, one runner beyond it ────────────────────
+
+@dataclass(frozen=True)
+class _PoolItem:
+    pool: Pool
+    timeframe: str
+    tolerance: float
+
+
+def _pool(price, *, kind=SWING_HIGH, touches=1, timeframe="1d", tolerance=1.0):
+    members = tuple(_swing(price, kind, index=i, day=i + 1) for i in range(touches))
+    return _PoolItem(Pool(kind=kind, price=price, members=members), timeframe, tolerance)
+
+
+def test_a_pool_between_entry_and_boundary_is_a_partial_carrying_its_provenance():
+    found = _levels(pools=(_pool(125.0, touches=2, timeframe="12h"),))
+    assert _prices(found) == [125.0, 140.0, 200.0]
+    assert found[0] == ExitLevel(price=125.0, kind=POOL, reward_risk=2.5,
+                                 touches=2, timeframe="12h")
+    assert found[1].touches == 0 and found[1].timeframe == ""
+
+
+def test_only_the_nearest_pool_past_the_boundary_survives_as_the_runner():
+    found = _levels(pools=(_pool(230.0), _pool(260.0)))
+    assert _prices(found) == [140.0, 200.0, 230.0]
+    assert _kinds(found)[-1] == POOL
+
+
+def test_the_runner_lands_in_the_ladder_and_the_boundary_stays_the_target():
+    found = _levels(pools=(_pool(230.0), _pool(125.0)))
+    inside = entry_liquidity(entry=100.0, dealing_range=_range(), sign=1)
+    target, ladder = select_target(found, inside)
+    assert (target.price, target.kind) == (200.0, RANGE_BOUND)
+    assert _prices(ladder) == [125.0, 140.0, 230.0]
+
+
+def test_a_pool_at_the_boundarys_exact_price_leaves_it_range_bound():
+    found = _levels(pools=(_pool(200.0, touches=3),))
+    assert [(lv.price, lv.kind) for lv in found if lv.price == 200.0] == [(200.0, RANGE_BOUND)]
+    assert found[-1].touches == 0
+    inside = entry_liquidity(entry=100.0, dealing_range=_range(), sign=1)
+    target, _ = select_target(found, inside)
+    assert target.kind == RANGE_BOUND
+
+
+def test_a_pool_just_beyond_the_boundary_is_a_duplicate_and_the_next_one_is_the_runner():
+    found = _levels(pools=(_pool(200.5, tolerance=1.0), _pool(230.0)))
+    assert _prices(found) == [140.0, 200.0, 230.0]
+
+
+def test_a_block_past_the_boundary_does_not_knock_out_the_runner_beside_it():
+    found = _levels(zones=(_zone(top=240.0, bottom=230.0),), pools=(_pool(230.5),))
+    assert _prices(found) == [140.0, 200.0, 230.5]
+    assert _kinds(found)[-1] == POOL
+
+
+def test_a_pool_at_the_extremes_exact_price_leaves_it_extreme():
+    found = _levels(pools=(_pool(140.0, touches=2),))
+    assert [(lv.price, lv.kind, lv.touches) for lv in found if lv.price == 140.0] == [
+        (140.0, EXTREME, 0)]
+
+
+def test_a_pool_inside_the_materiality_floor_is_dropped():
+    assert POOL not in _kinds(_levels(pools=(_pool(100.0 + MATERIAL_R * 10.0 - 0.5),)))
+
+
+def test_a_pool_on_the_wrong_side_is_ignored():
+    assert POOL not in _kinds(_levels(pools=(_pool(125.0, kind=SWING_LOW),)))
+
+
+def test_the_nearer_of_two_pools_from_different_series_is_kept():
+    found = _levels(pools=(_pool(126.0, timeframe="12h", touches=3),
+                           _pool(125.0, timeframe="1d")))
+    assert [(lv.price, lv.timeframe) for lv in found if lv.kind == POOL] == [(125.0, "1d")]
+
+
+def test_a_sweep_entry_takes_a_nearer_pool_as_its_first_level():
+    found = _levels(entry=76.0, stop=66.0, pools=(_pool(90.0),))
+    outside = entry_liquidity(entry=76.0, dealing_range=_range(), sign=1)
+    target, ladder = select_target(found, outside)
+    assert (target.price, target.kind) == (90.0, POOL)
+    assert 140.0 in _prices(ladder)
+
+
+def test_an_authored_target_beyond_a_nearer_pool_is_dropped():
+    found = _levels(authored=120.0, authored_source=STATED, pools=(_pool(110.0),))
+    assert 120.0 not in _prices(found)
+    assert _prices(found)[0] == 110.0
+
+
+def test_a_short_keeps_one_runner_past_the_range_low():
+    found = _levels(
+        entry=100.0, stop=110.0, sign=-1, structural_target=60.0,
+        dealing_range=_range(low=50.0, high=140.0),
+        pools=(_pool(40.0, kind=SWING_LOW), _pool(20.0, kind=SWING_LOW),
+               _pool(130.0, kind=SWING_HIGH)),
+    )
+    assert _prices(found) == [60.0, 50.0, 40.0]
+    assert _kinds(found) == [EXTREME, RANGE_BOUND, POOL]

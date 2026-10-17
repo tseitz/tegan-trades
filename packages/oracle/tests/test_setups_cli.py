@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from core import routing, trigger
 from core.canon import Registry
-from core.exits import EXTREME, OPPOSING, RANGE_BOUND, ExitLevel
+from core.exits import EXTREME, OPPOSING, POOL, RANGE_BOUND, ExitLevel
 from core.setups import (
     DAILY,
     SCORE_VERSION,
@@ -129,10 +129,16 @@ def test_decision_record_carries_the_ladder_that_was_on_screen():
     """"Should the target have been the second rung" is the first question to ask of a filled
     trade, and the ladder is derived from a structure that has moved on by the time anyone asks
     — so it has to be recorded rather than recomputed."""
-    candidate = _candidate(ladder=(ExitLevel(price=150.0, kind=OPPOSING, reward_risk=4.0),))
+    candidate = _candidate(ladder=(
+        ExitLevel(price=150.0, kind=OPPOSING, reward_risk=4.0),
+        ExitLevel(price=140.0, kind=POOL, reward_risk=3.0, touches=2, timeframe=DAILY),
+    ))
     record = setups_cli.decision_record(candidate, setups_cli.APPROVED,
                                         decided_at="2026-08-05T00:00:00+00:00")
-    assert record["ladder"] == [{"price": 150.0, "kind": OPPOSING, "reward_risk": 4.0}]
+    assert record["ladder"] == [
+        {"price": 150.0, "kind": OPPOSING, "reward_risk": 4.0, "touches": 0, "timeframe": ""},
+        {"price": 140.0, "kind": POOL, "reward_risk": 3.0, "touches": 2, "timeframe": DAILY},
+    ]
 
 
 def test_a_decision_on_a_candidate_with_no_ladder_records_an_empty_one():

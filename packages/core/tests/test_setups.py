@@ -5,9 +5,19 @@ from types import SimpleNamespace
 
 import pytest
 from core.dealing_range import DealingRange
-from core.exits import EXTERNAL, EXTREME, INTERNAL, OPPOSING, RANGE_BOUND, ExitLevel
+from core.exits import (
+    EXTERNAL,
+    EXTREME,
+    INTERNAL,
+    OPPOSING,
+    POOL,
+    RANGE_BOUND,
+    ExitLevel,
+)
 from core.funding import FundingOutlook
+from core.imbalance import atr
 from core.levels import NEAREST, STATED
+from core.liquidity import POOL_TOLERANCE_ATR
 from core.setups import (
     ARRIVAL,
     DAILY,
@@ -1562,3 +1572,66 @@ def test_h12_is_a_known_zone_timeframe_so_the_queue_can_order_it():
     would quietly bury every crypto candidate beneath every equity one."""
     assert H12 in ZONE_TIMEFRAMES
     assert ZONE_TIMEFRAMES.index(WEEKLY) == 0
+
+
+# ── liquidity pools reach the context and the ladder ─────────────────────────────────────────
+
+POOL_START = date(2025, 1, 1)
+
+
+def _flat_series(n, *, start, step, highs=None, lows=None, base=(10.0, 9.0)):
+    """Flat bars (no swings of their own) with chosen highs / lows overridden by index."""
+    highs, lows = highs or {}, lows or {}
+    out = []
+    for i in range(n):
+        high, low = highs.get(i, base[0]), lows.get(i, base[1])
+        out.append(SimpleNamespace(date=start + timedelta(days=i * step), open=low,
+                                   high=float(high), low=float(low), close=(high + low) / 2))
+    return tuple(out)
+
+
+def _weekly_and_daily():
+    """A weekly 5-20 range, then a daily whose lower high at 15 nothing has traded through.
+
+    The weekly top wicks through every earlier lower weekly high, so only a series formed
+    after it can hold an internal pool."""
+    weekly = _flat_series(20, start=POOL_START, step=7, highs={10: 20}, lows={5: 5})
+    top = weekly[10].date
+    daily = _flat_series(40, start=top, step=1, highs={20: 15})
+    return weekly, daily
+
+
+def test_build_context_reads_pools_from_both_series_with_each_series_own_tolerance():
+    weekly, daily = _weekly_and_daily()
+    ctx = build_context(daily, weekly, as_of=daily[-1].date)
+    by_tf = {tf: [z for z in ctx.pools if z.timeframe == tf] for tf in (WEEKLY, DAILY)}
+    assert by_tf[WEEKLY] and by_tf[DAILY]
+    assert 15.0 in [z.pool.price for z in by_tf[DAILY]]
+    for tf, series in ((WEEKLY, weekly), (DAILY, daily)):
+        cut = [b for b in series if b.date <= daily[-1].date]
+        expected = POOL_TOLERANCE_ATR * atr(cut, len(cut) - 1)
+        assert all(z.tolerance == pytest.approx(expected) for z in by_tf[tf])
+    assert by_tf[WEEKLY][0].tolerance != by_tf[DAILY][0].tolerance
+
+
+def test_a_series_without_enough_history_for_atr_yields_no_pools():
+    weekly, daily = _weekly_and_daily()
+    ctx = build_context(daily, weekly[:12], as_of=daily[-1].date)
+    assert WEEKLY not in {z.timeframe for z in ctx.pools}
+    assert DAILY in {z.timeframe for z in ctx.pools}
+
+
+def test_an_untaken_daily_high_inside_the_weekly_range_is_a_ladder_rung():
+    weekly, daily = _weekly_and_daily()
+    built = build_context(daily, weekly, as_of=daily[-1].date)
+    assert built.dealing_range.high == 20.0
+    block = _block(top=9.0, bottom=8.0, invalidation=6.0)
+    ctx = replace(built, weekly_trend=UPTREND, daily_trend=UPTREND,
+                  zones=(Zone(block=block, structural_target=None),))
+    setup = cross_reference(_row(), ctx, published_close=8.5)
+    assert setup.target == 20.0
+    assert setup.target_source == RANGE_BOUND
+    rung = next(level for level in setup.ladder if level.kind == POOL)
+    assert rung.price == 15.0
+    assert rung.touches == 1
+    assert rung.timeframe == DAILY

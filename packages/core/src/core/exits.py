@@ -13,7 +13,7 @@ extreme sat at 8.907 (R:R 2.31), a live weekly *bearish* block spanned 9.090–1
 in the path, and the weekly dealing range topped out at 10.867. The trade was being offered a
 target above the entire range, on the far side of supply the engine had already found.
 
-**Three structural sources, plus the author's number only when it is the nearest of them.**
+**Four structural sources, plus the author's number only when it is the nearest of them.**
 
 - ``OPPOSING`` — the near edge of a live order block on the other side. Price runs *into* a
   block, so for a long that is its ``bottom``: the first place the move meets sellers. This is
@@ -25,6 +25,10 @@ target above the entire range, on the far side of supply the engine had already 
 - ``RANGE_BOUND`` — the dealing range's boundary on the trade's side: the external liquidity
   the whole range is oscillating between, and the last honest level before a target becomes a
   forecast.
+- ``POOL`` — untaken swings at one price, the stops resting beyond them. Inside the range it is
+  a partial; the single nearest one past the boundary survives as the runner. An internal
+  entry never targets one; a sweep entry may, as its nearest level.
+  Measurements: ``scripts/probe_liquidity.py``, ``scripts/probe_smc_parity.py``.
 
 An authored target is kept **only when it is nearer than every structural level**. It is not
 a better source, it is a *different* one — measured against structure it is not systematically
@@ -60,21 +64,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.structure import BEARISH, BULLISH
+from core.structure import BEARISH, BULLISH, SWING_HIGH, SWING_LOW
 
 # Structural sources. Alongside ``core.levels.STATED``/``NEAREST``, which arrive as the
 # ``authored_source`` and are passed straight through so provenance survives.
 OPPOSING = "opposing_zone"
 EXTREME = "extreme"
 RANGE_BOUND = "range_bound"
+POOL = "liquidity_pool"
 
 # Which reason wins when two sources land on one price — the most specific first. An opposing
 # block states *why* price would stop there; a range boundary only says where the range ends.
-_SPECIFICITY = (OPPOSING, RANGE_BOUND, EXTREME)
+# TRAP: POOL stays last. Above RANGE_BOUND it relabels the boundary rung and every internal
+# entry is refused (no RANGE_BOUND to target). Above EXTREME it relabels the zone's own extreme
+# at an unchanged price, since that extreme is usually an untaken high.
+_SPECIFICITY = (OPPOSING, RANGE_BOUND, EXTREME, POOL)
 
 # Everything price structure supplies on its own. The complement is what a person said, which
 # is the distinction ``core.setups.collapse`` picks a representative on — kept here beside the
-# constants so a fourth structural source can never be added without that predicate following.
+# constants so a fifth structural source can never be added without that predicate following.
 STRUCTURAL_KINDS = frozenset(_SPECIFICITY)
 
 # How far from entry an opposing block must sit to be an obstruction rather than the far side
@@ -184,8 +192,18 @@ class ExitLevel:
     none of them should have to re-derive risk from a stop they may not be holding.
     """
     price: float
-    kind: str            # OPPOSING | EXTREME | RANGE_BOUND | STATED | NEAREST
+    kind: str            # OPPOSING | EXTREME | RANGE_BOUND | POOL | STATED | NEAREST
     reward_risk: float
+    touches: int = 0     # POOL rungs only
+    timeframe: str = ""  # POOL rungs only
+
+
+@dataclass(frozen=True, slots=True)
+class _Found:
+    price: float
+    kind: str
+    touches: int = 0
+    timeframe: str = ""
 
 
 def exit_levels(
@@ -199,13 +217,16 @@ def exit_levels(
     authored: float | None = None,
     authored_source: str = "",
     material_r: float = MATERIAL_R,
+    pools=(),
 ) -> tuple[ExitLevel, ...]:
     """Every exit level beyond ``entry`` on the trade's side, ordered nearest first.
 
     ``sign`` is +1 for a long and -1 for a short, matching ``core.setups``' ``family``-derived
     sign rather than a raw direction label. ``zones`` is duck-typed on ``zone.block`` exposing
     ``kind``/``top``/``bottom`` — deliberately not importing ``core.setups.Zone``, which would
-    make the dependency circular and buys nothing.
+    make the dependency circular and buys nothing. ``pools`` is likewise duck-typed on
+    ``item.pool`` (``kind``/``price``/``touches``), ``item.timeframe`` and ``item.tolerance``
+    (absolute price); a long reads ``SWING_HIGH`` pools, a short ``SWING_LOW``.
 
     Empty is a legitimate answer and means the caller has no target: everything structure knows
     about lies behind the entry. The caller refuses on that, exactly as it did before.
@@ -219,7 +240,7 @@ def exit_levels(
 
     beyond = lambda price: (price - entry) * sign > 0   # noqa: E731 — one predicate, used 4x
 
-    found: list[tuple[float, str]] = []
+    found: list[_Found] = []
 
     opposing_kind = BEARISH if sign > 0 else BULLISH
     for zone in zones:
@@ -230,49 +251,77 @@ def exit_levels(
         edge = block.bottom if sign > 0 else block.top
         if not beyond(edge) or abs(edge - entry) / risk < material_r:
             continue
-        found.append((edge, OPPOSING))
+        found.append(_Found(edge, OPPOSING))
 
     if dealing_range is not None:
         bound = dealing_range.high if sign > 0 else dealing_range.low
         if beyond(bound):
-            found.append((bound, RANGE_BOUND))
+            found.append(_Found(bound, RANGE_BOUND))
 
     if structural_target is not None and beyond(structural_target):
-        found.append((structural_target, EXTREME))
+        found.append(_Found(structural_target, EXTREME))
+
+    pool_kind = SWING_HIGH if sign > 0 else SWING_LOW
+    boundary = next((f.price for f in found if f.kind == RANGE_BOUND), None)
+    # Only rungs that survive truncation can make a pool a duplicate: a block past the boundary
+    # is about to be dropped, and must not take the runner down with it.
+    surviving = [f for f in found if boundary is None or (f.price - boundary) * sign <= 0]
+    kept: list = []
+    # Nearer to entry wins between pools from different series: the earlier exit is the
+    # conservative one, and the duplicate is the same liquidity seen at another resolution.
+    for item in sorted((i for i in pools if i.pool.kind == pool_kind),
+                       key=lambda i: abs(i.pool.price - entry)):
+        price = item.pool.price
+        if not beyond(price) or abs(price - entry) / risk < material_r:
+            continue
+        # Cross-feed prices (H12 from H1, weekly from daily) differ by ticks, so exact-float
+        # dedupe misses near-equal rungs.
+        if any(abs(price - f.price) <= item.tolerance for f in surviving) or any(
+                abs(price - k.pool.price) <= item.tolerance for k in kept):
+            continue
+        kept.append(item)
+    found.extend(_Found(i.pool.price, POOL, i.pool.touches, i.timeframe) for i in kept)
 
     if authored is not None and beyond(authored):
-        nearest = min((abs(price - entry) for price, _ in found), default=None)
+        nearest = min((abs(f.price - entry) for f in found), default=None)
         if nearest is None or abs(authored - entry) < nearest:
-            found.append((authored, authored_source))
+            found.append(_Found(authored, authored_source))
 
     return tuple(
-        ExitLevel(price=price, kind=kind, reward_risk=abs(price - entry) / risk)
-        for price, kind in sorted(_truncate_at_range(found, sign=sign).items(),
-                                  key=lambda item: abs(item[0] - entry))
+        ExitLevel(price=f.price, kind=f.kind, reward_risk=abs(f.price - entry) / risk,
+                  touches=f.touches, timeframe=f.timeframe)
+        for f in sorted(_truncate_at_range(found, sign=sign).values(),
+                        key=lambda f: abs(f.price - entry))
     )
 
 
-def _truncate_at_range(found: list[tuple[float, str]], *, sign: int) -> dict[float, str]:
+def _truncate_at_range(found: list[_Found], *, sign: int) -> dict[float, _Found]:
     """Drop every level past the dealing range's boundary, which is where this trade ends.
 
     The boundary is the external liquidity the range oscillates between; beyond it the range
     has broken and a new one forms, at which point the setup is re-derived from scratch rather
-    than run further. Without this, a long on LINK listed five runners between +61% and +178% —
-    the near edges of old weekly supply blocks stacked above a range that tops out at +36% —
-    which is the far-target problem this module exists to remove, wearing a different label.
+    than run further. Without this, a long on LINK listed five runners between +61% and +178%
+    — old weekly supply stacked above a range that tops out at +36%.
+
+    Exactly one ``POOL`` survives past the boundary, the nearest: an untaken major the range
+    has not yet redrawn around is the next place stops rest, and one rung is a runner where
+    five were the far-target problem again. Never the target — ``select_target`` still ends
+    at the boundary.
 
     A realized extreme sitting past the boundary is dropped by the same rule. That can only
     happen while the range lags the swing that would redraw it, and deferring to the range is
     the conservative side of that disagreement.
     """
-    boundary = next((price for price, kind in found if kind == RANGE_BOUND), None)
+    boundary = next((f.price for f in found if f.kind == RANGE_BOUND), None)
     if boundary is None:
         return _dedupe(found)
-    return _dedupe([(price, kind) for price, kind in found
-                    if (price - boundary) * sign <= 0])
+    kept = [f for f in found if (f.price - boundary) * sign <= 0]
+    runner = min((f for f in found if f.kind == POOL and (f.price - boundary) * sign > 0),
+                 key=lambda f: abs(f.price - boundary), default=None)
+    return _dedupe(kept + ([runner] if runner else []))
 
 
-def _dedupe(found: list[tuple[float, str]]) -> dict[float, str]:
+def _dedupe(found: list[_Found]) -> dict[float, _Found]:
     """One rung per price, labelled by the most specific reason that landed on it.
 
     Keyed on the float exactly: two sources agreeing to the cent are the same level (a block
@@ -282,8 +331,8 @@ def _dedupe(found: list[tuple[float, str]]) -> dict[float, str]:
     def rank(kind: str) -> int:
         return _SPECIFICITY.index(kind) if kind in _SPECIFICITY else len(_SPECIFICITY)
 
-    best: dict[float, str] = {}
-    for price, kind in found:
-        if price not in best or rank(kind) < rank(best[price]):
-            best[price] = kind
+    best: dict[float, _Found] = {}
+    for f in found:
+        if f.price not in best or rank(f.kind) < rank(best[f.price].kind):
+            best[f.price] = f
     return best

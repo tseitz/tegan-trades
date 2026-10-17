@@ -19,10 +19,16 @@ MEASURED 2026-10-16, daily BTC/ETH/SOL/SPY, from bar 250:
 - **Breaks SMC sees and we miss (79):** 75 are "superseded". The pivot was one of our swings,
   but a newer swing replaced it as the live target before price closed through it, per the
   most-recent-only rule in ``structure.breaks``. These include every swing/CHoCH at a 50-bar
-  level. Major structure reaches us only through a higher timeframe, never as a second scale
-  on one series.
+  level. In ``breaks`` major structure reaches us only through a higher timeframe; as a level,
+  ``core.liquidity`` keeps it (below).
 - **FVGs.** Ours are nearly a strict subset of SMC's; its body threshold is looser.
 - **Order blocks** on matched breaks overlap SMC's on crypto but are disjoint on 5 of 10 for SPY.
+- **Liquidity.** Of SMC's 14 swing-scale breaks, the bar before each: 12 were one of our
+  ``core.liquidity`` pools — 7 inside the weekly dealing range (a partial or the boundary), 5
+  the single nearest pool past it, which ``core.exits`` keeps as the one runner — and 2 were not
+  pools. So the superseded majors ``breaks`` drops do reach the ladder, and the runner is half of
+  that. SMC's equal highs/lows match our 2+-touch pools only 5 of 26: its pivots are one-sided
+  at size 3 and its tolerance is ATR(200), so this is definition, not a miss.
 
 **Trust comes from known-answer checks, not from PineTS.** Every SMC break is asserted against
 the bars (close crosses the level on that bar, the pivot bar's extreme equals the level), and
@@ -51,9 +57,12 @@ from datetime import UTC, datetime, time
 from pathlib import Path
 
 from core import imbalance, structure
+from core.dealing_range import dealing_range
 from core.imbalance import true_range
+from core.liquidity import POOL_TOLERANCE_ATR, pools
 from core.structure import BEARISH, BULLISH, SWING_HIGH, SWING_LOW
 from oracle import cache
+from oracle.resample import to_weekly
 
 SCRATCH = Path(__file__).resolve().parents[1] / "data" / "scratch" / "smc"
 MCP_URL = "https://mcp.luxalgo.com/mcp"
@@ -426,6 +435,44 @@ def _row(label: str, left: list[Event], right: list[Event]) -> None:
           f"  {len(pairs) / union if union else 0:5.0%}")
 
 
+def _pools_at(bars, index: int):
+    """Live pools on ``bars`` as of ``index``, with the tolerance they were clustered at."""
+    yardstick = imbalance.atr(bars[: index + 1], index)
+    if yardstick is None:
+        return (), 0.0
+    tolerance = POOL_TOLERANCE_ATR * yardstick
+    return pools(bars, as_of=bars[index].date, tolerance=tolerance), tolerance
+
+
+def liquidity_reach(event: Event, series, weekly) -> str:
+    """Where an SMC swing level stood in our liquidity model the bar before it broke."""
+    before = event.index - 1
+    side = SWING_HIGH if event.kind == BULLISH else SWING_LOW
+    sign = 1 if event.kind == BULLISH else -1
+    daily_pools, daily_tol = _pools_at(series.bars, before)
+    week_end = max((i for i, w in enumerate(weekly) if w.date <= series.bars[before].date),
+                   default=None)
+    weekly_pools, weekly_tol = (_pools_at(weekly, week_end) if week_end is not None
+                                else ((), 0.0))
+    levels = [(p.price, tol) for found, tol in ((daily_pools, daily_tol),
+                                                 (weekly_pools, weekly_tol))
+              for p in found if p.kind == side]
+    if not any(abs(price - event.level) <= tol for price, tol in levels):
+        return "not a pool"
+    span = dealing_range(weekly, as_of=series.bars[before].date,
+                         price=series.bars[before].close)
+    if span is None:
+        return "no range"
+    bound = span.high if sign > 0 else span.low
+    if (event.level - bound) * sign <= 0:
+        return "inside the range"
+    past = sorted((price for price, _ in levels if (price - bound) * sign > 0),
+                  key=lambda price: (price - bound) * sign)
+    nearest = past[0]
+    tol = max(t for _, t in levels)
+    return "the runner" if abs(nearest - event.level) <= tol else "behind the runner"
+
+
 def probe(ref: str, source: str, misses: list) -> None:
     src, symbol = ref.split(":", 1)
     series = cache.load(src, symbol)
@@ -500,7 +547,20 @@ def probe(ref: str, source: str, misses: list) -> None:
               f"{len(mine & theirs):3}   live: ours "
               f"{sum(g.kind == kind for g in ours_live)}  SMC {sum(z.kind == kind for z in live_fvgs)}")
 
+    weekly = to_weekly(series).bars
+    reach = Counter(liquidity_reach(e, series, weekly)
+                    for e in _after_warmup(smc5) if e.scope == "swing")
+    print("  SMC swing levels in our liquidity, bar before the break: " + "  ".join(
+        f"{k}={v}" for k, v in reach.most_common()))
+
     recent = [e for e in equals if e.index >= WARMUP]
+    paired = 0
+    for e in recent:
+        found, tol = _pools_at(bars, e.index)
+        side = SWING_HIGH if e.tag == "EQH" else SWING_LOW
+        paired += any(p.kind == side and p.touches >= 2 and abs(p.price - e.level) <= tol
+                      for p in found)
+    print(f"  SMC equal highs/lows that are one of our 2+-touch pools: {paired}/{len(recent)}")
     print(f"  equal highs/lows (SMC only): {sum(e.tag == 'EQH' for e in recent)} EQH, "
           f"{sum(e.tag == 'EQL' for e in recent)} EQL" + "".join(
               f"\n    {e.tag} {e.level:<12.6g} {bars[e.pivot_index].date} & {bars[e.index].date}"

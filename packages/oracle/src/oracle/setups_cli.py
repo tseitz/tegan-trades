@@ -346,7 +346,8 @@ def decision_record(candidate: Candidate, decision: str, *, decided_at: str,
         # A ``target_source`` of ``structural`` marks a row from before targets had to respect
         # what stood in the way; those have no ladder and are not comparable to these.
         "ladder": [
-            {"price": level.price, "kind": level.kind, "reward_risk": level.reward_risk}
+            {"price": level.price, "kind": level.kind, "reward_risk": level.reward_risk,
+             "touches": level.touches, "timeframe": level.timeframe}
             for level in candidate.ladder
         ],
         # Which liquidity the entry rested on, and how far outside the range it sat in
