@@ -53,7 +53,7 @@ def _split(result):
     return priced, left_out
 
 
-def _cash(book) -> float:
+def cash_of(book) -> float:
     """`cash_by_account` when present, else `cash` — the precedence `treasury.book._idle_rows`
     already uses."""
     return sum(book.cash_by_account.values()) if book.cash_by_account else (book.cash or 0.0)
@@ -64,7 +64,7 @@ def _pot(result) -> tuple[float, int, list[str]]:
     priced, left_out = _split(result)
     market = sum(value for _, value in priced)
     mismatched = [ticker for ticker, _, _ in result.mismatched]
-    return market + _cash(result.book), len(left_out), mismatched
+    return market + cash_of(result.book), len(left_out), mismatched
 
 
 def of(results, *, parked: float | None) -> NetWorth | None:
@@ -154,7 +154,7 @@ def exposure(results, *, parked: float | None, group_of) -> Exposure | None:
                 Part(book=name, ticker=reading.holding.ticker, value=value))
         excluded += [Excluded(book=name, ticker=r.holding.ticker, reason=reason)
                      for r, reason in left_out]
-        cash = _cash(result.book)
+        cash = cash_of(result.book)
         if cash:
             cash_parts.append(Part(book=name, ticker="cash", value=cash))
     if parked:

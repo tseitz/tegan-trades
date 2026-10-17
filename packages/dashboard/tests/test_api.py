@@ -44,14 +44,15 @@ LEVELS_LED_MANDATE = Mandate(name="test-levels-led", benchmarks=(Benchmark(type=
                              horizon="position", risk_posture="conservative")
 
 
-def _book(name, *, mandate=MANDATE, tickers=("VTI",), updated=None):
+def _book(name, *, mandate=MANDATE, tickers=("VTI",), updated=None, cash=None,
+          cash_by_account=None):
     return Portfolio(
         name=name, mandate=mandate,
         positions=tuple(
             Position(holding=Holding(ticker=t, shares=1.0, cost=None), domain="stock")
             for t in tickers
         ),
-        updated=updated,
+        updated=updated, cash=cash, cash_by_account=cash_by_account or {},
     )
 
 
@@ -76,9 +77,9 @@ def _grid_readings():
 
 
 def _grid_result(readings, *, book_name="retirement", mandate=MANDATE, levels=((), (), 0),
-                 chains=(), macro=()):
+                 chains=(), macro=(), cash=None, cash_by_account=None):
     return ReviewResult(
-        book=_book(book_name, mandate=mandate), readings=list(readings), contexts=(),
+        book=_book(book_name, mandate=mandate, cash=cash, cash_by_account=cash_by_account), readings=list(readings), contexts=(),
         mismatched=(), levels=levels, chains=chains, macro=macro,
     )
 
@@ -306,6 +307,32 @@ def test_totals_exclude_the_unpriced_row_and_match_the_terminals_tail(monkeypatc
     # Lifted out of the same `render()` string above, not out of `render.totals_lines` — that
     # would only assert the wire calls the function the wire calls.
     assert body["grid"]["totals"]["lines"] == tail_lines
+
+
+def test_account_value_adds_cash_to_the_positions_but_market_value_does_not(monkeypatch,
+                                                                            tmp_path):
+    readings = _grid_readings()
+    body = _review_response(monkeypatch, tmp_path, _grid_result(readings, cash=500.0)).json()
+
+    totals = body["grid"]["totals"]
+    assert totals["cash"] == 500.0
+    assert totals["account_value"] == totals["market_value"] + 500.0
+
+
+def test_cash_split_across_accounts_is_summed_the_way_net_worth_sums_it(monkeypatch, tmp_path):
+    result = _grid_result(_grid_readings(), cash=10.0,
+                          cash_by_account={"Roth IRA": 28.47, "Traditional IRA": 100.0})
+    body = _review_response(monkeypatch, tmp_path, result).json()
+
+    assert body["grid"]["totals"]["cash"] == pytest.approx(128.47)
+
+
+def test_a_book_that_records_no_cash_sends_null_not_zero(monkeypatch, tmp_path):
+    body = _review_response(monkeypatch, tmp_path, _grid_result(_grid_readings())).json()
+
+    totals = body["grid"]["totals"]
+    assert totals["cash"] is None
+    assert totals["account_value"] == totals["market_value"]
 
 
 def test_a_book_with_no_cost_basis_anywhere_has_no_pnl_line(monkeypatch, tmp_path):

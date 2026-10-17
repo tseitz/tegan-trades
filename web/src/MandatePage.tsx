@@ -1,6 +1,11 @@
 import { Fragment, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { fetchReview, type ReviewDocument, type ReviewHeader } from "./api/client";
+import {
+  fetchReview,
+  type ReviewDocument,
+  type ReviewHeader,
+  type ReviewTotals,
+} from "./api/client";
 import { AltSignalSection } from "./altsignal/AltSignalSection";
 import { kyberSwapUrl } from "./crypto/kyberswap";
 import { capitalize, useDocumentTitle } from "./documentTitle";
@@ -14,13 +19,13 @@ const MONEY = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD
 
 interface ReviewHeaderBlockProps {
   header: ReviewHeader;
-  unpriced: number;
+  totals: ReviewTotals;
 }
 
 // Riskiest first, the same order `render()` prints them and for the same reason
 // (`render.py:132-137`): above the table, never below, because by then every verdict has
 // been read as fact.
-function ReviewHeaderBlock({ header, unpriced }: ReviewHeaderBlockProps) {
+function ReviewHeaderBlock({ header, totals }: ReviewHeaderBlockProps) {
   return (
     <div className="mb-4 flex flex-col gap-2">
       {header.mismatches.length > 0 && (
@@ -31,10 +36,15 @@ function ReviewHeaderBlock({ header, unpriced }: ReviewHeaderBlockProps) {
       {header.stale_banner && (
         <p className="panel border-warn/50 m-0 text-xs text-warn">{header.stale_banner}</p>
       )}
+      {totals.cash !== null && (
+        <p className="m-0 font-mono text-xs text-muted tabular-nums">
+          {MONEY.format(totals.market_value)} positions · {MONEY.format(totals.cash)} cash
+        </p>
+      )}
       <p className="m-0 font-mono text-xs text-faint">
         {header.prices}
         {header.written ? ` · ${header.written}` : ""}
-        {unpriced > 0 ? ` · excludes ${unpriced} with no price` : ""}
+        {totals.unpriced > 0 ? ` · excludes ${totals.unpriced} with no price` : ""}
       </p>
     </div>
   );
@@ -104,9 +114,9 @@ export function MandatePage() {
   if (review.grid.rows.length === 0) {
     return (
       <div>
-        <Title>{review.mandate}</Title>
+        <Title total={review.grid.totals.cash ?? undefined}>{review.mandate}</Title>
         {error && <p className="mb-3 text-down">Failed to refresh: {error}</p>}
-        <ReviewHeaderBlock header={review.header} unpriced={review.grid.totals.unpriced} />
+        <ReviewHeaderBlock header={review.header} totals={review.grid.totals} />
         <p className="text-muted">no positions — nothing to review</p>
       </div>
     );
@@ -115,11 +125,11 @@ export function MandatePage() {
   return (
     <div className="flex flex-col gap-8">
       <section>
-        <Title total={review.grid.totals.market_value}>{review.mandate}</Title>
+        <Title total={review.grid.totals.account_value}>{review.mandate}</Title>
         {/* A transient failed refetch renders above the grid rather than replacing it — a good
             screen must survive a bad poll. */}
         {error && <p className="mb-3 text-down">Failed to refresh: {error}</p>}
-        <ReviewHeaderBlock header={review.header} unpriced={review.grid.totals.unpriced} />
+        <ReviewHeaderBlock header={review.header} totals={review.grid.totals} />
 
         <table className="data-table">
           <thead>

@@ -82,6 +82,12 @@ class ReviewHeader(BaseModel):
 
 class ReviewTotals(BaseModel):
     market_value: float
+    # `null` when the book records no cash at all — a hand-kept book that never wrote one down
+    # is not a book holding $0.00.
+    cash: float | None
+    # Positions plus cash, the figure the broker's own app shows. WT stays over `market_value`
+    # alone (`render._weight`).
+    account_value: float
     unpriced: int
     # The terminal's own tail, unindented, so the browser prints the total and the P&L line
     # without owning their wording. No `pnl`/`pnl_pct`/`ungraded`: nothing in #87–#92 reads
@@ -171,13 +177,16 @@ def review_document(result, *, as_of: date, freshness) -> ReviewDocument:
         row_by_reading_id[id(note.reading)].notes.append(
             ReviewNote(label="YIELD", text=render.yield_text(note))
         )
+    book = result.book
+    cash = (networth.cash_of(book)
+            if book.cash is not None or book.cash_by_account else None)
     grid = ReviewGrid(
         columns=list(render.HEADERS),
         rows=rows,
-        totals=ReviewTotals(market_value=t.market_value, unpriced=t.unpriced,
-                            lines=render.totals_lines(t)),
+        totals=ReviewTotals(market_value=t.market_value, cash=cash,
+                            account_value=t.market_value + (cash or 0.0),
+                            unpriced=t.unpriced, lines=render.totals_lines(t)),
     )
-    book = result.book
     header = ReviewHeader(
         written=render.written_text(book.age_days(on=as_of)),
         stale_banner=(render.stale_banner(book.age_days(on=as_of))

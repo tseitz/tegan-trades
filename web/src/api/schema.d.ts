@@ -443,6 +443,10 @@ export interface components {
         ReviewTotals: {
             /** Market Value */
             market_value: number;
+            /** Cash */
+            cash: number | null;
+            /** Account Value */
+            account_value: number;
             /** Unpriced */
             unpriced: number;
             /** Lines */
