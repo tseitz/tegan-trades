@@ -544,12 +544,12 @@ step plaid-sync     uv run plaid-sync
 step wallet-sync    uv run wallet-sync
 
 # Same again for an exchange account, free because Kraken's API is not metered. Opt-in by the
-# book file: with no data/portfolios/kraken.yaml it prints an example and exits 0.
+# book file: with no data/portfolios/kraken.yaml it says to run `kraken-sync --init` and exits 0.
 step kraken-sync    uv run kraken-sync
 
 # Same again for Coinbase, free. Opt-in by the book file: with no data/portfolios/coinbase.yaml
-# it prints an example and exits 0. A book whose rows don't reconcile with Coinbase's own
-# total exits 1 and is left untouched.
+# it says to run `coinbase-sync --init` and exits 0. A book whose rows don't reconcile with
+# Coinbase's own total exits 1 and is left untouched.
 step coinbase-sync  uv run coinbase-sync
 
 # `--all-portfolios` rather than a list of names: this script cannot know about an account

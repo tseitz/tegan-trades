@@ -3,9 +3,13 @@
 Free and read-only. Unlike ``wallet-sync``, which discovers its accounts from a ``wallets:``
 block, this reads one account with one key, so opt-in has to be something the key cannot
 express: the git-crypt ``.env`` puts the key on every unlocked checkout, which makes "no key"
-mean nothing. **The book file is the opt-in.** No book file prints an example and exits 0; a
+mean nothing. **The book file is the opt-in.** No book file says to run ``--init`` and exits 0; a
 file without a ``mandate:`` exits 1 and writes nothing, because ``write_positions`` on it
 would produce a file ``portfolios.load`` rejects and preflight halts the whole nightly on that.
+
+``--init`` creates the book only after a good read, settings and positions in one rename. A
+book written by hand from the example has no positions until its first sync, and preflight
+runs before the sync step, so it halts the nightly that would have filled it.
 
 A failed or empty read leaves the file alone for the reason ``wallet-sync`` does: an account
 that did not answer looks exactly like one that was sold out of.
@@ -19,6 +23,9 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
+
+import yaml
 
 from oracle import portfolios, wallet
 
@@ -54,27 +61,42 @@ def run(
         help=f"drop positions worth less than this many dollars "
         f"(default {wallet.MIN_VALUE_USD:g}, or `min_value:` in the file)",
     )
+    parser.add_argument(
+        "--init",
+        action="store_true",
+        help="create the book from the account, with starter settings you can edit after",
+    )
     args = parser.parse_args(argv)
     name = args.portfolio
     path = portfolios.DATA_ROOT / f"{name}.yaml"
+    settings = example.format(name=name)
 
-    if not path.is_file():
+    if args.init:
+        if path.exists():
+            print(
+                f"{name}: {path} already exists — run without --init to sync it",
+                file=sys.stderr,
+            )
+            return 1
+        doc = yaml.safe_load(settings)
+    elif not path.is_file():
         print(
-            f"no {name} book — to sync {account.SOURCE.name}, write {path} like:\n\n"
-            f"{example.format(name=name)}"
+            f"no {name} book — to sync {account.SOURCE.name}, run:\n\n"
+            f"    uv run {prog} {name} --init\n\n"
+            f"It writes {path} with these settings, edit them after:\n\n{settings}"
         )
         return 0
-
-    try:
-        doc = portfolios.strict_load(path)
-    except portfolios.PortfolioError as exc:
-        print(f"{name}: {exc}", file=sys.stderr)
-        return 1
+    else:
+        try:
+            doc = portfolios.strict_load(path)
+        except portfolios.PortfolioError as exc:
+            print(f"{name}: {exc}", file=sys.stderr)
+            return 1
     if not isinstance(doc.get("mandate"), dict):
         print(
             f"{name}: {path} has no `mandate:` block — file left alone "
             f"(a synced file without one fails to load). Add one like:\n\n"
-            f"{example.format(name=name)}",
+            f"{settings}",
             file=sys.stderr,
         )
         return 1
@@ -104,7 +126,11 @@ def run(
 
     before = _tickers(name)
     verb = "would write" if args.dry_run else "wrote"
-    if not args.dry_run:
+    if args.dry_run:
+        pass
+    elif args.init:
+        _create(path, settings, rows, source=account.SOURCE, cash=cash)
+    else:
         portfolios.write_positions(path, rows, source=account.SOURCE, cash=cash)
     staked_note = "".join(f", {r.staked:g} {r.ticker} staked" for r in rows if r.staked)
     print(
@@ -122,6 +148,16 @@ def run(
         f"Prices: uv run fetch-prices --all-portfolios"
     )
     return 0
+
+
+def _create(path: Path, settings: str, rows, *, source, cash: float) -> None:
+    # Built beside the book and renamed in, so a crash between the two writes cannot leave a
+    # positionless book for preflight to halt on. The suffix keeps it out of `*.yaml` globs.
+    staging = path.with_name(path.name + ".init")
+    staging.parent.mkdir(parents=True, exist_ok=True)
+    staging.write_text(settings, encoding="utf-8")
+    portfolios.write_positions(staging, rows, source=source, cash=cash)
+    staging.replace(path)
 
 
 def _min_value(doc: dict) -> float:

@@ -224,3 +224,47 @@ def test_a_min_value_that_is_not_a_number_refuses_rather_than_falling_back(
     assert coinbase_cli.sync([]) == 1
     assert "not a number" in capsys.readouterr().err
     assert path.read_text() == before
+
+
+# ─── --init: a book exists only once it has positions ───────────────────────────────────
+
+
+def test_no_book_file_says_to_run_init(_root, capsys):
+    assert coinbase_cli.sync([]) == 0
+    assert "uv run coinbase-sync coinbase --init" in capsys.readouterr().out
+
+
+def test_init_writes_a_book_that_preflight_will_load(_root, monkeypatch):
+    _reader(monkeypatch, [_row()], cash=12.5)
+    assert coinbase_cli.sync(["--init"]) == 0
+    book = portfolios.load("coinbase", root=_root)
+    assert [p.holding.ticker for p in book.positions] == ["BTC"]
+    assert "mandate:" in (_root / "coinbase.yaml").read_text(encoding="utf-8")
+    assert sorted(p.name for p in _root.iterdir()) == ["coinbase.yaml"]
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        lambda mp: _raises(mp, coinbase_account.CoinbaseError("down")),
+        lambda mp: _reader(mp, []),
+    ],
+    ids=["failed-read", "empty-read"],
+)
+def test_init_writes_nothing_without_a_good_read(_root, monkeypatch, setup):
+    setup(monkeypatch)
+    assert coinbase_cli.sync(["--init"]) == 1
+    assert list(_root.iterdir()) == []
+
+
+def test_init_refuses_to_replace_an_existing_book(_root, monkeypatch):
+    path = _book(_root)
+    _reader(monkeypatch, [_row()])
+    assert coinbase_cli.sync(["--init"]) == 1
+    assert path.read_text(encoding="utf-8") == SETTINGS
+
+
+def test_init_dry_run_writes_nothing(_root, monkeypatch):
+    _reader(monkeypatch, [_row()])
+    assert coinbase_cli.sync(["--init", "--dry-run"]) == 0
+    assert list(_root.iterdir()) == []
