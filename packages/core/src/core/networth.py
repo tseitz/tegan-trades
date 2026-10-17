@@ -165,7 +165,8 @@ def exposure(results, *, parked: float | None, group_of) -> Exposure | None:
     def make(asset: str, group: list[Part]) -> Slice:
         value = sum(p.value for p in group)
         return Slice(asset=asset, value=value,
-                     pct=value / net.total if net.total else None, parts=tuple(group))
+                     pct=value / net.total if net.total else None,
+                     parts=tuple(sorted(group, key=lambda p: p.value, reverse=True)))
 
     slices = sorted((make(asset, group) for asset, group in parts.items()),
                     key=lambda s: s.value, reverse=True)

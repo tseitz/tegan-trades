@@ -220,13 +220,21 @@ def test_the_same_ticker_in_two_books_merges_into_one_slice():
     exp = networth.exposure([a, b], parked=0.0, group_of=_group)
     gld = _slice(exp, "GLD")
     assert gld.value == 300.0
-    assert [p.book for p in gld.parts] == ["a", "b"]
+    assert [p.book for p in gld.parts] == ["b", "a"]
 
 
 def test_slices_are_sorted_by_value_descending():
     a = _result(readings=[_reading("SPY", 100.0), _reading("ETH", 500.0), _reading("BTC", 300.0)])
     exp = networth.exposure([a], parked=0.0, group_of=_group)
     assert [s.asset for s in exp.slices] == ["ETH", "BTC", "SPY"]
+
+
+def test_parts_within_a_slice_are_sorted_by_value_descending():
+    a = _result(name="a", readings=[_reading("ETH", 100.0)])
+    b = _result(name="b", readings=[_reading("ETH", 100.0, 5.0)])
+    c = _result(name="c", readings=[_reading("ETH", 100.0, 2.0)])
+    exp = networth.exposure([a, b, c], parked=0.0, group_of=_group)
+    assert [p.book for p in _slice(exp, "ETH").parts] == ["b", "c", "a"]
 
 
 def test_unpriced_and_mismatched_holdings_are_excluded_with_their_reason():
@@ -246,8 +254,8 @@ def test_cash_is_one_slice_with_a_part_per_book_and_the_parked_pot():
     exp = networth.exposure([a, b, c], parked=200.0, group_of=_group)
     cash = _slice(exp, "Cash")
     assert cash.value == 255.0
-    assert cash.parts == (networth.Part("a", "cash", 40.0), networth.Part("b", "cash", 15.0),
-                          networth.Part("treasury", "parked", 200.0))
+    assert cash.parts == (networth.Part("treasury", "parked", 200.0),
+                          networth.Part("a", "cash", 40.0), networth.Part("b", "cash", 15.0))
 
 
 def test_exposure_total_is_exactly_ofs_and_the_slices_sum_to_it():
