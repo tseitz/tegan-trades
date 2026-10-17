@@ -7,6 +7,7 @@ import sys
 from datetime import UTC, date, datetime
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from networth import ledger
 from networth.exposure import assemble
 from review.cli import altsignal_settings, load_books, price_freshness, review_for
@@ -202,8 +203,15 @@ def _refuse_cross_site(request: Request) -> None:
         raise HTTPException(status_code=403, detail="cross-site request refused")
 
 
+# Binding loopback does not stop DNS rebinding: a page can point its own name at 127.0.0.1 and
+# read every GET as same-origin. The Host header is the one thing that still says which name the
+# browser thinks it is talking to.
+ALLOWED_HOSTS = ("127.0.0.1", "localhost")
+
+
 def create_app() -> FastAPI:
     app = FastAPI()
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(ALLOWED_HOSTS))
     app.state.refresh_jobs = RefreshJobs()
 
     @app.get("/api/mandates")

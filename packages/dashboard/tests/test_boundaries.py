@@ -66,3 +66,22 @@ def test_host_is_loopback_with_no_flag_to_change_it():
 
     dests = {action.dest for action in cli._build_parser()._actions}
     assert "host" not in dests
+
+
+def test_a_rebound_hostname_is_refused():
+    from dashboard import api
+    from fastapi.testclient import TestClient
+
+    client = TestClient(api.create_app())
+    assert client.get("/api/mandates", headers={"host": "evil.example"}).status_code == 400
+
+
+def test_loopback_names_with_a_port_are_served(monkeypatch):
+    from dashboard import api
+    from fastapi.testclient import TestClient
+
+    app = api.create_app()
+    app.dependency_overrides[api.mandate_books] = lambda: []
+    client = TestClient(app)
+    for host in ("127.0.0.1:8000", "localhost:5173"):
+        assert client.get("/api/mandates", headers={"host": host}).status_code == 200
