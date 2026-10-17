@@ -170,7 +170,7 @@ def _levels(c: Candidate) -> list[_Level]:
         (c.target, "target", c.target_source, False),
         *((level.price,
            "partial" if abs(level.price - c.entry) < reach else "runner",
-           f"{level.kind} · {level.reward_risk:.2f}R", False)
+           _rung_note(level), False)
           for level in c.ladder),
         (c.entry, "entry", "", False),
         (c.price, "price", "", True),
@@ -194,6 +194,13 @@ def _levels(c: Candidate) -> list[_Level]:
         merged[key] = _Level(price=price, labels=(label,), pct=pct, note=note,
                              is_price=is_price)
     return sorted(merged.values(), key=lambda lv: lv.price, reverse=True)
+
+
+def _rung_note(level) -> str:
+    """``kind · R``, plus a pool's series and, for equal highs/lows, its touch count."""
+    touches = f" ×{level.touches}" if level.touches >= 2 else ""
+    series = f" · {level.timeframe}" if level.timeframe else ""
+    return f"{level.kind}{touches}{series} · {level.reward_risk:.2f}R"
 
 
 def _segment_heavy(rows: list[_Level], i: int, *, top: float, bottom: float) -> bool:

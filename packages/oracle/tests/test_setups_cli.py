@@ -406,6 +406,16 @@ def test_a_ladder_below_the_target_is_drawn_as_partials():
     assert "runner" not in text
 
 
+def test_a_pool_rung_names_its_series_and_its_touches_when_equal():
+    text = setups_cli.format_candidate(_candidate(
+        target=180.0, target_source=RANGE_BOUND, ladder=(
+            ExitLevel(price=130.0, kind=POOL, reward_risk=2.0, touches=1, timeframe=DAILY),
+            ExitLevel(price=150.0, kind=POOL, reward_risk=4.0, touches=2, timeframe=WEEKLY),
+        )))
+    assert f"{POOL} · {DAILY} · 2.00R" in text
+    assert f"{POOL} ×2 · {WEEKLY} · 4.00R" in text
+
+
 def test_a_candidate_with_no_ladder_renders_exactly_as_it_did():
     """The ladder is additive: a target with nothing above it is the common case and must not
     grow an empty rung."""
