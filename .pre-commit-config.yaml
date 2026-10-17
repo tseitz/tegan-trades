@@ -50,15 +50,24 @@ repos:
         files: ^(web/|packages/dashboard/|uv\.lock$|pyproject\.toml$)
         stages: [pre-commit]
 
+      # Stands in for `detect-private-key` on `.env`; see the script.
+      - id: env-encrypted
+        name: .env goes through git-crypt
+        entry: scripts/check-env-encrypted.sh
+        language: system
+        pass_filenames: false
+        files: ^\.env$
+        stages: [pre-commit]
+
   # The one remote hook worth the dependency, and the reason is specific rather than hygienic:
-  # this repo is public, and `packages/execution` is the only thing here that holds a signing key
-  # — the one that can move real money. `.env` is gitignored and `.env.example` is the only env
-  # file tracked, so nothing is wrong today; this exists for the day a key gets pasted somewhere
-  # that is not `.env`. There is no competing source of truth for these, so pinning a rev is fine.
+  # this repo is public, and `.env` is not the only place a key could be pasted. `.env` itself is
+  # committed as git-crypt ciphertext and excluded here — `env-encrypted` above guards it
+  # instead. There is no competing source of truth for these, so pinning a rev is fine.
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
       - id: detect-private-key
+        exclude: ^\.env$
       - id: check-merge-conflict
       # `data/` is gitignored ore and never committed, so this is aimed at the accident where
       # something large escapes that rule rather than at routine output.
