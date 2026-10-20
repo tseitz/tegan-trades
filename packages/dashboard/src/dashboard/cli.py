@@ -20,8 +20,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Serve the dashboard.")
     parser.add_argument(
         "--port", type=int, default=8000,
-        help="Only for a port collision — vite.config.ts's proxy target is authoritative "
-             "and does not read this flag, so changing it breaks `pnpm --dir web dev`.",
+        help="Vite's /api proxy does not read this flag; it reads DASHBOARD_PORT. Use "
+             "scripts/dev.sh, which sets both, rather than passing this by hand under "
+             "`pnpm --dir web dev`.",
     )
     parser.add_argument(
         "--print-openapi", action="store_true",
