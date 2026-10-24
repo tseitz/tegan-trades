@@ -50,6 +50,12 @@ repos:
         files: ^(web/|packages/dashboard/|uv\.lock$|pyproject\.toml$)
         stages: [pre-commit]
 
+      - id: no-tests-init
+        name: no tests/__init__.py (see pytest config in pyproject.toml)
+        entry: a tests/__init__.py makes same-named test modules shadow each other in the root run
+        language: fail
+        files: (^|/)tests/__init__\.py$
+
       # Stands in for `detect-private-key` on `.env`; see the script.
       - id: env-encrypted
         name: .env goes through git-crypt

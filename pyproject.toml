@@ -103,10 +103,7 @@ markers = [
     "needs_ore: reads cached ore from data/; run where the corpus exists",
 ]
 
-# Load-bearing for the combined run. Five packages each ship a `tests/__init__.py`, so under
-# pytest's default "prepend" import mode all five try to import as the single top-level
-# package `tests` and every module after the first collides. importlib mode derives a unique
-# module name from the full path instead, which is the only thing that makes one root-level
-# `pytest` able to see all six suites at once.
+# Load-bearing for the combined run, together with there being no `tests/__init__.py`. With one,
+# every package's `tests/test_cli.py` imports as the same `tests.test_cli`, and all but the first
+# silently drop out of a root-level run while it stays green. The `no-tests-init` hook enforces it.
 addopts = "--import-mode=importlib"
-consider_namespace_packages = true
