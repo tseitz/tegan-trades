@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, date, datetime, timedelta
+from html import escape
 
 import pytest
 from core import safety
@@ -225,9 +226,9 @@ def test_the_llm_is_never_called_with_no_llm(tmp_path, today, monkeypatch):
 def build(snapshots, tmp_path, *, orders=None, with_llm=False, state_path=None):
     """``cli.build`` with an order log that exists but is empty unless a test supplies one.
 
-    Drops the memory ``cli.build`` returns third, so the many tests that only care about the
-    rendered text keep reading as ``subject, body``. ``build_with_memory`` is for the few that
-    are about the memory itself.
+    Drops the html and memory ``cli.build`` also returns, so the many tests that only care
+    about the rendered text keep reading as ``subject, body``. ``build_with_memory`` is for the
+    few that are about the memory itself, ``build_with_html`` for the html page.
     """
     subject, body, _ = build_with_memory(snapshots, tmp_path, orders=orders, with_llm=with_llm,
                                          state_path=state_path)
@@ -236,11 +237,58 @@ def build(snapshots, tmp_path, *, orders=None, with_llm=False, state_path=None):
 
 def build_with_memory(snapshots, tmp_path, *, orders=None, with_llm=False, state_path=None,
                       subject_only=False):
+    subject, body, _, memory = build_with_html(
+        snapshots, tmp_path, orders=orders, with_llm=with_llm, state_path=state_path,
+        subject_only=subject_only)
+    return subject, body, memory
+
+
+def build_with_html(snapshots, tmp_path, *, orders=None, with_llm=False, state_path=None,
+                    subject_only=False):
     if orders is None:
         orders = tmp_path / "empty-orders.jsonl"
         orders.write_text("", encoding="utf-8")
     return cli.build(snapshots_path=snapshots, orders_path=orders, with_llm=with_llm,
                      state_path=state_path, subject_only=subject_only)
+
+
+# ── the html email ────────────────────────────────────────────────────────────
+
+def test_build_paints_the_html_email(tmp_path, today):
+    snaps = _write(tmp_path / "q.jsonl",
+                   _snap("2026-08-20", []), _snap("2026-08-21", [_entry("a", asset="HYPE")]))
+    subject, body, html, _ = build_with_html(snaps, tmp_path)
+    assert html is not None and html.lstrip().lower().startswith("<!doctype html")
+    assert f"<title>{escape(subject)}</title>" in html
+    assert "no movement on the assets in play" in html
+    assert "PROBLEMS" not in body
+
+
+def test_a_painter_bug_costs_the_page_not_the_email(tmp_path, today, monkeypatch):
+    def _explode(doc):
+        raise KeyError("shape")
+
+    monkeypatch.setattr(cli.email_html, "page", _explode)
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a", asset="HYPE")]))
+    subject, body, html, _ = build_with_html(snaps, tmp_path)
+    assert "PROBLEMS" in body and "html email could not be drawn" in body
+    assert "1 problem(s)" in subject
+    assert html == cli.email_html.fallback(body)
+
+
+def test_an_oversized_page_is_warned_about(tmp_path, today, monkeypatch):
+    monkeypatch.setattr(cli.email_html, "page",
+                        lambda doc: "x" * (cli.email_html.HARD_BUDGET + 1))
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
+    _, body, html, _ = build_with_html(snaps, tmp_path)
+    assert "Gmail clips" in body
+    assert len(html) > cli.email_html.HARD_BUDGET
+
+
+def test_no_snapshot_and_subject_only_paint_no_html(tmp_path, today):
+    assert build_with_html(tmp_path / "nope.jsonl", tmp_path)[2] is None
+    snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
+    assert build_with_html(snaps, tmp_path, subject_only=True)[2] is None
 
 
 # ── the bootstrap warning must not cry wolf ───────────────────────────────────
@@ -472,15 +520,17 @@ def _treasury_result(*, advice=(), idle=None, freshest=None) -> TreasuryResult:
         readings_as_of=ReadingsAsOf(freshest=freshest, oldest=freshest))
 
 
-def test_the_treasury_section_reaches_the_body_and_the_memory(tmp_path, today, monkeypatch):
+def test_the_treasury_section_leaves_the_body_and_its_memory_is_carried_over(
+        tmp_path, today, monkeypatch):
     monkeypatch.setattr(cli, "load_result",
                         lambda **kwargs: _treasury_result(advice=(_ranked("aave-v3", "pool-1"),)))
     path = tmp_path / "state.json"
+    cli.state.save(path, {cli.state.TREASURY_OPPORTUNITIES: {"old-pool": "old-venue"}})
     snaps = _write(tmp_path / "q.jsonl", _snap("2026-08-21", [_entry("a")]))
 
     _, body, memory = build_with_memory(snaps, tmp_path, state_path=path)
-    assert "TREASURY" in body and "aave-v3" in body
-    assert memory[cli.state.TREASURY_OPPORTUNITIES] == {"pool-1": "aave-v3"}
+    assert "TREASURY" not in body and "aave-v3" not in body
+    assert memory[cli.state.TREASURY_OPPORTUNITIES] == {"old-pool": "old-venue"}
 
 
 def test_a_raising_treasury_view_costs_a_warning_not_the_digest(tmp_path, today, monkeypatch):
@@ -494,7 +544,7 @@ def test_a_raising_treasury_view_costs_a_warning_not_the_digest(tmp_path, today,
 
     subject, body, memory = build_with_memory(snaps, tmp_path, state_path=path)
     assert subject
-    assert "PROBLEMS" in body and "treasury section was dropped" in body
+    assert "PROBLEMS" in body and "treasury read failed" in body
     assert "TREASURY" not in body
     # The previous memory survives — writing back an empty one would make the pool read as
     # new tomorrow.
@@ -949,6 +999,23 @@ def test_an_unconfigured_mailer_does_not_save_the_memory(delivery, monkeypatch, 
     assert run("--email") == 0
     assert not state_path.exists()
     assert "digest memory not saved: email is not configured" in capsys.readouterr().err
+
+
+def test_html_out_writes_the_page(delivery, tmp_path, capsys):
+    run, _ = delivery
+    out = tmp_path / "digest.html"
+    assert run("--html-out", str(out)) == 0
+    assert out.read_text(encoding="utf-8").lstrip().lower().startswith("<!doctype html")
+    assert f"html written to {out}" in capsys.readouterr().out
+
+
+def test_main_mails_the_painted_page(delivery, monkeypatch):
+    run, _ = delivery
+    sent = []
+    monkeypatch.setattr(cli.mail, "send", lambda config, subject, body, html, **k:
+                        sent.append(html) or True)
+    assert run("--email") == 0
+    assert sent and sent[0].lstrip().lower().startswith("<!doctype html")
 
 
 def test_a_delivered_email_saves_the_memory(delivery, monkeypatch, capsys):

@@ -29,7 +29,8 @@ import argparse
 import json
 import os
 import sys
-from dataclasses import replace
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -46,15 +47,14 @@ from ingestion import spend
 from ingestion.roster import load_watchlist
 from networth import ledger
 from oracle import exclusions, queue_snapshot
-from oracle.assemble import load_daily
 from oracle.decisions import load_decisions
-from oracle.route import Priceable, route, the_routing_table
 from review.cli import load_books, review_for
 from treasury.cli import load_result
 
 from digest import (
     bigpicture,
     diff,
+    email_html,
     holdings,
     mail,
     narrate,
@@ -65,7 +65,6 @@ from digest import (
     views,
 )
 from digest import book as book_mod
-from digest import treasury as treasury_mod
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 CONFIG_DIR = REPO_ROOT / "cfg"
@@ -201,8 +200,8 @@ def _open_keys(orders_path, warn) -> tuple[set[str], set[str]]:
     try:
         return store.awaiting_exit_keys(orders_path), store.unsettled_keys(orders_path)
     except (OSError, ValueError) as exc:
-        warn(f"warning: could not read open positions, so the HOLDING section is missing and "
-             f"roster scope is candidates only: {exc}")
+        warn(f"warning: could not read open positions, so roster scope is candidates only: "
+             f"{exc}")
         return set(), set()
 
 
@@ -322,9 +321,19 @@ def _canonical(stances, registry):
     return [s.model_copy(update={"asset": resolve_asset(s.asset, registry)[0]}) for s in stances]
 
 
-def _views_section(*, with_llm: bool, warn, seen: dict | None
-                   ) -> tuple[str | None, str | None, set[str] | None]:
-    """``(views_text, views_note, refs)`` — at most one of the first two is set.
+@dataclass(frozen=True, slots=True)
+class ViewsResult:
+    text: str | None = None
+    note: str | None = None
+    refs: set[str] | None = None
+    folded: Sequence[views.PersonView] = ()
+    big_picture: dict[str, str] | None = None
+
+
+def _views_section(*, with_llm: bool, warn, seen: dict | None) -> ViewsResult:
+    """``ViewsResult`` — at most one of ``text`` and ``note`` is set.
+
+    ``folded`` and ``big_picture`` are the structure ``text`` was flattened from.
 
     Every outcome gets its own words, as in ``_roster_section``: nobody published, everything
     was already sent, corpus unreadable, and a broken big-picture call must not look alike. A
@@ -342,7 +351,8 @@ def _views_section(*, with_llm: bool, warn, seen: dict | None
         sidecars = _sidecars(warn, views.SCAN_DAYS)
     except _CONFIG_ERRORS as exc:
         warn(f"warning: could not read the corpus for VIEWS: {exc}")
-        return None, "  unavailable — the transcript or stance corpus could not be read", None
+        return ViewsResult(
+            note="  unavailable — the transcript or stance corpus could not be read")
 
     registry = _registry(warn)
     stances = _canonical(stances, registry)
@@ -367,11 +377,13 @@ def _views_section(*, with_llm: bool, warn, seen: dict | None
         v.ref for view in folded for v in view.videos if v.distilled}
     if not folded:
         if bootstrap:
-            return None, f"  no videos in the last {views.WINDOW_DAYS} days", refs
+            return ViewsResult(note=f"  no videos in the last {views.WINDOW_DAYS} days",
+                               refs=refs)
         if not scan_videos:
-            return None, f"  no videos in the last {views.SCAN_DAYS} days", refs
-        return (None, f"  nothing new — {len(scan_distilled & set(seen))} video(s) already in "
-                      f"an earlier digest", refs)
+            return ViewsResult(note=f"  no videos in the last {views.SCAN_DAYS} days", refs=refs)
+        return ViewsResult(
+            note=f"  nothing new — {len(scan_distilled & set(seen))} video(s) already in "
+                 f"an earlier digest", refs=refs)
 
     big_picture = None
     if with_llm:
@@ -389,12 +401,19 @@ def _views_section(*, with_llm: bool, warn, seen: dict | None
             big_picture, dropped = bigpicture.grounded(lines, payload)
             for message in dropped:
                 warn(f"warning: {message}")
-    return "\n".join(views.lines(folded, big_picture=big_picture)), None, refs
+    return ViewsResult(text="\n".join(views.lines(folded, big_picture=big_picture)),
+                       refs=refs, folded=folded, big_picture=big_picture)
 
 
 def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
-          state_path=None, subject_only: bool = False) -> tuple[str, str, dict | None]:
-    """The digest, as ``(subject, body, memory)``. Never raises on a missing or malformed input.
+          state_path=None, subject_only: bool = False
+          ) -> tuple[str, str, str | None, dict | None]:
+    """The digest, as ``(subject, body, html, memory)``. Never raises on a missing or malformed
+    input.
+
+    ``html`` is the ``email_html`` page, or ``None`` on the no-snapshot and ``subject_only``
+    paths. A painter that raises costs the page, not the email: ``html`` falls back to the body
+    in a monospace block and the failure reaches PROBLEMS, the same as any other warning.
 
     ``memory`` is what to write back once the digest has been delivered, or ``None`` when
     ``state_path`` was not given. It is **returned rather than written here** so the caller can
@@ -410,7 +429,7 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
     if current is None:
         return ("no queue snapshot yet",
                 "No queue snapshot on disk. Run `uv run setups --list` at least once — the "
-                "digest diffs against what that records.\n", None)
+                "digest diffs against what that records.\n", None, None)
 
     previous = diff.previous_nightly(snapshots)
     # Bootstrap is a legitimate state, so a schema regression that hides every prior row would
@@ -439,9 +458,6 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
         window_unknown=window is None and previous is not None)
 
     held_keys, resting_keys = _open_keys(orders_path or store.DEFAULT_PATH, warn)
-    holding = book_mod.holdings(orders, held_keys)
-    holding = book_mod.priced(
-        holding, _marks(holding, as_of=datetime.now(UTC).date(), warn=warn))
 
     memory = state.load(state_path, warn=warn) if state_path else {}
     narration, withheld, reported = _roster_section(
@@ -456,94 +472,83 @@ def build(*, snapshots_path=None, orders_path=None, with_llm: bool = True,
     holdings_deltas, results, holdings_memories = _holdings(
         memory, books=books, registry=load_registry(CONFIG_DIR), as_of=as_of, warn=warn)
 
-    # Skipped on ``--subject-only``: neither `treasury_delta` nor net worth feeds `subject()`,
-    # and the read costs a portfolio parse, an alt-signal store read and the anchors file's
-    # first-sight write. `with_llm` gets the same treatment for the same reason, just above.
-    # Net worth is skipped rather than computed from `parked=None` — that would read as a
-    # failed read rather than as a section nobody asked for.
+    # Skipped on ``--subject-only``: net worth does not feed `subject()`, and the treasury read
+    # costs a portfolio parse, an alt-signal store read and the anchors file's first-sight
+    # write. `with_llm` gets the same treatment for the same reason, just above. Net worth is
+    # skipped rather than computed from `parked=None` — that would read as a failed read rather
+    # than as a section nobody asked for.
     if subject_only:
-        treasury_delta, parked, treasury_memory = None, None, state.treasury_opportunities_seen(memory)
         net_worth, net_worth_changes, net_worth_recorded = None, {}, True
     else:
-        treasury_delta, parked, treasury_memory = _treasury(
-            memory, books=books, as_of=as_of, warn=warn)
         net_worth, net_worth_changes, net_worth_recorded = _networth(
-            results=results, parked=parked, as_of=as_of, warn=warn)
+            results=results, parked=_parked(books=books, as_of=as_of, warn=warn),
+            as_of=as_of, warn=warn)
 
     views_seen = state.views_seen(memory)
-    views_text, views_note, views_refs = (None, None, None) if subject_only else _views_section(
+    views_result = ViewsResult() if subject_only else _views_section(
         with_llm=with_llm, warn=warn, seen=views_seen)
+    views_heading = render.VIEWS_HEADING if views_seen is None else render.VIEWS_HEADING_SINCE
 
     xai_month = spend.total()
+    xai_cap = _xai_cap()
+    xai_changed = state.xai_changed(memory, xai_month)
     run = _run_row(today, warn)
-    body = render.markdown(delta, run=run, book=events, roster=narration,
-                           roster_withheld=withheld, xai_month=xai_month,
-                           xai_cap=_xai_cap(),
-                           xai_changed=state.xai_changed(memory, xai_month),
-                           holding=holding, resting=len(resting_keys),
-                           holdings_deltas=holdings_deltas,
-                           treasury_delta=treasury_delta,
-                           net_worth=net_worth, net_worth_changes=net_worth_changes,
-                           net_worth_recorded=net_worth_recorded,
-                           views=views_text, views_note=views_note,
-                           views_heading=(render.VIEWS_HEADING if views_seen is None
-                                          else render.VIEWS_HEADING_SINCE),
-                           stale_as_of=stale, problems=warn.items)
-    subject = render.subject(delta, book=events, stale_as_of=stale, problems=len(warn.items),
-                             repeat=state.is_repeat(memory, delta.previous_run),
-                             holdings_deltas=holdings_deltas,
-                             blocking=tuple((run or {}).get("blocking") or ()))
-    return (subject, body,
+
+    def _body() -> str:
+        return render.markdown(delta, run=run, book=events, roster=narration,
+                               roster_withheld=withheld, xai_month=xai_month, xai_cap=xai_cap,
+                               xai_changed=xai_changed, holdings_deltas=holdings_deltas,
+                               net_worth=net_worth, net_worth_changes=net_worth_changes,
+                               net_worth_recorded=net_worth_recorded,
+                               views=views_result.text, views_note=views_result.note,
+                               views_heading=views_heading,
+                               stale_as_of=stale, problems=warn.items)
+
+    def _subject() -> str:
+        return render.subject(delta, book=events, stale_as_of=stale, problems=len(warn.items),
+                              repeat=state.is_repeat(memory, delta.previous_run),
+                              holdings_deltas=holdings_deltas,
+                              blocking=tuple((run or {}).get("blocking") or ()))
+
+    subject, body, html = _subject(), _body(), None
+    if not subject_only:
+        warned = len(warn.items)
+        try:
+            html = email_html.page(email_html.EmailDoc(
+                subject=subject, delta=delta, views=tuple(views_result.folded),
+                big_picture=views_result.big_picture, views_note=views_result.note,
+                views_heading=views_heading, roster=narration, roster_withheld=withheld,
+                book=events, holdings_deltas=tuple(holdings_deltas), net_worth=net_worth,
+                net_worth_changes=net_worth_changes, net_worth_recorded=net_worth_recorded,
+                run=run, problems=tuple(warn.items), stale_as_of=stale, xai_month=xai_month,
+                xai_cap=xai_cap, xai_changed=xai_changed))
+        except Exception as exc:  # noqa: BLE001 - a painter bug must not cost the email
+            warn(f"warning: the html email could not be drawn, so it carries the plain text "
+                 f"instead — {type(exc).__name__}: {exc}")
+            html = None
+        else:
+            if len(html) > email_html.HARD_BUDGET:
+                warn(f"warning: the html email is {len(html) // 1000} KB; Gmail clips past "
+                     f"102 KB, so its end may be hidden")
+        # A warning raised here postdates the body and subject drawn above.
+        if len(warn.items) > warned:
+            subject, body = _subject(), _body()
+            if html is None:
+                html = email_html.fallback(body)
+    return (subject, body, html,
             _next_memory(memory, reported, xai_month, delta.previous_run, *holdings_memories,
-                        treasury_memory, views_refs)
+                         views_result.refs)
             if state_path else None)
 
 
-def _marks(holding, *, as_of, warn) -> dict[str, float]:
-    """Last cached close for each open position, so the HOLDING section can price it.
-
-    **Reads the cache and never fetches**, the same refusal ``review`` makes. The nightly warms
-    prices in an earlier step, and a reporting command that reached the network would make
-    re-running the digest an unpredictable cost. An asset nothing has fetched gets no mark and
-    its row prints without a profit and loss figure.
-
-    ``close_on`` is what decides how stale is too stale: it carries the last bar forward across
-    a weekend and refuses beyond that, so a market shut for a month cannot supply a mark that
-    reads as today's.
-
-    Never raises. A missing price cache must not cost the other six sections.
-    """
-    assets = {held.asset for held in holding if held.asset and held.asset != "?"}
-    if not assets:
-        return {}
-    try:
-        registry = load_registry(CONFIG_DIR)
-        table = the_routing_table(CONFIG_DIR)
-        series_cache: dict = {}
-        marks = {}
-        for asset in sorted(assets):
-            resolved = route(resolve_asset(asset, registry)[0], table)
-            if not isinstance(resolved, Priceable):
-                continue
-            series = load_daily(resolved, table=table, series_cache=series_cache)
-            close = None if series is None else series.close_on(as_of)
-            if close is not None:
-                marks[asset] = close
-        return marks
-    except Exception as exc:  # noqa: BLE001 - a price failure must not cost the whole digest
-        warn(f"warning: open positions could not be priced, so the HOLDING section shows no "
-             f"profit and loss — {type(exc).__name__}: {exc}")
-        return {}
-
-
 def _portfolios(warn) -> list:
-    """Every account on disk, loaded once so ``_holdings`` and ``_treasury`` do not each glob
+    """Every account on disk, loaded once so ``_holdings`` and ``_parked`` do not each glob
     and parse ``data/portfolios/`` on their own — a second load means the 77-position
     retirement file parsed twice and two near-identical "portfolio ... was skipped" warnings
     for the same bad file.
 
-    **Never raises.** A directory that cannot be listed costs the PORTFOLIO and TREASURY
-    sections' portfolio-derived content, not the whole digest.
+    **Never raises.** A directory that cannot be listed costs the PORTFOLIO section and the
+    portfolio-derived part of net worth, not the whole digest.
     """
     try:
         # `load_books` is `review`'s seam for this, not `oracle.portfolios` directly — see
@@ -551,7 +556,7 @@ def _portfolios(warn) -> list:
         # convention belongs to this package, not to `review`.
         return load_books(warn=lambda m: warn(f"warning: {m}"))
     except Exception as exc:  # noqa: BLE001 - the whole digest must survive this
-        warn(f"warning: portfolios could not be loaded, so the PORTFOLIO and TREASURY sections "
+        warn(f"warning: portfolios could not be loaded, so the PORTFOLIO section and net worth "
              f"are missing — {type(exc).__name__}: {exc}")
         return []
 
@@ -604,32 +609,21 @@ def _holdings(memory: dict, *, books, registry, as_of, warn):
         return (), None, (previous, previous_levels)
 
 
-def _treasury(memory: dict, *, books, as_of, warn):
-    """``(delta, parked total, what to remember)``, mirroring ``_holdings``.
+def _parked(*, books, as_of, warn) -> float | None:
+    """What Treasury holds, for net worth.
 
-    The parked total is ``result.total`` when there is a result, ``0.0`` when ``load_result``
-    returned ``None`` (no ``data/treasury.yaml`` — a real zero), and ``None`` on the ``except``
-    path (the read itself failed, so a total would be a guess). ``networth.of`` tells those
-    apart: the first two are knowable, the third makes net worth unknown for the night.
-
-    **Never raises.** Returns the *previous* memory unchanged on failure, and also when
-    ``result.readings_as_of.freshest is None`` — ``treasury_for`` returns ``advice=()`` with no
-    exception when the alt-signal store is empty or the fetch failed, and writing that back as
-    tonight's memory would make every pool read as new tomorrow, the exact repeat this memory
-    exists to prevent.
+    ``result.total`` when there is a result, ``0.0`` when ``load_result`` returned ``None`` (no
+    ``data/treasury.yaml`` — a real zero), and ``None`` when the read itself failed, so a total
+    would be a guess. ``networth.of`` tells those apart: the first two are knowable, the third
+    makes net worth unknown for the night. **Never raises.**
     """
-    previous = state.treasury_opportunities_seen(memory)
     try:
         result = load_result(books=books, as_of=as_of, warn=lambda m: warn(f"warning: {m}"))
-        if result is None:
-            return None, 0.0, previous
-        delta = treasury_mod.delta(result, previous, has_idle=treasury_mod.has_idle(result))
-        if result.readings_as_of.freshest is None:
-            return delta, result.total, previous
-        return delta, result.total, treasury_mod.remember(result)
     except Exception as exc:  # noqa: BLE001 - one bad read must not cost the whole digest
-        warn(f"warning: the treasury section was dropped — {type(exc).__name__}: {exc}")
-        return None, None, previous
+        warn(f"warning: the treasury read failed, so net worth is missing — "
+             f"{type(exc).__name__}: {exc}")
+        return None
+    return 0.0 if result is None else result.total
 
 
 def _networth(*, results, parked, as_of, warn):
@@ -654,12 +648,15 @@ def _networth(*, results, parked, as_of, warn):
 
 def _next_memory(memory: dict, reported, xai_month: float, window_start: str | None,
                  holdings_memory: dict, holdings_levels: dict,
-                 treasury_memory: dict, views_refs: set[str] | None) -> dict:
+                 views_refs: set[str] | None) -> dict:
     """Tonight's memory. Pruned every run, not only on runs that reported something, so a quiet
     week still clears keys that have aged out.
 
     ``views_refs`` of ``None`` means VIEWS did not run, so ``views_reported`` is carried over
     exactly as it was, absence included. Writing an empty one would read as "nothing sent yet".
+
+    ``treasury_opportunities`` is carried over untouched: TREASURY no longer prints, so tonight
+    sent nothing and advancing it would hide the opportunities if the section returns.
     """
     views_memory = {} if views_refs is None else {
         state.VIEWS: roster.remember(state.views_seen(memory) or {}, views_refs,
@@ -674,7 +671,6 @@ def _next_memory(memory: dict, reported, xai_month: float, window_start: str | N
         state.WINDOW: window_start,
         state.HOLDINGS: holdings_memory,
         state.HOLDINGS_LEVELS: holdings_levels,
-        state.TREASURY_OPPORTUNITIES: treasury_memory,
     }
 
 
@@ -698,6 +694,8 @@ def main(argv: list[str] | None = None) -> int:
                              "and DIGEST_TO in .env")
     parser.add_argument("--no-llm", action="store_true",
                         help="skip the roster narration — the only part that spends anything")
+    parser.add_argument("--html-out", default=None, metavar="PATH",
+                        help="also write the html email to PATH, to preview it in a browser")
     args = parser.parse_args(argv)
 
     # `.env` before anything reads the environment: the cap and the mail settings both live
@@ -711,7 +709,7 @@ def main(argv: list[str] | None = None) -> int:
     # It also gets **no memory**, for the same reason: a run that never renders the roster
     # section must not record its events as told. `--no-llm` is safe to give a path to, because
     # the section it prints is a count and ``_roster_section`` reports nothing on that path.
-    subject, body, memory = build(
+    subject, body, html, memory = build(
         snapshots_path=args.snapshots, orders_path=args.orders,
         with_llm=not args.no_llm and not args.subject_only,
         state_path=None if args.subject_only else STATE,
@@ -726,6 +724,11 @@ def main(argv: list[str] | None = None) -> int:
     print("─" * len(subject))
     print()
     print(body, end="")
+    html = html or email_html.fallback(body)
+
+    if args.html_out:
+        Path(args.html_out).write_text(html, encoding="utf-8")
+        print(f"\nhtml written to {args.html_out}")
 
     if args.vault:
         # Written before the email is attempted: the note is the primary copy and must not
@@ -745,7 +748,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"warning: {exc}", file=sys.stderr)
             skipped = "email is not configured"
         else:
-            if mail.send(config, subject, body, warn=lambda m: print(m, file=sys.stderr)):
+            if mail.send(config, subject, body, html, warn=lambda m: print(m, file=sys.stderr)):
                 print(f"emailed to {', '.join(config.to)}")
                 delivered = True
             else:

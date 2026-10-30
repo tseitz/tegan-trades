@@ -56,10 +56,13 @@ def test_the_sender_defaults_to_the_authenticating_account():
 
 def test_the_message_carries_the_subject_and_a_plain_text_body():
     config = mail.configure(_env())
-    message = mail.compose(config, "1 at trigger · 1 new", "AT THE TRIGGER\n  HYPE\n")
+    message = mail.compose(config, "1 at trigger · 1 new", "AT THE TRIGGER\n  HYPE\n", HTML)
     assert message["Subject"] == "1 at trigger · 1 new"
     assert message["From"] == "me@gmail.com"
     assert "HYPE" in _part(message, "text/plain").get_content()
+
+
+HTML = "<html><body><p>painted</p></body></html>"
 
 
 def _part(message, kind):
@@ -67,26 +70,23 @@ def _part(message, kind):
 
 
 def test_the_plain_text_part_is_the_rendered_digest_unchanged():
-    """One renderer, no drift. The terminal, the vault note and the mail all show the same
-    characters, and the HTML part below may only restyle them."""
+    """The terminal, the vault note and the mail's text part all show the same characters."""
     body = "AT THE TRIGGER\n  HYPE     LONG   daily · entry 41.10\n"
-    message = mail.compose(mail.configure(_env()), "s", body)
+    message = mail.compose(mail.configure(_env()), "s", body, HTML)
     assert _part(message, "text/plain").get_content() == body
 
 
-def test_an_html_part_is_offered_alongside_it():
-    """``render`` pads columns to fixed widths and that only holds in a monospace font. As a lone
-    plain-text part the mail was drawn proportional and every column collapsed."""
-    message = mail.compose(mail.configure(_env()), "s", "AT THE TRIGGER\n")
+def test_the_given_html_is_offered_alongside_it():
+    message = mail.compose(mail.configure(_env()), "s", "AT THE TRIGGER\n", HTML)
     assert message.get_content_type() == "multipart/alternative"
-    assert "AT THE TRIGGER" in _part(message, "text/html").get_content()
+    assert _part(message, "text/html").get_content().strip() == HTML
 
 
 def test_a_long_subject_survives_the_trip_through_a_mail_parser():
     """Folded at the default 78 columns, a subject carrying "·" split into encoded-words — one of
     them a lone space — and every client decoded it back with a double space in it."""
     subject = "3 at trigger · 6 new · 2 out · 1 rezoned · 3 holdings moved · 19 at a level"
-    raw = mail.compose(mail.configure(_env()), subject, "b").as_string()
+    raw = mail.compose(mail.configure(_env()), subject, "b", HTML).as_string()
     assert str(message_from_string(raw, policy=policy.default)["Subject"]) == subject
 
 
@@ -99,7 +99,7 @@ def test_a_send_failure_warns_and_returns_false(tmp_path):
         raise OSError("connection refused")
 
     warned: list[str] = []
-    sent = mail.send(mail.configure(_env()), "s", "b",
+    sent = mail.send(mail.configure(_env()), "s", "b", HTML,
                      transport=_explode, warn=warned.append)
     assert sent is False
     assert warned and "connection refused" in warned[0]
@@ -107,7 +107,7 @@ def test_a_send_failure_warns_and_returns_false(tmp_path):
 
 def test_a_successful_send_reports_true():
     sent = []
-    assert mail.send(mail.configure(_env()), "s", "b",
+    assert mail.send(mail.configure(_env()), "s", "b", HTML,
                      transport=lambda *a, **k: sent.append(a)) is True
     assert sent
 
@@ -171,14 +171,14 @@ def test_resend_also_requires_a_recipient():
 def test_resend_sends_plain_text_and_html_over_https():
     config = mail.configure(_resend_env())
     calls = []
-    sent = mail.send(config, "s", "AT THE TRIGGER\n  HYPE\n",
+    sent = mail.send(config, "s", "AT THE TRIGGER\n  HYPE\n", HTML,
                      transport=lambda *a: calls.append(a))
     assert sent is True
     got_config, subject, text, html = calls[0]
     assert got_config is config
     assert subject == "s"
     assert text == "AT THE TRIGGER\n  HYPE\n"
-    assert "HYPE" in html
+    assert html == HTML
 
 
 def test_a_resend_failure_warns_and_returns_false():
@@ -186,7 +186,7 @@ def test_a_resend_failure_warns_and_returns_false():
         raise requests.RequestException("503 from Resend")
 
     warned: list[str] = []
-    sent = mail.send(mail.configure(_resend_env()), "s", "b",
+    sent = mail.send(mail.configure(_resend_env()), "s", "b", HTML,
                      transport=_explode, warn=warned.append)
     assert sent is False
     assert warned and "503 from Resend" in warned[0]

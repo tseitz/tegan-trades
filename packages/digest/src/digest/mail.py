@@ -42,8 +42,6 @@ from email.policy import SMTP
 
 import requests
 
-from digest import htmlmail
-
 # RFC 5321's line limit, used as the header-folding width. The default policy folds at 78, and a
 # subject carrying "·" gets split into encoded-words at that boundary — one of which encodes a
 # lone space. A client unfolds the break to a space and decodes that word to a second one, so
@@ -158,20 +156,19 @@ def configure(env) -> Config | ResendConfig:
     return _configure_smtp(env)
 
 
-def compose(config: Config, subject: str, body: str) -> EmailMessage:
-    """The message. Two parts carrying one string.
+def compose(config: Config, subject: str, body: str, html: str) -> EmailMessage:
+    """The message, as ``multipart/alternative``.
 
-    The plain-text part is the rendered digest verbatim, so the terminal, the vault note and the
-    inbox still show the same characters and there is still one renderer. The HTML part is that
-    same text in a monospace block — see ``htmlmail``, which may restyle and may not restate.
-    Sending it as ``multipart/alternative`` means a client that prefers plain text loses nothing.
+    The plain-text part is the rendered digest verbatim, the same characters the terminal and
+    the vault note show. The HTML part is a separately painted page (``email_html``), so a
+    client that prefers plain text still gets the whole digest.
     """
     message = EmailMessage(policy=_POLICY)
     message["Subject"] = subject
     message["From"] = config.sender
     message["To"] = ", ".join(config.to)
     message.set_content(body)
-    message.add_alternative(htmlmail.wrap(body), subtype="html")
+    message.add_alternative(html, subtype="html")
     return message
 
 
@@ -193,7 +190,7 @@ def _resend_send(config: ResendConfig, subject: str, text: str, html: str) -> No
     response.raise_for_status()
 
 
-def send(config: Config | ResendConfig, subject: str, body: str, *,
+def send(config: Config | ResendConfig, subject: str, body: str, html: str, *,
          transport=None, warn=None) -> bool:
     """Send it. ``True`` if it went. Never raises.
 
@@ -205,9 +202,9 @@ def send(config: Config | ResendConfig, subject: str, body: str, *,
     """
     try:
         if isinstance(config, ResendConfig):
-            (transport or _resend_send)(config, subject, body, htmlmail.wrap(body))
+            (transport or _resend_send)(config, subject, body, html)
         else:
-            (transport or _smtp_send)(config, compose(config, subject, body))
+            (transport or _smtp_send)(config, compose(config, subject, body, html))
     except (OSError, smtplib.SMTPException, requests.RequestException) as exc:
         if warn is not None:
             warn(f"warning: could not email the digest: {exc}")

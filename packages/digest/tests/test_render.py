@@ -382,72 +382,9 @@ def _held(asset="HOOD", **over):
     return diff_book.Holding(asset=asset, **kw)
 
 
-def test_an_open_position_is_named_with_its_stop():
-    """The BOOK section is a diff, so a position opened three weeks ago produces no line. On
-    2026-08-26 the account held META and HOOD and no digest had ever mentioned either."""
-    body = render.markdown(_quiet(), holding=(_held(),))
-    assert "HOLDING" in body
-    assert "HOOD" in body and "72.29" in body and "117" in body
-
-
-def test_holding_nothing_prints_no_section():
-    assert "HOLDING" not in render.markdown(_quiet(), holding=())
-
-
-def test_a_paper_position_is_labelled():
-    """A fill that never had to find a buyer reads exactly like a real one. Same rule the
-    closed line follows: the flag travels with the number."""
-    assert "paper" in render.markdown(_quiet(), holding=(_held(),)).lower()
-
-
-def test_a_live_position_is_not_labelled_paper():
-    body = render.markdown(_quiet(), holding=(_held(paper=False),))
-    assert "paper" not in body.lower()
-
-
-def test_a_position_missing_its_fill_still_prints_its_stop():
-    """Open either way, and the stop is the number worth reading."""
-    body = render.markdown(_quiet(), holding=(_held(qty=None, fill_price=None),))
-    assert "HOOD" in body and "72.29" in body
-
-
-def test_resting_entries_are_counted_not_listed():
-    """Five orders waiting at a price is worth knowing. Listing them would double the section
-    to say what `uv run book` says better."""
+def test_an_open_position_no_longer_prints_a_holding_section():
     body = render.markdown(_quiet(), holding=(_held(),), resting=5)
-    assert "5" in body and "resting" in body
-
-
-def test_no_resting_entries_adds_nothing():
-    assert "resting" not in render.markdown(_quiet(), holding=(_held(),), resting=0)
-
-
-def test_an_open_position_shows_what_it_is_up_in_money_and_in_percent():
-    """The section named the fill and the stop, so it said what was committed and never what
-    it had become. The one question a reader opens this section with went unanswered."""
-    body = render.markdown(_quiet(), holding=(_held(mark=104.26),))
-    assert "104.26" in body and "+1,037.71" in body and "+18.8%" in body
-
-
-def test_a_position_with_no_mark_still_prints_its_row():
-    """An asset nothing has fetched is still a position. Dropping the row, or printing it at
-    break-even, would both be worse than a row with no number on it."""
-    body = render.markdown(_quiet(), holding=(_held(),))
-    assert "HOOD" in body and "72.29" in body
-
-
-def _holding_head(body: str) -> str:
-    return next(line for line in body.splitlines() if line.startswith("HOLDING"))
-
-
-def test_the_holding_header_carries_the_whole_book():
-    head = _holding_head(render.markdown(_quiet(), holding=(_held(mark=104.26),)))
-    assert "+1,037.71" in head and "+18.8%" in head
-
-
-def test_the_holding_header_admits_what_it_could_not_price():
-    body = render.markdown(_quiet(), holding=(_held(mark=104.26), _held(asset="META")))
-    assert "1 unpriced" in _holding_head(body)
+    assert "HOLDING" not in body and "HOOD" not in body and "resting" not in body
 
 
 # ── run health names the reason, not just the exit code ──────────────────────
@@ -550,28 +487,10 @@ def test_no_treasury_delta_prints_no_section():
     assert "TREASURY" not in render.markdown(_quiet())
 
 
-def test_a_treasury_delta_with_nothing_new_still_prints_the_deployed_head():
-    body = render.markdown(_quiet(), treasury_delta=_treasury_delta())
-    assert "TREASURY — treasury · 1 row(s) · $1,000.00 total · weighted APY 4.21%" in body
-
-
-def test_a_partial_apy_coverage_note_matches_the_treasury_cards_own_wording():
+def test_a_treasury_delta_no_longer_prints_a_section():
     body = render.markdown(_quiet(), treasury_delta=_treasury_delta(
-        rows=2, total=2000.0, apy_rows=1, apy_amount=1000.0))
-    assert "1/2 rows, $1,000.00 of $2,000.00 — partial" in body
-
-
-def test_new_opportunities_print_in_full_the_first_night():
-    body = render.markdown(_quiet(), treasury_delta=_treasury_delta(
-        new=(_ranked("aave-v3", "pool-1", apy=5.5),), bootstrap=True))
-    assert "aave-v3" in body and "5.50%" in body
-    assert "first look, nothing to compare against yet" in body
-
-
-def test_already_reported_opportunities_collapse_to_a_count():
-    body = render.markdown(_quiet(), treasury_delta=_treasury_delta(standing=2))
-    assert "2 opportunities standing" in body
-    assert "aave-v3" not in body
+        new=(_ranked("aave-v3", "pool-1", apy=5.5),), standing=2))
+    assert "TREASURY" not in body and "aave-v3" not in body and "standing" not in body
 
 
 # ── the NET WORTH section ───────────────────────────────────────────────────────
@@ -623,3 +542,9 @@ def test_an_unrecorded_night_is_marked():
     body = render.markdown(_quiet(), net_worth=_net_worth(), net_worth_recorded=False)
     assert "(not recorded)" in body
     assert "(not recorded)" not in render.markdown(_quiet(), net_worth=_net_worth())
+
+
+def test_portfolio_rows_is_none_for_a_portfolio_with_nothing_to_say():
+    from digest import holdings
+    assert render.portfolio_rows(holdings.HoldingsDelta(portfolio="p", positions=3)) is None
+    assert render.portfolio_rows(holdings.HoldingsDelta(portfolio="p", stale=True)) is not None

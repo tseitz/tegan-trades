@@ -18,11 +18,13 @@ client, which means one renderer and nothing to drift.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from core import networth
 from review.render import roster_text, where_text
 from treasury import render as treasury_render
 
-from digest import book, diff, holdings, treasury
+from digest import diff, holdings, treasury
 from digest.fmt import money, num, pct
 
 # How close to the monthly xAI cap before spend is worth a reader's attention. Below this the
@@ -158,6 +160,9 @@ def markdown(delta: diff.QueueDelta, *, run=None, book=None, roster: str | None 
     ``views`` is the VIEWS block pre-rendered without its heading; ``views_note`` is the words
     for a night with no block ("nobody published", "corpus unreadable"). Like ``roster``, both
     arrive already written.
+
+    ``holding``, ``resting`` and ``treasury_delta`` are accepted and ignored: HOLDING and
+    TREASURY no longer print.
     """
     out: list[str] = []
 
@@ -187,17 +192,13 @@ def markdown(delta: diff.QueueDelta, *, run=None, book=None, roster: str | None 
         out.append("ROSTER MOVED")
         out.append(roster)
 
-    # Above the book's events: what you are in outranks what the account did overnight, and on
-    # most nights the events are about orders that never became a position.
-    out.extend(_holding_section(holding, resting))
     out.extend(_book_section(book))
     # Below the trading book on purpose. Everything above is time-sensitive — a zone reached
     # this morning, a fill overnight. A long-horizon account moves on a scale where one day
     # rarely matters, so it reads after the things that do.
     out.extend(_holdings_section(holdings_deltas))
-    out.extend(_treasury_section(treasury_delta))
-    # After PORTFOLIO and TREASURY, which are the pots it sums — it reads as their total
-    # rather than as a seventh sibling section.
+    # After PORTFOLIO, one of the pots it sums — it reads as their total rather than as
+    # a sibling section.
     out.extend(_networth_section(net_worth, net_worth_changes or {},
                                        recorded=net_worth_recorded))
     out.extend(_run_section(run, xai_month=xai_month, xai_cap=xai_cap,
@@ -229,56 +230,34 @@ def _caveats(delta: diff.QueueDelta) -> list[str]:
     return out
 
 
-def _holding_section(holding, resting: int) -> list[str]:
-    """What the account is in right now. The one standing state in a digest of diffs.
+@dataclass(frozen=True, slots=True)
+class PortfolioRows:
+    """What one portfolio's block shows tonight, already filtered, ordered and capped."""
+    delta: holdings.HoldingsDelta
+    changes: tuple
+    arrivals: tuple
+    arrivals_dropped: int
+    standing_loud: dict[str, int]
+    watching: int
 
-    It has to be standing, and that is the whole point: a position opened three weeks ago
-    produces no event tonight, so every other section here is structurally incapable of
-    mentioning it. The account held META and HOOD for three weeks and no digest had ever named
-    either.
 
-    Resting entries are counted, not listed. Five orders waiting at a price is worth knowing;
-    listing them would double the section to say what ``uv run book`` says better.
+def portfolio_rows(delta: holdings.HoldingsDelta) -> PortfolioRows | None:
+    """The pieces of a portfolio block, or ``None`` when it prints nothing tonight.
 
-    Every row carries what it is up or down, because "committed at 87.79 with a stop at 72.29"
-    is the state at entry and says nothing about the state now. The mark is the last cached
-    close, so these are the numbers as at the snapshot the rest of the digest describes — not
-    a live quote, and they will differ from the broker's screen by whatever has traded since.
+    Loud (ADD/TRIM) changes sort before quiet dropouts, ADD before TRIM within the loud group.
+    ``arrivals`` is capped at ``ARRIVALS_SHOWN`` and ``arrivals_dropped`` counts the rest.
     """
-    if not holding:
-        return []
-
-    # Paper travels with the position for the reason it travels with a closed trade's number:
-    # a fill that never had to find a buyer reads exactly like a real one.
-    note = ", ".join(
-        part for part in (
-            f"{len(holding)} open",
-            f"{resting} entries resting" if resting else "",
-            "paper" if all(h.paper for h in holding) else "",
-        ) if part)
-
-    gain, share, unpriced = book.totals(holding)
-    if gain is not None:
-        note += f" · P&L {money(gain)}"
-        if share is not None:
-            note += f" ({pct(share)})"
-        if unpriced:
-            note += f", excludes {unpriced} unpriced"
-
-    out = [f"HOLDING — {note}"]
-    for held in holding:
-        fill = (f"{held.qty:g} @ {num(held.fill_price)}"
-                if held.qty is not None and held.fill_price is not None else "fill not recorded")
-        # A mark with no fill behind it still answers half the question, so it prints alone
-        # rather than being dropped with the arithmetic it could not complete.
-        if held.pnl is not None:
-            fill += f" → {num(held.mark)} · {money(held.pnl)} ({pct(held.pnl_pct)})"
-        elif held.mark is not None:
-            fill += f" · now {num(held.mark)}"
-        since = f" · since {held.settled_at[:10]}" if held.settled_at else ""
-        out.append(f"  {held.asset:<8} {(held.direction or '?').upper():<6} {fill} · "
-                   f"stop {num(held.stop)} · target {num(held.target)}{since}")
-    return ["", *out]
+    standing_loud = {v: n for v, n in delta.standing.items() if v in holdings.LOUD and n}
+    if not (delta.changed or standing_loud or delta.unpriced or delta.arrived or delta.left
+            or delta.stale):
+        return None
+    return PortfolioRows(
+        delta=delta,
+        changes=tuple(sorted(delta.changed, key=_change_sort_key)),
+        arrivals=tuple(delta.arrived[:ARRIVALS_SHOWN]),
+        arrivals_dropped=max(0, len(delta.arrived) - ARRIVALS_SHOWN),
+        standing_loud=standing_loud,
+        watching=delta.standing.get("WATCH", 0))
 
 
 def _holdings_section(deltas) -> list[str]:
@@ -293,14 +272,11 @@ def _holdings_section(deltas) -> list[str]:
     the fact worth carrying is only that it stopped asking.
     """
     out: list[str] = []
-    for d in deltas:
-        standing_loud = {v: n for v, n in d.standing.items() if v in holdings.LOUD and n}
-        if not (d.changed or standing_loud or d.unpriced or d.arrived or d.left or d.stale):
+    for rows in map(portfolio_rows, deltas):
+        if rows is None:
             continue
+        d = rows.delta
 
-        # PORTFOLIO, not HOLDINGS: `_holding_section` above already prints "HOLDING", and the
-        # two sections are about different accounts entirely — one is the trading book, this is
-        # the long-term money. A one-letter difference between two headings is not a difference.
         head = f"PORTFOLIO — {d.portfolio}"
         if d.bootstrap:
             # Eight arrivals on night one is not eight things that happened today, and without
@@ -315,16 +291,13 @@ def _holdings_section(deltas) -> list[str]:
             out.append(f"  STALE — written down {d.age_days} days ago. Anything traded since "
                        f"is missing from everything below.")
 
-        # Loud (ADD/TRIM) before quiet dropouts, ADD before TRIM within the loud group — a
-        # reader wants to know what to buy and sell before what quietly stopped asking.
-        #
         # 5 is the floor this column has always had, and it stays the floor regardless of
         # which verdicts this portfolio's own changes happen to carry — AC 5 needs the exact
         # width a sentiment-led account (ADD/TRIM only, both under 5 characters) always had.
         # It only grows past 5 when a wider verdict (`SELL_ZONE`, `BUY_ZONE`) is present.
         width = max(5, max((len(change.reading.verdict) for change in d.changed
                             if change.reading.verdict in holdings.LOUD), default=0))
-        for change in sorted(d.changed, key=_change_sort_key):
+        for change in rows.changes:
             verdict = change.reading.verdict
             was = "new to the file" if change.before is None else f"was {change.before}"
             if verdict in holdings.LOUD:
@@ -338,21 +311,20 @@ def _holdings_section(deltas) -> list[str]:
         # sits above the standing counts — those describe a state that was already true.
         if d.arrived:
             out.append("  reached a level overnight")
-            out += [f"    {_arrival(spot)}" for spot in d.arrived[:ARRIVALS_SHOWN]]
-            dropped = len(d.arrived) - ARRIVALS_SHOWN
-            if dropped > 0:
-                out.append(f"    and {dropped} more — `uv run review --levels`")
+            out += [f"    {_arrival(spot)}" for spot in rows.arrivals]
+            if rows.arrivals_dropped:
+                out.append(f"    and {rows.arrivals_dropped} more — "
+                           f"`uv run review --levels`")
         # Counted, not listed. A departure asks nothing of the reader — the position simply
         # is not at a level any more — so naming each one only lengthens the section.
         if d.left:
             out.append(f"  {len(d.left)} position{'' if len(d.left) == 1 else 's'} "
                        f"stepped off a level overnight")
 
-        counts = " · ".join(f"{n} {v}" for v, n in sorted(standing_loud.items()))
-        watching = d.standing.get("WATCH", 0)
+        counts = " · ".join(f"{n} {v}" for v, n in sorted(rows.standing_loud.items()))
         tail = [counts] if counts else []
-        if watching:
-            tail.append(f"{watching} WATCH")
+        if rows.watching:
+            tail.append(f"{rows.watching} WATCH")
         tail.append(f"{d.positions} positions")
         out.append(f"  {' · '.join(tail)} standing")
 
@@ -393,41 +365,6 @@ def holdings_subject(deltas) -> list[str]:
     # between "nothing happened" and "we are reading a file from two months ago".
     parts += [f"{d.portfolio} stale" for d in deltas if d.stale]
     return parts
-
-
-def _treasury_head(delta: treasury.TreasuryDelta) -> str:
-    """Mandate, row count, typed total and weighted APY — calls `treasury.render.apy_line` and
-    `.money` (stripped of their two-space terminal indent) rather than a second copy of either,
-    since this is the same figure about the same rows."""
-    apy = treasury_render.apy_line(delta.weighted_apy, delta.apy_rows, delta.rows,
-                                    delta.apy_amount, delta.total).strip()
-    note = (f"{delta.mandate_name} · {delta.rows} row(s) · "
-            f"{treasury_render.money(delta.total)} total · {apy}")
-    if delta.bootstrap:
-        note += " · first look, nothing to compare against yet"
-    return note
-
-
-def _treasury_section(delta: treasury.TreasuryDelta | None) -> list[str]:
-    """Parked money, and any standing yield opportunity idle cash could move to.
-
-    The deployed half is standing state and prints unconditionally whenever there is a
-    Treasury file at all — the same reasoning `_holding_section` gives for the trading book: a
-    position parked three weeks ago produces no event tonight, so a diff would never mention
-    it. The opportunity half is a diff: a gate-clearing pool prints in full its first night and
-    only as a count after that, `_holdings_section`'s rule for a standing verdict.
-    """
-    if delta is None:
-        return []
-
-    out = ["", f"TREASURY — {_treasury_head(delta)}"]
-    for ranked in delta.new:
-        apy = f"{ranked.facts.apy:.2f}%" if ranked.facts.apy is not None else "—"
-        out.append(f"  {ranked.facts.slug:<14} {apy:>7}")
-    if delta.standing:
-        out.append(f"  {delta.standing} opportunit{'y' if delta.standing == 1 else 'ies'} "
-                   f"standing")
-    return out
 
 
 def _networth_section(net: networth.NetWorth | None, changes: dict[int, networth.Change],

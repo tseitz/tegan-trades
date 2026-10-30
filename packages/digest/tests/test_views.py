@@ -322,3 +322,9 @@ def test_collapsed_both_sides_drop_still_works_with_a_flip_present():
                            collapsed=frozenset({"tasty"}), priors=by_id))
     assert '    Sep 30 · "Busy" — Bullish BTC (was bearish)' in out
     assert not any("SPX" in ln for ln in out)
+
+
+def test_entry_notes_lists_high_then_the_prior_with_its_year_when_it_differs():
+    assert views.entry_notes(views.Entry("BTC", True, prior("bullish", "2025-09-03")), 2026) \
+        == ["high", "was bullish Sep 3 2025"]
+    assert views.entry_notes(views.Entry("BTC", False), 2026) == []
