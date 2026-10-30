@@ -787,3 +787,24 @@ def test_funding_is_read_once_over_the_whole_hold_not_once_per_leg(tmp_path):
     # One read per candidate, and the window runs to the LAST exit.
     assert len(broker.funding_calls) == 1
     assert broker.funding_calls[0][1] == datetime.fromisoformat("2026-08-07T13:39:09+00:00")
+
+
+def test_hyperliquid_is_opened_on_every_dex_the_log_has_traded(tmp_path, monkeypatch):
+    """Opened on the core book alone, the listing read "positions: none" while four xyz
+    positions and eighteen orders were live."""
+    path = tmp_path / "orders.jsonl"
+    store._append(path, {"outcome": store.PLACED, "candidate_key": "a",
+                         "network": "testnet", "coin": "xyz:TSLA"})
+    store._append(path, {"outcome": store.PLACED, "candidate_key": "b",
+                         "network": "testnet", "coin": "ETH"})
+    opened = {}
+
+    def fake_open(config, credentials, *, dexs=()):
+        opened["dexs"] = dexs
+        return FakeBroker()
+
+    monkeypatch.setattr("execution.book_cli.open_broker", fake_open)
+    monkeypatch.setattr("execution.book_cli.config_module.credentials_for", lambda venue: None)
+    main(["--venue", "hyperliquid", "--network", "testnet"], now=NOW,
+         out=lambda _: None, orders_path=path)
+    assert opened["dexs"] == ("xyz",)

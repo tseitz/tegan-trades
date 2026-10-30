@@ -41,6 +41,7 @@ from datetime import UTC, datetime
 from execution import config as config_module
 from execution import journal, outcome, store
 from execution.book import RestingOrder, stale
+from execution.broker import dex_of
 from execution.session import open_broker
 from execution.venues import ALL_NETWORKS, default_network, is_real_money
 from execution.venues import NETWORKS as VENUE_NETWORKS
@@ -567,8 +568,15 @@ def main(argv: list[str] | None = None, *, now: datetime | None = None,
     max_age = args.max_age if args.max_age is not None else config.max_order_age_days
 
     if broker is None:
+        # A HIP-3 builder is its own book, unread unless named. ``venue_map`` would list
+        # them, but ``execution`` cannot see it — so the log names what was ever traded.
+        # Outside the try: a corrupt log is not an unreachable venue.
+        dexs = tuple(sorted(
+            {dex_of(c) for c in store.placed_coins(orders_path, network=config.network)}
+            - {""}))
         try:
-            broker = open_broker(config, config_module.credentials_for(config.venue))
+            broker = open_broker(config, config_module.credentials_for(config.venue),
+                                 dexs=dexs)
         except Exception as exc:  # noqa: BLE001 - a message beats a traceback here
             print(f"error: could not reach {config.venue} {config.network} — "
                   f"{type(exc).__name__}: {exc}", file=sys.stderr)

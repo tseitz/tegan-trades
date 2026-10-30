@@ -325,6 +325,15 @@ def load(path) -> list[dict]:
     return [json.loads(ln) for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
 
 
+def placed_coins(path, *, network: str) -> set[str]:
+    """Every market this repo has sent an order to on ``network``. Failed sends included: a
+    reply misread as a failure can still have left something live at the venue."""
+    return {
+        r["coin"] for r in load(path)
+        if r.get("outcome") in (PLACED, FAILED) and r.get("network") == network and r.get("coin")
+    }
+
+
 def placed_keys(path, *, network: str | None = None) -> set[str]:
     """Candidate keys that already have a live order behind them **on ``network``**.
 

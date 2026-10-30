@@ -538,3 +538,16 @@ def test_a_close_with_unmeasured_costs_records_them_as_absent(tmp_path):
     assert row["funding"] is None
     assert row["pnl_net"] is None
     assert row["r_net_at_fill"] is None
+
+
+def test_placed_coins_names_every_market_sent_on_one_network(tmp_path):
+    """What `book` reads to know which HIP-3 books to ask. Failures count too: a reply misread
+    as a failure can still have left a position behind."""
+    path = _placed(tmp_path, [
+        {"candidate_key": "a", "network": "testnet", "coin": "xyz:TSLA"},
+        {"candidate_key": "b", "network": "testnet", "coin": "ETH"},
+        {"candidate_key": "c", "network": "mainnet", "coin": "flx:GOLD"},
+    ])
+    store._append(path, {"outcome": store.FAILED, "candidate_key": "d",
+                         "network": "testnet", "coin": "km:SILVER"})
+    assert store.placed_coins(path, network="testnet") == {"xyz:TSLA", "ETH", "km:SILVER"}
