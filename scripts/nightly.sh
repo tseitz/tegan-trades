@@ -369,11 +369,11 @@ print(f'{spend.total():.2f}')" 2>/dev/null || echo "0.00")
 
 WORST=0
 RUN_STARTED=$(date +%s)
-declare -a STATUS_LINES
+declare -a STATUS_LINES=()
 # Parallel to STATUS_LINES, but machine-readable: `name|status|seconds`, assembled into a JSON
 # row at the end. The pretty lines above answer "what happened last night"; this answers "is
 # distill getting slower", which no single run's log can. See scripts/nightly_report.py.
-declare -a STEP_RECORDS
+declare -a STEP_RECORDS=()
 # Every reason the run is not clean, whatever noticed it. Two sources feed this and both must:
 # `step` files the ones an exit code carries, and `flag` files the ones it cannot — several
 # commands report a failure while exiting 0 (`ingest-roster` aborting on a YouTube IP block is
@@ -387,9 +387,9 @@ declare -a STEP_RECORDS
 #
 # Keep it parallel to STATUS_LINES: the log gets the pretty line, this survives into
 # history.jsonl and therefore into the mail.
-declare -a REASONS
+declare -a REASONS=()
 # The subset of REASONS no unattended night will clear. The digest puts these in the subject.
-declare -a BLOCKING
+declare -a BLOCKING=()
 
 # Raise the run to at least WARN and say why, in both places.
 flag() {
