@@ -72,3 +72,16 @@ def test_user_message_carries_the_source_context_and_transcript():
     assert "2026-07-01" in user
     assert "https://youtu.be/abc123" in user
     assert "the transcript body" in user
+
+
+def test_horizon_is_how_long_the_call_plays_out_not_the_chart_it_was_read_from():
+    """Left undefined, `swing` became the default and swallowed weekly and cycle views —
+    measured in scripts/probe_horizon_tags.py."""
+    s = _system()
+    for horizon in ("scalp", "swing", "position", "macro"):
+        assert horizon in s
+    assert "not the chart" in s
+
+
+def test_asks_for_one_stance_per_horizon_when_the_leans_differ():
+    assert "one stance per horizon" in _system()

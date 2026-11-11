@@ -25,6 +25,7 @@ brain = "brain.query_cli:main"
 brain-extract = "brain.cli:extract_main"
 brain-index = "brain.index_cli:main"
 brain-mcp = "brain.mcp_server:main"
+brain-retag-horizon = "brain.retag:main"
 
 [build-system]
 requires = ["uv_build>=0.10.4,<0.11.0"]

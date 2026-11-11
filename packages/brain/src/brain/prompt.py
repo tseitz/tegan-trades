@@ -17,7 +17,9 @@ Do NOT extract price levels, entries, targets, or stop losses. Those are capture
 separately by another pass and are not your job here. If someone gives a detailed trade
 setup, record only the underlying lean and why they hold it.
 
-Return one stance per (asset) the speaker actually expresses a view on.
+Return one stance per asset the speaker actually expresses a view on. When they hold
+DIFFERENT leans on the same asset over different horizons — bearish for the next few
+weeks, bullish over the year — return one stance per horizon, each with its own lean.
 
 Fields:
 - `asset` — a standard uppercase ticker/symbol (BTC, ETH, SOL, SPX, NVDA). Required.
@@ -34,7 +36,7 @@ Fields:
   make them flip or reconsider. This is the single most valuable field here, because these
   people revise as data arrives. Capture it whenever they signal one.
 - `conviction` — how strongly they said it: low, med, or high.
-- `horizon` — the timescale of the view: scalp, swing, position, or macro.
+- `horizon` — how long the view is expected to take to play out. See HORIZON below.
 - `asset_heard` — these transcripts are auto-captions that mishear tickers ("Cardano" ->
   "Cards", "Cheniere" -> "Shener"). Put your best-guess ticker in `asset`; when the spoken
   term was garbled, ALSO put the verbatim heard phrase here.
@@ -49,6 +51,18 @@ Rules:
   Do NOT invent views to fill it out."""
 
 
+HORIZON_RULES = """HORIZON — how long the call is expected to take to play out:
+    scalp     under a day
+    swing     days to about six weeks
+    position  about two to nine months
+    macro     about a year or longer
+It is NOT the chart the view was read from. A swing long taken off a weekly breaker is
+`swing`; "the weekly is bearish, I expect weeks of downside" is `swing`; "the monthly says
+the cycle low is in" is `position` or `macro`. Judge by the time the speaker expects the
+move to take, and by what they say they are doing (a trade they will manage over days is
+not a cycle view). Omit it when they give nothing to judge by."""
+
+
 def build_prompt(transcript_text: str, source: Source) -> tuple[str, str]:
     user = (
         f"Speaker: {source.person}\n"
@@ -56,4 +70,4 @@ def build_prompt(transcript_text: str, source: Source) -> tuple[str, str]:
         f"URL: {source.url}\n\n"
         f"Transcript:\n{transcript_text}"
     )
-    return _SYSTEM, user
+    return _SYSTEM + "\n\n" + HORIZON_RULES, user

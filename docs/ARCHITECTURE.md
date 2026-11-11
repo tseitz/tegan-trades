@@ -143,6 +143,7 @@ packages. Every command below is run as `uv run <command>` **from the repo root*
 | `distill-transcript <id>` | 🔴 | One transcript, one call. Cheap. |
 | `brain-extract` | 🔴 | Resumable — skips the 455 already done, so ~211 remain. |
 | `brain-extract --force` | 🔴🔴 **DANGER** | Re-extracts all 666. |
+| `brain-retag-horizon` | 🔴 | Re-judges every stance's horizon from its stored rationale — ~255 calls (40 stances each) for the whole corpus, ~1–2h at `--concurrency 3`. Resumable; ids unchanged; the original tag stays in `ext.horizon_v1`. Run on the droplet, which owns the corpus. It rewrites nearly every stance file, so the next `brain-index` re-embeds nearly the whole corpus (free, CPU time only). `--dry-run --limit N` to sample. |
 | `brain "<question>"` | 🔴 | One synthesis call per question. Trivial cost. |
 | `brain "<question>" --no-llm` | 🟢 | Structured + evidence legs only. Completely free. |
 | `brain-index` | 🟢 | Local embedding model (`BAAI/bge-small-en-v1.5`) on CPU. Slow first run (downloads weights), zero dollars. |
