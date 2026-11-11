@@ -15,6 +15,7 @@ from core.review import (
     RosterLean,
 )
 from oracle import freshness
+from oracle.corpus import CorpusRow
 from oracle.portfolios import Benchmark, Mandate, Portfolio, Position
 from oracle.route import RoutingTable
 from oracle.series import Bar, PriceSeries
@@ -458,3 +459,77 @@ def test_a_replay_never_pulls(monkeypatch):
     """A pull writes today's bars into the cache, which is exactly what makes a past-date read
     untrue — the same reason `--refresh` is refused alongside `--as-of`."""
     assert _gated_main(monkeypatch, ["test", "--as-of", "2026-01-02"]) == []
+
+
+# ── review_for: the roster's called levels (opt-in) ────────────────────────
+
+
+def _corpus_row(asset, *, levels, person="Ann", direction="long", timeframe="swing",
+                published_at="2025-06-20"):
+    return CorpusRow(
+        id=f"{asset}-{person}-{published_at}", asset=asset, asset_raw=asset, domain="crypto",
+        direction=direction, timeframe=timeframe, conviction="high", confidence=0.8,
+        person=person, published_at=published_at, summary="", thesis_type="technical",
+        url="", key_levels=tuple(levels))
+
+
+def _drive_roster_levels(monkeypatch, tickers, corpus_rows, *, curated=None, wraps=None,
+                         **kwargs):
+    series = _series()
+    last = series.bars[-1].close
+    monkeypatch.setattr(cli.corpus, "iter_rows", lambda registry: iter(corpus_rows))
+    monkeypatch.setattr(cli, "load_all_stances", lambda: [])
+    monkeypatch.setattr(
+        cli, "load_routing_table",
+        lambda *a, **kw: RoutingTable(
+            curated=curated or {}, coinbase_symbols=frozenset(), kraken_symbols=frozenset(),
+            domain_consensus={"ETH": "crypto", "BTC": "crypto", "DJI": "stock", "HODL": "crypto"},
+            wraps=wraps or {}))
+    monkeypatch.setattr(cli.listings, "load_or_fetch", lambda path: {})
+    monkeypatch.setattr(cli, "load_daily", lambda resolved, **kw: series)
+    return last, review_for([_book(*tickers, domain="crypto")], as_of=AS_OF,
+                            registry=REGISTRY, **kwargs)
+
+
+_CURATED_ETH = {"ETH": {"source": "yahoo", "symbol": "ETH-USD"},
+                "BTC": {"source": "yahoo", "symbol": "BTC-USD"}}
+
+
+def test_roster_levels_are_off_unless_asked_for(monkeypatch):
+    _last, [result] = _drive_roster_levels(
+        monkeypatch, ["ETH"],
+        [_corpus_row("ETH", levels=[round(_series().bars[-1].close * 1.1, 2)])],
+        curated=_CURATED_ETH)
+    assert result.roster_levels == () and result.other_scale == ()
+
+
+def test_a_held_alias_reads_the_canonical_assets_levels(monkeypatch):
+    """The silent failure is an asset-key mismatch: WETH is held, the rows say ETH, and a
+    lookup on the file ticker would show nothing at all."""
+    level = round(_series().bars[-1].close * 1.1, 2)
+    _last, [result] = _drive_roster_levels(
+        monkeypatch, ["WETH"], [_corpus_row("ETH", levels=[level])],
+        curated=_CURATED_ETH, roster_levels=True)
+    [(reading, found)] = result.roster_levels
+    assert reading.holding.ticker == "WETH"
+    assert [(c.person, c.level) for c in found.levels] == [("Ann", level)]
+    assert result.other_scale == ()
+
+
+def test_a_tradeable_route_counts_as_other_scale_and_gets_no_levels(monkeypatch):
+    curated = {"DJI": {"source": "yahoo", "symbol": "^DJI", "tradeable": "DIA"}}
+    level = round(_series().bars[-1].close * 1.1, 2)
+    _last, [result] = _drive_roster_levels(
+        monkeypatch, ["DJI"], [_corpus_row("DJI", levels=[level])], curated=curated,
+        roster_levels=True)
+    assert result.other_scale == ("DJI",)
+    assert result.roster_levels == ()
+
+
+def test_a_wrapper_fund_does_not_borrow_the_wrapped_assets_levels(monkeypatch):
+    _last, [result] = _drive_roster_levels(
+        monkeypatch, ["HODL"],
+        [_corpus_row("BTC", levels=[round(_series().bars[-1].close * 1.1, 2)])],
+        curated={"HODL": {"source": "yahoo", "symbol": "HODL"}, **_CURATED_ETH},
+        wraps={"HODL": "BTC"}, roster_levels=True)
+    assert result.roster_levels == ()

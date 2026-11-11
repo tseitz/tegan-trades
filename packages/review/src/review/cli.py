@@ -24,6 +24,7 @@ from brain.stance_store import load_all_stances
 from core.canon import load_registry, resolve_asset
 from core.nearby import levels_near
 from core.review import LEVELS_LED, mark_disagrees, review
+from core.roster_levels import roster_levels as _roster_levels
 from core.setups import build_context
 from core.transactions import TransactionSpan
 from oracle import (
@@ -43,7 +44,12 @@ from oracle.route import Priceable, load_routing_table, route
 
 from review import altsignal, yield_note
 from review.levels import SHOWN, cap, shortlist
-from review.render import render, render_altsignal, render_levels
+from review.render import (
+    render,
+    render_altsignal,
+    render_levels,
+    render_roster_calls,
+)
 
 CONFIG_DIR = Path(__file__).resolve().parents[4] / "cfg"
 
@@ -91,6 +97,8 @@ class ReviewResult(NamedTuple):
     macro: tuple
     history: TransactionSpan | None = None
     yield_notes: tuple = ()
+    roster_levels: tuple = ()  # (reading, RosterLevels) in file order; only holdings with a level or a drop
+    other_scale: tuple = ()    # tickers whose price route is quoted off the roster's instrument
 
 
 def canonical_rows(book, registry) -> list[tuple[str, str]]:
@@ -174,7 +182,38 @@ def _fold_by_asset(registry) -> dict[str, list]:
     return grouped
 
 
-def review_for(books, *, as_of: date, registry=None, altsignal_cfg=None) -> list[ReviewResult]:
+def _roster_levels_for(readings, *, registry, table, rows_by_asset, series_cache, as_of):
+    """``(pairs, other_scale)`` — the roster's called levels beside each holding.
+
+    Keyed on the holding's **own** canonical asset, never ``table.wraps``: levels are dollar
+    prices on the underlying and would be wrong on a wrapper fund's scale. A ``tradeable``
+    route is priced on a different instrument than the one the roster quoted (DIA vs ^DJI), so
+    it is counted in ``other_scale`` rather than rescaled.
+    """
+    pairs, other_scale = [], []
+    for reading in readings:
+        if reading.price is None:
+            continue
+        asset = resolve_asset(reading.holding.ticker, registry)[0]
+        resolved = route(asset, table)
+        if isinstance(resolved, Priceable) and getattr(resolved, "tradeable", None):
+            other_scale.append(reading.holding.ticker)
+            continue
+        daily = (load_daily(resolved, table=table, series_cache=series_cache)
+                 if isinstance(resolved, Priceable) else None)
+        found = _roster_levels(
+            rows_by_asset.get(asset, ()),
+            price=reading.price, cost=reading.holding.cost,
+            close_on=lambda d, daily=daily: daily.close_on(d) if daily is not None else None,
+            today=as_of,
+        )
+        if found.levels or found.dropped:
+            pairs.append((reading, found))
+    return tuple(pairs), tuple(other_scale)
+
+
+def review_for(books, *, as_of: date, registry=None, altsignal_cfg=None,
+               roster_levels: bool = False) -> list[ReviewResult]:
     """One ``ReviewResult`` per account, for several accounts at once.
 
     **One routing table and one stance fold for all of them.** Both are O(corpus) — a full walk
@@ -191,6 +230,10 @@ def review_for(books, *, as_of: date, registry=None, altsignal_cfg=None) -> list
     section today, so asking every caller to pay for it — or to risk a broken
     ``cfg/altsignal.yaml`` costing a section that was never going to be shown — would be a cost
     with no matching benefit. The terminal passes its own loaded config.
+
+    ``roster_levels`` is opt-in for the same reason: ``digest`` never renders the roster's
+    called levels, so it must not pay the per-holding publish-day close lookups. When False the
+    result's ``roster_levels`` and ``other_scale`` stay empty.
     """
     books = list(books)
     if not books:
@@ -206,13 +249,19 @@ def review_for(books, *, as_of: date, registry=None, altsignal_cfg=None) -> list
     # The corpus supplies domain consensus for everything the roster discusses; the files
     # supply it for everything else. Both, never one — see `Portfolio.domain_rows` for why a
     # file's single row cannot outvote a discussed asset's hundreds.
-    rows = [(r.asset, r.domain) for r in corpus.iter_rows(registry)]
+    corpus_rows = list(corpus.iter_rows(registry))
+    rows = [(r.asset, r.domain) for r in corpus_rows]
     for pairs in per_book_assets:
         rows += pairs
     table = load_routing_table(
         CONFIG_DIR, rows,
         listings=listings.load_or_fetch(cache.DATA_ROOT / "_listings.json"),
     )
+
+    rows_by_asset: dict[str, list] = defaultdict(list)
+    if roster_levels:
+        for r in corpus_rows:
+            rows_by_asset[r.asset].append(r)
 
     folded = _fold_by_asset(registry)
     series_cache: dict = {}
@@ -238,6 +287,12 @@ def review_for(books, *, as_of: date, registry=None, altsignal_cfg=None) -> list
                 readings, assets, book.positions, altsignal_cfg=altsignal_cfg, as_of=as_of
             )
 
+        called, other_scale = (), ()
+        if roster_levels:
+            called, other_scale = _roster_levels_for(
+                readings, registry=registry, table=table, rows_by_asset=rows_by_asset,
+                series_cache=series_cache, as_of=as_of)
+
         cached = transaction_store.load(book.name)
         history = TransactionSpan.of(cached[0]) if cached is not None else None
 
@@ -245,7 +300,7 @@ def review_for(books, *, as_of: date, registry=None, altsignal_cfg=None) -> list
             book=book, readings=readings, contexts=contexts,
             mismatched=mismatched(book, readings),
             levels=levels, chains=chains, macro=macro, history=history,
-            yield_notes=notes,
+            yield_notes=notes, roster_levels=called, other_scale=other_scale,
         ))
     return results
 
@@ -382,7 +437,8 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
 
     as_of = args.as_of or datetime.now(UTC).date()
-    [result] = review_for([book], as_of=as_of, altsignal_cfg=altsignal_settings())
+    [result] = review_for([book], as_of=as_of, altsignal_cfg=altsignal_settings(),
+                          roster_levels=True)
     readings = result.readings
     print(render(readings, portfolio=book.name, as_of=as_of,
                  age_days=book.age_days(on=as_of), stale=book.is_stale(on=as_of),
@@ -403,6 +459,10 @@ def main(argv: list[str] | None = None) -> int:
                                         limit=None if args.levels else SHOWN)
     print()
     print(render_levels(standing, closing, suppressed, kinds=book.level_kinds))
+
+    print()
+    print(render_roster_calls(result.roster_levels, result.other_scale,
+                              every=args.levels))
 
     print()
     print(render_altsignal(result.chains, result.macro))

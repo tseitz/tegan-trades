@@ -43,7 +43,7 @@ NO_REFERENCE = "no_reference_price"
 NO_TARGET_SIDE = "no_level_beyond_entry"
 UNDIRECTED = "undirected"
 
-_PROFIT_SIDE = {"long": 1, "short": -1}
+PROFIT_SIDE = {"long": 1, "short": -1}
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +79,7 @@ def read_target(row, reference_price: float | None) -> TargetReading:
     if reference_price is None:
         return TargetReading(target=None, source=NO_REFERENCE)
 
-    sign = _PROFIT_SIDE.get(getattr(row, "direction", ""))
+    sign = PROFIT_SIDE.get(getattr(row, "direction", ""))
     if sign is None:
         # "neutral" has no profit side by definition, and an unrecognised direction must fail
         # closed rather than default to long.

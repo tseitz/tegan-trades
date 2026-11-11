@@ -23,6 +23,7 @@ from core.review import (
     Reading,
     RosterLean,
 )
+from core.roster_levels import AGAINST, HIT, TARGET, CalledLevel, RosterLevels
 from core.transactions import TransactionSpan
 from oracle.portfolios import Benchmark, Mandate
 from review.render import (
@@ -32,6 +33,7 @@ from review.render import (
     note_text,
     ranked,
     render,
+    render_roster_calls,
     roster_text,
     row_cells,
     totals,
@@ -761,3 +763,80 @@ def test_totals_lines_prints_the_total_alone_for_a_synced_wallet_with_no_cost_ba
     and never graded."""
     reading = _reading("BTC", price=100.0, shares=2.0, cost=None)
     assert totals_lines(totals([reading])) == ["total 200.00"]
+
+
+def _call(level, *, price=100.0, cost=50.0, person="Raoul", role=TARGET, published="2026-11-05"):
+    return CalledLevel(person=person, direction="long", horizon="swing",
+                       published_at=published, level=level, role=role,
+                       distance=(level - price) / price,
+                       vs_cost=(level - cost) / cost if cost else None)
+
+
+def test_roster_calls_rows_carry_arrow_distance_person_role_date_and_cost():
+    found = RosterLevels((_call(110.0), _call(90.0, role=AGAINST)), people=1)
+    out = render_roster_calls([(_reading("BTC"), found)], ())
+    assert out.splitlines()[0] == ("ROSTER CALLS — 1 holding · near-term calls (scalp/swing), "
+                                   "newest per person")
+    assert "BTC  100.00  (cost 50.00)" in out
+    up, down = [ln for ln in out.splitlines() if "Raoul" in ln]
+    assert up.split()[:3] == ["▲", "110.00", "+10.0%"]
+    assert "long swing" in up and "target" in up and "11-05" in up and "vs cost +120.0%" in up
+    assert down.split()[:3] == ["▼", "90.00", "-10.0%"] and "against" in down
+
+
+def test_roster_calls_cost_omitted_when_unknown():
+    found = RosterLevels((_call(110.0, cost=None),), people=1)
+    out = render_roster_calls([(_reading("BTC", cost=None), found)], ())
+    assert "(cost" not in out and "vs cost" not in out
+
+
+def test_roster_calls_keep_each_persons_nearest_target_and_nearest_against():
+    levels = (
+        _call(150.0), _call(120.0),
+        _call(95.0, role=AGAINST), _call(80.0, role=AGAINST),
+        _call(101.0, role=HIT),
+        _call(130.0, person="Mayne"),
+    )
+    out = render_roster_calls([(_reading("BTC"), RosterLevels(levels, people=2))], ())
+    shown = [ln.split()[1] for ln in out.splitlines() if "Raoul" in ln or "Mayne" in ln]
+    assert shown == ["130.00", "120.00", "95.00"]
+    assert "+3 more" in out
+
+
+def test_roster_calls_every_shows_everything_including_hits():
+    levels = (*(_call(float(v)) for v in range(60, 130, 10)), _call(101.0, role=HIT))
+    out = render_roster_calls([(_reading("BTC"), RosterLevels(levels, people=1))], (),
+                              every=True)
+    assert out.count("Raoul") == 8 and "more" not in out
+
+
+def test_roster_calls_out_of_band_count_beside_a_holding_with_levels():
+    found = RosterLevels((_call(110.0),), people=1, dropped=2)
+    out = render_roster_calls([(_reading("ETH"), found)], ())
+    assert "    2 out of band" in out
+
+
+def test_roster_calls_holding_with_only_dropped_levels_is_one_footer_line():
+    found = RosterLevels((), people=0, dropped=1)
+    out = render_roster_calls([(_reading("ANSEM"), found)], ())
+    assert "out of band only: ANSEM 1" in out
+    assert "ANSEM  " not in out and "0 holdings" in out
+
+
+def test_roster_calls_names_other_scale_holdings():
+    out = render_roster_calls([], ("DIA", "QQQ"))
+    assert "DIA, QQQ — levels quoted on the index, not the fund; not shown" in out
+    assert "no near-term" not in out
+
+
+def test_roster_calls_empty_state_is_one_line_not_silence():
+    out = render_roster_calls([], ())
+    assert out.splitlines()[-1].strip() == "no near-term roster calls on anything held"
+
+
+def test_roster_calls_a_person_with_only_hit_targets_still_shows_the_nearest_hit():
+    levels = (_call(101.0, role=HIT, person="Mayne"), _call(102.0, role=HIT, person="Mayne"),
+              _call(120.0))
+    out = render_roster_calls([(_reading("BTC"), RosterLevels(levels, people=2))], ())
+    mayne = [ln for ln in out.splitlines() if "Mayne" in ln]
+    assert len(mayne) == 1 and "101.00" in mayne[0] and "hit" in mayne[0]

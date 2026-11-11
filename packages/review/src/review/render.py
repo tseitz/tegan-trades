@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from core.nearby import DAILY_ZONE, GAP, RANGE_EDGE, RESISTANCE, WEEKLY_ZONE
+from core.rank import parse_date
 from core.review import (
     ABOVE_RANGE,
     ADD,
@@ -41,6 +42,7 @@ from core.review import (
     chart_trims,
     roster_disagrees,
 )
+from core.roster_levels import HIT
 from core.structure import (
     DOWNTREND,
     DOWNTREND_FAILED_BREAKDOWN,
@@ -102,6 +104,7 @@ LEVEL_HEADERS = ("TICKER", "PRICE", "SIDE", "LEVEL", "WHAT", "", "ROSTER", "")
 
 LEVEL_GROUPS = ("standing on it", "closing in")
 NOTHING_NEAR = "nothing near a level"
+NO_ROSTER_CALLS = "no near-term roster calls on anything held"
 
 ALTSIGNAL_TITLE = "ALT-SIGNAL"
 MACRO_LABEL = "MACRO"
@@ -649,4 +652,95 @@ def render_altsignal(chains, macro) -> str:
         out.append(f"  {MACRO_LABEL}")
         for row in macro:
             out.append(f"    {macro_text(row)}")
+    return "\n".join(out)
+
+
+def _call_date(published_at) -> str:
+    d = parse_date(published_at)
+    return d.strftime("%m-%d") if d is not None else "—"
+
+
+def _call_row(call) -> list[str]:
+    return [
+        "▲" if call.distance >= 0 else "▼",
+        _money(call.level),
+        _pct(call.distance),
+        call.person,
+        f"{call.direction} {call.horizon}",
+        call.role,
+        _call_date(call.published_at),
+        f"vs cost {_pct(call.vs_cost)}" if call.vs_cost is not None else "",
+    ]
+
+
+def headline_calls(calls) -> list:
+    """Per person, the nearest live target and the nearest level against the call.
+
+    Nearest-to-price alone was tried first and measured on a 22-level BTC book: the six it kept
+    sat within 1.5% of price — two hit targets and a ladder of stops — and hid every target
+    worth reading. What a holder wants from a person is where they think it goes next and where
+    they are wrong, so that is the one row each. A hit target is behind price and only stands
+    in for a person who has nothing else — otherwise a call that already paid would vanish.
+    """
+    best: dict[tuple[str, str], object] = {}
+    for call in calls:
+        key = (call.person, call.role)
+        if key not in best or abs(call.distance) < abs(best[key].distance):
+            best[key] = call
+    live = {person for person, role in best if role != HIT}
+    return [call for (person, role), call in best.items() if role != HIT or person not in live]
+
+
+def render_roster_calls(pairs, other_scale, *, every: bool = False) -> str:
+    """The roster's called price levels beside each holding.
+
+    By default each holding shows ``headline_calls`` and counts the rest; ``every`` prints
+    them all. Widths come from the shown rows across every holding so the columns line up down
+    the page. A holding whose every level fell out of band gets no block of its own — it is
+    named on one footer line instead, so a wrong-scale level reads as one.
+    """
+    shown, only_dropped = [], []
+    for reading, found in pairs:
+        if not found.levels:
+            only_dropped.append(f"{reading.holding.ticker} {found.dropped}")
+            continue
+        calls = list(found.levels) if every else headline_calls(found.levels)
+        calls.sort(key=lambda c: c.level, reverse=True)
+        shown.append((reading, found, [_call_row(c) for c in calls],
+                      len(found.levels) - len(calls)))
+
+    noun = "holding" if len(shown) == 1 else "holdings"
+    head = (f"ROSTER CALLS — {len(shown)} {noun} · near-term calls (scalp/swing), "
+            f"newest per person")
+    if not shown and not only_dropped and not other_scale:
+        return f"{head}\n\n  {NO_ROSTER_CALLS}"
+
+    all_rows = [row for _, _, rows, _ in shown for row in rows]
+    widths = [max(len(cell) for cell in column) for column in zip(*all_rows, strict=True)] \
+        if all_rows else []
+
+    def line(cells):
+        return "    " + "  ".join(c.ljust(w) for c, w in zip(cells, widths, strict=True)).rstrip()
+
+    out = [head]
+    for reading, found, rows, more in shown:
+        holding = reading.holding
+        title = f"{holding.ticker}  {_money(reading.price)}"
+        if holding.cost is not None:
+            title += f"  (cost {_money(holding.cost)})"
+        out += ["", f"  {title}"]
+        out += [line(row) for row in rows]
+        if more:
+            out.append(f"    +{more} more — `--levels` prints every one")
+        if found.dropped:
+            out.append(f"    {found.dropped} out of band")
+
+    if only_dropped or other_scale:
+        out.append("")
+    if only_dropped:
+        out.append(f"  out of band only: {', '.join(only_dropped)} — levels off this "
+                   f"asset's scale, likely a different instrument")
+    if other_scale:
+        out.append(f"  {', '.join(other_scale)} — levels quoted on the index, not the fund; "
+                   f"not shown")
     return "\n".join(out)
