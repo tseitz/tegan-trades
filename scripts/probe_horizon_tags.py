@@ -17,6 +17,15 @@ day ranges (`brain/prompt.py`, the `horizon` field), so "swing trade on a weekly
 Current people per term on digest assets (non-stale, newest per person per term): BTC near 12 /
 long 18, ETH 12/12, SPX 11/16, GOLD 9/16, MSTR 4/11, HYPE 2/8. Single-author crosswinds: BTC 4,
 ETH 4, NVDA 3, SPX 3, GOLD 2, MSTR 2, SOL 0, HYPE 0.
+
+AFTER `brain-retag-horizon`, 2026-11-11 (horizon = how long the call plays out, `HORIZON_RULES`)
+
+Re-tag changed 4,095 of 10,153; near→long 1,514, long→near 369. Tagged-near/says-long fell
+1,124 → 692, tagged-long/says-near rose 90 → 126; disagreement 36.4% → 24.6%. That 24.6% is NOT
+the error rate any more: the regex reads "weekly" as long, but a swing trade taken off a weekly
+chart is `swing` by definition. Hand-read of 20 remaining disagreements: ~2 clearly mis-termed (a
+year-end target tagged swing), the rest weekly-chart swing trades or regex false hits. This
+regex can no longer measure tagging; judge any future change by hand-reads.
 """
 from __future__ import annotations
 
