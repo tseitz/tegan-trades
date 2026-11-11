@@ -5,6 +5,7 @@ export type ReviewDocument = components["schemas"]["ReviewDocument"];
 export type ReviewHeader = components["schemas"]["ReviewHeader"];
 export type ReviewTotals = components["schemas"]["ReviewTotals"];
 export type LevelsSection = components["schemas"]["LevelsSection"];
+export type RosterCallsSection = components["schemas"]["RosterCallsSection"];
 export type AltSignalSection = components["schemas"]["AltSignalSection"];
 export type RefreshJobStatus = components["schemas"]["RefreshJobStatus"];
 export type TreasuryResponse = components["schemas"]["TreasuryResponse"];

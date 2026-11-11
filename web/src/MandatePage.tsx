@@ -13,6 +13,7 @@ import { nextSort, sortRows, type GridSort } from "./grid/sort";
 import { numericColumns, signedColumns, signTone, verdictTone } from "./grid/tone";
 import { LevelsTable } from "./levels/LevelsTable";
 import { useRefresh } from "./refresh/RefreshProvider";
+import { RosterCallsTable } from "./rostercalls/RosterCallsTable";
 import { tradingViewUrl } from "./tradingview";
 
 const MONEY = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -69,6 +70,7 @@ export function MandatePage() {
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<GridSort | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [callsExpanded, setCallsExpanded] = useState(false);
 
   useDocumentTitle(name ? capitalize(name) : "Mandates");
 
@@ -78,6 +80,7 @@ export function MandatePage() {
   useEffect(() => {
     setSort(null);
     setExpanded(false);
+    setCallsExpanded(false);
   }, [name]);
 
   useEffect(() => {
@@ -222,6 +225,11 @@ export function MandatePage() {
         levels={review.levels}
         expanded={expanded}
         onToggle={() => setExpanded((current) => !current)}
+      />
+      <RosterCallsTable
+        calls={review.roster_calls}
+        expanded={callsExpanded}
+        onToggle={() => setCallsExpanded((current) => !current)}
       />
       <AltSignalSection altsignal={review.altsignal} />
     </div>

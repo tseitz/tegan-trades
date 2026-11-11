@@ -118,6 +118,27 @@ class LevelsSection(BaseModel):
     empty_note: str | None   # render.NOTHING_NEAR when both groups are empty, else None
 
 
+class RosterCallRow(BaseModel):
+    cells: list[str]         # render.call_row, in render.ROSTER_CALL_HEADERS order
+    headline: bool           # in render.headline_calls(found.levels) — the one selection rule
+
+
+class RosterCallHolding(BaseModel):
+    title: str                  # render.roster_call_title
+    rows: list[RosterCallRow]    # every level, level descending — render_roster_calls' order
+    dropped: int                 # RosterLevels.dropped
+
+
+class RosterCallsSection(BaseModel):
+    headline: str
+    columns: list[str]           # render.ROSTER_CALL_HEADERS
+    holdings: list[RosterCallHolding]  # holdings with at least one level only
+    withheld: int                # non-headline rows across all holdings
+    out_of_band_only: str | None
+    other_scale: str | None
+    empty_note: str | None       # render.NO_ROSTER_CALLS when nothing at all, else None
+
+
 class AltSignalChain(BaseModel):
     ticker: str
     lines: list[str]         # review.altsignal.ChainLine.lines, already finished sentences
@@ -137,6 +158,7 @@ class ReviewDocument(BaseModel):
     grid: ReviewGrid
     header: ReviewHeader
     levels: LevelsSection
+    roster_calls: RosterCallsSection
     altsignal: AltSignalSection
 
 
@@ -195,7 +217,8 @@ def review_document(result, *, as_of: date, freshness) -> ReviewDocument:
         mismatches=render.mismatch_lines(result.mismatched),
     )
     return ReviewDocument(mandate=book.name, as_of=as_of, grid=grid, header=header,
-                          levels=levels_section(result), altsignal=altsignal_section(result))
+                          levels=levels_section(result), roster_calls=roster_calls_section(result),
+                          altsignal=altsignal_section(result))
 
 
 def levels_section(result) -> LevelsSection:
@@ -229,6 +252,39 @@ def levels_section(result) -> LevelsSection:
         shown=SHOWN,
         withheld=withheld,
         empty_note=render.NOTHING_NEAR if not groups else None,
+    )
+
+
+def roster_calls_section(result) -> RosterCallsSection:
+    """`ReviewResult.roster_levels` -> the browser's ROSTER CALLS section.
+
+    Every level goes on the wire, flagged `headline` from `render.headline_calls`, so the
+    browser filters on a boolean instead of re-implementing the selection. Membership is by
+    `id()` because `headline_calls` returns the same objects it was given.
+    """
+    holdings = []
+    for reading, found in result.roster_levels:
+        if not found.levels:
+            continue
+        keep = {id(c) for c in render.headline_calls(found.levels)}
+        calls = sorted(found.levels, key=lambda c: c.level, reverse=True)
+        holdings.append(RosterCallHolding(
+            title=render.roster_call_title(reading),
+            rows=[RosterCallRow(cells=render.call_row(c), headline=id(c) in keep)
+                  for c in calls],
+            dropped=found.dropped,
+        ))
+    out_of_band_only = render.out_of_band_only_line(result.roster_levels)
+    other_scale = render.other_scale_line(result.other_scale)
+    return RosterCallsSection(
+        headline=render.roster_calls_headline(len(holdings)),
+        columns=list(render.ROSTER_CALL_HEADERS),
+        holdings=holdings,
+        withheld=sum(not row.headline for h in holdings for row in h.rows),
+        out_of_band_only=out_of_band_only,
+        other_scale=other_scale,
+        empty_note=(render.NO_ROSTER_CALLS
+                    if not holdings and not out_of_band_only and not other_scale else None),
     )
 
 

@@ -23,6 +23,7 @@ from core.review import (
     Reading,
     RosterLean,
 )
+from core.roster_levels import AGAINST, HIT, TARGET, CalledLevel, RosterLevels
 from core.safety import UNCONFIGURED, GateResult, RankedVenue, SafetyScore, VenueFacts
 from core.setups import WEEKLY
 from fastapi.testclient import TestClient
@@ -77,10 +78,12 @@ def _grid_readings():
 
 
 def _grid_result(readings, *, book_name="retirement", mandate=MANDATE, levels=((), (), 0),
-                 chains=(), macro=(), cash=None, cash_by_account=None):
+                 chains=(), macro=(), cash=None, cash_by_account=None, roster_levels=(),
+                 other_scale=()):
     return ReviewResult(
         book=_book(book_name, mandate=mandate, cash=cash, cash_by_account=cash_by_account), readings=list(readings), contexts=(),
         mismatched=(), levels=levels, chains=chains, macro=macro,
+        roster_levels=roster_levels, other_scale=other_scale,
     )
 
 
@@ -1097,3 +1100,119 @@ def test_networth_shows_no_change_when_the_newest_row_is_not_today(monkeypatch, 
 
     assert len(body["rows"]) == 2
     assert body["horizons"] == []
+
+
+# ── the ROSTER CALLS section ────────────────────────────────────────────────
+
+
+def _call(level, *, price=100.0, person="Raoul", role=TARGET):
+    return CalledLevel(person=person, direction="long", horizon="swing",
+                       published_at="2026-11-05", level=level, role=role,
+                       distance=(level - price) / price, vs_cost=(level - 50.0) / 50.0)
+
+
+def _called_pairs():
+    busy = RosterLevels(
+        (_call(150.0), _call(120.0), _call(95.0, role=AGAINST), _call(80.0, role=AGAINST),
+         _call(101.0, role=HIT), _call(130.0, person="Mayne")),
+        people=2, dropped=1,
+    )
+    quiet = RosterLevels((_call(210.0, price=200.0),), people=1)
+    gone = RosterLevels((), people=1, dropped=3)
+    return (
+        (_reading("BTC", verdict=TRIM, price=100.0, cost=50.0), busy),
+        (_reading("ETH", verdict=TRIM, price=200.0, cost=50.0), quiet),
+        (_reading("ANSEM", verdict=TRIM, price=1.0, cost=50.0), gone),
+    )
+
+
+def _calls_body(monkeypatch, tmp_path, pairs, other_scale=()):
+    result = _grid_result([], roster_levels=pairs, other_scale=other_scale)
+    return _review_response(monkeypatch, tmp_path, result).json()["roster_calls"]
+
+
+def _terminal_rows(pairs, *, every):
+    out = render_module.render_roster_calls(pairs, (), every=every)
+    return [re.split(r"\s{2,}", line.strip()) for line in out.splitlines()
+            if line.startswith("    ") and line.strip()[0] in "\u25b2\u25bc"]
+
+
+def test_roster_call_rows_are_cell_by_cell_identical_to_the_terminals_every_output(
+    monkeypatch, tmp_path,
+):
+    pairs = _called_pairs()
+    body = _calls_body(monkeypatch, tmp_path, pairs)
+
+    wire = [row["cells"] for h in body["holdings"] for row in h["rows"]]
+    assert wire == _terminal_rows(pairs, every=True)
+
+
+def test_headline_flagged_roster_rows_equal_the_terminals_default_output(monkeypatch, tmp_path):
+    pairs = _called_pairs()
+    body = _calls_body(monkeypatch, tmp_path, pairs)
+
+    flagged = [row["cells"] for h in body["holdings"] for row in h["rows"] if row["headline"]]
+    assert flagged == _terminal_rows(pairs, every=False)
+
+
+def test_roster_call_headline_flags_match_headline_calls_membership(monkeypatch, tmp_path):
+    pairs = _called_pairs()
+    body = _calls_body(monkeypatch, tmp_path, pairs)
+
+    for (_, found), holding in zip(pairs[:2], body["holdings"], strict=True):
+        keep = {id(c) for c in render_module.headline_calls(found.levels)}
+        ordered = sorted(found.levels, key=lambda c: c.level, reverse=True)
+        assert [r["headline"] for r in holding["rows"]] == [id(c) in keep for c in ordered]
+
+
+def test_roster_calls_withheld_counts_non_headline_rows_and_dropped_rides_along(
+    monkeypatch, tmp_path,
+):
+    body = _calls_body(monkeypatch, tmp_path, _called_pairs())
+
+    rows = [row for h in body["holdings"] for row in h["rows"]]
+    assert body["withheld"] == sum(not r["headline"] for r in rows) > 0
+    assert [h["dropped"] for h in body["holdings"]] == [1, 0]
+    assert body["columns"] == list(render_module.ROSTER_CALL_HEADERS)
+    assert body["headline"] == render_module.roster_calls_headline(2)
+
+
+def test_a_holding_with_only_dropped_levels_is_the_footer_not_a_holding(monkeypatch, tmp_path):
+    pairs = _called_pairs()
+    body = _calls_body(monkeypatch, tmp_path, pairs, other_scale=("DIA",))
+
+    assert [h["title"] for h in body["holdings"]] == [
+        render_module.roster_call_title(r) for r, _ in pairs[:2]
+    ]
+    assert body["out_of_band_only"] == render_module.out_of_band_only_line(pairs)
+    assert "ANSEM 3" in body["out_of_band_only"]
+    assert body["other_scale"] == render_module.other_scale_line(("DIA",))
+    assert body["empty_note"] is None
+
+
+def test_roster_calls_with_nothing_at_all_carry_the_empty_note(monkeypatch, tmp_path):
+    body = _calls_body(monkeypatch, tmp_path, ())
+
+    assert body["empty_note"] == render_module.NO_ROSTER_CALLS
+    assert body["holdings"] == []
+    assert body["withheld"] == 0
+
+
+def test_mandate_review_asks_review_for_to_fill_roster_levels(monkeypatch, tmp_path):
+    """Dependency-override tests skip `mandate_review`, so a dropped kwarg would ship an empty
+    section with a green suite."""
+    monkeypatch.setattr(assets, "WEB_DIST", tmp_path / "no-dist")
+    stub_result = _grid_result(_grid_readings())
+    captured = []
+
+    def _fake_review_for(books, **kw):
+        captured.append(kw)
+        return [stub_result]
+
+    monkeypatch.setattr(api, "review_for", _fake_review_for)
+    app = api.create_app()
+    app.dependency_overrides[api.mandate_books] = lambda: [_book("retirement")]
+    app.dependency_overrides[api.data_freshness] = lambda: _fake_freshness()
+
+    assert TestClient(app).get("/api/mandates/retirement/review").status_code == 200
+    assert captured[0]["roster_levels"] is True

@@ -392,6 +392,7 @@ export interface components {
             grid: components["schemas"]["ReviewGrid"];
             header: components["schemas"]["ReviewHeader"];
             levels: components["schemas"]["LevelsSection"];
+            roster_calls: components["schemas"]["RosterCallsSection"];
             altsignal: components["schemas"]["AltSignalSection"];
         };
         /** ReviewGrid */
@@ -451,6 +452,39 @@ export interface components {
             unpriced: number;
             /** Lines */
             lines: string[];
+        };
+        /** RosterCallHolding */
+        RosterCallHolding: {
+            /** Title */
+            title: string;
+            /** Rows */
+            rows: components["schemas"]["RosterCallRow"][];
+            /** Dropped */
+            dropped: number;
+        };
+        /** RosterCallRow */
+        RosterCallRow: {
+            /** Cells */
+            cells: string[];
+            /** Headline */
+            headline: boolean;
+        };
+        /** RosterCallsSection */
+        RosterCallsSection: {
+            /** Headline */
+            headline: string;
+            /** Columns */
+            columns: string[];
+            /** Holdings */
+            holdings: components["schemas"]["RosterCallHolding"][];
+            /** Withheld */
+            withheld: number;
+            /** Out Of Band Only */
+            out_of_band_only: string | null;
+            /** Other Scale */
+            other_scale: string | null;
+            /** Empty Note */
+            empty_note: string | null;
         };
         /** TreasuryCard */
         TreasuryCard: {

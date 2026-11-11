@@ -116,7 +116,7 @@ def mandate_review(name: str, books: list = _MANDATE_BOOKS, as_of: date = _AS_OF
     book = next((b for b in books if b.name == name), None)
     if book is None:
         raise HTTPException(status_code=404, detail=f"no such Mandate: {name!r}")
-    [result] = review_for([book], as_of=as_of, altsignal_cfg=cfg)
+    [result] = review_for([book], as_of=as_of, altsignal_cfg=cfg, roster_levels=True)
     return result
 
 

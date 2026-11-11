@@ -660,7 +660,7 @@ def _call_date(published_at) -> str:
     return d.strftime("%m-%d") if d is not None else "—"
 
 
-def _call_row(call) -> list[str]:
+def call_row(call) -> list[str]:
     return [
         "▲" if call.distance >= 0 else "▼",
         _money(call.level),
@@ -691,6 +691,40 @@ def headline_calls(calls) -> list:
     return [call for (person, role), call in best.items() if role != HIT or person not in live]
 
 
+ROSTER_CALL_HEADERS = ("", "level", "from price", "who", "call", "role", "date", "vs cost")
+
+
+def roster_calls_headline(n_shown: int) -> str:
+    noun = "holding" if n_shown == 1 else "holdings"
+    return (f"ROSTER CALLS — {n_shown} {noun} · near-term calls (scalp/swing), "
+            f"newest per person")
+
+
+def roster_call_title(reading) -> str:
+    holding = reading.holding
+    title = f"{holding.ticker}  {_money(reading.price)}"
+    if holding.cost is not None:
+        title += f"  (cost {_money(holding.cost)})"
+    return title
+
+
+def out_of_band_only_line(pairs) -> str | None:
+    """Over every pair, not just the level-less ones — the filter lives here so the terminal
+    and the browser cannot disagree on which holdings count as "only dropped"."""
+    named = [f"{reading.holding.ticker} {found.dropped}"
+             for reading, found in pairs if not found.levels]
+    if not named:
+        return None
+    return (f"out of band only: {', '.join(named)} — levels off this "
+            f"asset's scale, likely a different instrument")
+
+
+def other_scale_line(other_scale) -> str | None:
+    if not other_scale:
+        return None
+    return f"{', '.join(other_scale)} — levels quoted on the index, not the fund; not shown"
+
+
 def render_roster_calls(pairs, other_scale, *, every: bool = False) -> str:
     """The roster's called price levels beside each holding.
 
@@ -699,20 +733,19 @@ def render_roster_calls(pairs, other_scale, *, every: bool = False) -> str:
     the page. A holding whose every level fell out of band gets no block of its own — it is
     named on one footer line instead, so a wrong-scale level reads as one.
     """
-    shown, only_dropped = [], []
+    shown = []
     for reading, found in pairs:
         if not found.levels:
-            only_dropped.append(f"{reading.holding.ticker} {found.dropped}")
             continue
         calls = list(found.levels) if every else headline_calls(found.levels)
         calls.sort(key=lambda c: c.level, reverse=True)
-        shown.append((reading, found, [_call_row(c) for c in calls],
+        shown.append((reading, found, [call_row(c) for c in calls],
                       len(found.levels) - len(calls)))
 
-    noun = "holding" if len(shown) == 1 else "holdings"
-    head = (f"ROSTER CALLS — {len(shown)} {noun} · near-term calls (scalp/swing), "
-            f"newest per person")
-    if not shown and not only_dropped and not other_scale:
+    head = roster_calls_headline(len(shown))
+    only_dropped = out_of_band_only_line(pairs)
+    scale = other_scale_line(other_scale)
+    if not shown and not only_dropped and not scale:
         return f"{head}\n\n  {NO_ROSTER_CALLS}"
 
     all_rows = [row for _, _, rows, _ in shown for row in rows]
@@ -724,23 +757,17 @@ def render_roster_calls(pairs, other_scale, *, every: bool = False) -> str:
 
     out = [head]
     for reading, found, rows, more in shown:
-        holding = reading.holding
-        title = f"{holding.ticker}  {_money(reading.price)}"
-        if holding.cost is not None:
-            title += f"  (cost {_money(holding.cost)})"
-        out += ["", f"  {title}"]
+        out += ["", f"  {roster_call_title(reading)}"]
         out += [line(row) for row in rows]
         if more:
             out.append(f"    +{more} more — `--levels` prints every one")
         if found.dropped:
             out.append(f"    {found.dropped} out of band")
 
-    if only_dropped or other_scale:
+    if only_dropped or scale:
         out.append("")
     if only_dropped:
-        out.append(f"  out of band only: {', '.join(only_dropped)} — levels off this "
-                   f"asset's scale, likely a different instrument")
-    if other_scale:
-        out.append(f"  {', '.join(other_scale)} — levels quoted on the index, not the fund; "
-                   f"not shown")
+        out.append(f"  {only_dropped}")
+    if scale:
+        out.append(f"  {scale}")
     return "\n".join(out)
