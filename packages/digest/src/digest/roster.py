@@ -10,9 +10,10 @@ the repo has answered once.
 
 An absolute lean count is not reportable. It moves with corpus size, with who happened to
 publish, and with how much of the corpus has been extracted — none of which is news. The
-*change* is the news, and a change cancels most of the distortions: a stale view contributes
-identically to both sides of the comparison, so ``brain.report``'s staleness labelling is not
-needed here. This is why the section counts what moved and never prints a standing total.
+*change* is the news. Events are what the narrator reports; the standing split rides along as
+context only, per term and over current views only (``before`` never reaches the payload, so
+nothing can describe a count as having moved). A term with fewer than ``MIN_TERM_VOICES``
+current people carries names and no count.
 
 ## The abstention
 
@@ -34,10 +35,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 
-from brain.report import is_stale
-from brain.retrieve import Split, fold_stances, summarize_split
+from brain.retrieve import (
+    Crosswind,
+    TermSplit,
+    crosswinds,
+    fold_stances,
+    summarize_by_term,
+)
 from core.canon import resolve_asset
 from core.rank import parse_date
+from core.term import TERMS, term_of
 
 # How far back "moved" reaches. Overnight is too tight to be useful — most of the roster does
 # not publish daily, so a one-day window would report nothing on most nights and the section
@@ -70,6 +77,10 @@ BACKFILL_SPAN_DAYS = 14
 # old video is ordinary catch-up and must not silence a night that also carries real movement.
 BACKFILL_MIN_ROWS = 2
 
+# Below this many current people a term's lean count reads as sentiment when it is one or two
+# opinions. Names still travel; the count does not.
+MIN_TERM_VOICES = 3
+
 
 @dataclass(frozen=True, slots=True)
 class Flip:
@@ -101,18 +112,12 @@ class NewView:
 @dataclass(frozen=True, slots=True)
 class AssetMove:
     asset: str
-    before: Split
-    after: Split
+    after: dict[str, TermSplit]
     flips: tuple[Flip, ...] = ()
     fresh_people: tuple[str, ...] = ()
     new_views: tuple[NewView, ...] = ()
-    #: How many of the people counted in ``after`` last spoke past their own horizon.
-    #:
-    #: The counts are printed as context — "bearish leads 12 to 3" — and eleven of MSTR's
-    #: twenty-nine voices were stale on 2026-08-26, as was 41% of the corpus. The stale ones
-    #: are still *counted*: withholding them would silently redefine a number the reader has
-    #: been reading for weeks. What this adds is that the age travels with it.
-    stale_now: int = 0
+    #: Context only. A crosswind never fires a move and has no event key.
+    crosswinds: tuple[Crosswind, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,7 +160,7 @@ def moved(stances, registry, *, assets, on, window_days: int = WINDOW_DAYS,
     moves = []
     for asset in sorted(set(after) | set(before)):
         move = _move_for(asset, before.get(asset, []), after.get(asset, []),
-                         cutoff=cutoff, on=on)
+                         cutoff=cutoff, on=on, members=registry.members)
         if move is not None:
             moves.append(move)
     return RosterDelta(moved=tuple(moves), window_days=window_days,
@@ -169,7 +174,8 @@ def _by_asset(folded) -> dict:
     return out
 
 
-def _move_for(asset: str, before_folded, after_folded, *, cutoff, on=None) -> AssetMove | None:
+def _move_for(asset: str, before_folded, after_folded, *, cutoff, on=None,
+              members=()) -> AssetMove | None:
     """One asset's movement, or ``None`` if it held still.
 
     A restatement is not movement. Someone repeating a view they already held is the most
@@ -207,11 +213,11 @@ def _move_for(asset: str, before_folded, after_folded, *, cutoff, on=None) -> As
 
     if not flips and not fresh and not new_views:
         return None
-    stale = sum(1 for f in after_folded
-                if is_stale(f.current.source.published_at, f.current.horizon, on))
-    return AssetMove(asset=asset, before=summarize_split(before_folded),
-                     after=summarize_split(after_folded), flips=flips, fresh_people=fresh,
-                     new_views=new_views, stale_now=stale)
+    return AssetMove(
+        asset=asset,
+        after=summarize_by_term(after_folded, today=on, members=members),
+        flips=flips, fresh_people=fresh, new_views=new_views,
+        crosswinds=tuple(crosswinds(after_folded, today=on, members=members)))
 
 
 def _within(published_at, cutoff) -> bool:
@@ -279,9 +285,9 @@ def event_keys(delta: RosterDelta) -> tuple[str, ...]:
 def unreported(delta: RosterDelta, seen) -> RosterDelta:
     """``delta`` with every event in ``seen`` removed, and any asset left empty dropped.
 
-    ``before`` and ``after`` are deliberately **not** recomputed. They are the standing split,
-    which is context the narrator needs to say what the change did — recomputing them against
-    the filtered events would describe a roster that never existed.
+    ``after`` and ``crosswinds`` are deliberately **not** recomputed. They are the standing
+    view, which is context the narrator needs to say what the change did — recomputing them
+    against the filtered events would describe a roster that never existed.
 
     A withheld delta passes through untouched. The abstention is the deliverable on a backfill
     night, and filtering it would turn an explicit "I do not trust tonight's numbers" back into
@@ -329,18 +335,30 @@ def payload(delta: RosterDelta) -> list[dict]:
     return [
         {
             "asset": move.asset,
-            "before": dict(move.before.counts),
-            "after": dict(move.after.counts),
-            "stale_now": move.stale_now,
-            "people_now": {lean: names for lean, names in move.after.people.items() if names},
+            "standing": {
+                term: {"counts": dict(split.counts), "dropped_stale": split.dropped_stale}
+                for term in TERMS
+                if (split := move.after[term]).total_people >= MIN_TERM_VOICES
+            },
+            "voices": {
+                term: {lean: names for lean, names in split.people.items() if names}
+                for term in TERMS
+                if (split := move.after[term]).total_people
+            },
+            "crosswinds": [
+                {"person": c.person, "near": c.near, "long": c.long,
+                 "near_on": c.near_published_at, "long_on": c.long_published_at}
+                for c in move.crosswinds
+            ],
             "flips": [
                 {"person": f.person, "was": f.was, "now": f.now,
-                 "horizon": f.horizon, "on": f.published_at}
+                 "horizon": f.horizon, "term": term_of(f.horizon), "on": f.published_at}
                 for f in move.flips
             ],
             "new_voices": list(move.fresh_people),
             "new_horizons": [
-                {"person": v.person, "lean": v.lean, "horizon": v.horizon, "on": v.published_at}
+                {"person": v.person, "lean": v.lean, "horizon": v.horizon,
+                 "term": term_of(v.horizon), "on": v.published_at}
                 for v in move.new_views
             ],
         }

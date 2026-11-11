@@ -9,32 +9,31 @@ from __future__ import annotations
 from datetime import date
 
 from core.rank import parse_date
+from core.term import is_stale
 
-from brain.retrieve import LEANS, RosterView
+from brain.retrieve import LEANS, RosterView, TermSplit
 
 _INDENT = "  "
-
-# How long a view of each horizon stays meaningfully "current". A four-month-old swing
-# call is stale; a four-month-old macro call is not. Without this, a view someone last
-# stated 14 months ago prints identically to one from last week — observed live, where
-# TraderMayne's most recent BTC statement was 2025-05-29 and still labelled current.
-STALE_AFTER_DAYS = {"scalp": 14, "swing": 45, "position": 240, "macro": 540}
-_DEFAULT_STALE_DAYS = 120
+TERM_LABELS = {"near": "near-term", "long": "long-term", "unset": "no horizon"}
 
 
-def is_stale(published_at: str | None, horizon: str | None, today: date | None) -> bool:
-    """Whether a view has outlived its horizon. An undated view counts as stale.
+def term_counts(view: RosterView) -> list[tuple[str, str]]:
+    """(label, "bullish 3 · bearish 1 · … (+N stale not counted)") per term with anyone in it.
+    The one rendering of `view.by_term`, shared with the synthesis prompt so they cannot differ."""
+    out = []
+    for term, label in TERM_LABELS.items():
+        ts: TermSplit | None = view.by_term.get(term)
+        if ts is None or not (ts.total_people or ts.dropped_stale):
+            continue
+        text = " · ".join(f"{lean} {ts.counts.get(lean, 0)}" for lean in LEANS)
+        if ts.dropped_stale:
+            text += f"  (+{ts.dropped_stale} stale not counted)"
+        out.append((label, text))
+    return out
 
-    Public because ``digest.roster`` needs the same verdict to say how much of a lean count is
-    archaeology. A second copy of these limits elsewhere would drift from this one.
-    """
-    if today is None:
-        return False
-    published = parse_date(published_at)
-    if published is None:
-        return True
-    limit = STALE_AFTER_DAYS.get(horizon or "", _DEFAULT_STALE_DAYS)
-    return (today - published).days > limit
+
+def current_feeds(view: RosterView) -> int:
+    return len({n for ts in view.by_term.values() for names in ts.people.values() for n in names})
 
 
 def _staleness(published_at: str | None, horizon: str | None, today: date | None) -> str:
@@ -110,22 +109,25 @@ def format_view(view: RosterView, *, synthesis=None, question: str | None = None
     if not view.folded:
         return "\n".join([*lines, f"No current stance on {asset} in the corpus.", "", "Either nobody on the roster has covered it, or those transcripts have not", "been through `brain-extract` yet."])
 
-    split = view.split
-    counts = " · ".join(f"{lean} {split.counts[lean]}" for lean in LEANS)
-    lines += [
-        f"{asset} — {split.total_people} feed(s) with a current view",
-        "",
-        f"SPLIT   {counts}",
-    ]
-    if sum(split.counts.values()) > split.total_people:
-        # Not an error: someone can be bullish on `macro` and bearish on `position` at
-        # the same time, and both are real views. Say so, or the arithmetic looks broken.
-        lines.append(f"{_INDENT}(exceeds feed count — a feed holding different leans at "
-                     f"different horizons is counted under each)")
-    for lean in LEANS:
-        if split.people[lean]:
-            names = ", ".join(_feed_label(n, view) for n in split.people[lean])
-            lines.append(f"{_INDENT}{lean:<10}{names}")
+    lines += [f"{asset} — {current_feeds(view)} feed(s) with a current view", "", "SPLIT"]
+    for term, label in TERM_LABELS.items():
+        ts = view.by_term.get(term)
+        text = dict(term_counts(view)).get(label)
+        if text is None:
+            continue
+        lines.append(f"{_INDENT}{label:<11}{text}")
+        for lean in LEANS:
+            if ts.people.get(lean):
+                names = ", ".join(_feed_label(n, view) for n in ts.people[lean])
+                lines.append(f"{_INDENT*2}{lean:<10}{names}")
+
+    if view.crosswinds:
+        lines += ["", "CROSSWINDS"]
+        for c in view.crosswinds:
+            lines.append(
+                f"{_INDENT}{c.person}: near {c.near} ({c.near_published_at or 'undated'}) "
+                f"vs long {c.long} ({c.long_published_at or 'undated'})"
+            )
 
     if view.changed:
         lines += ["", "CHANGED"]

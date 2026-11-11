@@ -41,7 +41,8 @@ class _Client:
         return _Message(self._reply)
 
 
-PAYLOAD = [{"asset": "ETH", "before": {"bullish": 1}, "after": {"bullish": 3},
+PAYLOAD = [{"asset": "ETH",
+            "standing": {"near": {"counts": {"bullish": 3}, "dropped_stale": 0}},
             "flips": [{"person": "Pierre", "was": "bearish", "now": "bullish"}],
             "new_voices": ["krillin"]}]
 
@@ -143,22 +144,25 @@ def test_retries_back_off_rather_than_hammering(monkeypatch):
     assert slept == sorted(slept), "backoff should not shrink"
 
 
-def test_the_prompt_tells_the_model_what_a_stale_count_is():
-    """The count reaches the model either way. Without the rule it renders "12 to 3" as current
-    sentiment when a third of it is months old."""
-    system, _ = narrate.build_prompt([{"asset": "MSTR", "stale_now": 11}])
-    assert "stale_now" in system
-    assert "MUST" in system
-
-
-def test_the_stale_count_travels_in_the_user_message():
-    _, user = narrate.build_prompt([{"asset": "MSTR", "after": {"bearish": 12},
-                                     "stale_now": 11}])
-    assert '"stale_now": 11' in user
-
-
-def test_the_model_is_told_not_to_name_the_stale_people():
-    """It is given a count, not names. Attributing staleness to a person it picked would be
-    exactly the invented claim the payload shape exists to prevent."""
+def test_the_prompt_forbids_adding_terms_together():
+    """One person can hold a near view and a long view; a summed count double-counts them."""
     system, _ = narrate.build_prompt([])
-    assert "never say WHICH people are the stale ones" in system
+    assert "NEVER add terms together" in system
+
+
+def test_the_prompt_forbids_describing_a_count_as_changed():
+    """The payload carries no earlier count, so any "rose to" or "fell from" is invented."""
+    system, _ = narrate.build_prompt([])
+    assert "Never say a count rose, fell or changed" in system
+
+
+def test_the_prompt_forbids_counts_for_thin_terms():
+    system, _ = narrate.build_prompt([])
+    assert "not in `standing`" in system
+
+
+def test_the_prompt_no_longer_speaks_of_a_stale_count():
+    """Stale views are dropped before the payload is built; a rule about them would invite a
+    caveat with no number behind it."""
+    system, _ = narrate.build_prompt([])
+    assert "stale_now" not in system

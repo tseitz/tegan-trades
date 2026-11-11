@@ -1,6 +1,16 @@
 from dataclasses import dataclass
+from datetime import date
 
-from brain.retrieve import fold_key, fold_stances, priors, retrieve, summarize_split
+import pytest
+from brain.retrieve import (
+    crosswinds,
+    fold_key,
+    fold_stances,
+    priors,
+    retrieve,
+    summarize_by_term,
+    summarize_split,
+)
 from core.canon import Registry
 from core.stance import ExtractedStance, build_stance
 from core.thesis import Source
@@ -354,3 +364,144 @@ def test_priors_only_cover_stances_in_refs():
 def test_fold_key_is_public_and_keeps_horizon_not_lean():
     s = stance("Benjamin Cowen", "ETH", "bullish", "2026-01-01", horizon="macro")
     assert fold_key("P", "ETH", s) == ("P", "ETH", "macro")
+
+
+# ── term split ──────────────────────────────────────────────────────────────
+
+TODAY = date(2026, 11, 10)
+MEMBERS = REGISTRY.members
+MAYNE = "TraderMayne"
+
+
+def _by_term(stances, today=TODAY):
+    return summarize_by_term(fold_stances(stances, REGISTRY), today=today, members=MEMBERS)
+
+
+def _winds(stances, today=TODAY):
+    return crosswinds(fold_stances(stances, REGISTRY), today=today, members=MEMBERS)
+
+
+def test_a_person_bearish_swing_and_bullish_position_is_one_crosswind():
+    stances = [
+        stance(MAYNE, "BTC", "bearish", "2026-11-05", horizon="swing"),
+        stance(MAYNE, "BTC", "bullish", "2026-11-05", horizon="position"),
+    ]
+    by = _by_term(stances)
+    assert by["near"].counts["bearish"] == 1 and by["near"].counts["bullish"] == 0
+    assert by["long"].counts["bullish"] == 1 and by["long"].counts["bearish"] == 0
+    (c,) = _winds(stances)
+    assert (c.person, c.near, c.long) == (MAYNE, "bearish", "bullish")
+    assert c.near_published_at == c.long_published_at == "2026-11-05"
+
+
+def test_a_stale_view_is_dropped_and_counted_in_dropped_stale():
+    stances = [
+        stance("A", "BTC", "bullish", "2026-11-05", horizon="swing"),
+        stance("B", "BTC", "bearish", "2026-08-01", horizon="swing"),
+    ]
+    near = _by_term(stances)["near"]
+    assert near.counts["bearish"] == 0 and near.total_people == 1
+    assert near.dropped_stale == 1
+
+
+def test_a_stale_older_view_beside_a_current_one_is_not_dropped_stale():
+    stances = [
+        stance("A", "BTC", "bullish", "2026-11-05", horizon="swing"),
+        stance("A", "BTC", "bearish", "2026-08-01", horizon="scalp"),
+    ]
+    assert _by_term(stances)["near"].dropped_stale == 0
+
+
+def test_without_today_nothing_is_dropped():
+    stances = [stance("A", "BTC", "bullish", "2020-01-01", horizon="swing")]
+    near = _by_term(stances, today=None)["near"]
+    assert near.counts["bullish"] == 1 and near.dropped_stale == 0
+
+
+def test_the_newest_view_in_a_term_wins():
+    stances = [
+        stance("A", "BTC", "bullish", "2026-11-01", horizon="scalp"),
+        stance("A", "BTC", "bearish", "2026-11-05", horizon="swing"),
+    ]
+    near = _by_term(stances)["near"]
+    assert near.counts["bearish"] == 1 and near.counts["bullish"] == 0
+    assert near.total_people == 1
+
+
+def test_a_same_day_conflict_counts_under_each_lean_and_forms_no_crosswind():
+    stances = [
+        stance("A", "BTC", "bullish", "2026-11-05", horizon="scalp"),
+        stance("A", "BTC", "bearish", "2026-11-05", horizon="swing"),
+        stance("A", "BTC", "bullish", "2026-11-05", horizon="macro"),
+    ]
+    near = _by_term(stances)["near"]
+    assert near.counts["bullish"] == 1 and near.counts["bearish"] == 1
+    assert near.total_people == 1
+    assert _winds(stances) == []
+
+
+def test_a_members_feed_counts_under_each_lean_and_never_forms_a_crosswind():
+    feed = "Technical Roundup (CryptoCred + DonAlt)"
+    stances = [
+        stance(feed, "BTC", "bullish", "2026-11-01", horizon="scalp"),
+        stance(feed, "BTC", "bearish", "2026-11-05", horizon="swing"),
+        stance(feed, "BTC", "bullish", "2026-11-05", horizon="macro"),
+    ]
+    near = _by_term(stances)["near"]
+    assert near.counts["bullish"] == 1 and near.counts["bearish"] == 1
+    assert _winds(stances) == []
+
+
+def test_a_null_horizon_lands_in_unset():
+    stances = [stance("A", "BTC", "bullish", "2026-11-05", horizon=None)]
+    by = _by_term(stances)
+    assert by["unset"].counts["bullish"] == 1
+    assert by["near"].total_people == 0 and by["long"].total_people == 0
+
+
+def test_every_term_is_present_with_all_four_leans():
+    by = _by_term([])
+    assert set(by) == {"near", "long", "unset"}
+    assert all(set(t.counts) == {"bullish", "bearish", "neutral", "uncertain"}
+               for t in by.values())
+
+
+@pytest.mark.parametrize("other", ["neutral", "uncertain"])
+def test_neutral_and_uncertain_never_form_a_crosswind(other):
+    stances = [
+        stance("A", "BTC", "bullish", "2026-11-05", horizon="swing"),
+        stance("A", "BTC", other, "2026-11-05", horizon="position"),
+    ]
+    assert _winds(stances) == []
+
+
+def test_a_stale_side_voids_the_crosswind():
+    stances = [
+        stance("A", "BTC", "bearish", "2026-08-01", horizon="swing"),
+        stance("A", "BTC", "bullish", "2026-11-05", horizon="position"),
+    ]
+    assert _winds(stances) == []
+
+
+def test_an_undated_view_does_not_break_newest_wins():
+    stances = [
+        stance("A", "BTC", "bullish", "", horizon="swing"),
+        stance("A", "BTC", "bearish", "2026-11-05", horizon="swing"),
+        stance("B", "BTC", "bullish", "", horizon="swing"),
+    ]
+    near = _by_term(stances, today=None)["near"]
+    assert near.counts["bearish"] == 1 and near.counts["bullish"] == 1
+    assert near.people["bullish"] == ["B"]
+    assert _by_term(stances)["near"].total_people == 1
+
+
+def test_retrieve_with_today_populates_by_term_and_crosswinds():
+    stances = [
+        stance(MAYNE, "BTC", "bearish", "2026-11-05", horizon="swing"),
+        stance(MAYNE, "BTC", "bullish", "2026-11-05", horizon="position"),
+    ]
+    view = retrieve(stances=stances, registry=REGISTRY, asset="BTC", today=TODAY)
+    assert view.by_term["near"].counts["bearish"] == 1
+    assert view.by_term["long"].counts["bullish"] == 1
+    assert [c.person for c in view.crosswinds] == [MAYNE]
+    assert view.split.total_people == 1

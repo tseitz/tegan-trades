@@ -196,7 +196,7 @@ def test_cli_still_prints_the_structured_answer_when_synthesis_fails():
     client = _FakeClient(exc=RuntimeError("down"))
     code, out = _run(["roster on ETH"], client=client)
     assert code == 0
-    assert "bearish 2" in out
+    assert "SPLIT" in out and "VIEWS" in out
     assert "synthes" in out.lower()
 
 
@@ -243,7 +243,7 @@ def test_a_recent_view_is_not_marked_stale():
 
 def test_staleness_thresholds_are_per_horizon():
     """A 4-month-old swing call is stale; a 4-month-old macro call is not."""
-    from brain.report import STALE_AFTER_DAYS
+    from core.term import STALE_AFTER_DAYS
     assert STALE_AFTER_DAYS["swing"] < STALE_AFTER_DAYS["macro"]
 
 
@@ -252,15 +252,73 @@ def test_no_staleness_is_shown_when_today_is_not_supplied():
     assert "STALE" not in out
 
 
-def test_split_exceeding_the_feed_count_is_explained_not_left_looking_broken():
+def _with(st, **kw):
+    return st.model_copy(update=kw)
+
+
+TODAY = date(2026, 7, 24)
+
+
+def test_a_stale_view_is_counted_out_of_its_term_and_footnoted():
     corpus = [
-        stance("Pierre", "ETH", "bullish", "2026-03-01"),
-        stance("Pierre", "ETH", "bearish", "2026-03-01"),
+        stance("Pierre", "ETH", "bullish", "2026-07-20"),
+        stance("Benjamin Cowen", "ETH", "bearish", "2025-01-01"),
     ]
-    corpus[1] = corpus[1].model_copy(update={"horizon": "macro"})
-    out = format_view(retrieve(stances=corpus, registry=REGISTRY, asset="ETH",
-                               search_fn=None))
-    assert "counted under each" in out
+    out = format_view(_view(corpus, today=TODAY), today=TODAY)
+    near = next(ln for ln in out.splitlines() if ln.strip().startswith("near-term"))
+    assert "bullish 1" in near and "bearish 0" in near
+    assert "(+1 stale not counted)" in near
+
+
+def test_the_header_counts_current_people_only():
+    corpus = [
+        stance("Pierre", "ETH", "bullish", "2026-07-20"),
+        stance("Benjamin Cowen", "ETH", "bearish", "2025-01-01"),
+    ]
+    out = format_view(_view(corpus, today=TODAY), today=TODAY)
+    assert "1 feed(s) with a current view" in out
+
+
+def test_each_term_gets_its_own_split_line():
+    corpus = [
+        stance("Pierre", "ETH", "bullish", "2026-07-20"),
+        _with(stance("Benjamin Cowen", "ETH", "bearish", "2026-07-20"), horizon="macro"),
+    ]
+    out = format_view(_view(corpus, today=TODAY), today=TODAY)
+    assert "near-term" in out and "long-term" in out and "no horizon" not in out
+
+
+def test_a_crosswind_is_rendered_with_both_dates():
+    corpus = [
+        stance("Pierre", "ETH", "bearish", "2026-07-20"),
+        _with(stance("Pierre", "ETH", "bullish", "2026-07-10"), horizon="position"),
+    ]
+    view = _view(corpus, today=TODAY)
+    assert view.crosswinds
+    out = format_view(view, today=TODAY)
+    assert "CROSSWINDS" in out
+    assert "Pierre: near bearish (2026-07-20) vs long bullish (2026-07-10)" in out
+
+
+def test_synthesis_counted_split_is_per_term_and_matches_the_report():
+    from brain.report import term_counts
+    from brain.synthesize import build_synthesis_prompt
+    corpus = [
+        stance("Pierre", "ETH", "bullish", "2026-07-20"),
+        _with(stance("Benjamin Cowen", "ETH", "bearish", "2026-07-20"), horizon="macro"),
+        stance("Technical Roundup (CryptoCred + DonAlt)", "ETH", "bearish", "2025-01-01"),
+    ]
+    view = _view(corpus, today=TODAY)
+    system, user = build_synthesis_prompt(view, "q")
+    sent = system + user
+    report = format_view(view, today=TODAY)
+    pairs = term_counts(view)
+    assert len(pairs) == 2
+    for label, text in pairs:
+        assert f"{label}: {text}" in sent
+        assert text in report
+    assert "(+1 stale not counted)" in sent
+    assert "never be summed" in sent
 
 
 def test_evidence_is_still_retrieved_with_no_llm():

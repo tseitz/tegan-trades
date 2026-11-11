@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import sqlite3
 import sys
+from datetime import UTC, datetime
 
 from mcp.server.fastmcp import FastMCP
 
@@ -168,13 +169,14 @@ def brain_roster(asset: str, person: str | None = None, since: str | None = None
     from core.canon import resolve_asset
     asset_c = resolve_asset(asset, registry)[0]
 
+    today = datetime.now(UTC).date()
     view = retrieve(
         stances=stances, registry=registry, asset=asset, person=person, since=since,
-        k=k, search_fn=lambda *, k, person, since, assets: _search(
+        k=k, today=today, search_fn=lambda *, k, person, since, assets: _search(
             f"where does the roster stand on {asset}", k=k, person=person,
             since=since, assets=assets),
     )
-    return format_view(view, question=f"where does the roster stand on {asset_c}")
+    return format_view(view, question=f"where does the roster stand on {asset_c}", today=today)
 
 
 def main() -> None:

@@ -30,6 +30,14 @@ _Avoid_: Index, baseline, target.
 How long a Mandate's position is expected to be held — `scalp`, `swing`, `position`, or `macro` — carried as a Mandate field. Three unrelated things share this vocabulary: a Mandate's own Horizon, a Thesis's stated timeframe, and the day-count constants used in call scoring. Settling which one a conversation means is worth a beat before using the word.
 _Avoid_: Timeframe, period — without saying which of the three you mean.
 
+**Term**:
+A stance's horizon folded into two sides for counting the roster: `near` (scalp, swing — days to ~6 weeks) or `long` (position, macro — months to years), plus `unset` when no horizon was given. A roster lean is always reported per term and never summed across them, because one person can lean one way in each. A stance's horizon is how long the speaker expects the call to take to play out, not the chart it was read from (`core.term`, `brain.prompt.HORIZON_RULES`).
+_Avoid_: Bucket (that word belongs to Mandate's _Avoid_ list).
+
+**Crosswind**:
+One person, one asset, leaning bullish in one term and bearish in the other, both views current — "bearish for the next few weeks, bullish over the year". Only single-author feeds have one; a multi-author feed's two leans are two speakers disagreeing.
+_Avoid_: Flip — a flip is one view changing over time, a crosswind is two views held at once.
+
 **Holding**:
 Something currently owned, listed in a portfolio file. Distinct from a Candidate, which is not owned yet.
 _Avoid_: Position, lot.

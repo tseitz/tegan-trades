@@ -20,6 +20,7 @@ from datetime import date
 from core.canon import Registry, resolve_asset, resolve_person
 from core.rank import parse_date
 from core.stance import Stance
+from core.term import TERMS, is_stale, term_of
 
 LEANS = ("bullish", "bearish", "neutral", "uncertain")
 
@@ -48,6 +49,21 @@ class Split:
 
 
 @dataclass(frozen=True)
+class TermSplit(Split):
+    dropped_stale: int = 0    # people in this term whose only views are past their horizon
+
+
+@dataclass(frozen=True)
+class Crosswind:
+    """One single-author person bullish in one term and bearish in the other, both current."""
+    person: str
+    near: str
+    long: str
+    near_published_at: str | None
+    long_published_at: str | None
+
+
+@dataclass(frozen=True)
 class RosterView:
     """What the roster currently thinks about one asset — the answer shape."""
     asset: str | None
@@ -59,6 +75,8 @@ class RosterView:
     # feed-level, so any consumer printing "5 bullish, 2 bearish" MUST surface this
     # or a two-person feed reads as two independent opinions.
     multi_author: dict[str, list[str]] = field(default_factory=dict)
+    by_term: dict[str, TermSplit] = field(default_factory=dict)
+    crosswinds: list[Crosswind] = field(default_factory=list)
 
 
 def fold_key(person_canonical: str, asset_canonical: str, stance: Stance) -> tuple:
@@ -184,6 +202,86 @@ def summarize_split(folded: list[FoldedStance]) -> Split:
     )
 
 
+def _term_views(
+    folded: list[FoldedStance], *, today: date | None, members,
+) -> dict[str, dict[str, tuple[set[str], str | None, bool]]]:
+    """term -> person -> (leans held, newest published_at, resolved by newest-wins).
+
+    Stale views are left out. A single-author person gets one lean per term, the newest
+    view's. Members feeds, and a newest date carrying conflicting leans (the fold's id
+    tie-break is a hash), fall back to every lean held.
+    """
+    grouped: dict[str, dict[str, list[Stance]]] = {t: {} for t in TERMS}
+    for f in folded:
+        s = f.current
+        if is_stale(s.source.published_at, s.horizon, today):
+            continue
+        grouped[term_of(s.horizon)].setdefault(f.person_canonical, []).append(s)
+
+    out: dict[str, dict[str, tuple[set[str], str | None, bool]]] = {t: {} for t in TERMS}
+    for term, people in grouped.items():
+        for person, views in people.items():
+            newest = max(v.source.published_at or "" for v in views)
+            top = [v for v in views if (v.source.published_at or "") == newest]
+            top_leans = {v.lean for v in top}
+            if person in members or len(top_leans) > 1:
+                leans, resolved = {v.lean for v in views}, False
+            else:
+                leans, resolved = top_leans, True
+            out[term][person] = (leans, newest or None, resolved)
+    return out
+
+
+def summarize_by_term(
+    folded: list[FoldedStance], *, today: date | None, members,
+) -> dict[str, TermSplit]:
+    """`summarize_split` per term over current views only. Every term is present.
+
+    Each person counts once per term, under their newest view's lean. `members` feeds
+    (several speakers under one name) count under every lean they hold. `today=None`
+    drops nothing; a stale view contributes nothing and `dropped_stale` counts the
+    people left with no current view in that term.
+    """
+    views = _term_views(folded, today=today, members=members)
+    out: dict[str, TermSplit] = {}
+    for term in TERMS:
+        counts = dict.fromkeys(LEANS, 0)
+        people: dict[str, list[str]] = {lean: [] for lean in LEANS}
+        for person, (leans, _, _) in views[term].items():
+            for lean in leans:
+                people[lean].append(person)
+                counts[lean] += 1
+        stale_only = {
+            f.person_canonical for f in folded
+            if term_of(f.current.horizon) == term
+            and is_stale(f.current.source.published_at, f.current.horizon, today)
+        } - views[term].keys()
+        out[term] = TermSplit(
+            counts=counts,
+            people={k: sorted(v) for k, v in people.items()},
+            total_people=len(views[term]),
+            dropped_stale=len(stale_only),
+        )
+    return out
+
+
+def crosswinds(
+    folded: list[FoldedStance], *, today: date | None, members,
+) -> list[Crosswind]:
+    """Single-author people bullish in one of near/long and bearish in the other, both
+    views current and both picked by newest-wins. Sorted by person."""
+    views = _term_views(folded, today=today, members=members)
+    out = []
+    for person, (near, near_at, near_ok) in views["near"].items():
+        long = views["long"].get(person)
+        if long is None or person in members or not near_ok or not long[2]:
+            continue
+        (near_lean,), (long_lean,) = near, long[0]
+        if {near_lean, long_lean} == {"bullish", "bearish"}:
+            out.append(Crosswind(person, near_lean, long_lean, near_at, long[1]))
+    return sorted(out, key=lambda c: c.person)
+
+
 def retrieve(
     *,
     stances: list[Stance],
@@ -193,6 +291,7 @@ def retrieve(
     since: str | None = None,
     k: int = 10,
     search_fn: Callable | None = None,
+    today: date | None = None,
 ) -> RosterView:
     """Structured leg + evidence leg, filtered by the same facets and merged.
 
@@ -247,4 +346,6 @@ def retrieve(
             for name, members in registry.members.items()
             if any(f.person_canonical == name for f in folded)
         },
+        by_term=summarize_by_term(folded, today=today, members=registry.members),
+        crosswinds=crosswinds(folded, today=today, members=registry.members),
     )

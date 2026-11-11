@@ -12,7 +12,8 @@ import json
 import re
 from dataclasses import dataclass, field
 
-from brain.retrieve import LEANS, RosterView
+from brain.report import term_counts
+from brain.retrieve import RosterView
 
 DEFAULT_MODEL = "claude-sonnet-5"
 MAX_TOKENS = 4096
@@ -100,11 +101,11 @@ class Synthesis:
 
 
 def build_synthesis_prompt(view: RosterView, question: str) -> tuple[str, str]:
-    split = view.split
-    counts = " · ".join(f"{lean} {split.counts[lean]}" for lean in LEANS)
-
     parts = [f"Question: {question}", "", f"Asset: {view.asset or 'unspecified'}",
-             f"COUNTED SPLIT (authoritative, do not recount): {counts}", ""]
+             "COUNTED SPLIT per term (authoritative, do not recount; terms are separate "
+             "populations and must never be summed):"]
+    parts += [f"  {label}: {text}" for label, text in term_counts(view)]
+    parts.append("")
 
     if view.multi_author:
         parts.append("Multi-author feeds — each is ONE voice:")

@@ -66,14 +66,13 @@ def test_restating_the_same_lean_is_not_movement():
     assert delta.moved == ()
 
 
-def test_the_split_before_and_after_are_both_carried():
-    """A count with nothing to compare against is not a delta. The narration needs both sides
-    or it can only describe, not compare."""
-    delta = _moved([stance("Pierre", "ETH", "bullish", "2026-06-01"),
+def test_the_standing_split_is_carried_per_term():
+    delta = _moved([stance("Pierre", "ETH", "bullish", "2026-08-10"),
                     stance("Benjamin Cowen", "ETH", "bearish", "2026-08-20")])
-    move = delta.moved[0]
-    assert move.before.counts["bullish"] == 1 and move.before.counts["bearish"] == 0
-    assert move.after.counts["bearish"] == 1
+    after = delta.moved[0].after
+    assert set(after) == {"near", "long", "unset"}
+    assert after["near"].counts["bullish"] == 1 and after["near"].counts["bearish"] == 1
+    assert after["long"].total_people == 0
 
 
 # ── scope ─────────────────────────────────────────────────────────────────────
@@ -159,6 +158,14 @@ def test_the_narration_payload_is_counts_and_names_only():
     assert "rationale" not in blob and "transcript" not in blob
 
 
+def test_the_payload_carries_no_before_count_and_no_flat_split():
+    """Nothing in it can be read as a count that moved."""
+    delta = _moved([stance("Pierre", "ETH", "bearish", "2026-06-01"),
+                    stance("Pierre", "ETH", "bullish", "2026-08-20")])
+    entry = roster.payload(delta)[0]
+    assert not {"before", "after", "stale_now", "people_now"} & entry.keys()
+
+
 # ── saying a thing once ───────────────────────────────────────────────────────
 #
 # The window is seven days wide, so an event published on Monday sits inside it until the
@@ -196,14 +203,14 @@ def test_a_flip_and_a_new_horizon_are_remembered_apart():
 
 
 def test_the_standing_counts_survive_the_filter():
-    """``before``/``after`` are context for the narrator, not events. Dropping a reported event
-    must not restate the split as though those people vanished."""
+    """``after`` is context for the narrator, not events. Dropping a reported event must not
+    restate the split as though those people vanished."""
     both = _moved([stance("Benjamin Cowen", "ETH", "bullish", "2026-08-20"),
                    stance("krillin", "ETH", "bearish", "2026-08-21")],
                   on=date(2026, 8, 22))
     seen = roster.remember({}, [roster.event_keys(both)[0]], on=date(2026, 8, 22))
     left = roster.unreported(both, seen)
-    assert left.moved[0].after.counts == both.moved[0].after.counts
+    assert left.moved[0].after == both.moved[0].after
 
 
 def test_an_empty_memory_changes_nothing():
@@ -242,49 +249,127 @@ def test_an_unreadable_stamp_is_forgotten_rather_than_kept():
     assert roster.remember({"ETH|voice|Pierre": "not-a-date"}, (), on=date(2026, 8, 21)) == {}
 
 
-# ── how much of a lean count is archaeology ──────────────────────────────────
+# ── what the standing split is allowed to say ─────────────────────────────────
 #
 # The narrator prints the standing split as context — "bearish leads 12 to 3". On 2026-08-26
 # eleven of the twenty-nine voices behind MSTR's count had last spoken past their own horizon,
-# and 41% of the whole corpus had. A count that old presented as current sentiment is the
-# "confident wrong number" this package refuses everywhere else.
+# and 41% of the whole corpus had. Only current views count, per term, and a term too thin to
+# be sentiment carries names and no count.
 
-def test_a_recent_view_is_not_counted_stale():
+def _crowd(*extra, horizon="swing"):
+    """Three people current in one term, so that term clears ``MIN_TERM_VOICES``."""
+    return [stance("Benjamin Cowen", "ETH", "bullish", "2026-08-20", horizon=horizon),
+            stance("krillin", "ETH", "bullish", "2026-08-19", horizon=horizon),
+            stance("TraderMayne", "ETH", "bearish", "2026-08-18", horizon=horizon), *extra]
+
+
+def test_a_recent_view_drops_nothing():
     delta = _moved([stance("Benjamin Cowen", "ETH", "bullish", "2026-08-20")])
-    assert delta.moved[0].stale_now == 0
+    assert delta.moved[0].after["near"].dropped_stale == 0
 
 
-def test_a_view_past_its_horizon_is_counted():
-    """45 days for a swing view — ``brain.report.STALE_AFTER_DAYS``, not a second copy here."""
+def test_a_view_past_its_horizon_is_dropped_and_counted():
+    """45 days for a swing view — ``core.term.STALE_AFTER_DAYS``, not a second copy here."""
     delta = _moved([stance("Pierre", "ETH", "bearish", "2026-01-01"),
                     stance("Benjamin Cowen", "ETH", "bullish", "2026-08-20")])
-    assert delta.moved[0].stale_now == 1
+    near = delta.moved[0].after["near"]
+    assert near.dropped_stale == 1
+    assert near.counts["bearish"] == 0 and near.counts["bullish"] == 1
+    assert near.total_people == 1
 
 
 def test_the_horizon_decides_when_a_view_goes_stale():
     """A four-month-old swing call is stale; a four-month-old macro call is not. One limit for
-    both would make the count meaningless on a macro-heavy asset."""
+    both would make the split meaningless on a macro-heavy asset."""
     old = "2026-04-01"
     swing = _moved([stance("Pierre", "ETH", "bearish", old, horizon="swing"),
                     stance("Benjamin Cowen", "ETH", "bullish", "2026-08-20")])
     macro = _moved([stance("Pierre", "ETH", "bearish", old, horizon="macro"),
                     stance("Benjamin Cowen", "ETH", "bullish", "2026-08-20")])
-    assert swing.moved[0].stale_now == 1
-    assert macro.moved[0].stale_now == 0
+    assert swing.moved[0].after["near"].dropped_stale == 1
+    assert macro.moved[0].after["long"].dropped_stale == 0
+    assert macro.moved[0].after["long"].counts["bearish"] == 1
 
 
-def test_the_stale_count_reaches_the_narrator():
-    """It is useless unless the line that prints the count also carries it."""
+def test_a_stale_view_is_not_counted_in_the_split():
+    """Inverse of the old behaviour, which counted it and footnoted its age."""
     delta = _moved([stance("Pierre", "ETH", "bearish", "2026-01-01"),
                     stance("Benjamin Cowen", "ETH", "bullish", "2026-08-20")])
-    entry = roster.payload(delta)[0]
-    assert entry["stale_now"] == 1
-    assert sum(entry["after"].values()) == 2
+    assert delta.moved[0].after["near"].counts["bearish"] == 0
 
 
-def test_a_stale_view_still_counts_in_the_split():
-    """Withholding it would silently redefine the count the reader has been reading for weeks.
-    The number stays; what changes is that its age travels with it."""
-    delta = _moved([stance("Pierre", "ETH", "bearish", "2026-01-01"),
-                    stance("Benjamin Cowen", "ETH", "bullish", "2026-08-20")])
-    assert delta.moved[0].after.counts["bearish"] == 1
+def test_a_stale_view_is_excluded_from_standing():
+    entry = roster.payload(_moved(_crowd(stance("Pierre", "ETH", "bearish", "2026-01-01"))))[0]
+    near = entry["standing"]["near"]
+    assert near["counts"] == {"bullish": 2, "bearish": 1, "neutral": 0, "uncertain": 0}
+    assert near["dropped_stale"] == 1
+    assert "Pierre" not in str(entry["voices"])
+
+
+def test_a_term_under_three_current_people_is_names_only():
+    entry = roster.payload(_moved([stance("Benjamin Cowen", "ETH", "bullish", "2026-08-20"),
+                                   stance("krillin", "ETH", "bearish", "2026-08-19")]))[0]
+    assert "near" not in entry["standing"]
+    assert entry["voices"] == {"near": {"bullish": ["Benjamin Cowen"], "bearish": ["krillin"]}}
+
+
+def test_a_term_with_three_current_people_gets_a_count():
+    entry = roster.payload(_moved(_crowd()))[0]
+    assert entry["standing"]["near"]["counts"]["bullish"] == 2
+    assert set(entry["standing"]) == {"near"}
+
+
+def test_an_empty_term_is_absent_from_voices():
+    entry = roster.payload(_moved(_crowd()))[0]
+    assert set(entry["voices"]) == {"near"}
+
+
+# ── crosswinds ────────────────────────────────────────────────────────────────
+
+def _mayne(*extra):
+    return [stance("TraderMayne", "BTC", "bearish", "2026-08-10", horizon="swing"),
+            stance("TraderMayne", "BTC", "bullish", "2026-08-05", horizon="position"), *extra]
+
+
+def test_a_crosswind_alone_does_not_make_a_move():
+    assert _moved(_mayne(), assets=("BTC",)).moved == ()
+
+
+def test_a_crosswind_is_in_the_payload_and_adds_no_event_key():
+    delta = _moved(_mayne(stance("Benjamin Cowen", "BTC", "bullish", "2026-08-20")),
+                   assets=("BTC",))
+    assert roster.payload(delta)[0]["crosswinds"] == [
+        {"person": "TraderMayne", "near": "bearish", "long": "bullish",
+         "near_on": "2026-08-10", "long_on": "2026-08-05"}]
+    assert roster.event_keys(delta) == ("BTC|voice|Benjamin Cowen",)
+
+
+def test_a_crosswind_survives_the_filter():
+    delta = _moved(_mayne(stance("Benjamin Cowen", "BTC", "bullish", "2026-08-20"),
+                               stance("krillin", "BTC", "bullish", "2026-08-20")),
+                   assets=("BTC",))
+    seen = roster.remember({}, [roster.event_keys(delta)[0]], on=date(2026, 8, 21))
+    assert roster.unreported(delta, seen).moved[0].crosswinds == delta.moved[0].crosswinds
+
+
+# ── the narrator never maps horizons to terms itself ──────────────────────────
+
+def test_a_flip_carries_its_term():
+    delta = _moved([stance("Pierre", "ETH", "bearish", "2026-06-01", horizon="macro"),
+                    stance("Pierre", "ETH", "bullish", "2026-08-20", horizon="macro")])
+    flip = roster.payload(delta)[0]["flips"][0]
+    assert (flip["horizon"], flip["term"]) == ("macro", "long")
+
+
+def test_a_new_horizon_carries_its_term():
+    delta = _moved([stance("Pierre", "ETH", "bullish", "2026-06-01", horizon="swing"),
+                    stance("Pierre", "ETH", "bearish", "2026-08-20", horizon="macro")])
+    view = roster.payload(delta)[0]["new_horizons"][0]
+    assert (view["horizon"], view["term"]) == ("macro", "long")
+
+
+def test_an_untagged_horizon_is_the_unset_term():
+    delta = _moved([stance("Pierre", "ETH", "bullish", "2026-06-01", horizon="swing"),
+                    stance("Pierre", "ETH", "bearish", "2026-08-20", horizon=None)])
+    view = roster.payload(delta)[0]["new_horizons"][0]
+    assert (view["horizon"], view["term"]) == ("?", "unset")

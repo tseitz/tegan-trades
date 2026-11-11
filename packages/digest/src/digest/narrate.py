@@ -1,7 +1,7 @@
 """The one narrated section — prose over numbers Python already computed.
 
-**The model is given counts and names, never a transcript.** ``roster.payload`` carries lean
-counts before and after, who flipped, and who spoke for the first time; it carries no
+**The model is given counts and names, never a transcript.** ``roster.payload`` carries the
+standing lean per term, who flipped, and who spoke for the first time; it carries no
 rationale text and no transcript reference. So the worst failure available here is an awkward
 sentence. A wrong *number* would be a rendering bug in ``roster``, with a test behind it, not
 a hallucination — which is the only arrangement under which a generated line belongs in a
@@ -47,24 +47,29 @@ _SYSTEM = """You write one line per asset for a personal trading digest that is 
 a minute, before the market opens.
 
 You are given a JSON array. Each entry is one asset whose roster of commentators moved in the
-last week: the lean counts before and after, who currently holds which lean, who changed their
-mind, who spoke on it for the first time, and `stale_now`.
+last week: who changed their mind (`flips`), who spoke on it for the first time
+(`new_voices`), who spoke on a new horizon (`new_horizons`), and where the roster stands now.
 
-`stale_now` is how many of the people in `after` last spoke longer ago than their own horizon
-allows — months-old views still sitting in the count. It is often a third of them.
+Where it stands is split by TERM: `near` (days to ~6 weeks), `long` (months to years), `unset`
+(no horizon given). `standing` has lean counts for a term only when enough people hold a
+current view to make a count mean something; `voices` names who holds which lean in every
+term. Views older than their horizon allows are already left out. A `crosswind` is one person
+leaning one way near-term and the other way long-term.
 
 Rules:
 - ONE line per asset. Start with the ticker.
-- Lead with what changed, not with the standing count. "Pierre flipped bearish to bullish" is
-  the news; "4 bullish, 1 bearish" is background and only earns space if the change moved it.
-- If you print a standing count and `stale_now` is not zero, you MUST say so in the same
-  breath: "bearish leads 12 to 3, though 11 of those last spoke months ago". A count offered
-  as current sentiment when a third of it is archaeology is the worst error you can make here.
-  If you do not print the count, you do not need to mention it.
+- Lead with what changed, not with where it stands. "Pierre flipped bearish to bullish" is
+  the news; "near-term bullish 4 to 1" is background and only earns space if it helps.
+- Counts are per term. Say which term ("near-term bearish 6 to 4, longer-term bullish 12 to
+  3") and NEVER add terms together — one person can be in both.
+- Never say a count rose, fell or changed. You are given where it stands now, not where it
+  was; only the listed flips and new voices changed.
+- Never print a count for a term that is not in `standing`. Name people instead.
+- Name a crosswind only when that person is already in the line ("Mayne flipped bearish
+  near-term but stays bullish longer-term").
 - Name people. A flip is the highest-signal event here and it is worthless unattributed.
 - Use ONLY the numbers and names given. Never add a price, a level, a reason, or a claim about
-  why anyone changed their mind — you have not been told why and must not guess. In particular
-  never say WHICH people are the stale ones; you are given a count, not names.
+  why anyone changed their mind — you have not been told why and must not guess.
 - No markdown, no bullets, no preamble, no sign-off. Plain sentences.
 - Under 30 words per line. This sits beside four other sections."""
 

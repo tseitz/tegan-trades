@@ -112,8 +112,10 @@ def main(
         # from a free answer.
         search_fn = _default_search_fn(args.question, args.k)
 
+    today = datetime.now(UTC).date()
     view = retrieve(stances=stances, registry=registry, asset=asset,
-                    person=args.person, since=args.since, k=args.k, search_fn=search_fn)
+                    person=args.person, since=args.since, k=args.k, search_fn=search_fn,
+                    today=today)
 
     synthesis = None
     if not args.no_llm and view.folded:
@@ -126,6 +128,5 @@ def main(
             print(f"[brain] synthesis unavailable: {exc}", file=sys.stderr)
             out("(synthesis unavailable — structured answer below)\n")
 
-    out(format_view(view, synthesis=synthesis, question=args.question,
-                    today=datetime.now(UTC).date()))
+    out(format_view(view, synthesis=synthesis, question=args.question, today=today))
     return 0
