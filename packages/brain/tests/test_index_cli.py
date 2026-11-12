@@ -339,6 +339,52 @@ class TestIncremental:
         assert stats["transcripts_indexed"] == 1
         assert conn.execute("SELECT assets FROM chunks LIMIT 1").fetchone()[0] == "BTC"
 
+    def test_a_stance_file_rewritten_with_the_same_assets_is_restamped_not_reembedded(
+            self, data_root):
+        """A horizon re-tag rewrites every stance file without touching an asset."""
+        _write_transcript(data_root, "youtube", "vid1", "Cowen", "hello world " * 50)
+        _write_stance_file(data_root, "youtube", "vid1", ["BTC", "ETH"])
+        conn = connect(data_root / "index.db")
+        self._index(data_root, conn, _FakeEmbedder())
+
+        stance = data_root / "stances" / "youtube" / "vid1.json"
+        _touch(stance, stance.read_text(encoding="utf-8").replace('"r"', '"r2"'))
+        embedder = _FakeEmbedder()
+        stats = self._index(data_root, conn, embedder)
+
+        assert embedder.calls == []
+        assert stats["transcripts_restamped"] == 1
+        again = self._index(data_root, conn, _FakeEmbedder())
+        assert again["transcripts_skipped"] == 1
+
+    def test_a_stance_file_rewritten_with_new_assets_is_reembedded(self, data_root):
+        _write_transcript(data_root, "youtube", "vid1", "Cowen", "hello world")
+        _write_stance_file(data_root, "youtube", "vid1", ["BTC"])
+        conn = connect(data_root / "index.db")
+        self._index(data_root, conn, _FakeEmbedder())
+
+        _write_stance_file(data_root, "youtube", "vid1", ["BTC", "SOL"])
+        _bump_mtime(data_root / "stances" / "youtube" / "vid1.json")
+        stats = self._index(data_root, conn, _FakeEmbedder())
+
+        assert stats["transcripts_indexed"] == 1
+        assert conn.execute("SELECT assets FROM chunks LIMIT 1").fetchone()[0] == "BTC,SOL"
+
+    def test_text_and_stance_both_changed_is_reembedded_even_with_the_same_assets(
+            self, data_root):
+        _write_transcript(data_root, "youtube", "vid1", "Cowen", "hello world " * 50)
+        _write_stance_file(data_root, "youtube", "vid1", ["BTC"])
+        conn = connect(data_root / "index.db")
+        self._index(data_root, conn, _FakeEmbedder())
+
+        _touch(data_root / "transcripts" / "youtube" / "vid1.txt", "different text " * 50)
+        _bump_mtime(data_root / "stances" / "youtube" / "vid1.json", seconds=20.0)
+        embedder = _FakeEmbedder()
+        stats = self._index(data_root, conn, embedder)
+
+        assert stats["transcripts_indexed"] == 1
+        assert embedder.calls != []
+
     def test_changed_sidecar_is_reindexed(self, data_root):
         """person/published_at are denormalized onto every chunk row, so a corrected
         sidecar has to reach the store even though the transcript text is untouched."""

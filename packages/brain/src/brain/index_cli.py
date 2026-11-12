@@ -122,6 +122,7 @@ def index_all(
 
     transcripts_indexed = 0
     transcripts_skipped = 0
+    transcripts_restamped = 0
     chunks_written = 0
     chunks_skipped = 0
 
@@ -140,9 +141,21 @@ def index_all(
         fingerprint = _fingerprint(
             txt_path, sidecar_path, store_mod.stance_path(platform, source_id, stances_root)
         )
-        if known.get(transcript_ref) == fingerprint:
+        previous = known.get(transcript_ref)
+        if previous == fingerprint:
             transcripts_skipped += 1
             continue
+
+        # Only the stance file moved, and it moved nothing the rows carry: re-stamp, don't
+        # re-embed. A horizon re-tag rewrites every stance file, and on the droplet a full
+        # re-embed runs past eight hours and gets OOM-killed.
+        if previous is not None and max(txt_path.stat().st_mtime,
+                                        sidecar_path.stat().st_mtime) <= previous:
+            assets = _read_assets(platform, source_id, stances_root, registry)
+            if store.stored_assets(conn, transcript_ref) == store.assets_column(assets):
+                store.record_indexed(conn, transcript_ref, fingerprint, now)
+                transcripts_restamped += 1
+                continue
 
         text = txt_path.read_text(encoding="utf-8")
         chunks = chunk_transcript(text, transcript_ref)
@@ -175,6 +188,7 @@ def index_all(
     return {
         "transcripts_indexed": transcripts_indexed,
         "transcripts_skipped": transcripts_skipped,
+        "transcripts_restamped": transcripts_restamped,
         "chunks_written": chunks_written,
         "chunks_skipped": chunks_skipped,
     }
@@ -184,6 +198,7 @@ def _format_summary(stats: dict, elapsed: float) -> str:
     return (
         f"{stats['transcripts_indexed']} transcripts indexed, "
         f"{stats.get('transcripts_skipped', 0)} unchanged, "
+        f"{stats.get('transcripts_restamped', 0)} re-stamped without re-embedding, "
         f"{stats['chunks_written']} chunks written, "
         f"{stats['chunks_skipped']} chunks skipped, "
         f"{elapsed:.1f}s elapsed"

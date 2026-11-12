@@ -68,7 +68,7 @@ def connect(path: Path = DB_PATH) -> sqlite3.Connection:
     return conn
 
 
-def _assets_column(assets: list[str] | None) -> str:
+def assets_column(assets: list[str] | None) -> str:
     """Comma-join asset tickers for storage.
 
     IMPORTANT: a chunk is a window of narrative text, not a claim about any one
@@ -98,7 +98,7 @@ def upsert_chunks(
     makes both re-indexing and same-run duplicates idempotent rather than
     raising an integrity error.
     """
-    assets_col = _assets_column(assets)
+    assets_col = assets_column(assets)
     rows = [
         (
             c.id, c.transcript_ref, person, published_at, assets_col,
@@ -144,6 +144,14 @@ def delete_transcript(conn: sqlite3.Connection, transcript_ref: str) -> int:
     cursor = conn.execute("DELETE FROM chunks WHERE transcript_ref = ?", (transcript_ref,))
     conn.commit()
     return cursor.rowcount
+
+
+def stored_assets(conn: sqlite3.Connection, transcript_ref: str) -> str | None:
+    """The asset column every chunk of one transcript carries, or ``None`` when it has no
+    chunks or they disagree."""
+    rows = conn.execute("SELECT DISTINCT assets FROM chunks WHERE transcript_ref = ?",
+                        (transcript_ref,)).fetchall()
+    return rows[0][0] if len(rows) == 1 else None
 
 
 def fingerprints(conn: sqlite3.Connection) -> dict[str, float]:
