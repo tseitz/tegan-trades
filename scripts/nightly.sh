@@ -732,6 +732,13 @@ done
 # that hits this has not fallen behind, it has stopped.
 if grep -q 'OAuth session expired' "$LOG"; then
   block "claude auth expired — run \`claude /login\`, then re-run the LLM steps"
+else
+  # Warns before the line above can fire. Runs on every night, whatever `--only` selected.
+  AUTH_EXPIRY=$(uv run python scripts/claude_auth_expiry.py 2>>"$LOG")
+  case "$AUTH_EXPIRY" in
+    block\|*) block "${AUTH_EXPIRY#block|}" ;;
+    warn\|*)  flag "${AUTH_EXPIRY#warn|}" ;;
+  esac
 fi
 
 # Same shape for YouTube: a proxy account out of credits answers every request with 402 until it
