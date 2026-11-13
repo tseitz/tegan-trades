@@ -34,13 +34,13 @@ X_SIDECAR = {
 
 
 def stance(ref, asset, lean, *, person="Benjamin Cowen", published="2026-09-29",
-           conviction=None, watching=None):
+           conviction=None, watching=None, horizon=None):
     src = Source(person=person, platform=ref.split("/")[0], url="https://example.com",
                  published_at=published, transcript_ref=ref)
     return build_stance(
         ExtractedStance.model_validate({
             "asset": asset, "lean": lean, "conviction": conviction, "watching": watching,
-            "rationale": f"{person} on {asset}"}),
+            "horizon": horizon, "rationale": f"{person} on {asset}"}),
         source=src, model="m", extracted_at="2026-09-30T00:00:00+00:00")
 
 
@@ -328,3 +328,19 @@ def test_entry_notes_lists_high_then_the_prior_with_its_year_when_it_differs():
     assert views.entry_notes(views.Entry("BTC", True, prior("bullish", "2025-09-03")), 2026) \
         == ["high", "was bullish Sep 3 2025"]
     assert views.entry_notes(views.Entry("BTC", False), 2026) == []
+
+
+def test_an_asset_on_both_sides_carries_its_term_and_others_do_not():
+    ss = [stance(REF, "MAG7", "bullish", horizon="swing"),
+          stance(REF, "MAG7", "bearish", conviction="high", horizon="position"),
+          stance(REF, "GOLD", "bullish", horizon="macro")]
+    out = rendered(ss, with_priors(ss))
+    assert "    Bullish  MAG7 (near), GOLD" in out
+    assert "    Bearish  MAG7 (long · high)" in out
+
+
+def test_a_held_asset_on_both_sides_carries_its_term():
+    ss = [stance(REF, "SPX", "bearish", conviction="high", horizon="swing"),
+          stance(REF, "SPX", "bullish", conviction="high", horizon="macro")]
+    out = rendered(ss, {ss[0].id: prior("bearish"), ss[1].id: prior("bullish")})
+    assert "    Held     SPX bearish (near), SPX bullish (long)" in out

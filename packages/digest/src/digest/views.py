@@ -20,6 +20,7 @@ from datetime import UTC, date, datetime, timedelta
 
 from core.rank import parse_date
 from core.stance import Stance
+from core.term import term_of
 
 from digest.fmt import UNDATED, instant
 
@@ -54,6 +55,7 @@ class Entry:
     asset: str
     high: bool
     prior: dict | None = None
+    term: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,10 +183,24 @@ def _graded(video: Video) -> list[tuple[Stance, str]]:
     return [(s, status) for s, status in graded if _STATUS_RANK[status] == best[_key(s.asset)]]
 
 
+def _both_sides(stances) -> set[str]:
+    """Assets leaning both ways — usually one call per term, unreadable without the term."""
+    leans: dict[str, set[str]] = {}
+    for s in stances:
+        leans.setdefault(_key(s.asset), set()).add(s.lean)
+    return {k for k, v in leans.items() if {"bullish", "bearish"} <= v}
+
+
+def _term(stance: Stance, both: set[str]) -> str | None:
+    term = term_of(stance.horizon)
+    return term if _key(stance.asset) in both and term != "unset" else None
+
+
 def buckets(video: Video) -> dict[str, list[Entry]]:
     """Flip and new assets per bucket, high conviction first, deduped within each. Empty omitted."""
     ordered = sorted((g for g in _graded(video) if g[1] != _HELD),
                      key=lambda g: g[0].conviction != "high")
+    both = _both_sides(s for s, _ in ordered)
     out: dict[str, list[Entry]] = {"Bullish": [], "Bearish": [], "Unsure": [], "Punts": []}
     seen: dict[str, set[str]] = {k: set() for k in out}
     for s, status in ordered:
@@ -199,7 +215,8 @@ def buckets(video: Video) -> dict[str, list[Entry]]:
         out[name].append(Entry(
             asset=s.asset.strip(),
             high=s.conviction == "high" and name in ("Bullish", "Bearish"),
-            prior=video.priors.get(s.id) if status == _FLIP else None))
+            prior=video.priors.get(s.id) if status == _FLIP else None,
+            term=_term(s, both)))
     return {k: v for k, v in out.items() if v}
 
 
@@ -207,9 +224,11 @@ def held(video: Video) -> list[str]:
     """``BTC bullish`` per asset whose lean matches the previous view, high conviction first."""
     ordered = sorted((g for g in _graded(video) if g[1] == _HELD),
                      key=lambda g: g[0].conviction != "high")
+    both = _both_sides(s for s, _ in ordered)
     out: list[str] = []
     for s, _ in ordered:
-        text = f"{s.asset.strip()} {s.lean}"
+        term = _term(s, both)
+        text = f"{s.asset.strip()} {s.lean}" + (f" ({term})" if term else "")
         if _key(s.asset) and text not in out:
             out.append(text)
     return out
@@ -221,7 +240,8 @@ def _year(published_at: str) -> int | None:
 
 
 def entry_notes(entry: Entry, video_year: int | None) -> list[str]:
-    notes = ["high"] if entry.high else []
+    notes = [entry.term] if entry.term else []
+    notes += ["high"] if entry.high else []
     if entry.prior:
         when = day(entry.prior["published_at"])
         year = _year(entry.prior["published_at"])
